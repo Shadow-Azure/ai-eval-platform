@@ -84,6 +84,10 @@ def test_presigned_put_url_structure(endpoint: str) -> None:
     credential = query["X-Amz-Credential"][0]
     assert credential.startswith("akTest/")
     assert credential.endswith("/s3/aws4_request")
+    # The canonical query string must URL-encode the slashes in the credential
+    # value (SigV4 requirement) — real S3/MinIO reject raw "/" there, which the
+    # M2-05 host smoke caught (presigned PUT → SignatureDoesNotMatch).
+    assert "X-Amz-Credential=akTest%2F" in url
     signature = query["X-Amz-Signature"][0]
     assert len(signature) == 64 and all(c in "0123456789abcdef" for c in signature)
     assert "X-Amz-Date" in query

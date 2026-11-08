@@ -78,10 +78,14 @@ class ObjectStore:
         host = parsed.netloc
         canonical_uri = _uri_encode_path(f"/{self.bucket}/{object_key}")
         scope = f"{date_stamp}/{self.region}/s3/aws4_request"
+        # SigV4: the credential element in the canonical query is URL-encoded
+        # including its "/" separators (raw slashes → SignatureDoesNotMatch on
+        # real S3/MinIO; caught by the M2-05 host smoke).
+        credential = quote(f"{self.access_key}/{scope}", safe="")
         query = "&".join(
             [
                 "X-Amz-Algorithm=AWS4-HMAC-SHA256",
-                f"X-Amz-Credential={quote(self.access_key, safe='')}/{scope}",
+                f"X-Amz-Credential={credential}",
                 f"X-Amz-Date={amz_date}",
                 f"X-Amz-Expires={expires}",
                 "X-Amz-SignedHeaders=host",
