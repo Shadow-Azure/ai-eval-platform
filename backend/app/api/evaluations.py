@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -27,9 +27,10 @@ class CreateEvaluationRequest(BaseModel):
     idempotency_key: str | None = Field(default=None, max_length=128)
 
 
-@router.post("/api/v1/evaluations", status_code=201)
+@router.post("/api/v1/evaluations")
 def create_evaluation(
     payload: CreateEvaluationRequest,
+    response: Response,
     session: Session = Depends(get_session),
 ) -> dict:
     settings = get_settings()
@@ -52,6 +53,8 @@ def create_evaluation(
                 details={"fields": {exc.field: "invalid"}} if exc.field else None,
             ),
         ) from exc
+    # Idempotent replay of an existing run answers 200, fresh creation 201.
+    response.status_code = 201 if created else 200
     return _run_body(evaluation_service.evaluation_summary(run), created)
 
 
