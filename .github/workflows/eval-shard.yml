@@ -1,29 +1,32 @@
 # Synthetic shard workflow executed on the fixed self-hosted Linux runner.
 #
-# M2-04: verifies the fixed runner actually picks work up from the GitHub
-# queue, executes the synthetic task in the container and posts contract
-# heartbeats/callbacks to the platform API. M2-05 will evolve this into the
-# real dispatch loop (repository_dispatch payload from the platform, OIDC or
-# short-term scoped tokens instead of the generated demo token).
+# M2-05: this workflow is the real consumption side of the platform dispatch
+# loop. The platform worker POSTs a repository_dispatch whose client_payload
+# satisfies runner-contract/schemas/v1/dispatch.schema.json; the job validates
+# it, fetches the shard manifest from the platform (which also issues the
+# attempt-scoped short-term token via X-Runner-Task-Token) and executes the
+# deterministic synthetic task. Result objects are uploaded through platform
+# presigned URLs (RUNNER_PRESIGN_UPLOADS=1) and the terminal callbacks persist
+# run/case/attempt state.
 #
-# Safety: no model keys, cloud AKs or platform admin tokens are used here.
-# The demo task token is generated per run (HMAC, development-only-secret)
-# and kept in the runner temp dir; callback auth currently relies on the
-# platform runner-plane token when configured.
+# No model keys, cloud AKs or long-lived platform tokens appear here: the
+# short-lived task token never enters the workflow env, it lives in the runner
+# process memory only.
+#
+# workflow_dispatch (manual) is a bootstrap: it asks the platform to create a
+# synthetic evaluation, and the platform's dispatch loop triggers the real
+# repository_dispatch run (this also re-verifies the GitHub queue pickup hop).
 name: eval-shard
 
 on:
   workflow_dispatch:
     inputs:
-      eval_run_id:
-        description: "Eval run id for the synthetic shard"
-        default: "eval_m204_smoke"
-      shard_id:
-        description: "Shard id"
-        default: "shard_m204"
       callback_base_url:
         description: "Platform API base URL reachable from the runner host"
         default: "http://127.0.0.1:8000"
+      case_count:
+        description: "Number of synthetic cases in the bootstrap evaluation"
+        default: "2"
   repository_dispatch:
     types: [eval-shard]
 
@@ -31,38 +34,64 @@ permissions:
   contents: read
 
 concurrency:
-  group: eval-shard-${{ github.event.client_payload.shard_id || inputs.shard_id || github.run_id }}
+  group: eval-shard-${{ github.event.client_payload.dispatch_key || github.run_id }}
   cancel-in-progress: false
 
 jobs:
+  bootstrap:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: [self-hosted, linux, eval]
+    timeout-minutes: 5
+    steps:
+      - name: Ask the platform to create and dispatch a synthetic evaluation
+        env:
+          CALLBACK_BASE_URL: ${{ inputs.callback_base_url || 'http://127.0.0.1:8000' }}
+          CASE_COUNT: ${{ inputs.case_count || '2' }}
+        run: |
+          set -euo pipefail
+          python3 - "$CALLBACK_BASE_URL" "$CASE_COUNT" <<'PY'
+          import json, sys, time, urllib.request
+
+          base_url, case_count = sys.argv[1], int(sys.argv[2])
+          body = json.dumps({
+              "name": "eval-shard manual bootstrap",
+              "case_keys": [f"bootstrap-case-{i + 1}" for i in range(case_count)],
+              "idempotency_key": f"eval-shard-{time.time_ns()}",
+          }).encode()
+          request = urllib.request.Request(
+              f"{base_url}/api/v1/evaluations",
+              data=body,
+              method="POST",
+              headers={"content-type": "application/json"},
+          )
+          with urllib.request.urlopen(request, timeout=10) as response:
+              payload = json.load(response)
+          print(f"evaluation created: {payload['id']} status={payload['status']}")
+          PY
+
   synthetic-shard:
+    if: github.event_name == 'repository_dispatch'
     runs-on: [self-hosted, linux, eval]
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
-      - name: Prepare synthetic dispatch payload
+      - name: Materialize and validate the dispatch payload
         env:
-          EVAL_RUN_ID: ${{ github.event.client_payload.eval_run_id || inputs.eval_run_id || 'eval_m204_smoke' }}
-          SHARD_ID: ${{ github.event.client_payload.shard_id || inputs.shard_id || 'shard_m204' }}
-          CALLBACK_BASE_URL: ${{ github.event.client_payload.callback_base_url || inputs.callback_base_url || 'http://127.0.0.1:8000' }}
+          DISPATCH_PAYLOAD: ${{ toJson(github.event.client_payload) }}
         run: |
           set -euo pipefail
-          node scripts/make-eval-dispatch.mjs \
-            --out-dir "$RUNNER_TEMP/eval-dispatch" \
-            --eval-run-id "$EVAL_RUN_ID" \
-            --shard-id "$SHARD_ID" \
-            --callback-base-url "$CALLBACK_BASE_URL"
+          mkdir -p "$RUNNER_TEMP/eval-dispatch"
+          printf '%s' "$DISPATCH_PAYLOAD" > "$RUNNER_TEMP/eval-dispatch/dispatch.json"
+          node runner/lib/contracts.mjs dispatch "$RUNNER_TEMP/eval-dispatch/dispatch.json"
 
-      - name: Execute synthetic shard with heartbeats
+      - name: Execute synthetic shard (manifest fetch → callbacks → OSS)
         env:
-          RUNNER_TASK_SECRET: development-only-secret
+          RUNNER_PRESIGN_UPLOADS: "1"
           RUNNER_STATE_DIR: ${{ runner.temp }}/eval-state
           RUNNER_OBJECT_ROOT: ${{ runner.temp }}/eval-objects
         run: |
           set -euo pipefail
-          RUNNER_TASK_TOKEN="$(cat "$RUNNER_TEMP/eval-dispatch/task-token")"
-          export RUNNER_TASK_TOKEN
           node runner/scripts/synthetic-task.mjs \
             --dispatch "$RUNNER_TEMP/eval-dispatch/dispatch.json" \
             --state-dir "$RUNNER_STATE_DIR" \
