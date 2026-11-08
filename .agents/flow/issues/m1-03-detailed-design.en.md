@@ -1,4 +1,4 @@
-# Write the evaluation platform detailed design document
+# Freeze the M2 executable foundation contracts
 
 English | [中文](m1-03-detailed-design.md)
 
@@ -15,6 +15,8 @@ scope:
   - docs/architecture.*
   - docs/design/eval-platform-detailed-design.*
   - docs/README.*
+  - contracts/**
+  - plans/m1-02-fullstack-design/**
   - reports/**
   - scripts/doc-budgets.manifest.json
 adr: []
@@ -25,20 +27,20 @@ github:
 
 ## Background
 
-The finalized architecture answers what the system does and which major technologies it uses, but it does not yet expand service boundaries, database tables, API contracts, state machines, task protocols, and testing strategy to an implementable level. Before development, the team needs an engineering baseline consistent with the architecture and prototype to split implementation work and review code.
+`plans/m1-02-fullstack-design/` is now the implementation baseline for the evaluation platform, and a complete detailed design for the entire platform is no longer an M2 prerequisite. M1-03 freezes only the contracts needed for the M2 control plane, database, deployment, fixed runner, and synthetic execution loop so the five M2 issues can be implemented and accepted directly; designs for M3 and later evolve in later milestones using implementation evidence.
 
 ## Goals
 
-- Define service and module boundaries, code organization, and dependency direction, along with the responsibilities of the platform, dispatcher, runner, object storage, and GitHub Actions.
-- Specify the MVP data model, migration strategy, indexes, and multi-tenant constraints, and define the core APIs, events, error codes, and SSE protocol.
-- Detail the evaluation and case state machines, concurrent scheduling, retry idempotency, timeout recovery, callback authentication, and short-lived credential flow.
-- Define the five-file task package, dataset and execution adapter interfaces, normalized session trace model, and OSS directory conventions.
-- Cover frontend routes and component boundaries, test layers, observability, security boundaries, deployment rollback, and the CI/CD implementation.
+- Map M2 services, modules, code paths, and dependency direction, and define the minimal boundaries among the platform, dispatcher, fixed runner, PostgreSQL, Redis, and object storage.
+- Freeze the initial M2 data model, migration order, composite tenant constraints, and idempotency keys for evaluations, cases, attempts, events, and outbox records.
+- Freeze machine-readable contracts and state transitions for M2 APIs, SSE queries, task manifests, heartbeats, uploads, completion, and failure callbacks.
+- Freeze the minimal operating flow for main-branch migration and deployment, health checks, compatible rollback, and fixed Linux runner registration and loss recovery.
+- Map contracts to acceptance for M2-01 through M2-05, while explicitly leaving OIDC, spot provisioning, multiple runners, and real agents to M3 or M4.
 
 ## Acceptance
 
-- The detailed design lands as a Chinese base, an English `.en.md`, and an `.i18n.yaml` trio, and is listed in the documentation index.
-- Every MVP primary flow is traceable through explicit page, API, service, database, task package, and storage contracts.
-- Module diagrams, the data model diagram, key sequence diagrams, and state machines are complete, and API examples cover success, failure, authentication, and idempotency scenarios.
-- The design gives an executable migration order, test matrix, failure handling, and production rollback steps, and marks every open decision with a default option.
-- The document passes repository gates and technical review and can be split directly into implementation issues; this issue does not include production code.
+- The M2 execution contracts land as a Chinese base, an English `.en.md`, and an `.i18n.yaml` trio, and are listed in the documentation index.
+- `contracts/` provides an M2 OpenAPI summary or interface schema, task and callback JSON schemas, and the actual migration order and deployment state machine.
+- Every M2 issue traces its acceptance items to a baseline document section, database objects, API or task protocol, and corresponding automated test.
+- Baseline items marked as recommendations, defaults, or requiring technical validation that affect M2 receive a frozen value, validation task, or explicit later milestone, with no M3+ open item blocking M2.
+- The contracts pass repository gates and technical review; this issue contains no production code, and M2-01 can enter implementation after review.
