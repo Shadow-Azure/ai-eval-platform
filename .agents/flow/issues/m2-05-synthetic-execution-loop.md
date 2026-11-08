@@ -6,9 +6,10 @@
 kind: issue
 milestone: m2
 priority: P0
-status: in-progress
+status: done
 scope:
   - .agents/flow/issues/m2-05-synthetic-execution-loop.*
+  - .agents/flow/milestones/m2-executable-foundation.*
   - backend/**
   - web/**
   - runner/**
