@@ -11,6 +11,7 @@ scope:
   - .agents/flow/issues/m2-01-control-plane-foundation.*
   - backend/**
   - web/**
+  - plans/**
   - tests/**
   - pyproject.toml
   - package.json
