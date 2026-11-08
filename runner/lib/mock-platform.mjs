@@ -1,6 +1,15 @@
 import { createServer } from "node:http";
 
-/** Minimal platform stub used by the contract tests. It never calls a model. */
+/**
+ * Minimal platform stub used by the contract tests. It never calls a model.
+ *
+ * M2-05 additions:
+ * - GET /manifest also returns X-Runner-Task-Token when `expectedToken` is
+ *   set (platform-issued short-term token delivery, like the real endpoint).
+ * - behavior.uploadUrls serves POST .../upload-urls with presigned-style PUT
+ *   URLs (`/objects/<key>`, no bearer auth — the URL signature is the
+ *   credential) and records every PUT body for assertions.
+ */
 export async function startMockPlatform({
   manifestText,
   expectedToken,
@@ -9,6 +18,7 @@ export async function startMockPlatform({
 }) {
   const getManifest = typeof manifestText === "function" ? manifestText : () => manifestText;
   const requests = [];
+  const objects = new Map();
   const state = {
     completionFailures: behavior.completionFailures ?? 0,
     failCompletionPermanently: behavior.failCompletionPermanently ?? false,
@@ -35,8 +45,20 @@ export async function startMockPlatform({
     };
 
     if (request.method === "GET" && request.url === "/manifest") {
-      response.writeHead(200, { "content-type": manifestContentType });
+      const headers = { "content-type": manifestContentType };
+      if (expectedToken) headers["x-runner-task-token"] = expectedToken;
+      response.writeHead(200, headers);
       response.end(getManifest());
+      return;
+    }
+
+    // Presigned PUT receiver: the URL signature is the credential, so no
+    // bearer auth here — mirrors the real object store.
+    if (request.method === "PUT" && request.url.startsWith("/objects/")) {
+      const key = request.url.slice("/objects/".length);
+      objects.set(key, Buffer.from(rawBody, "utf8"));
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end("{}");
       return;
     }
 
@@ -51,6 +73,27 @@ export async function startMockPlatform({
     }
 
     const path = request.url ?? "";
+    if (path.endsWith("/upload-urls")) {
+      if (!behavior.uploadUrls) {
+        send(404, { error: { code: "not_found" } });
+        return;
+      }
+      const uploads = (body?.objects ?? []).map((item) => {
+        const objectKey = `mock/${item.artifact_kind}/${item.sha256}`;
+        return {
+          artifact_kind: item.artifact_kind,
+          sha256: item.sha256,
+          size: item.size,
+          object_key: objectKey,
+          upload_url: `${state.baseUrl}/objects/${objectKey}`,
+          expires_at: new Date(Date.now() + 900_000).toISOString(),
+          method: "PUT",
+          headers: { "content-type": item.content_type },
+        };
+      });
+      send(200, { ok: true, uploads });
+      return;
+    }
     if (path.endsWith("/uploads") || path.endsWith("/started") || path.endsWith("/heartbeat")) {
       send(200, { ok: true });
       return;
@@ -83,11 +126,13 @@ export async function startMockPlatform({
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
   const baseUrl = `http://127.0.0.1:${address.port}`;
+  state.baseUrl = baseUrl;
 
   return {
     baseUrl,
     requests,
     state,
+    objects,
     close: () => new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve()))),
     callbackUrl: (caseRunId, action) => `${baseUrl}/runner/v1/case-runs/${caseRunId}/${action}`,
   };
