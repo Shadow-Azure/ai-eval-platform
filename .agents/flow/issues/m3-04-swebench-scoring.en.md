@@ -16,6 +16,8 @@ scope:
   - plans/**
   - reports/**
   - docker-compose.yml
+  - runner/**
+  - runner-contract/**
 adr: []
 github:
   number: 26
