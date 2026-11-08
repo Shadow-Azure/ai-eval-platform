@@ -500,3 +500,29 @@ def test_case_callbacks_unified_on_platform_token(eval_env, client, configure_se
         case_url(env, case_run_id, "heartbeat"), json=heartbeat_body(case_run_id, 1)
     )
     assert missing.status_code == 401
+
+
+def test_completion_clears_case_error_fields(eval_env, client) -> None:
+    """成功完成应清掉旧失败 attempt 遗留在 case 行上的 error 字段。"""
+
+    env = eval_env
+    case_run_id = env["cases"]["case-a"]
+    client.post(case_url(env, case_run_id, "started"), json=started_body(env, case_run_id), headers=auth(env))
+    failed = client.post(
+        case_url(env, case_run_id, "failed"),
+        json=failure_body(case_run_id, retryable=True),
+        headers=auth(env),
+    )
+    assert failed.json()["retry_queued"] is True
+
+    # 重试 attempt（attempt_no=2）成功完成
+    completion = completion_body(env, case_run_id, attempt=2)
+    completion["event_id"] = "evt_retry_completed"
+    ok = client.post(case_url(env, case_run_id, "completed"), json=completion, headers=auth(env, attempt=2))
+    assert ok.status_code == 200, ok.text
+
+    env["session"].expire_all()
+    case = env["session"].query(EvalCaseRun).filter(EvalCaseRun.id == case_run_id).one()
+    assert case.execution_status == "succeeded"
+    assert case.error_code is None
+    assert case.error_summary is None

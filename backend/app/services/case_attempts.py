@@ -345,6 +345,10 @@ def handle_completed(session: Session, *, payload: dict, now: datetime | None = 
     ctx.case_run.duration_ms = payload["summary"].get("duration_ms")
     if attempt_status != "succeeded":
         ctx.case_run.error_code = f"runner_{payload['execution_status']}"
+    else:
+        # 成功完成清掉旧失败 attempt 遗留在 case 行上的诊断字段。
+        ctx.case_run.error_code = None
+        ctx.case_run.error_summary = None
     trace_status = "ready" if "trace_manifest" in payload else "unlinked"
     ctx.case_run.trace_status = trace_status
     _add_event(
