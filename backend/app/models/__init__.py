@@ -1,4 +1,14 @@
 from .base import Base, CreatedAtMixin, TimestampMixin, json_type, new_id, tenant_fk, utcnow
+from .dataset import (
+    DATASET_IMPORT_STATUSES,
+    DATASET_VERSION_STATUSES,
+    Dataset,
+    DatasetCase,
+    DatasetImport,
+    DatasetVersion,
+    DatasetVersionMetric,
+    MetricDefinition,
+)
 from .evaluation import (
     ATTEMPT_STATUSES,
     EVAL_RUN_STATUSES,
@@ -11,8 +21,16 @@ from .evaluation import (
     EvalRun,
 )
 from .identity import Project, Tenant, Workspace
+from .model import (
+    CREDENTIAL_KINDS,
+    USAGE_STATUSES,
+    Credential,
+    ModelConfig,
+    ModelUsage,
+)
 from .outbox import Outbox
 from .resources import ProvisionedInstance, ResourcePool, Runner
+from .scoring import TEST_GROUPS, TEST_OUTCOMES, MetricResult, ScoreArtifact, TestCaseResult
 
 __all__ = [
     "Base",
@@ -25,6 +43,24 @@ __all__ = [
     "Project",
     "Tenant",
     "Workspace",
+    "Dataset",
+    "DatasetCase",
+    "DatasetImport",
+    "DatasetVersion",
+    "DatasetVersionMetric",
+    "MetricDefinition",
+    "DATASET_IMPORT_STATUSES",
+    "DATASET_VERSION_STATUSES",
+    "Credential",
+    "ModelConfig",
+    "ModelUsage",
+    "CREDENTIAL_KINDS",
+    "USAGE_STATUSES",
+    "MetricResult",
+    "ScoreArtifact",
+    "TestCaseResult",
+    "TEST_GROUPS",
+    "TEST_OUTCOMES",
     "Outbox",
     "ProvisionedInstance",
     "ResourcePool",

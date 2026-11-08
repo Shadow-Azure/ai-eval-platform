@@ -1,0 +1,5 @@
+# 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
+# git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
+#   pnpm run record:i18n -- .agents/flow/issues/m4-05-sse-event-stream.md
+m4-05-sse-event-stream.md: 89940cea1382b3383bfa57815d6a88afb6466d2e
+m4-05-sse-event-stream.en.md: 2fbbbe99aecabc7324df9143121b9ed1227af1d2

@@ -1,0 +1,5 @@
+# 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
+# git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
+#   pnpm run record:i18n -- .agents/flow/issues/m4-03-timeout-retry-recovery.md
+m4-03-timeout-retry-recovery.md: d3d76d01cfb4096fec97a5145423bff47aa2f63c
+m4-03-timeout-retry-recovery.en.md: fb184eebccbb92c21a8a4d16349f0eaf030ae500

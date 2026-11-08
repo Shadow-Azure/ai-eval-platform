@@ -1,0 +1,5 @@
+# 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
+# git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
+#   pnpm run record:i18n -- .agents/flow/issues/m4-01-shard-scheduling.md
+m4-01-shard-scheduling.md: 13bdd46284620d3c2ff9525a3df6f745f52cfc54
+m4-01-shard-scheduling.en.md: f1816309c459e307d1732951ac4fb9166f5bd91d

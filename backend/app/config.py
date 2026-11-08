@@ -31,6 +31,15 @@ class Settings(BaseSettings):
     worker_poll_seconds: float = 5.0
     worker_heartbeat_path: str = "/tmp/eval-worker-heartbeat"
 
+    dataset_source_root: str = "/tmp/eval-datasets"
+    dataset_import_max_cases: int = 5000
+    dataset_import_max_bytes: int = 50 * 1024 * 1024
+    object_store_root: str = "/tmp/eval-objects"
+
+    secret_box_key: str = ""
+    gateway_token_secret: str = "dev-gateway-token-secret"
+    gateway_timeout_seconds: float = 120.0
+
     # M2-04 fixed runner plane. The heartbeat token matches the env key the
     # deployed runner agent reads (/etc/eval-platform/runner.env); when unset
     # the runner plane accepts unauthenticated requests (development only).
