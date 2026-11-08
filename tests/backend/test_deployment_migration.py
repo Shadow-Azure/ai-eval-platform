@@ -53,7 +53,9 @@ def test_record_deployment_script_inserts_a_row(database_url: str) -> None:
             "DEPLOY_IMAGE_DIGEST": "registry.example/api@sha256:" + "0" * 64,
             "DEPLOY_MIGRATION_REVISION": "0002_deployment",
             "DEPLOY_TRIGGERED_BY": "pytest",
-            "DEPLOY_DETAIL_JSON": '{"source":"pytest"}',
+            "DEPLOY_DETAIL_API_IMAGE": "registry.example/api@sha256:" + "1" * 64,
+            "DEPLOY_DETAIL_WEB_IMAGE": "registry.example/web@sha256:" + "2" * 64,
+            "DEPLOY_DETAIL_GIT_COMMIT": "abc1234",
         }
     )
     result = subprocess.run(
@@ -76,6 +78,10 @@ def test_record_deployment_script_inserts_a_row(database_url: str) -> None:
             assert row is not None
             assert row.environment == "test"
             assert row.status == "succeeded"
-            assert row.detail_json == {"source": "pytest"}
+            assert row.detail_json == {
+                "api_image": "registry.example/api@sha256:" + "1" * 64,
+                "web_image": "registry.example/web@sha256:" + "2" * 64,
+                "git_commit": "abc1234",
+            }
     finally:
         engine.dispose()
