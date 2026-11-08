@@ -39,6 +39,10 @@ services:
       # the runner heartbeat/callback endpoints require it as a Bearer token.
       RUNNER_HEARTBEAT_TOKEN: ${RUNNER_HEARTBEAT_TOKEN:-}
       DEPLOY_ENVIRONMENT: ${DEPLOY_ENVIRONMENT:-production}
+    # Fixed runners and the heartbeat agent run on the API host and reach the
+    # platform via loopback (PLATFORM_BASE_URL=http://127.0.0.1:8000).
+    ports:
+      - "127.0.0.1:8000:8000"
     depends_on:
       postgres:
         condition: service_healthy
