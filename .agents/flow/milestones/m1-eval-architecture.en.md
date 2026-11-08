@@ -8,7 +8,7 @@ Complete the industry survey, discuss with the user, finalize the evaluation pla
 kind: milestone
 id: m1
 title: 评测平台架构定稿
-status: active
+status: done
 github:
   number: 1
   url: https://github.com/Shadow-Azure/ai-eval-platform/milestone/1
