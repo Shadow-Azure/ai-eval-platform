@@ -14,6 +14,7 @@ scope:
   - web/**
   - deploy/**
   - .github/workflows/runner-smoke.yml
+  - .github/workflows/deploy.yml
   - infra/runner/**
   - scripts/**
   - tests/**
