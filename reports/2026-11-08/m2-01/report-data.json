@@ -1,0 +1,249 @@
+{
+  "title": "M2-01 控制面与数据库底座 · 浏览器 Smoke",
+  "eyebrow": "Computer Use Smoke · M2-01",
+  "summary": "在真实 uvicorn + PostgreSQL 与构建后的 Web 预览上完成 6 项浏览器 smoke：登录、空密码错误态、真实总览、占位路由、控制面健康、1080×800 桌面最小宽度全部通过；最终复跑无 console error 与 page error。",
+  "meta": "2026-11-08 · macOS · Chrome headless 1440×900 / 1080×800",
+  "metrics": [
+    {
+      "value": "6/6",
+      "label": "场景通过"
+    },
+    {
+      "value": "0",
+      "label": "Console errors"
+    },
+    {
+      "value": "0",
+      "label": "Page errors"
+    },
+    {
+      "value": "2",
+      "label": "视口"
+    }
+  ],
+  "facts": [
+    {
+      "label": "PR",
+      "value": "#19"
+    },
+    {
+      "label": "Branch",
+      "value": "agent/m2-01-control-plane-foundation"
+    },
+    {
+      "label": "Commit",
+      "value": "5c931cc"
+    },
+    {
+      "label": "Web",
+      "value": "http://127.0.0.1:4173 (vite preview)"
+    },
+    {
+      "label": "API",
+      "value": "http://127.0.0.1:8000 (uvicorn + PostgreSQL 16)"
+    },
+    {
+      "label": "Database",
+      "value": "eval @ local PostgreSQL, migration 1a795994c4e9"
+    }
+  ],
+  "matrix": {
+    "columns": [
+      "#",
+      "场景",
+      "结果",
+      "细节",
+      "证据"
+    ],
+    "rows": [
+      {
+        "id": "01",
+        "name": "登录页渲染",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "主视觉、账号/密码字段、演示账号说明可见；默认值预填。",
+        "evidence": [
+          "01-login.png"
+        ]
+      },
+      {
+        "id": "02",
+        "name": "空密码校验",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "清空密码提交后出现内联错误“请输入账号和密码后重试”，未导航。",
+        "evidence": [
+          "02-login-error.png"
+        ]
+      },
+      {
+        "id": "03",
+        "name": "登录后总览",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "演示登录进入 /overview；默认租户/项目、系统健康与空态表来自真实 API。",
+        "evidence": [
+          "03-overview.png"
+        ]
+      },
+      {
+        "id": "04",
+        "name": "占位路由",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "/evals 在应用壳内显示“该功能将在后续里程碑接入”占位说明。",
+        "evidence": [
+          "04-evals-placeholder.png"
+        ]
+      },
+      {
+        "id": "05",
+        "name": "控制面健康",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "经 Web 代理访问 /healthz 与 /readyz：healthz=ok, readyz=ok, database=ok。",
+        "evidence": [
+          "06-readyz.png"
+        ]
+      },
+      {
+        "id": "06",
+        "name": "桌面最小宽度",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "1080×800 下侧栏、状态卡、运行概况与空态表仍完整可用。",
+        "evidence": [
+          "05-overview-1080.png"
+        ]
+      }
+    ]
+  },
+  "issues": [
+    {
+      "severity": "P3",
+      "title": "首次运行时浏览器请求 /favicon.ico 返回 404",
+      "facts": [
+        {
+          "label": "Actual",
+          "value": "Console 出现一条 404 Failed to load resource"
+        },
+        {
+          "label": "Expected",
+          "value": "页面加载无资源 404"
+        },
+        {
+          "label": "Root cause",
+          "value": "index.html 未声明 favicon"
+        },
+        {
+          "label": "Fix",
+          "value": "新增 web/public/favicon.svg 并在 index.html 声明"
+        }
+      ],
+      "state": {
+        "kind": "fixed",
+        "label": "Fixed · 5c931cc"
+      }
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "screenshots/01-login.png",
+      "alt": "登录页",
+      "label": "01 · 登录",
+      "caption": "演示账号预填，密码为空时显示内联错误。",
+      "variant": "wide"
+    },
+    {
+      "src": "screenshots/02-login-error.png",
+      "alt": "登录空密码错误态",
+      "label": "02 · 错误态",
+      "caption": "清空密码提交后保持登录页并提示错误。",
+      "variant": "wide"
+    },
+    {
+      "src": "screenshots/03-overview.png",
+      "alt": "总览页",
+      "label": "03 · 总览",
+      "caption": "真实 API 返回默认租户/项目与零计数；空态表与 M2 提示可见。",
+      "variant": "wide"
+    },
+    {
+      "src": "screenshots/04-evals-placeholder.png",
+      "alt": "评测任务占位页",
+      "label": "04 · 占位路由",
+      "caption": "占位页保留应用壳与导航上下文。",
+      "variant": "wide"
+    },
+    {
+      "src": "screenshots/05-overview-1080.png",
+      "alt": "1080×800 总览",
+      "label": "05 · 最小宽度",
+      "caption": "1080×800 下主要操作与状态仍可见。",
+      "variant": "wide"
+    },
+    {
+      "src": "screenshots/06-readyz.png",
+      "alt": "/readyz 响应",
+      "label": "06 · 健康检查",
+      "caption": "uvicorn 的 /readyz 返回 database ok。",
+      "variant": "normal"
+    }
+  ],
+  "coverage": {
+    "columns": [
+      "区域",
+      "覆盖",
+      "结论",
+      "建议"
+    ],
+    "rows": [
+      {
+        "area": "登录与错误态",
+        "coverage": "E2E",
+        "conclusion": "真实浏览器交互覆盖。",
+        "recommendation": "接入真实认证后在 CI 保持 smoke。"
+      },
+      {
+        "area": "总览真实 API",
+        "coverage": "E2E",
+        "conclusion": "真实 PostgreSQL + uvicorn 返回数据。",
+        "recommendation": "M2-05 增加已有评测数据后的列表态。"
+      },
+      {
+        "area": "迁移与约束",
+        "coverage": "UT/DB",
+        "conclusion": "14 个 pytest 在 SQLite 与 PostgreSQL 通过。",
+        "recommendation": "M2-02 把 Postgres 测试接入 CI。"
+      },
+      {
+        "area": "Compose 启动",
+        "coverage": "Config only",
+        "conclusion": "本机 Docker daemon 不可用，只做 YAML 校验。",
+        "recommendation": "M2-02 在 CI/部署机执行 compose up 健康检查。"
+      }
+    ]
+  },
+  "conclusion": {
+    "kind": "pass",
+    "label": "浏览器 smoke 通过，保留部署前门禁",
+    "summary": "6/6 场景通过，最终复跑 console/page error 均为 0；唯一发现（favicon 404）已修复。",
+    "points": [
+      "Compose 实际启动仍需在 M2-02 的 CI/部署机验证。",
+      "PR #19 需人工加入 M2 Project 才能通过 flow-online。"
+    ]
+  },
+  "footer": "Generated by dsh-superagent · computer-use-smoke-reporting · 2026-11-08"
+}
