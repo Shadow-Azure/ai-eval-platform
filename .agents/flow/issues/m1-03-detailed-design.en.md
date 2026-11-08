@@ -1,4 +1,4 @@
-# Freeze the M2 executable foundation contracts
+# Freeze the M2 execution contracts
 
 English | [中文](m1-03-detailed-design.md)
 
@@ -27,20 +27,19 @@ github:
 
 ## Background
 
-`plans/m1-02-fullstack-design/` is now the implementation baseline for the evaluation platform, and a complete detailed design for the entire platform is no longer an M2 prerequisite. M1-03 freezes only the contracts needed for the M2 control plane, database, deployment, fixed runner, and synthetic execution loop so the five M2 issues can be implemented and accepted directly; designs for M3 and later evolve in later milestones using implementation evidence.
+`plans/m1-02-fullstack-design/` is design input for M1-03, not the formal detailed design or an implementation baseline. M1-03 does not revisit the overall architecture or technology choices; it turns only the parts genuinely needed by M2 into executable contracts so the five M2 issues can be implemented, tested, and accepted directly. Designs for M3 and later evolve in later milestones using implementation evidence.
 
 ## Goals
 
-- Map M2 services, modules, code paths, and dependency direction, and define the minimal boundaries among the platform, dispatcher, fixed runner, PostgreSQL, Redis, and object storage.
-- Freeze the initial M2 data model, migration order, composite tenant constraints, and idempotency keys for evaluations, cases, attempts, events, and outbox records.
-- Freeze machine-readable contracts and state transitions for M2 APIs, SSE queries, task manifests, heartbeats, uploads, completion, and failure callbacks.
-- Freeze the minimal operating flow for main-branch migration and deployment, health checks, compatible rollback, and fixed Linux runner registration and loss recovery.
-- Map contracts to acceptance for M2-01 through M2-05, while explicitly leaving OIDC, spot provisioning, multiple runners, and real agents to M3 or M4.
+- Use the design input as a starting point to freeze the initial M2 database schema, core table relationships, tenant and idempotency constraints, and actual migration order.
+- Freeze the M2 API skeleton, runner task protocol, dispatch and callback contracts, and their state transitions and error classification.
+- Freeze the M2 deployment and migration flow, health checks, compatible rollback boundary, and minimal fixed Linux runner connection path.
+- Promote recommendation defaults affecting M2 into frozen values or explicit technical validation items, and map M2-01 through M2-05 to concrete contracts and acceptance tests.
 
 ## Acceptance
 
-- The M2 execution contracts land as a Chinese base, an English `.en.md`, and an `.i18n.yaml` trio, and are listed in the documentation index.
-- `contracts/` provides an M2 OpenAPI summary or interface schema, task and callback JSON schemas, and the actual migration order and deployment state machine.
-- Every M2 issue traces its acceptance items to a baseline document section, database objects, API or task protocol, and corresponding automated test.
-- Baseline items marked as recommendations, defaults, or requiring technical validation that affect M2 receive a frozen value, validation task, or explicit later milestone, with no M3+ open item blocking M2.
+- Produce one concise formal design as a Chinese base, an English `.en.md`, and an `.i18n.yaml` trio listed in the documentation index, without mechanically translating all 11 design-input documents.
+- `contracts/` provides machine-readable contracts for the M2 API skeleton, task and callback schemas, database migration order, deployment state machine, and related interfaces.
+- The formal design includes a traceability matrix for M2-01 through M2-05, mapping every acceptance item to a design section, database object, API or protocol, and automated test.
+- Recommendations, defaults, and technical-validation items in the design input form a frozen-decision ledger marked as a frozen value, M2 validation task, or later milestone; items not affecting M2 must not block implementation.
 - The contracts pass repository gates and technical review; this issue contains no production code, and M2-01 can enter implementation after review.
