@@ -2,8 +2,7 @@
 
 [English](README.en.md) | 中文
 
-> 本目录只定义 roadmap → milestone → issue 的工作契约。当前尚未创建 roadmap、
-> milestone 或 issue；用户完成规划后，下列门禁自动启用。
+> 本目录只定义 roadmap → milestone → issue 的工作契约。当前尚未创建 roadmap、milestone 或 issue；用户完成规划后，下列门禁自动启用。
 
 ## 层级
 
@@ -15,17 +14,13 @@
 
 ## 机读围栏
 
-每份工作文件必须恰好包含一个 `yaml flow` 围栏。中英文配对文件的围栏必须逐字节
-一致，避免机读字段漂移。
+每份工作文件必须恰好包含一个 `yaml flow` 围栏。中英文配对文件的围栏必须逐字节一致，避免机读字段漂移。
 
 roadmap 字段：`kind: roadmap`、`milestones`。
 
-milestone 字段：`kind: milestone`、`id`、`title`、`status`、
-`github: {number, url}`。
+milestone 字段：`kind: milestone`、`id`、`title`、`status`、`github: {number, url}`。
 
-issue 字段：`kind: issue`、`milestone`、`priority`、`status`、`scope`、`adr`、
-`github: {number, url}`。流程自举时可在首个 milestone 内使用一次
-`bootstrap: true`，编号回填后移除。
+issue 字段：`kind: issue`、`milestone`、`priority`、`status`、`scope`、`adr`、`github: {number, url}`。流程自举时可在首个 milestone 内使用一次 `bootstrap: true`，编号回填后移除。
 
 ## 封闭集合
 
@@ -50,29 +45,17 @@ issue 字段：`kind: issue`、`milestone`、`priority`、`status`、`scope`、`
 | `npm run verify:flow-online` | CI PR | GitHub issue/milestone 状态、标题、URL、PR milestone 与 Project 关联 |
 | `commit-msg` | 本地 | 提交标题缺 `(#N)` 时提醒并阻断 |
 
-在 roadmap 尚未创建时，静态和在线 CI 会明确记录“pending”并跳过；roadmap
-首次合入后自动启用，无需再改工作流。
+在 roadmap 尚未创建时，静态和在线 CI 会明确记录“pending”并跳过；roadmap 首次合入后自动启用，无需再改工作流。
 
-在线 Project 检查强制开启，要求仓库 Secret `FLOW_TOKEN` 具备读取用户级
-Projects v2 的权限。本地运行需先完成 `gh auth login`。
+在线 Project 检查强制开启，要求仓库 Secret `FLOW_TOKEN` 具备读取用户级 Projects v2 的权限。本地运行需先完成 `gh auth login`。
 
 ## 工具
 
-初始化本地提醒钩子：
+初始化钩子、生成 issue 三件套并把本地流程树同步到 GitHub：
 
 ```sh
 npm run install:hooks
-```
-
-生成 issue 三件套骨架：
-
-```sh
 npm run flow:new-issue -- --milestone <id> --priority P0 --slug <kebab> \
-  --title <中文标题> --title-en "<English title>" --scope "<glob,glob>"
-```
-
-把本地流程树同步到 GitHub，并回填 issue/milestone 编号：
-
-```sh
+  --title <Chinese title> --title-en "<English title>" --scope "<glob,glob>"
 npm run flow:sync
 ```

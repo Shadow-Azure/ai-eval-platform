@@ -4,6 +4,10 @@
   "type": "module",
   "scripts": {
     "test": "node --test tests/*.test.mjs",
+    "lint:docs": "node scripts/run-gates.mjs --mode doc-quick",
+    "verify:docs": "node scripts/run-gates.mjs --mode doc-sync",
+    "record:i18n": "node scripts/verify-translation-pairing.mjs --write",
+    "route:gates": "node scripts/route-gates.mjs",
     "verify:flow": "node scripts/verify-flow.mjs",
     "verify:flow-online": "node scripts/verify-flow-online.mjs",
     "flow:new-issue": "node scripts/flow-new-issue.mjs",

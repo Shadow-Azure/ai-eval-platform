@@ -1,0 +1,66 @@
+{
+  "title": "Example GUI Smoke Report",
+  "eyebrow": "Computer Use · Deterministic Mock",
+  "summary": "The packaged example application passed its launch, navigation, persistence, and error-handling scenarios. Two layout regressions were found and fixed.",
+  "meta": "2026-10-10 · Example Platform",
+  "metrics": [
+    { "value": "8", "label": "Scenarios" },
+    { "value": "2", "label": "Defects fixed" },
+    { "value": "128 / 128", "label": "Unit tests" },
+    { "value": "24 / 24", "label": "Integration tests" }
+  ],
+  "facts": [
+    { "label": "Application", "value": "Example Desktop 2.0" },
+    { "label": "Commit", "value": "abcdefg" },
+    { "label": "Artifact", "value": "build/Example.app" }
+  ],
+  "matrix": {
+    "columns": ["#", "Scenario", "Result", "Detail", "Evidence"],
+    "rows": [
+      {
+        "id": "01",
+        "name": "Launch",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "The main window opens and the primary action is reachable.",
+        "evidence": ["No screenshot required; accessibility tree verified."]
+      },
+      {
+        "id": "02",
+        "name": "Save and reopen",
+        "status": { "kind": "fixed", "label": "FAIL → FIXED" },
+        "detail": "A layout wrapper removed the content height chain; restored it and added a regression.",
+        "evidence": ["02-before.png", "03-after.png"]
+      }
+    ]
+  },
+  "issues": [
+    {
+      "severity": "P1",
+      "title": "Save panel loses its bottom action",
+      "facts": [
+        { "label": "Actual", "value": "The action floats below the content." },
+        { "label": "Expected", "value": "The action stays pinned to the panel bottom." }
+      ],
+      "state": { "kind": "fixed", "label": "Fixed · abc1234" }
+    }
+  ],
+  "screenshots": [],
+  "coverage": {
+    "columns": ["Area", "Coverage", "Conclusion", "Recommendation"],
+    "rows": [
+      {
+        "area": "Save layout",
+        "coverage": "Integration",
+        "conclusion": "A component contract pins the flex height chain.",
+        "recommendation": "Add a browser screenshot for future visual changes."
+      }
+    ]
+  },
+  "conclusion": {
+    "kind": "pass",
+    "label": "Ready",
+    "summary": "All smoke scenarios passed after fixes.",
+    "points": ["Keep provider-specific checks as release-only smoke."]
+  },
+  "footer": "Generated from Computer Use evidence · Secrets are redacted."
+}

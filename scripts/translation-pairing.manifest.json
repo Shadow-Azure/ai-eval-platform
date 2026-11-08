@@ -1,0 +1,6 @@
+{
+  "//": "双语配对豁免清单；只有显式 excluded，没有隐式免检。",
+  "excluded": [
+    "docs/AGENTS.md"
+  ]
+}
