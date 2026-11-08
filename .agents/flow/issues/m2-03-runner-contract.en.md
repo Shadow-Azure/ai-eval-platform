@@ -6,7 +6,7 @@ English | [中文](m2-03-runner-contract.md)
 kind: issue
 milestone: m2
 priority: P0
-status: in-progress
+status: done
 scope:
   - .agents/flow/issues/m2-03-runner-contract.*
   - runner-contract/**
