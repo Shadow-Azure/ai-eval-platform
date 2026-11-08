@@ -1,0 +1,5 @@
+# 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
+# git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
+#   pnpm run record:i18n -- .agents/flow/issues/m2-01-control-plane-foundation.md
+m2-01-control-plane-foundation.md: aacfe83e9f06dfa6f2e73f5fb79c149547027ebd
+m2-01-control-plane-foundation.en.md: 2a2d495f629d2c6c84d7e59fd8c089e27e6660e7

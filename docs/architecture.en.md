@@ -9,7 +9,7 @@ The repository is in the initialization stage of an AI evaluation platform. The 
 | Area | Responsibility | Boundary |
 |---|---|---|
 | `docs/` | Current facts, development method, and bilingual contract | No roadmaps or decision debates |
-| `.agents/flow/` | roadmap, milestone, issue state machine | No planning files yet |
+| `.agents/flow/` | roadmap, milestone, issue state machine, and acceptance boundaries | Stores flow state only, not implementation details |
 | `.agents/skills/` | Task skills and templates synchronized from StudyWiki | Outside bilingual pairing |
 | `scripts/` | Mechanical documentation and workflow gates | Not product runtime |
 | `.github/workflows/` | CI decisions for docs and flow | No external publishing |
@@ -34,6 +34,6 @@ The Chinese file is `foo.md`, the English side is `foo.en.md`, and the record is
 ## Extension points
 
 - When the product runtime and evaluation executor exist, add their components, data flows, and external dependencies here instead of debating design in README.
-- When development tasks begin, create the roadmap, milestones, and issues under `.agents/flow/`; the existing workflow gates activate automatically.
+- Development tasks proceed through the roadmap, milestones, and issues under `.agents/flow/`; that directory is authoritative for flow state and change scopes.
 - Add platform-specific checks as independent leaves under `scripts/`, combine them in `run-gates`, and wire them explicitly into CI.
 - If documentation volume grows, reorganize layers and budgets before considering a site projection; this repository currently has no VitePress or other generated site.
