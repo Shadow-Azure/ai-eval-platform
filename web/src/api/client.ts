@@ -48,7 +48,7 @@ function errorField(payload: unknown, field: "code" | "request_id"): string | nu
   return typeof value === "string" ? value : null;
 }
 
-async function requestJson(path: string, signal?: AbortSignal): Promise<unknown> {
+export async function requestJson(path: string, signal?: AbortSignal): Promise<unknown> {
   let response: Response;
   try {
     response = await fetch(path, {

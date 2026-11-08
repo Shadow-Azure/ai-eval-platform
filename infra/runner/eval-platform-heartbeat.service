@@ -1,0 +1,13 @@
+[Unit]
+Description=AI Eval Platform fixed runner heartbeat
+After=network-online.target
+
+[Service]
+EnvironmentFile=/etc/eval-platform/runner.env
+ExecStart=/usr/bin/node /opt/ai-eval-platform-runner/heartbeat.mjs
+Restart=always
+RestartSec=5
+User=root
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,36 @@
+name: Runner Smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fixed-runner-smoke:
+    runs-on: [self-hosted, linux, eval]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Heartbeat busy with current job
+        run: |
+          set -euo pipefail
+          . /etc/eval-platform/runner.env
+          curl -fsS -X POST "$PLATFORM_BASE_URL/runner/v1/runners/heartbeat" \
+            -H "Authorization: Bearer $RUNNER_HEARTBEAT_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"runner_id\":\"$RUNNER_ID\",\"name\":\"$RUNNER_NAME\",\"labels\":[\"self-hosted\",\"linux\",\"eval\"],\"status\":\"busy\",\"current_case_attempt_id\":\"$GITHUB_RUN_ID\"}"
+
+      - name: Execute container script
+        run: docker run --rm ubuntu:22.04 sh -c 'echo runner-container-ok; uname -a'
+
+      - name: Heartbeat online
+        if: always()
+        run: |
+          set -euo pipefail
+          . /etc/eval-platform/runner.env
+          curl -fsS -X POST "$PLATFORM_BASE_URL/runner/v1/runners/heartbeat" \
+            -H "Authorization: Bearer $RUNNER_HEARTBEAT_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"runner_id\":\"$RUNNER_ID\",\"name\":\"$RUNNER_NAME\",\"labels\":[\"self-hosted\",\"linux\",\"eval\"],\"status\":\"online\",\"current_case_attempt_id\":null}"

@@ -4,6 +4,7 @@ import { PlaceholderPage } from "../components/PlaceholderPage";
 import { LoginPage } from "../pages/LoginPage";
 import { NotFoundPage } from "../pages/NotFoundPage";
 import { OverviewPage } from "../pages/OverviewPage";
+import { ResourcesPage } from "../pages/ResourcesPage";
 
 const placeholders = [
   {
@@ -23,12 +24,6 @@ const placeholders = [
     eyebrow: "Configuration · Model credentials",
     title: "模型凭据",
     description: "配置模型供应商与集中式凭据，并验证端点连通性。",
-  },
-  {
-    path: "resources",
-    eyebrow: "Configuration · Resource pools",
-    title: "资源池",
-    description: "管理资源连接、供给模式与 Runner 在线容量。",
   },
   {
     path: "evals",
@@ -57,6 +52,7 @@ export function AppRoutes() {
       <Route element={<AppShell />}>
         <Route index element={<Navigate to="/overview" replace />} />
         <Route path="/overview" element={<OverviewPage />} />
+        <Route path="/resources" element={<ResourcesPage />} />
         {placeholders.map((page) => (
           <Route
             key={page.path}

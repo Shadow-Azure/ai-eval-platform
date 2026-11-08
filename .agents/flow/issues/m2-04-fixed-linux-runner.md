@@ -6,10 +6,14 @@
 kind: issue
 milestone: m2
 priority: P0
-status: backlog
+status: in-progress
 scope:
   - .agents/flow/issues/m2-04-fixed-linux-runner.*
   - runner/**
+  - backend/**
+  - web/**
+  - deploy/**
+  - .github/workflows/runner-smoke.yml
   - infra/runner/**
   - scripts/**
   - tests/**
