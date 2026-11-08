@@ -10,6 +10,7 @@ This repository treats documentation as a verifiable software artifact: Node scr
 |---|---|
 | [AGENTS.md](AGENTS.md) | Documentation writing standards and repository instructions |
 | [architecture.md](architecture.en.md) | Current repository components, boundaries, and extension points |
+| [design/eval-platform-architecture.md](design/eval-platform-architecture.en.md) | Finalized evaluation platform architecture: structure, flow, data model, deployment, and CI/CD |
 | [development.md](development.en.md) | Local commands, documentation loop, and CI |
 | [i18n/README.md](i18n/README.en.md) | Bilingual trio and structural mirror contract |
 | [i18n/terminology.md](i18n/terminology.en.md) | Chinese-English terms and banned alternatives |
