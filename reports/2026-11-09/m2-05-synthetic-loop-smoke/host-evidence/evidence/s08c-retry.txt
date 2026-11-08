@@ -1,0 +1,5 @@
+retryable fail -> {"ok":true,"case_run_id":"beeac6b4-81b5-4ab0-bf2c-01ed79f5687d","runner_id":null,"runner_status":null,"run_id":"5741ae70-fddf-4641-bce3-b050c13d0d9a","deduped":false,"status":"failed","retry_queued":true}
+1:failed
+2:queued
+5741ae70-fddf-4641-bce3-b050c13d0d9a:shard_000:1 sent
+5741ae70-fddf-4641-bce3-b050c13d0d9a:shard_000-o1a2:2 sent

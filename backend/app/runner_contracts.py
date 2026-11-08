@@ -21,6 +21,7 @@ from urllib.parse import urlparse
 KIND_FILES = {
     "dispatch": "dispatch.schema.json",
     "manifest": "task-manifest.schema.json",
+    "started": "started.schema.json",
     "heartbeat": "heartbeat.schema.json",
     "upload": "upload-manifest.schema.json",
     "completion": "completion.schema.json",

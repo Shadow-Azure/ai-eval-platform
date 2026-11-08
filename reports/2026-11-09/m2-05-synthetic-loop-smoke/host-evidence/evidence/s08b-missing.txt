@@ -1,0 +1,3 @@
+{"detail":{"error":{"code":"artifact_missing","message":"对象不存在：evaluations/ghost/objects/does-not-exist","request_id":null}}}
+http=409
+run2 status: failed failed: 1 case: failed artifact_missing

@@ -6,14 +6,18 @@ English | [中文](m2-05-synthetic-execution-loop.md)
 kind: issue
 milestone: m2
 priority: P0
-status: backlog
+status: in-progress
 scope:
   - .agents/flow/issues/m2-05-synthetic-execution-loop.*
   - backend/**
   - web/**
   - runner/**
+  - runner-contract/**
   - tests/**
   - .github/workflows/**
+  - deploy/docker-compose.prod.yml
+  - reports/**
+  - plans/**
 adr: []
 github:
   number: 15

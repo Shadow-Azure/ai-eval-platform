@@ -6,7 +6,7 @@ import json
 import os
 import sys
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import psycopg
 from psycopg.types.json import Jsonb
@@ -16,7 +16,7 @@ def main() -> int:
     url = os.environ["DATABASE_URL"].replace("postgresql+psycopg://", "postgresql://")
     status = os.environ.get("DEPLOY_STATUS", "deploying")
     finished = (
-        datetime.now(timezone.utc).isoformat()
+        datetime.now(UTC).isoformat()
         if status in {"succeeded", "failed", "rolled_back"}
         else None
     )

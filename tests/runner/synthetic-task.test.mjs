@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import { createToken } from "../../runner/lib/auth.mjs";
-import { validateCompletion, validateFailure } from "../../runner/lib/contracts.mjs";
+import { validateCompletion, validateFailure, validateStarted } from "../../runner/lib/contracts.mjs";
 import { startMockPlatform } from "../../runner/lib/mock-platform.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -93,10 +93,10 @@ async function scenario(overrides = {}) {
     stateDir,
     objectRoot,
     token,
-    run: (extra = []) =>
+    run: (extra = [], envOverrides = {}) =>
       runTask(
         ["--dispatch", dispatchPath, "--state-dir", stateDir, "--object-store-root", objectRoot, ...extra],
-        { RUNNER_TASK_TOKEN: token, RUNNER_TASK_SECRET: secret },
+        { RUNNER_TASK_TOKEN: token, RUNNER_TASK_SECRET: secret, ...envOverrides },
       ),
     close: () => platform.close(),
   };
@@ -161,13 +161,17 @@ test("manifest digest mismatch is rejected before execution", async () => {
   }
 });
 
-test("token binding mismatch is rejected before manifest fetch", async () => {
+test("token binding mismatch is rejected before any execution side effect", async () => {
+  // M2-05: the platform delivers the short-term token WITH the manifest
+  // (X-Runner-Task-Token), so verification happens after the fetch but must
+  // still precede every claim/callback — no POST, no objects written.
   const ctx = await scenario({ tokenAttempt: 2 });
   try {
     const result = await ctx.run();
     assert.equal(result.code, 2);
     assert.match(result.stderr, /token/);
-    assert.equal(ctx.platform.requests.some((request) => request.path === "/manifest"), false);
+    assert.equal(ctx.platform.requests.some((request) => request.method === "POST"), false);
+    assert.equal(existsSync(ctx.objectRoot), false);
   } finally {
     await ctx.close();
   }
@@ -245,6 +249,73 @@ test("workflow template reuses the same scripts and has no secret material", () 
   }
   for (const forbidden of ["AKIA", "LTAI", "BEGIN PRIVATE KEY", "sk-"]) {
     assert.equal(text.includes(forbidden), false, `workflow contains ${forbidden}`);
+  }
+});
+
+test("platform-issued token (manifest header) drives the loop without env secrets", async () => {
+  // M2-05 real loop: no RUNNER_TASK_TOKEN / RUNNER_TASK_SECRET in the job env.
+  // The platform hands the short-term token to the runner via the manifest
+  // response; binding checks still run against the dispatch.
+  const ctx = await scenario();
+  delete ctx.token;
+  try {
+    const result = await ctx.run(
+      [],
+      { RUNNER_TASK_TOKEN: "", RUNNER_TASK_SECRET: "" },
+    );
+    assert.equal(result.code, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim().split("\n").at(-1));
+    assert.equal(payload.status, "completed");
+
+    const started = ctx.platform.requests.filter((request) => request.path.endsWith("/started"));
+    assert.equal(started.length, 2);
+    for (const request of started) {
+      const validation = validateStarted(request.body);
+      assert.equal(validation.ok, true, validation.errors.join("; "));
+    }
+    const heartbeats = ctx.platform.requests.filter((request) => request.path.endsWith("/heartbeat"));
+    assert.equal(heartbeats.length, 2);
+    // started precedes heartbeat for each case
+    const paths = ctx.platform.requests.map((request) => request.path);
+    for (const caseRunId of ["ecr_001", "ecr_002"]) {
+      assert.ok(paths.indexOf(`/runner/v1/case-runs/${caseRunId}/started`) < paths.indexOf(`/runner/v1/case-runs/${caseRunId}/heartbeat`));
+    }
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("presign upload mode PUTs bytes to platform keys and reports them", async () => {
+  const ctx = await scenario({ behavior: { uploadUrls: true } });
+  try {
+    const result = await ctx.run(
+      [],
+      { RUNNER_PRESIGN_UPLOADS: "1" },
+    );
+    assert.equal(result.code, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim().split("\n").at(-1));
+    assert.equal(payload.status, "completed");
+    assert.equal(payload.objects.length, 4);
+    for (const object of payload.objects) {
+      assert.ok(object.object_key.startsWith("mock/"), `platform key expected: ${object.object_key}`);
+      const bytes = ctx.platform.objects.get(object.object_key.slice("mock/".length) ? object.object_key : object.object_key);
+      assert.ok(bytes, `PUT body recorded for ${object.object_key}`);
+      assert.equal(createHash("sha256").update(bytes).digest("hex"), object.sha256);
+    }
+
+    const uploads = ctx.platform.requests.filter((request) => request.path.endsWith("/uploads"));
+    assert.equal(uploads.length, 2);
+    for (const request of uploads) {
+      for (const object of request.body.objects) {
+        assert.ok(object.object_key.startsWith("mock/"));
+      }
+    }
+    const completions = ctx.platform.requests.filter((request) => request.path.endsWith("/completed"));
+    for (const request of completions) {
+      assert.ok(request.body.score_manifest.object_key.startsWith("mock/"));
+    }
+  } finally {
+    await ctx.close();
   }
 });
 

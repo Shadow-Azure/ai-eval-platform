@@ -19,6 +19,7 @@ BACKEND = REPO_ROOT / "backend"
 os.environ.setdefault("DATABASE_URL", "sqlite:////tmp/ai-eval-platform-tests-default.db")
 os.environ.setdefault("REDIS_URL", "")
 
+from app.config import get_settings  # noqa: E402
 from app.db import get_session  # noqa: E402
 from app.main import app  # noqa: E402
 
@@ -93,6 +94,19 @@ def session(engine) -> Session:
 
 
 @pytest.fixture
+def configure_settings(monkeypatch: pytest.MonkeyPatch):
+    """Override Settings via environment (they are cached with lru_cache)."""
+
+    def _configure(**overrides: str) -> None:
+        for key, value in overrides.items():
+            monkeypatch.setenv(key, str(value))
+        get_settings.cache_clear()
+
+    yield _configure
+    get_settings.cache_clear()
+
+
+@pytest.fixture
 def client(engine) -> TestClient:
     testing_session = sessionmaker(
         bind=engine, autoflush=False, expire_on_commit=False, class_=Session
@@ -106,3 +120,62 @@ def client(engine) -> TestClient:
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
+
+
+EVAL_ENV_SECRET = "platform-task-secret"
+
+
+@pytest.fixture
+def eval_env(session: Session, client: TestClient, configure_settings):
+    """One seeded synthetic evaluation (2 cases, 1 shard) with token auth and
+    a local stub object store; the fixed runner registers via heartbeat first
+    so X-Runner-Id bindings resolve like on the host. Shared by the callback
+    and upload-urls suites."""
+
+    from app.models import EvalCaseAttempt, EvalCaseRun
+    from app.seed import ensure_default_scope
+    from app.services import evaluations
+    from case_helpers import EVAL_ENV_SECRET as SECRET
+    from object_stub import StubObjectStore
+
+    configure_settings(RUNNER_TASK_SECRET=SECRET)
+    ensure_default_scope(session)
+    registered = client.post(
+        "/runner/v1/runners/heartbeat",
+        json={
+            "runner_id": "fixed-linux-eval",
+            "name": "fixed-linux-eval",
+            "labels": ["self-hosted", "linux", "eval"],
+            "status": "online",
+            "current_case_attempt_id": None,
+        },
+    )
+    assert registered.status_code == 200
+    with StubObjectStore() as store:
+        configure_settings(
+            S3_ENDPOINT=store.endpoint,
+            S3_ACCESS_KEY="ak",
+            S3_SECRET_KEY="sk",
+        )
+        run, _ = evaluations.create_synthetic_evaluation(
+            session,
+            name="回调冒烟",
+            case_keys=["case-a", "case-b"],
+            idempotency_key="cb-env",
+            created_by="agent",
+            settings=get_settings(),
+        )
+        cases = {
+            c.case_key: c.id
+            for c in session.query(EvalCaseRun).filter(EvalCaseRun.eval_run_id == run.id).all()
+        }
+        yield {
+            "session": session,
+            "run_id": run.id,
+            "cases": cases,
+            "store": store,
+            "shard": session.query(EvalCaseAttempt)
+            .filter(EvalCaseAttempt.eval_case_run_id == cases["case-a"])
+            .first()
+            .shard_id,
+        }

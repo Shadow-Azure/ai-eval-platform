@@ -1,0 +1,7 @@
+worker paused; run4=a7e5b41b-8876-43fb-8f86-dad39dfc3c18 created with pending outbox
+after restart:
+attempts=2
+a7e5b41b-8876-43fb-8f86-dad39dfc3c18:shard_000:1 sent attempts=1
+worker: dispatch sent=1 retried=0 failed=0 recovered=0
+worker: dispatch sent=1 retried=0 failed=0 recovered=0
+worker: dispatch sent=1 retried=0 failed=0 recovered=0
