@@ -1,0 +1,18 @@
+{
+  "attempt": 1,
+  "callback_base_url": "http://127.0.0.1:8000",
+  "case_timeout_seconds": 3600,
+  "cases": [
+    {
+      "case_key": "runner-fail-case",
+      "case_run_id": "beeac6b4-81b5-4ab0-bf2c-01ed79f5687d",
+      "dataset_case_id": "runner-fail-case"
+    }
+  ],
+  "deadline": "2026-11-08T20:12:21.836964Z",
+  "dispatch_key": "5741ae70-fddf-4641-bce3-b050c13d0d9a:shard_000:1",
+  "eval_run_id": "5741ae70-fddf-4641-bce3-b050c13d0d9a",
+  "max_attempts": 2,
+  "schema_version": "1.0",
+  "shard_id": "shard_000"
+}

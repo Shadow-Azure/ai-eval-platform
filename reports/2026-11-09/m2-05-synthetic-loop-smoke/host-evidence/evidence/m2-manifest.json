@@ -1,0 +1,18 @@
+{
+  "attempt": 1,
+  "callback_base_url": "http://127.0.0.1:8000",
+  "case_timeout_seconds": 3600,
+  "cases": [
+    {
+      "case_key": "missing-obj-case",
+      "case_run_id": "396e2ad9-113c-41f3-993d-9eedd939136e",
+      "dataset_case_id": "missing-obj-case"
+    }
+  ],
+  "deadline": "2026-11-08T20:11:45.740288Z",
+  "dispatch_key": "2c528d4d-899d-49eb-934c-daa1f5fc3ac6:shard_000:1",
+  "eval_run_id": "2c528d4d-899d-49eb-934c-daa1f5fc3ac6",
+  "max_attempts": 2,
+  "schema_version": "1.0",
+  "shard_id": "shard_000"
+}
