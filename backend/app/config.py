@@ -26,6 +26,11 @@ class Settings(BaseSettings):
     worker_poll_seconds: float = 5.0
     worker_heartbeat_path: str = "/tmp/eval-worker-heartbeat"
 
+    dataset_source_root: str = "/tmp/eval-datasets"
+    dataset_import_max_cases: int = 5000
+    dataset_import_max_bytes: int = 50 * 1024 * 1024
+    object_store_root: str = "/tmp/eval-objects"
+
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173,http://localhost:8080"
 
     @property

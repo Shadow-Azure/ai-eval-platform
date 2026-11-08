@@ -16,6 +16,8 @@ scope:
   - plans/**
   - reports/**
   - docker-compose.yml
+  - scripts/doc-budgets.manifest.json
+  - .gitignore
 adr: []
 github:
   number: 23

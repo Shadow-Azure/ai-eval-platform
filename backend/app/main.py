@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from .api.datasets import router as datasets_router
 from .api.health import router as health_router
 from .api.overview import router as overview_router
 from .config import get_settings
@@ -20,6 +21,7 @@ def create_app() -> FastAPI:
     )
     app.include_router(health_router)
     app.include_router(overview_router)
+    app.include_router(datasets_router)
     return app
 
 

@@ -1,4 +1,14 @@
 from .base import Base, CreatedAtMixin, TimestampMixin, json_type, new_id, tenant_fk, utcnow
+from .dataset import (
+    DATASET_IMPORT_STATUSES,
+    DATASET_VERSION_STATUSES,
+    Dataset,
+    DatasetCase,
+    DatasetImport,
+    DatasetVersion,
+    DatasetVersionMetric,
+    MetricDefinition,
+)
 from .evaluation import (
     ATTEMPT_STATUSES,
     EVAL_RUN_STATUSES,
@@ -25,6 +35,14 @@ __all__ = [
     "Project",
     "Tenant",
     "Workspace",
+    "Dataset",
+    "DatasetCase",
+    "DatasetImport",
+    "DatasetVersion",
+    "DatasetVersionMetric",
+    "MetricDefinition",
+    "DATASET_IMPORT_STATUSES",
+    "DATASET_VERSION_STATUSES",
     "Outbox",
     "ProvisionedInstance",
     "ResourcePool",

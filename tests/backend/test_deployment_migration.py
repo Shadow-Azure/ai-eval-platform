@@ -33,7 +33,7 @@ def test_deployment_table_and_revision(database_url: str) -> None:
         } <= columns
         with Session(engine) as session:
             revision = session.scalar(text("SELECT version_num FROM alembic_version"))
-            assert revision == "0002_deployment"
+            assert revision == "0003_datasets"
     finally:
         engine.dispose()
 
@@ -51,7 +51,7 @@ def test_record_deployment_script_inserts_a_row(database_url: str) -> None:
             "DEPLOY_ENVIRONMENT": "test",
             "GIT_COMMIT": "abc1234",
             "DEPLOY_IMAGE_DIGEST": "registry.example/api@sha256:" + "0" * 64,
-            "DEPLOY_MIGRATION_REVISION": "0002_deployment",
+            "DEPLOY_MIGRATION_REVISION": "0003_datasets",
             "DEPLOY_TRIGGERED_BY": "pytest",
             "DEPLOY_DETAIL_API_IMAGE": "registry.example/api@sha256:" + "1" * 64,
             "DEPLOY_DETAIL_WEB_IMAGE": "registry.example/web@sha256:" + "2" * 64,

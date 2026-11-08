@@ -1,0 +1,5 @@
+{"instance_id": "valid__case-1", "repo": "owner/repo", "base_commit": "0123456789abcdef0123456789abcdef01234567", "problem_statement": "Valid case.", "patch": "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1 +1 @@\n-old\n+new\n", "test_patch": "diff --git a/test_a.py b/test_a.py\n--- a/test_a.py\n+++ b/test_a.py\n@@ -1 +1 @@\n-old\n+new\n", "FAIL_TO_PASS": "[\"test_a.py::test_ok\"]", "PASS_TO_PASS": "[]"}
+{"instance_id": "invalid__case", "repo": "owner/repo", "base_commit": "not-a-commit", "problem_statement": "Bad commit.", "patch": "x", "test_patch": "y", "FAIL_TO_PASS": "[\"test_a.py::test_ok\"]"}
+not-json
+{"instance_id": "missing__fields", "repo": "owner/repo"}
+{"instance_id": "valid__case-2", "repo": "owner/repo", "base_commit": "fedcba9876543210fedcba9876543210fedcba98", "problem_statement": "Second valid case.", "patch": "diff --git a/b.py b/b.py\n--- a/b.py\n+++ b/b.py\n@@ -1 +1 @@\n-old\n+new\n", "test_patch": "diff --git a/test_b.py b/test_b.py\n--- a/test_b.py\n+++ b/test_b.py\n@@ -1 +1 @@\n-old\n+new\n", "FAIL_TO_PASS": "[\"test_b.py::test_ok\"]", "PASS_TO_PASS": "[]"}
