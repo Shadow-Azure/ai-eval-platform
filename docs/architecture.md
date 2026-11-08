@@ -43,6 +43,10 @@ M2 把评测执行与具体数据集、Agent 解耦：平台只通过 repository
 
 `backend/` 的 dataset 模块把数据集、不可变版本、用例和指标定义写入 PostgreSQL，并把五文件任务包与 manifest 写入对象存储。`DatasetAdapter` 注册表先实现 SWE-bench：导入逐行校验 JSONL，合法用例进入版本，非法行汇入错误报告；任务包区分 Agent 可见文件与评分专用文件。API 提供数据集、版本、用例、指标和导入进度查询。
 
+## 模型网关
+
+Runner 用短期 token 调用 `/model-gateway/v1`；网关校验租户、模型配置、允许模型、attempt 与预算，解密供应商密钥后转发请求，并按 attempt 记录 token 用量与成本。供应商错误归一化为稳定错误码。
+
 ## 扩展位置
 
 - 产品运行时和评测执行器落地后，在本页增加组成、数据流和外部依赖，而不是把设计争论塞入 README。

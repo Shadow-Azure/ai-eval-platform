@@ -21,6 +21,13 @@ from .evaluation import (
     EvalRun,
 )
 from .identity import Project, Tenant, Workspace
+from .model import (
+    CREDENTIAL_KINDS,
+    USAGE_STATUSES,
+    Credential,
+    ModelConfig,
+    ModelUsage,
+)
 from .outbox import Outbox
 from .resources import ProvisionedInstance, ResourcePool, Runner
 
@@ -43,6 +50,11 @@ __all__ = [
     "MetricDefinition",
     "DATASET_IMPORT_STATUSES",
     "DATASET_VERSION_STATUSES",
+    "Credential",
+    "ModelConfig",
+    "ModelUsage",
+    "CREDENTIAL_KINDS",
+    "USAGE_STATUSES",
     "Outbox",
     "ProvisionedInstance",
     "ResourcePool",

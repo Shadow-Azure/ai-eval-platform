@@ -16,6 +16,7 @@ scope:
   - plans/**
   - reports/**
   - docker-compose.yml
+  - scripts/doc-budgets.manifest.json
 adr: []
 github:
   number: 24

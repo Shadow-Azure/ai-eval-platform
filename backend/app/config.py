@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     dataset_import_max_bytes: int = 50 * 1024 * 1024
     object_store_root: str = "/tmp/eval-objects"
 
+    secret_box_key: str = ""
+    gateway_token_secret: str = "dev-gateway-token-secret"
+    gateway_timeout_seconds: float = 120.0
+
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173,http://localhost:8080"
 
     @property

@@ -43,6 +43,10 @@ M2 decouples evaluation execution from datasets and agents: the platform sends o
 
 The `backend/` dataset module stores datasets, immutable versions, cases, and metric definitions in PostgreSQL, and writes five-file task bundles plus manifests to object storage. The `DatasetAdapter` registry starts with SWE-bench: imports validate JSONL row by row, valid cases join the version while invalid rows collect in an error report, and bundles separate agent-visible files from scoring-only files. APIs expose datasets, versions, cases, metrics, and import progress.
 
+## Model gateway
+
+Runners call `/model-gateway/v1` with a short-lived token; the gateway verifies the tenant, model configuration, allowed models, attempt and budget, decrypts the provider key before forwarding, and records token usage and cost per attempt. Provider errors are normalized into stable codes.
+
 ## Extension points
 
 - When the product runtime and evaluation executor exist, add their components, data flows, and external dependencies here instead of debating design in README.
