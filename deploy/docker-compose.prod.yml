@@ -37,6 +37,8 @@ services:
       S3_SECRET_KEY: ${S3_SECRET_KEY:-}
       RUNNER_HEARTBEAT_TOKEN: ${RUNNER_HEARTBEAT_TOKEN:-}
       DEPLOY_ENVIRONMENT: ${DEPLOY_ENVIRONMENT:-production}
+    ports:
+      - "127.0.0.1:8000:8000"
     depends_on:
       postgres:
         condition: service_healthy
