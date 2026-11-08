@@ -1,0 +1,2 @@
+# Keep repository text and checkout text identical for byte-level pairing checks.
+* text=auto eol=lf

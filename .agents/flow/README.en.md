@@ -2,8 +2,7 @@
 
 English | [中文](README.md)
 
-> This directory defines the roadmap → milestone → issue contract. No roadmap,
-> milestone, or issue content is created yet; the gates activate after planning.
+> This directory defines the roadmap → milestone → issue contract. No roadmap, milestone, or issue content is created yet; the gates activate after planning.
 
 ## Layers
 
@@ -15,14 +14,9 @@ English | [中文](README.md)
 
 ## Machine-readable fence
 
-Each work document contains exactly one `yaml flow` fence. Bilingual pairs keep
-that fence byte-for-byte identical.
+Each work document contains exactly one `yaml flow` fence. Bilingual pairs keep that fence byte-for-byte identical.
 
-The roadmap contains `kind: roadmap` and `milestones`. A milestone contains
-`kind: milestone`, `id`, `title`, `status`, and `github: {number, url}`. An
-issue contains `kind: issue`, `milestone`, `priority`, `status`, `scope`, `adr`,
-and `github: {number, url}`. One bootstrap issue in the first milestone may use
-`bootstrap: true` until its GitHub number is assigned.
+The roadmap contains `kind: roadmap` and `milestones`. A milestone contains `kind: milestone`, `id`, `title`, `status`, and `github: {number, url}`. An issue contains `kind: issue`, `milestone`, `priority`, `status`, `scope`, `adr`, and `github: {number, url}`. One bootstrap issue in the first milestone may use `bootstrap: true` until its GitHub number is assigned.
 
 ## Closed sets
 
@@ -32,11 +26,9 @@ and `github: {number, url}`. One bootstrap issue in the first milestone may use
 
 ## Progression
 
-- The local issue number matches its GitHub issue number; commits and PR titles
-  must contain `(#N)`.
+- The local issue number matches its GitHub issue number; commits and PR titles must contain `(#N)`.
 - An issue with `github.number: null` must remain in `backlog`.
-- Issues move serially across milestones at the same priority and may run in
-  parallel within the same milestone and priority.
+- Issues move serially across milestones at the same priority and may run in parallel within the same milestone and priority.
 - A milestone is `done` only when all of its issues are `done`.
 
 ## Gates
@@ -49,13 +41,9 @@ and `github: {number, url}`. One bootstrap issue in the first milestone may use
 | `npm run verify:flow-online` | PR CI | GitHub issue/milestone drift plus missing PR milestone or Project links |
 | `commit-msg` | local | Commit subjects without `(#N)` |
 
-Until `roadmap.md` exists, CI reports the gates as pending and exits
-successfully. The first roadmap merge activates them without another workflow
-change.
+Until `roadmap.md` exists, CI reports the gates as pending and exits successfully. The first roadmap merge activates them without another workflow change.
 
-Project checking is mandatory and needs a `FLOW_TOKEN` repository secret with
-user-level Projects v2 read access. Local online checks require an authenticated
-GitHub CLI.
+Project checking is mandatory and needs a `FLOW_TOKEN` repository secret with user-level Projects v2 read access. Local online checks require an authenticated GitHub CLI.
 
 ## Tooling
 
