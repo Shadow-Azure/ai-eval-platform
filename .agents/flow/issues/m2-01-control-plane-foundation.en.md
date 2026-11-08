@@ -6,11 +6,13 @@ English | [中文](m2-01-control-plane-foundation.md)
 kind: issue
 milestone: m2
 priority: P0
-status: backlog
+status: in-progress
 scope:
   - .agents/flow/issues/m2-01-control-plane-foundation.*
   - backend/**
   - web/**
+  - plans/**
+  - reports/**
   - tests/**
   - pyproject.toml
   - package.json

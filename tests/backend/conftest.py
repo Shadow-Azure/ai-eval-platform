@@ -1,0 +1,108 @@
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine, event, text
+from sqlalchemy.orm import Session, sessionmaker
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+BACKEND = REPO_ROOT / "backend"
+
+# Settings are cached on import, so point the default app at a harmless local
+# SQLite file before importing app modules. Every test overrides the session
+# dependency with its own migrated database.
+os.environ.setdefault("DATABASE_URL", "sqlite:////tmp/ai-eval-platform-tests-default.db")
+os.environ.setdefault("REDIS_URL", "")
+
+from app.db import get_session  # noqa: E402
+from app.main import app  # noqa: E402
+
+
+def run_alembic(url: str, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    env["DATABASE_URL"] = url
+    result = subprocess.run(
+        [sys.executable, "-m", "alembic", "-c", "alembic.ini", *args],
+        cwd=BACKEND,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+    if check and result.returncode != 0:
+        raise AssertionError(
+            f"alembic {' '.join(args)} failed with {result.returncode}\n"
+            f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+        )
+    return result
+
+
+def prepare_database(url: str) -> None:
+    """Reset a disposable test database before applying migrations from empty."""
+
+    if url.startswith("sqlite:///"):
+        Path(url.removeprefix("sqlite:///")).unlink(missing_ok=True)
+    else:
+        if "test" not in url.lower():
+            raise RuntimeError("TEST_DATABASE_URL must point to a disposable *test* database")
+        engine = create_engine(url, future=True)
+        with engine.begin() as connection:
+            connection.execute(text("DROP SCHEMA public CASCADE"))
+            connection.execute(text("CREATE SCHEMA public"))
+        engine.dispose()
+    run_alembic(url, "upgrade", "head")
+
+
+@pytest.fixture
+def database_url(tmp_path: Path) -> str:
+    external = os.environ.get("TEST_DATABASE_URL")
+    if external:
+        prepare_database(external)
+        yield external
+        return
+    path = tmp_path / "test.db"
+    url = f"sqlite:///{path}"
+    prepare_database(url)
+    yield url
+
+
+@pytest.fixture
+def engine(database_url: str):
+    created = create_engine(database_url, future=True)
+
+    if created.dialect.name == "sqlite":
+
+        @event.listens_for(created, "connect")
+        def _enable_foreign_keys(dbapi_connection, _record):
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.close()
+
+    yield created
+    created.dispose()
+
+
+@pytest.fixture
+def session(engine) -> Session:
+    with Session(engine) as db_session:
+        yield db_session
+
+
+@pytest.fixture
+def client(engine) -> TestClient:
+    testing_session = sessionmaker(
+        bind=engine, autoflush=False, expire_on_commit=False, class_=Session
+    )
+
+    def override_get_session():
+        with testing_session() as db_session:
+            yield db_session
+
+    app.dependency_overrides[get_session] = override_get_session
+    with TestClient(app) as test_client:
+        yield test_client
+    app.dependency_overrides.clear()
