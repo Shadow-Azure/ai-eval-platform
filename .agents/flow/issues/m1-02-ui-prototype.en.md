@@ -6,12 +6,13 @@ English | [中文](m1-02-ui-prototype.md)
 kind: issue
 milestone: m1
 priority: P0
-status: ready
+status: in-progress
 scope:
   - .agents/flow/issues/m1-02-ui-prototype.*
   - docs/design/eval-platform-architecture.*
   - scripts/doc-budgets.manifest.json
   - prototype/**
+  - plans/m1-02-fullstack-design/**
   - reports/**
 adr: []
 github:
