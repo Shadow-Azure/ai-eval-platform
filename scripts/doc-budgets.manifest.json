@@ -3,11 +3,14 @@
   "README.md": 420,
   "AGENTS.md": 520,
   "docs/AGENTS.md": 500,
-  "docs/README.md": 450,
+  "docs/README.md": 520,
   "docs/architecture.md": 650,
+  "docs/design/eval-platform-architecture.md": 10200,
   "docs/development.md": 550,
   "docs/i18n/README.md": 550,
   "docs/i18n/terminology.md": 220,
   "docs/i18n/translation-prompt.md": 300,
-  ".agents/flow/README.md": 900
+  ".agents/flow/README.md": 900,
+  ".agents/flow/roadmap.md": 300,
+  ".agents/flow/milestones/m1-eval-architecture.md": 400
 }

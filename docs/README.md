@@ -10,6 +10,7 @@
 |---|---|
 | [AGENTS.md](AGENTS.md) | docs 子树写作标准与本仓指令 |
 | [architecture.md](architecture.md) | 当前工程组成、边界和扩展位置 |
+| [design/eval-platform-architecture.md](design/eval-platform-architecture.md) | 评测平台定稿架构：结构、流程、数据模型、部署与 CI/CD |
 | [development.md](development.md) | 本地命令、文档循环和 CI |
 | [i18n/README.md](i18n/README.md) | 双语三件套与结构镜像契约 |
 | [i18n/terminology.md](i18n/terminology.md) | 中英术语及禁用替写 |
