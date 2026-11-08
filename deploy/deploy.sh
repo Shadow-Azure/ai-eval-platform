@@ -19,11 +19,11 @@ if [ -f "$ENV_FILE" ]; then
   fi
 fi
 
+login_acr_if_configured
 set_env API_IMAGE "$API_IMAGE"
 set_env WEB_IMAGE "$WEB_IMAGE"
 set_env GIT_COMMIT "$GIT_COMMIT"
 set_env DEPLOY_ENVIRONMENT "$DEPLOY_ENVIRONMENT"
-login_acr_if_configured
 
 on_error() {
   echo "deploy: failed, rolling back" >&2

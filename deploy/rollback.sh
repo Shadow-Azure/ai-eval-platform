@@ -11,9 +11,9 @@ if [ ! -f .state/previous.env ]; then
 fi
 # shellcheck disable=SC1091
 . ./.state/previous.env
+login_acr_if_configured
 set_env API_IMAGE "$API_IMAGE"
 set_env WEB_IMAGE "$WEB_IMAGE"
-login_acr_if_configured
 
 "${COMPOSE[@]}" pull api web
 "${COMPOSE[@]}" up -d --remove-orphans

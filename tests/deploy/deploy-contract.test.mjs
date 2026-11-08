@@ -79,6 +79,13 @@ test("production compose swaps object storage for OSS and keeps health checks", 
   assert.equal(compose.includes("minio"), false);
 });
 
+test("ECS deploy derives the ACR VPC endpoint for fast pulls", () => {
+  const common = read("deploy/common.sh");
+  assert.ok(common.includes("normalize_images"));
+  assert.ok(common.includes("ACR_REGISTRY_VPC"));
+  assert.ok(common.includes("docker login --username"));
+});
+
 test("deployment scripts contain no obvious secret logging", () => {
   for (const path of ["deploy/deploy.sh", "deploy/rollback.sh", "deploy/common.sh", "deploy/record-deployment.sh"]) {
     const text = read(path);

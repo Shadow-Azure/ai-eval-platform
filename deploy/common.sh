@@ -49,12 +49,23 @@ record_deployment() {
   bash "$DEPLOY_DIR/deploy/record-deployment.sh" || true
 }
 
+normalize_images() {
+  if [ -n "${ACR_REGISTRY:-}" ]; then
+    ACR_REGISTRY_VPC="${ACR_REGISTRY_VPC:-${ACR_REGISTRY/\.cn-/-vpc.cn-}}"
+    API_IMAGE="${API_IMAGE//$ACR_REGISTRY/$ACR_REGISTRY_VPC}"
+    WEB_IMAGE="${WEB_IMAGE//$ACR_REGISTRY/$ACR_REGISTRY_VPC}"
+  fi
+}
+
 login_acr_if_configured() {
   if [ -f "$DEPLOY_DIR/.acr.env" ]; then
     # shellcheck disable=SC1091
     . "$DEPLOY_DIR/.acr.env"
-    if [ -n "${ACR_REGISTRY:-}" ] && [ -n "${ACR_USERNAME:-}" ] && [ -n "${ACR_PASSWORD:-}" ]; then
-      printf '%s' "$ACR_PASSWORD" | docker login --username "$ACR_USERNAME" --password-stdin "$ACR_REGISTRY" >/dev/null
-    fi
+    normalize_images
+    for registry in "${ACR_REGISTRY:-}" "${ACR_REGISTRY_VPC:-}"; do
+      if [ -n "$registry" ] && [ -n "${ACR_USERNAME:-}" ] && [ -n "${ACR_PASSWORD:-}" ]; then
+        printf '%s' "$ACR_PASSWORD" | docker login --username "$ACR_USERNAME" --password-stdin "$registry" >/dev/null
+      fi
+    done
   fi
 }
