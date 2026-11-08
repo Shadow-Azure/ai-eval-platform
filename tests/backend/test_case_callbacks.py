@@ -21,10 +21,7 @@ from app.models import EvalCaseAttempt, EvalCaseRun, EvalEvent, EvalRun, Outbox
 from app.seed import ensure_default_scope
 from app.services import evaluations
 from app.services.short_token import issue_short_token
-from fastapi.testclient import TestClient
-from sqlalchemy.orm import Session
-
-from tests.backend.case_helpers import (
+from case_helpers import (
     SECRET,
     auth,
     case_url,
@@ -34,7 +31,9 @@ from tests.backend.case_helpers import (
     started_body,
     upload_body,
 )
-from tests.backend.object_stub import StubObjectStore
+from fastapi.testclient import TestClient
+from object_stub import StubObjectStore
+from sqlalchemy.orm import Session
 
 
 def attempt_rows(env: dict, case_run_id: str) -> list[EvalCaseAttempt]:

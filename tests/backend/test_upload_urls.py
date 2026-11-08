@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from tests.backend.case_helpers import auth, upload_urls_body
+from case_helpers import auth, upload_urls_body
 
 
 def test_upload_urls_returns_platform_keys_and_presigned_puts(eval_env, client) -> None:

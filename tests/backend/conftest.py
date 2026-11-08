@@ -135,9 +135,8 @@ def eval_env(session: Session, client: TestClient, configure_settings):
     from app.models import EvalCaseAttempt, EvalCaseRun
     from app.seed import ensure_default_scope
     from app.services import evaluations
-
-    from tests.backend.case_helpers import EVAL_ENV_SECRET as SECRET
-    from tests.backend.object_stub import StubObjectStore
+    from case_helpers import EVAL_ENV_SECRET as SECRET
+    from object_stub import StubObjectStore
 
     configure_settings(RUNNER_TASK_SECRET=SECRET)
     ensure_default_scope(session)
