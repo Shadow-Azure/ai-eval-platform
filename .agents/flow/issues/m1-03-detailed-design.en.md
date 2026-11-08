@@ -1,4 +1,4 @@
-# Write the evaluation platform detailed design document
+# Freeze the M2 execution contracts
 
 English | [中文](m1-03-detailed-design.md)
 
@@ -15,6 +15,8 @@ scope:
   - docs/architecture.*
   - docs/design/eval-platform-detailed-design.*
   - docs/README.*
+  - contracts/**
+  - plans/m1-02-fullstack-design/**
   - reports/**
   - scripts/doc-budgets.manifest.json
 adr: []
@@ -25,20 +27,19 @@ github:
 
 ## Background
 
-The finalized architecture answers what the system does and which major technologies it uses, but it does not yet expand service boundaries, database tables, API contracts, state machines, task protocols, and testing strategy to an implementable level. Before development, the team needs an engineering baseline consistent with the architecture and prototype to split implementation work and review code.
+`plans/m1-02-fullstack-design/` is design input for M1-03, not the formal detailed design or an implementation baseline. M1-03 does not revisit the overall architecture or technology choices; it turns only the parts genuinely needed by M2 into executable contracts so the five M2 issues can be implemented, tested, and accepted directly. Designs for M3 and later evolve in later milestones using implementation evidence.
 
 ## Goals
 
-- Define service and module boundaries, code organization, and dependency direction, along with the responsibilities of the platform, dispatcher, runner, object storage, and GitHub Actions.
-- Specify the MVP data model, migration strategy, indexes, and multi-tenant constraints, and define the core APIs, events, error codes, and SSE protocol.
-- Detail the evaluation and case state machines, concurrent scheduling, retry idempotency, timeout recovery, callback authentication, and short-lived credential flow.
-- Define the five-file task package, dataset and execution adapter interfaces, normalized session trace model, and OSS directory conventions.
-- Cover frontend routes and component boundaries, test layers, observability, security boundaries, deployment rollback, and the CI/CD implementation.
+- Use the design input as a starting point to freeze the initial M2 database schema, core table relationships, tenant and idempotency constraints, and actual migration order.
+- Freeze the M2 API skeleton, runner task protocol, dispatch and callback contracts, and their state transitions and error classification.
+- Freeze the M2 deployment and migration flow, health checks, compatible rollback boundary, and minimal fixed Linux runner connection path.
+- Promote recommendation defaults affecting M2 into frozen values or explicit technical validation items, and map M2-01 through M2-05 to concrete contracts and acceptance tests.
 
 ## Acceptance
 
-- The detailed design lands as a Chinese base, an English `.en.md`, and an `.i18n.yaml` trio, and is listed in the documentation index.
-- Every MVP primary flow is traceable through explicit page, API, service, database, task package, and storage contracts.
-- Module diagrams, the data model diagram, key sequence diagrams, and state machines are complete, and API examples cover success, failure, authentication, and idempotency scenarios.
-- The design gives an executable migration order, test matrix, failure handling, and production rollback steps, and marks every open decision with a default option.
-- The document passes repository gates and technical review and can be split directly into implementation issues; this issue does not include production code.
+- Produce one concise formal design as a Chinese base, an English `.en.md`, and an `.i18n.yaml` trio listed in the documentation index, without mechanically translating all 11 design-input documents.
+- `contracts/` provides machine-readable contracts for the M2 API skeleton, task and callback schemas, database migration order, deployment state machine, and related interfaces.
+- The formal design includes a traceability matrix for M2-01 through M2-05, mapping every acceptance item to a design section, database object, API or protocol, and automated test.
+- Recommendations, defaults, and technical-validation items in the design input form a frozen-decision ledger marked as a frozen value, M2 validation task, or later milestone; items not affecting M2 must not block implementation.
+- The contracts pass repository gates and technical review; this issue contains no production code, and M2-01 can enter implementation after review.
