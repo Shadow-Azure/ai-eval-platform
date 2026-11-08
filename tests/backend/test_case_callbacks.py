@@ -468,3 +468,35 @@ def test_manifest_endpoint_refuses_cancelled_run(eval_env, client: TestClient) -
         params={"eval_run_id": env["run_id"], "attempt": 1, "dispatch_key": dispatch_key},
     )
     assert response.status_code == 409
+
+
+def test_case_callbacks_unified_on_platform_token(eval_env, client, configure_settings) -> None:
+    """M2-04 遗留 b 收口：case 回调只认平台签发的短期 token——runner 面共享
+    token（RUNNER_HEARTBEAT_TOKEN）不再守卫 case 端点（它只守卫 Runner 心跳）。"""
+
+    env = eval_env
+    case_run_id = env["cases"]["case-a"]
+    configure_settings(RUNNER_HEARTBEAT_TOKEN="plane-token", RUNNER_TASK_SECRET=SECRET)
+
+    # 平台短期 token：200（无需 runner 面 token）
+    ok = client.post(
+        case_url(env, case_run_id, "started"),
+        json=started_body(env, case_run_id, event_id="evt_unified_started"),
+        headers=auth(env),
+    )
+    assert ok.status_code == 200, ok.text
+
+    # 只有 runner 面 token：401（case 端点不再接受它）
+    plane_only = client.post(
+        case_url(env, case_run_id, "heartbeat"),
+        json=heartbeat_body(case_run_id, 1),
+        headers={"Authorization": "Bearer plane-token"},
+    )
+    assert plane_only.status_code == 401
+    assert plane_only.json()["detail"]["error"]["code"] == "runner_token_invalid"
+
+    # 无 token：401
+    missing = client.post(
+        case_url(env, case_run_id, "heartbeat"), json=heartbeat_body(case_run_id, 1)
+    )
+    assert missing.status_code == 401

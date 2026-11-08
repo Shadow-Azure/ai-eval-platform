@@ -307,10 +307,9 @@ def case_upload_urls(
     return {"ok": True, "case_run_id": case_run_id, "uploads": uploads}
 
 
-@router.post(
-    "/runner/v1/case-runs/{case_run_id}/{action}",
-    dependencies=[Depends(require_runner_token)],
-)
+# M2-04 遗留 b 收口：case 回调只认平台签发的短期 token（require_case_token）；
+# runner 面共享 token 只守卫 /runner/v1/runners/heartbeat。
+@router.post("/runner/v1/case-runs/{case_run_id}/{action}")
 def case_callback(
     case_run_id: str,
     action: Literal["started", "heartbeat", "uploads", "completed", "failed"],

@@ -525,24 +525,36 @@ def test_case_callback_unknown_case_is_404(seeded: Session, client: TestClient) 
 def test_case_callbacks_require_token_when_configured(
     seeded: Session, client: TestClient, configure_settings
 ) -> None:
-    configure_settings(RUNNER_HEARTBEAT_TOKEN="platform-side-token")
-    auth = {"Authorization": "Bearer platform-side-token"}
-    registered = client.post("/runner/v1/runners/heartbeat", json=agent_payload(), headers=auth)
+    """M2-05 起 case 回调统一为平台签发的短期 token（RUNNER_TASK_SECRET 配置
+    后强制）；runner 面 token 只守卫 Runner 心跳，不再守卫 case 端点。"""
+
+    configure_settings(RUNNER_TASK_SECRET="task-secret", RUNNER_HEARTBEAT_TOKEN="platform-side-token")
+    plane_auth = {"Authorization": "Bearer platform-side-token"}
+    registered = client.post("/runner/v1/runners/heartbeat", json=agent_payload(), headers=plane_auth)
     assert registered.status_code == 200
 
     cases = make_case_env(seeded)
-    response = client.post(
+    no_token = client.post(
         f"/runner/v1/case-runs/{cases['case-a']}/heartbeat",
         json=make_heartbeat_body(cases["case-a"]),
         headers={"X-Runner-Id": "fixed-linux-eval"},
     )
-    assert response.status_code == 401
-    ok = client.post(
+    assert no_token.status_code == 401
+
+    plane_only = client.post(
         f"/runner/v1/case-runs/{cases['case-a']}/heartbeat",
         json=make_heartbeat_body(cases["case-a"]),
-        headers={"X-Runner-Id": "fixed-linux-eval", **auth},
+        headers={"X-Runner-Id": "fixed-linux-eval", **plane_auth},
     )
-    assert ok.status_code == 200, ok.text
+    assert plane_only.status_code == 401
+
+    # RUNNER_TASK_SECRET 未配置（开发态）时 case 端点保持开放。
+    configure_settings(RUNNER_TASK_SECRET="")
+    open_dev = client.post(
+        f"/runner/v1/case-runs/{cases['case-a']}/heartbeat",
+        json=make_heartbeat_body(cases["case-a"]),
+    )
+    assert open_dev.status_code == 200, open_dev.text
 
 
 def test_case_callback_rejects_path_payload_mismatch(seeded: Session, client: TestClient) -> None:
