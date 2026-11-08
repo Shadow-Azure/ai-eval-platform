@@ -26,6 +26,14 @@ class Settings(BaseSettings):
     worker_poll_seconds: float = 5.0
     worker_heartbeat_path: str = "/tmp/eval-worker-heartbeat"
 
+    # M2-04 fixed runner plane. The heartbeat token matches the env key the
+    # deployed runner agent reads (/etc/eval-platform/runner.env); when unset
+    # the runner plane accepts unauthenticated requests (development only).
+    runner_heartbeat_token: str | None = None
+    runner_heartbeat_timeout_seconds: int = 90
+    runner_fixed_pool_name: str = "fixed-linux"
+    runner_fixed_pool_provider_key: str = "fixed"
+
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173,http://localhost:8080"
 
     @property

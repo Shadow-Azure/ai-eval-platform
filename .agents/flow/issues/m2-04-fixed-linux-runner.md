@@ -6,13 +6,17 @@
 kind: issue
 milestone: m2
 priority: P0
-status: backlog
+status: done
 scope:
   - .agents/flow/issues/m2-04-fixed-linux-runner.*
   - runner/**
   - infra/runner/**
   - scripts/**
   - tests/**
+  - backend/**
+  - deploy/docker-compose.prod.yml
+  - .github/workflows/eval-shard.yml
+  - reports/**
 adr: []
 github:
   number: 14
