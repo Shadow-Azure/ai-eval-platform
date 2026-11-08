@@ -1,14 +1,15 @@
 # 定稿评测平台架构方案
 
-[English](m1-eval-architecture.en.md) | 中文
+[English](m1-01-eval-architecture.en.md) | 中文
 
 ```yaml flow
 kind: issue
 milestone: m1
 priority: P0
-status: in-progress
+status: done
 bootstrap: true
 scope:
+  - .agents/flow/issues/m1-01-eval-architecture.*
   - docs/**
   - research/**
   - reports/**
