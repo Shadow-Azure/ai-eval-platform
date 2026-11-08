@@ -31,13 +31,14 @@ test("eval-shard workflow carries no secret material or demo tokens", () => {
     "AKIA",
     "LTAI",
     "BEGIN PRIVATE KEY",
-    "sk-",
     "development-only-secret",
     "RUNNER_TASK_SECRET",
     "make-eval-dispatch",
   ]) {
     assert.equal(text.includes(forbidden), false, `workflow must not contain ${forbidden}`);
   }
+  // OpenAI-style API keys (but NOT the legitimate "Task-Token" wording).
+  assert.doesNotMatch(text, /sk-[A-Za-z0-9]{16}/, "workflow must not contain API keys");
   assert.ok(!text.includes("secrets."), "workflow must not reference repository secrets");
 });
 
