@@ -28,7 +28,11 @@ login_acr_if_configured
 on_error() {
   echo "deploy: failed, rolling back" >&2
   record_deployment failed
-  bash "$DEPLOY_DIR/deploy/rollback.sh" || true
+  if [ -f "$DEPLOY_DIR/.state/previous.env" ]; then
+    bash "$DEPLOY_DIR/deploy/rollback.sh" || true
+  else
+    echo "deploy: no previous images; leaving the current stack untouched" >&2
+  fi
   exit 1
 }
 trap on_error ERR

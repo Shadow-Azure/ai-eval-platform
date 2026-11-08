@@ -31,23 +31,33 @@ def main() -> int:
         "started_at": os.environ.get("DEPLOY_STARTED_AT"),
         "finished_at": finished,
         "rollback_of_id": os.environ.get("DEPLOY_ROLLBACK_OF_ID") or None,
-        "detail_json": Jsonb(json.loads(os.environ.get("DEPLOY_DETAIL_JSON", "{}"))),
+        "detail_json": Jsonb(
+            {
+                "api_image": os.environ.get("DEPLOY_DETAIL_API_IMAGE", ""),
+                "web_image": os.environ.get("DEPLOY_DETAIL_WEB_IMAGE", ""),
+                "git_commit": os.environ.get("DEPLOY_DETAIL_GIT_COMMIT", ""),
+            }
+        ),
     }
-    with psycopg.connect(url, autocommit=True) as connection:
-        connection.execute(
-            """
-            INSERT INTO deployment (
+    try:
+        with psycopg.connect(url, autocommit=True) as connection:
+            connection.execute(
+                """
+                INSERT INTO deployment (
                 id, environment, git_commit, image_digest, migration_revision,
                 status, triggered_by, started_at, finished_at, rollback_of_id, detail_json
             ) VALUES (
                 %(id)s, %(environment)s, %(git_commit)s, %(image_digest)s,
                 %(migration_revision)s, %(status)s, %(triggered_by)s,
                 COALESCE(%(started_at)s::timestamptz, now()), %(finished_at)s::timestamptz,
-                %(rollback_of_id)s, %(detail_json)s
+                    %(rollback_of_id)s, %(detail_json)s
+                )
+                """,
+                record,
             )
-            """,
-            record,
-        )
+    except psycopg.errors.UndefinedTable:
+        print(json.dumps({"status": "skipped", "reason": "deployment table missing"}))
+        return 0
     print(json.dumps({"status": "recorded", "id": record["id"], "deployment_status": status}))
     return 0
 

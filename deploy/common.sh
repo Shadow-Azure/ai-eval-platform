@@ -43,7 +43,9 @@ record_deployment() {
   DEPLOY_TRIGGERED_BY="$DEPLOY_TRIGGERED_BY" \
   DEPLOY_ENVIRONMENT="$DEPLOY_ENVIRONMENT" \
   DEPLOY_ROLLBACK_OF_ID="${DEPLOY_ROLLBACK_OF_ID:-}" \
-  DEPLOY_DETAIL_JSON="{\"api_image\":\"${API_IMAGE:-unknown}\",\"web_image\":\"${WEB_IMAGE:-unknown}\",\"git_commit\":\"${GIT_COMMIT:-unknown}\"}" \
+  DEPLOY_DETAIL_API_IMAGE="${API_IMAGE:-unknown}" \
+  DEPLOY_DETAIL_WEB_IMAGE="${WEB_IMAGE:-unknown}" \
+  DEPLOY_DETAIL_GIT_COMMIT="${GIT_COMMIT:-unknown}" \
   bash "$DEPLOY_DIR/deploy/record-deployment.sh" || true
 }
 
