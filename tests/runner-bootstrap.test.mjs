@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -80,8 +80,8 @@ test("fresh install stages agent, env file and unit, then enables the service", 
     "安装的 heartbeat.mjs 与 runner/agent/heartbeat.mjs 不一致",
   );
 
-  const stat = execFileSync("stat", ["-f", "%Lp", stage.envFile], { encoding: "utf8" }).trim();
-  assert.equal(stat, "600", "runner.env 必须是 root-only 600");
+  const stat = statSync(stage.envFile);
+  assert.equal(stat.mode & 0o777, 0o600, "runner.env 必须是 root-only 600");
 
   const envContent = readFileSync(stage.envFile, "utf8");
   for (const key of [
