@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-eval-platform.local/runner-contract/v1/completion.schema.json",
+  "title": "Case attempt completion",
+  "description": "Terminal success callback for one case attempt. The platform still verifies the attempt, token and object digests.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "event_id",
+    "case_run_id",
+    "attempt",
+    "sequence",
+    "execution_status",
+    "result_status",
+    "score_manifest",
+    "summary"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "event_id": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "case_run_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "attempt": { "type": "integer", "minimum": 1 },
+    "sequence": { "type": "integer", "minimum": 0 },
+    "execution_status": { "enum": ["succeeded", "failed", "timeout", "cancelled"] },
+    "result_status": { "enum": ["resolved", "unresolved", "not_scored"] },
+    "score_manifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["object_key", "sha256", "size"],
+      "properties": {
+        "object_key": { "type": "string", "minLength": 1, "maxLength": 1024 },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "size": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "trace_manifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["object_key", "sha256", "size"],
+      "properties": {
+        "object_key": { "type": "string", "minLength": 1, "maxLength": 1024 },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "size": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["duration_ms", "input_tokens", "output_tokens"],
+      "properties": {
+        "duration_ms": { "type": "integer", "minimum": 0 },
+        "input_tokens": { "type": "integer", "minimum": 0 },
+        "output_tokens": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

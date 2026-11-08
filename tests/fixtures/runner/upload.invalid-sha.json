@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "case_run_id": "ecr_001",
+  "attempt": 1,
+  "objects": [
+    {
+      "artifact_kind": "score",
+      "object_key": "objects/not-hex",
+      "sha256": "not-a-sha256",
+      "size": 12,
+      "content_type": "application/json"
+    }
+  ]
+}

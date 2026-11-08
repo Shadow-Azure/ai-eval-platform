@@ -1,0 +1,9 @@
+{
+  "schema_version": "1.0",
+  "eval_run_id": "eval_01HZX",
+  "shard_id": "shard_01",
+  "attempt": 1,
+  "dispatch_key": "eval_01HZX:shard_01:1",
+  "manifest_url": "http://127.0.0.1:18080/manifest",
+  "expires_at": "2026-11-09T00:00:00Z"
+}

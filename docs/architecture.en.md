@@ -2,7 +2,7 @@
 
 English | [中文](architecture.md)
 
-The repository is in the initialization stage of an AI evaluation platform. The current structure covers engineering collaboration, documentation consistency, and reusable workflows only; runtime architecture, data models, and external interfaces for evaluation jobs are not yet established.
+The repository is in the initialization stage of an AI evaluation platform. M2 starts the execution foundation: `runner-contract/` and `runner/` freeze the Runner task protocol first, while the control plane, database, and delivery pipeline are added milestone by milestone.
 
 ## Components
 
@@ -13,6 +13,8 @@ The repository is in the initialization stage of an AI evaluation platform. The 
 | `.agents/skills/` | Task skills and templates synchronized from StudyWiki | Outside bilingual pairing |
 | `scripts/` | Mechanical documentation and workflow gates | Not product runtime |
 | `.github/workflows/` | CI decisions for docs and flow | No external publishing |
+| `runner-contract/` | Versioned Runner dispatch, manifest, heartbeat, and callback schemas | Contract only, not platform runtime |
+| `runner/` | Reusable workflow template, synthetic task, and local contract tests | No dataset- or agent-specific branches |
 
 ## Documentation pipeline
 
@@ -30,6 +32,10 @@ index -> budgets -> wrap -> pairing -> terminology
 ```
 
 The Chinese file is `foo.md`, the English side is `foo.en.md`, and the record is `foo.i18n.yaml`. The record stores both blob hashes from the last confirmed state, so drift on either side fails the pairing gate.
+
+## Runner contract
+
+M2 decouples evaluation execution from datasets and agents: the platform sends only eval_run, shard, attempt, manifest URL, and digest through repository_dispatch; the runner verifies the token, manifest, and digest before execution, then reports heartbeats, upload manifests, and completion or failure callbacks. `runner-contract/` holds the versioned schemas, while `runner/` holds the reusable workflow template, deterministic synthetic task, and local contract tests; real OSS, OIDC, and platform callbacks arrive with later issues.
 
 ## Extension points
 

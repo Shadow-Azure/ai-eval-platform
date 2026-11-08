@@ -1,0 +1,11 @@
+{
+  "schema_version": "1.0",
+  "event_id": "evt_ecr_001_failed_1",
+  "case_run_id": "ecr_001",
+  "attempt": 1,
+  "sequence": 3,
+  "error_code": "callback_retryable",
+  "retryable": true,
+  "error_summary": "platform returned HTTP 500",
+  "phase": "uploading"
+}
