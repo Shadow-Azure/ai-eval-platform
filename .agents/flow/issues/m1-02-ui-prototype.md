@@ -9,6 +9,8 @@ priority: P0
 status: ready
 scope:
   - .agents/flow/issues/m1-02-ui-prototype.*
+  - docs/design/eval-platform-architecture.*
+  - scripts/doc-budgets.manifest.json
   - prototype/**
   - reports/**
 adr: []
