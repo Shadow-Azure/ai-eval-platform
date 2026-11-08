@@ -17,6 +17,7 @@ scope:
   - deploy/docker-compose.prod.yml
   - .github/workflows/eval-shard.yml
   - reports/**
+  - plans/**
 adr: []
 github:
   number: 14
