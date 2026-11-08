@@ -314,3 +314,91 @@ def test_revoked_credential_blocks_gateway(client, provider, engine, usage_facto
     assert response.status_code == 403
     assert response.json()["error"]["code"] == "credential_revoked"
     assert provider.calls == []
+
+
+def _create_anthropic_config(client, *, secret: str = "sk-ant-test-1234567890") -> dict:
+    response = client.post(
+        "/api/v1/model-configs",
+        json={
+            "provider": "minimax",
+            "display_name": "MiniMax via Anthropic",
+            "base_url": "https://api.minimax.cn/anthropic",
+            "model_name": "MiniMax-M3",
+            "api_style": "anthropic",
+            "secret": secret,
+            "pricing": {"input_per_1m": 5_000, "output_per_1m": 20_000},
+        },
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+def test_anthropic_gateway_forwards_and_records_usage(
+    client, provider, engine, usage_factory
+) -> None:
+    config = _create_anthropic_config(client)
+    provider.body = {
+        "id": "msg_test",
+        "type": "message",
+        "role": "assistant",
+        "content": [{"type": "text", "text": "ok"}],
+        "usage": {"input_tokens": 20, "output_tokens": 5},
+    }
+    claims = GatewayClaims(
+        tenant_id=str(DEFAULT_TENANT_ID),
+        model_config_id=config["id"],
+        allowed_models=("MiniMax-M3",),
+        exp=int(time.time()) + 300,
+        eval_run_id="run-1",
+        case_run_id="case-1",
+        attempt=1,
+    )
+    token = issue_token(claims, "test-gateway-secret")
+    response = client.post(
+        "/model-gateway/anthropic/v1/messages",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "anthropic-version": "2023-06-01",
+        },
+        json={"model": "MiniMax-M3", "max_tokens": 16, "messages": [{"role": "user", "content": "hi"}]},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["id"] == "msg_test"
+    assert provider.calls[0].headers["x-api-key"] == "sk-ant-test-1234567890"
+    assert provider.calls[0].url.path.endswith("/anthropic/v1/messages")
+
+    rows = _usage_rows(engine)
+    assert len(rows) == 1
+    assert rows[0].prompt_tokens == 20
+    assert rows[0].completion_tokens == 5
+    assert rows[0].cost_usd == Decimal("0.200000")
+    assert rows[0].status == "succeeded"
+
+
+def test_anthropic_gateway_streams_usage(client, provider, engine, usage_factory) -> None:
+    config = _create_anthropic_config(client)
+    provider.stream_body = (
+        b'data: {"type":"message_start","message":{"usage":{"input_tokens":11,"output_tokens":1}}}\n\n'
+        b'data: {"type":"message_delta","usage":{"output_tokens":7}}\n\n'
+        b'data: {"type":"message_stop"}\n\n'
+    )
+    claims = GatewayClaims(
+        tenant_id=str(DEFAULT_TENANT_ID),
+        model_config_id=config["id"],
+        allowed_models=("MiniMax-M3",),
+        exp=int(time.time()) + 300,
+        eval_run_id="run-1",
+        case_run_id="case-1",
+        attempt=1,
+    )
+    token = issue_token(claims, "test-gateway-secret")
+    response = client.post(
+        "/model-gateway/anthropic/v1/messages",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"model": "MiniMax-M3", "stream": True, "messages": []},
+    )
+    assert response.status_code == 200
+    rows = _usage_rows(engine)
+    assert rows[0].prompt_tokens == 11
+    assert rows[0].completion_tokens == 7
+    assert rows[0].status == "succeeded"

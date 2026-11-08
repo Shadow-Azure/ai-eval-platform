@@ -146,6 +146,31 @@ def upstream_url(base_url: str) -> str:
     return f"{normalized}/chat/completions"
 
 
+def upstream_messages_url(base_url: str) -> str:
+    normalized = base_url.rstrip("/")
+    if normalized.endswith("/v1/messages"):
+        return normalized
+    if normalized.endswith("/v1"):
+        return f"{normalized}/messages"
+    return f"{normalized}/v1/messages"
+
+
+def anthropic_usage_from_payload(payload: dict) -> tuple[int, int]:
+    usage = payload.get("usage") if isinstance(payload, dict) else None
+    if isinstance(payload, dict) and isinstance(payload.get("message"), dict):
+        nested = payload["message"].get("usage")
+        if isinstance(nested, dict):
+            usage = nested
+    if not isinstance(usage, dict):
+        return 0, 0
+    prompt = usage.get("input_tokens")
+    completion = usage.get("output_tokens")
+    return (
+        int(prompt) if isinstance(prompt, (int, float)) else 0,
+        int(completion) if isinstance(completion, (int, float)) else 0,
+    )
+
+
 def normalize_upstream_error(status_code: int) -> GatewayError:
     if status_code in (401, 403):
         return GatewayError(502, "authentication_failed", "模型供应商鉴权失败")
@@ -207,6 +232,8 @@ __all__ = [
     "record_usage",
     "resolve_config",
     "spent_usd",
+    "upstream_messages_url",
     "upstream_url",
     "usage_from_payload",
+    "anthropic_usage_from_payload",
 ]

@@ -45,7 +45,7 @@ M2 把评测执行与具体数据集、Agent 解耦：平台只通过 repository
 
 ## 模型网关
 
-Runner 用短期 token 调用 `/model-gateway/v1`；网关校验租户、模型配置、允许模型、attempt 与预算，解密供应商密钥后转发请求，并按 attempt 记录 token 用量与成本。供应商错误归一化为稳定错误码。
+Runner 用短期 token 调用 `/model-gateway/v1`；网关校验租户、模型配置、允许模型、attempt 与预算，解密供应商密钥后经 OpenAI 或 Anthropic 兼容路由转发，并按 attempt 记录 token 用量与成本。供应商错误归一化为稳定错误码。
 
 ## 评分与结果
 

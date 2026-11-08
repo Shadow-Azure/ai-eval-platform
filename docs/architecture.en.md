@@ -45,7 +45,7 @@ The `backend/` dataset module stores datasets, immutable versions, cases, and me
 
 ## Model gateway
 
-Runners call `/model-gateway/v1` with a short-lived token; the gateway verifies the tenant, model configuration, allowed models, attempt and budget, decrypts the provider key before forwarding, and records token usage and cost per attempt. Provider errors are normalized into stable codes.
+Runners call `/model-gateway/v1` with a short-lived token; the gateway verifies the tenant, model configuration, allowed models, attempt and budget, decrypts the provider key and forwards through OpenAI- or Anthropic-compatible routes, and records token usage and cost per attempt. Provider errors are normalized into stable codes.
 
 ## Scoring and results
 
