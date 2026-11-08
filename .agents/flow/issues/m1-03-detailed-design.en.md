@@ -8,12 +8,15 @@ milestone: m1
 priority: P0
 status: ready
 scope:
+  - .agents/flow/**
   - .agents/flow/issues/m1-03-detailed-design.*
   - .agents/flow/issues/m1-01-eval-architecture.*
   - .agents/flow/issues/m1-eval-architecture.*
+  - docs/architecture.*
   - docs/design/eval-platform-detailed-design.*
   - docs/README.*
   - reports/**
+  - scripts/doc-budgets.manifest.json
 adr: []
 github:
   number: 5

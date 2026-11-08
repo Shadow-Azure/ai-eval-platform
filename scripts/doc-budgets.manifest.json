@@ -13,5 +13,11 @@
   "docs/i18n/translation-prompt.md": 300,
   ".agents/flow/README.md": 900,
   ".agents/flow/roadmap.md": 300,
-  ".agents/flow/milestones/m1-eval-architecture.md": 400
+  ".agents/flow/milestones/m1-eval-architecture.md": 400,
+  ".agents/flow/milestones/m2-executable-foundation.md": 200,
+  ".agents/flow/milestones/m3-first-real-evaluation.md": 200,
+  ".agents/flow/milestones/m4-concurrency-and-spot-pool.md": 200,
+  ".agents/flow/milestones/m5-product-workflows.md": 200,
+  ".agents/flow/milestones/m6-trace-diagnosis.md": 200,
+  ".agents/flow/milestones/m7-extension-and-hardening.md": 200
 }
