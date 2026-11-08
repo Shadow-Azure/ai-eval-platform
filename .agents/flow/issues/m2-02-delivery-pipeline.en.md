@@ -6,7 +6,7 @@ English | [中文](m2-02-delivery-pipeline.md)
 kind: issue
 milestone: m2
 priority: P0
-status: backlog
+status: in-progress
 scope:
   - .agents/flow/issues/m2-02-delivery-pipeline.*
   - .github/workflows/**

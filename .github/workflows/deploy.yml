@@ -1,0 +1,97 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - "web/**"
+      - "deploy/**"
+      - "docker-compose.yml"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production
+  cancel-in-progress: false
+
+env:
+  ACR_REGISTRY: ${{ secrets.ACR_REGISTRY }}
+  ACR_NAMESPACE: ${{ secrets.ACR_NAMESPACE }}
+
+jobs:
+  build:
+    name: build and push images
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      api_digest: ${{ steps.api.outputs.digest }}
+      web_digest: ${{ steps.web.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.ACR_REGISTRY }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+      - name: Build and push API/worker image
+        id: api
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: backend/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/ai-eval-platform-api:${{ github.sha }}
+      - name: Build and push web image
+        id: web
+        uses: docker/build-push-action@v6
+        with:
+          context: ./web
+          file: web/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/ai-eval-platform-web:${{ github.sha }}
+
+  deploy:
+    name: migrate and deploy to ECS
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install SSH key
+        env:
+          ECS_SSH_KEY: ${{ secrets.ECS_SSH_KEY }}
+          ECS_KNOWN_HOSTS: ${{ secrets.ECS_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s' "$ECS_SSH_KEY" | awk '1' > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$ECS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+      - name: Copy deploy scripts
+        run: scp -r deploy "root@${{ secrets.ECS_HOST }}:/opt/ai-eval-platform/"
+      - name: Write ACR credentials on the host
+        run: |
+          printf 'ACR_REGISTRY=%s\nACR_USERNAME=%s\nACR_PASSWORD=%s\n' \
+            "${{ secrets.ACR_REGISTRY }}" \
+            "${{ secrets.ACR_USERNAME }}" \
+            "${{ secrets.ACR_PASSWORD }}" \
+            | ssh "root@${{ secrets.ECS_HOST }}" 'umask 077; cat > /opt/ai-eval-platform/.acr.env'
+      - name: Deploy
+        env:
+          API_IMAGE: ${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/ai-eval-platform-api@${{ needs.build.outputs.api_digest }}
+          WEB_IMAGE: ${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/ai-eval-platform-web@${{ needs.build.outputs.web_digest }}
+          GIT_COMMIT: ${{ github.sha }}
+          DEPLOY_TRIGGERED_BY: ${{ github.actor }}
+        run: |
+          ssh "root@${{ secrets.ECS_HOST }}" \
+            "cd /opt/ai-eval-platform && API_IMAGE='$API_IMAGE' WEB_IMAGE='$WEB_IMAGE' GIT_COMMIT='$GIT_COMMIT' DEPLOY_TRIGGERED_BY='$DEPLOY_TRIGGERED_BY' bash deploy/deploy.sh"
+      - name: Verify public health
+        run: curl -fsS "http://${{ secrets.ECS_HOST }}:8080/readyz"

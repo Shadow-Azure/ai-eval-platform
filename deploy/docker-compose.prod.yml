@@ -1,0 +1,96 @@
+name: ai-eval-platform
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-eval}
+      POSTGRES_USER: ${POSTGRES_USER:-eval}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-eval} -d ${POSTGRES_DB:-eval}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    image: ${API_IMAGE:?API_IMAGE required}
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-eval}:${POSTGRES_PASSWORD:?}@postgres:5432/${POSTGRES_DB:-eval}
+      REDIS_URL: redis://redis:6379/0
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_BUCKET: ${S3_BUCKET:-}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-}
+      DEPLOY_ENVIRONMENT: ${DEPLOY_ENVIRONMENT:-production}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=2)"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  worker:
+    image: ${API_IMAGE:?API_IMAGE required}
+    command: ["worker"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-eval}:${POSTGRES_PASSWORD:?}@postgres:5432/${POSTGRES_DB:-eval}
+      REDIS_URL: redis://redis:6379/0
+      WORKER_HEARTBEAT_PATH: /tmp/worker-heartbeat
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import os, time; p=os.environ.get('WORKER_HEARTBEAT_PATH','/tmp/worker-heartbeat'); assert time.time()-os.path.getmtime(p) < 30"
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
+
+  web:
+    image: ${WEB_IMAGE:?WEB_IMAGE required}
+    ports:
+      - "8080:80"
+    depends_on:
+      api:
+        condition: service_healthy
+
+  migrate:
+    image: ${API_IMAGE:?API_IMAGE required}
+    profiles: ["tools"]
+    entrypoint: ["python", "migrations/migrate_with_lock.py"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-eval}:${POSTGRES_PASSWORD:?}@postgres:5432/${POSTGRES_DB:-eval}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  redisdata:
