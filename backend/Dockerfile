@@ -11,7 +11,8 @@ WORKDIR /app
 COPY pyproject.toml ./
 COPY backend ./backend
 
-RUN pip install --no-cache-dir .
+ARG PIP_INDEX_URL=https://pypi.org/simple
+RUN pip install --no-cache-dir --index-url "${PIP_INDEX_URL}" .
 
 WORKDIR /app/backend
 RUN chmod +x ./docker-entrypoint.sh

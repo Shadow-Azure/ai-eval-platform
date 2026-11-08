@@ -61,6 +61,8 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-eval}:${POSTGRES_PASSWORD:-eval}@postgres:5432/${POSTGRES_DB:-eval}
       REDIS_URL: redis://redis:6379/0
@@ -92,6 +94,8 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
     command: ["worker"]
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-eval}:${POSTGRES_PASSWORD:-eval}@postgres:5432/${POSTGRES_DB:-eval}
