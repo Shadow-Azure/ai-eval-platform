@@ -2,6 +2,9 @@ name: Runner Smoke
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - agent/m2-04-fixed-linux-runner/complete-m2-issues-1c94ebeef02f
 
 permissions:
   contents: read
