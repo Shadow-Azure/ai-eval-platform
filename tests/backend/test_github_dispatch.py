@@ -11,7 +11,6 @@ import json
 
 import pytest
 from app.config import get_settings
-
 from app.services.github_dispatch import (
     GitHubDispatchError,
     post_repository_dispatch,

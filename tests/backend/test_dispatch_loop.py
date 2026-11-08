@@ -11,12 +11,6 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-
-def aware(value):
-    """SQLite hands back naive UTC datetimes; normalize for comparisons."""
-
-    return value.replace(tzinfo=UTC) if value.tzinfo is None else value
-
 import pytest
 from app.config import get_settings
 from app.models import EvalCaseAttempt, EvalCaseRun, EvalEvent, EvalRun, Outbox
@@ -24,7 +18,11 @@ from app.seed import ensure_default_scope
 from app.services import dispatcher, evaluations
 from sqlalchemy.orm import Session
 
-from tests.backend.test_evaluations import configure_settings  # shared fixture
+
+def aware(value):
+    """SQLite hands back naive UTC datetimes; normalize for comparisons."""
+
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value
 
 
 @pytest.fixture

@@ -9,8 +9,8 @@ platform-configured ``GITHUB_TOKEN`` (repo scope on the host .env).
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Callable
 
 from ..config import Settings, get_settings
 

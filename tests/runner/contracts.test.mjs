@@ -13,7 +13,7 @@ const readFixture = (name) => JSON.parse(readFileSync(join(fixturesDir, name), "
 
 test("schema files are valid JSON Schema documents", () => {
   const files = readdirSync(schemaDir).filter((file) => file.endsWith(".schema.json"));
-  assert.equal(files.length, 6);
+  assert.equal(files.length, 7);
   for (const file of files) {
     const schema = JSON.parse(readFileSync(join(schemaDir, file), "utf8"));
     assert.match(schema.$schema, /2020-12/);
@@ -27,6 +27,7 @@ test("schema files are valid JSON Schema documents", () => {
 const validFixtures = [
   ["dispatch", "dispatch.valid.json"],
   ["manifest", "manifest.valid.json"],
+  ["started", "started.valid.json"],
   ["heartbeat", "heartbeat.valid.json"],
   ["upload", "upload.valid.json"],
   ["completion", "completion.valid.json"],

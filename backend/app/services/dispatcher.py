@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 from ..config import Settings, get_settings
 from ..models import EvalCaseAttempt, EvalCaseRun, EvalEvent, EvalRun, Outbox
 from . import evaluations
-from .evaluations import SHARD_DISPATCH_TOPIC, append_run_event, refresh_run_progress
+from .evaluations import SHARD_DISPATCH_TOPIC, refresh_run_progress
 from .github_dispatch import GitHubDispatchError, post_repository_dispatch
 
 

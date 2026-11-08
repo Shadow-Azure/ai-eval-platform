@@ -19,7 +19,6 @@ from pathlib import Path
 from textwrap import dedent
 
 import pytest
-
 from app.services.short_token import (
     ShortTokenInvalid,
     issue_short_token,
@@ -90,7 +89,8 @@ def cross_script(mode: str) -> str:
         for await (const chunk of lines) input += chunk;
         const payload = JSON.parse(input);
         if (mode === "issue") {{
-          const token = createToken(payload.claims, payload.secret, {{ ttlSeconds: payload.ttl_seconds, now: payload.now_ms }});
+          const token = createToken(payload.claims, payload.secret,
+            {{ ttlSeconds: payload.ttl_seconds, now: payload.now_ms }});
           process.stdout.write(token);
         }} else {{
           try {{

@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 from app.config import get_settings
 from app.defaults import DEFAULT_PROJECT_ID, DEFAULT_TENANT_ID
-from app.models import Runner
+from app.models import EvalCaseRun, Runner
 from app.seed import ensure_default_scope
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
@@ -366,34 +366,66 @@ def make_heartbeat_body(case_run_id: str = "ecr_001", sequence: int = 1) -> dict
     }
 
 
+
+def make_case_env(session: Session) -> dict:
+    """M2-05: case callbacks resolve a real evaluation; the runner-binding
+    semantics under test are unchanged, but case ids must exist."""
+    from app.services import evaluations
+
+    run, _ = evaluations.create_synthetic_evaluation(
+        session,
+        name="runner 面冒烟",
+        case_keys=["case-a", "case-b"],
+        idempotency_key="runner-plane",
+        created_by="agent",
+        settings=get_settings(),
+    )
+    cases = {
+        c.case_key: c.id
+        for c in session.query(EvalCaseRun).filter(EvalCaseRun.eval_run_id == run.id).all()
+    }
+    return cases
+
+
+def eval_session_override(client: TestClient, session: Session) -> None:
+    """Ensure the app writes through a session that shares the test DB.
+
+    The conftest ``client`` fixture already overrides get_session against the
+    same engine, so no extra wiring is needed; this helper exists to make the
+    dependency explicit in the tests below.
+    """
+
 def bind_runner_via_agent(client: TestClient, attempt: str | None = None) -> None:
     payload = agent_payload(status="busy", current_case_attempt_id=attempt) if attempt else agent_payload()
     assert client.post("/runner/v1/runners/heartbeat", json=payload).status_code == 200
 
 
 def test_case_heartbeat_binds_runner_and_marks_busy(seeded: Session, client: TestClient) -> None:
+    cases = make_case_env(seeded)
     bind_runner_via_agent(client)
     response = client.post(
-        "/runner/v1/case-runs/ecr_001/heartbeat",
-        json=make_heartbeat_body(),
+        f"/runner/v1/case-runs/{cases['case-a']}/heartbeat",
+        json=make_heartbeat_body(cases["case-a"]),
         headers={"X-Runner-Id": "fixed-linux-eval"},
     )
-    assert response.status_code == 200
+    assert response.status_code == 200, response.text
     body = response.json()
-    assert body == {
-        "ok": True,
-        "case_run_id": "ecr_001",
-        "runner_id": "fixed-linux-eval",
-        "status": "busy",
-    }
+    assert body["ok"] is True
+    assert body["case_run_id"] == cases["case-a"]
+    assert body["runner_id"] == "fixed-linux-eval"
+    assert body["runner_status"] == "busy"
     listed = client.get("/api/v1/runners/fixed-linux-eval").json()
     assert listed["status"] == "busy"
-    assert listed["current_case_attempt_id"] == "ecr_001"
+    assert listed["current_case_attempt_id"] == cases["case-a"]
 
 
 def test_case_heartbeat_without_runner_header_is_accepted(seeded: Session, client: TestClient) -> None:
-    response = client.post("/runner/v1/case-runs/ecr_001/heartbeat", json=make_heartbeat_body())
-    assert response.status_code == 200
+    cases = make_case_env(seeded)
+    response = client.post(
+        f"/runner/v1/case-runs/{cases['case-a']}/heartbeat",
+        json=make_heartbeat_body(cases["case-a"]),
+    )
+    assert response.status_code == 200, response.text
     assert response.json()["runner_id"] is None
 
 
@@ -419,10 +451,11 @@ def test_case_heartbeat_rejects_contract_violations(seeded: Session, client: Tes
 
 
 def test_case_heartbeat_conflicts_with_bound_other_job(seeded: Session, client: TestClient) -> None:
+    cases = make_case_env(seeded)
     bind_runner_via_agent(client, attempt="attempt-41")
     response = client.post(
-        "/runner/v1/case-runs/ecr_002/heartbeat",
-        json=make_heartbeat_body("ecr_002"),
+        f"/runner/v1/case-runs/{cases['case-b']}/heartbeat",
+        json=make_heartbeat_body(cases["case-b"]),
         headers={"X-Runner-Id": "fixed-linux-eval"},
     )
     assert response.status_code == 409
@@ -430,46 +463,63 @@ def test_case_heartbeat_conflicts_with_bound_other_job(seeded: Session, client: 
 
 
 def test_case_completed_and_failed_release_runner(seeded: Session, client: TestClient) -> None:
+    cases = make_case_env(seeded)
     bind_runner_via_agent(client)
     headers = {"X-Runner-Id": "fixed-linux-eval"}
 
+    completion = read_fixture("completion.valid.json")
+    completion["case_run_id"] = cases["case-a"]
     completed = client.post(
-        "/runner/v1/case-runs/ecr_001/completed",
-        json=read_fixture("completion.valid.json"),
+        f"/runner/v1/case-runs/{cases['case-a']}/completed",
+        json=completion,
         headers=headers,
     )
-    assert completed.status_code == 200
-    assert completed.json()["status"] == "online"
+    assert completed.status_code == 200, completed.text
+    assert completed.json()["runner_status"] == "online"
 
-    bind_runner_via_agent(client, attempt="ecr_001")
+    bind_runner_via_agent(client, attempt=cases["case-a"])
+    failure = read_fixture("failure.valid.json")
+    failure["case_run_id"] = cases["case-b"]
     failed = client.post(
-        "/runner/v1/case-runs/ecr_001/failed",
-        json=read_fixture("failure.valid.json"),
+        f"/runner/v1/case-runs/{cases['case-b']}/failed",
+        json=failure,
         headers=headers,
     )
-    assert failed.status_code == 200
+    assert failed.status_code == 200, failed.text
     assert client.get("/api/v1/runners/fixed-linux-eval").json()["status"] == "online"
 
 
 def test_case_uploads_callback_accepted(seeded: Session, client: TestClient) -> None:
-    bind_runner_via_agent(client, attempt="ecr_001")
+    cases = make_case_env(seeded)
+    bind_runner_via_agent(client, attempt=cases["case-a"])
+    upload = read_fixture("upload.valid.json")
+    upload["case_run_id"] = cases["case-a"]
     response = client.post(
-        "/runner/v1/case-runs/ecr_001/uploads",
-        json=read_fixture("upload.valid.json"),
+        f"/runner/v1/case-runs/{cases['case-a']}/uploads",
+        json=upload,
         headers={"X-Runner-Id": "fixed-linux-eval"},
     )
-    assert response.status_code == 200
-    assert response.json()["status"] == "busy"
+    assert response.status_code == 200, response.text
+    assert response.json()["runner_status"] == "busy"
 
 
 def test_case_callback_unknown_runner_404(seeded: Session, client: TestClient) -> None:
+    cases = make_case_env(seeded)
     response = client.post(
-        "/runner/v1/case-runs/ecr_001/heartbeat",
-        json=make_heartbeat_body(),
+        f"/runner/v1/case-runs/{cases['case-a']}/heartbeat",
+        json=make_heartbeat_body(cases["case-a"]),
         headers={"X-Runner-Id": "ghost-runner"},
     )
     assert response.status_code == 404
     assert response.json()["detail"]["error"]["code"] == "runner_not_found"
+
+
+def test_case_callback_unknown_case_is_404(seeded: Session, client: TestClient) -> None:
+    response = client.post(
+        "/runner/v1/case-runs/ecr_missing/heartbeat", json=make_heartbeat_body("ecr_missing")
+    )
+    assert response.status_code == 404
+    assert response.json()["detail"]["error"]["code"] == "case_run_not_found"
 
 
 def test_case_callbacks_require_token_when_configured(
@@ -480,23 +530,25 @@ def test_case_callbacks_require_token_when_configured(
     registered = client.post("/runner/v1/runners/heartbeat", json=agent_payload(), headers=auth)
     assert registered.status_code == 200
 
+    cases = make_case_env(seeded)
     response = client.post(
-        "/runner/v1/case-runs/ecr_001/heartbeat",
-        json=make_heartbeat_body(),
+        f"/runner/v1/case-runs/{cases['case-a']}/heartbeat",
+        json=make_heartbeat_body(cases["case-a"]),
         headers={"X-Runner-Id": "fixed-linux-eval"},
     )
     assert response.status_code == 401
     ok = client.post(
-        "/runner/v1/case-runs/ecr_001/heartbeat",
-        json=make_heartbeat_body(),
+        f"/runner/v1/case-runs/{cases['case-a']}/heartbeat",
+        json=make_heartbeat_body(cases["case-a"]),
         headers={"X-Runner-Id": "fixed-linux-eval", **auth},
     )
-    assert ok.status_code == 200
+    assert ok.status_code == 200, ok.text
 
 
 def test_case_callback_rejects_path_payload_mismatch(seeded: Session, client: TestClient) -> None:
+    cases = make_case_env(seeded)
     bind_runner_via_agent(client)
-    body = make_heartbeat_body("ecr_001")
+    body = make_heartbeat_body(cases["case-a"])
     response = client.post(
         "/runner/v1/case-runs/ecr_other/heartbeat",
         json=body,

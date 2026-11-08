@@ -19,6 +19,7 @@ BACKEND = REPO_ROOT / "backend"
 os.environ.setdefault("DATABASE_URL", "sqlite:////tmp/ai-eval-platform-tests-default.db")
 os.environ.setdefault("REDIS_URL", "")
 
+from app.config import get_settings  # noqa: E402
 from app.db import get_session  # noqa: E402
 from app.main import app  # noqa: E402
 
@@ -90,6 +91,19 @@ def engine(database_url: str):
 def session(engine) -> Session:
     with Session(engine) as db_session:
         yield db_session
+
+
+@pytest.fixture
+def configure_settings(monkeypatch: pytest.MonkeyPatch):
+    """Override Settings via environment (they are cached with lru_cache)."""
+
+    def _configure(**overrides: str) -> None:
+        for key, value in overrides.items():
+            monkeypatch.setenv(key, str(value))
+        get_settings.cache_clear()
+
+    yield _configure
+    get_settings.cache_clear()
 
 
 @pytest.fixture

@@ -504,6 +504,9 @@ def refresh_run_progress(session: Session, run: EvalRun, *, now: datetime | None
     authoritative result is recomputed in-transaction, not accumulated)."""
 
     now = _now(now)
+    # Sessions are created with autoflush=False; pending case mutations must
+    # hit the database before the authoritative group-by.
+    session.flush()
     statuses = dict(
         session.execute(
             select(EvalCaseRun.execution_status, func.count()).where(

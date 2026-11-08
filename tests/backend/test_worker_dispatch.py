@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-from sqlalchemy.orm import Session, sessionmaker
-
 from app.config import get_settings
 from app.models import Outbox
 from app.seed import ensure_default_scope
 from app.services import evaluations
 from app.worker.main import dispatch_once
-
-from tests.backend.test_evaluations import configure_settings  # shared fixture
+from sqlalchemy.orm import sessionmaker
 
 
 def test_worker_poll_processes_dispatch_outbox(

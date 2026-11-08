@@ -36,17 +36,6 @@ def seeded(session: Session) -> Session:
     return session
 
 
-@pytest.fixture
-def configure_settings(monkeypatch: pytest.MonkeyPatch):
-    def _configure(**overrides: str) -> None:
-        for key, value in overrides.items():
-            monkeypatch.setenv(key, str(value))
-        get_settings.cache_clear()
-
-    yield _configure
-    get_settings.cache_clear()
-
-
 def create_eval(
     session: Session,
     *,

@@ -1,0 +1,9 @@
+{
+  "schema_version": "1.0",
+  "event_id": "evt_ecr_001_started_1",
+  "case_run_id": "ecr_001",
+  "attempt": 1,
+  "runner_id": "fixed-linux-eval",
+  "pool_id": "fixed-linux",
+  "occurred_at": "2026-11-09T00:00:00Z"
+}
