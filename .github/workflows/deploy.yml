@@ -76,7 +76,9 @@ jobs:
           printf '%s\n' "$ECS_KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
       - name: Copy deploy scripts
-        run: scp -r deploy "root@${{ secrets.ECS_HOST }}:/opt/ai-eval-platform/"
+        run: |
+          ssh "root@${{ secrets.ECS_HOST }}" 'rm -rf /opt/ai-eval-platform/deploy'
+          scp -r deploy "root@${{ secrets.ECS_HOST }}:/opt/ai-eval-platform/"
       - name: Write ACR credentials on the host
         run: |
           printf 'ACR_REGISTRY=%s\nACR_USERNAME=%s\nACR_PASSWORD=%s\n' \

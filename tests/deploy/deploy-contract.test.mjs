@@ -18,6 +18,7 @@ test("deploy workflow builds immutable images and deploys over SSH", () => {
     "api@${{ needs.build.outputs.api_digest }}",
     "web@${{ needs.build.outputs.web_digest }}",
     "bash deploy/deploy.sh",
+    "rm -rf /opt/ai-eval-platform/deploy",
     "readyz",
     "environment: production",
   ]) {
