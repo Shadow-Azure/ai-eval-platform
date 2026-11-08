@@ -47,6 +47,10 @@ The `backend/` dataset module stores datasets, immutable versions, cases, and me
 
 Runners call `/model-gateway/v1` with a short-lived token; the gateway verifies the tenant, model configuration, allowed models, attempt and budget, decrypts the provider key before forwarding, and records token usage and cost per attempt. Provider errors are normalized into stable codes.
 
+## Scoring and results
+
+The `backend/` scoring module parses official SWE-bench reports, stores per-test F2P/P2P results in `test_case_result`, and produces running and final `metric_result` rows from dataset metric definitions. The `resolved_rate` denominator is always the selected case total.
+
 ## Extension points
 
 - When the product runtime and evaluation executor exist, add their components, data flows, and external dependencies here instead of debating design in README.

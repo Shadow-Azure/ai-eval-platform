@@ -8,6 +8,7 @@ from .api.health import router as health_router
 from .api.model_configs import router as model_configs_router
 from .api.model_gateway import router as model_gateway_router
 from .api.overview import router as overview_router
+from .api.results import router as results_router
 from .config import get_settings
 
 
@@ -26,6 +27,7 @@ def create_app() -> FastAPI:
     app.include_router(datasets_router)
     app.include_router(model_configs_router)
     app.include_router(model_gateway_router)
+    app.include_router(results_router)
     return app
 
 

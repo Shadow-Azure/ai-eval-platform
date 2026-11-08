@@ -30,6 +30,7 @@ from .model import (
 )
 from .outbox import Outbox
 from .resources import ProvisionedInstance, ResourcePool, Runner
+from .scoring import TEST_GROUPS, TEST_OUTCOMES, MetricResult, ScoreArtifact, TestCaseResult
 
 __all__ = [
     "Base",
@@ -55,6 +56,11 @@ __all__ = [
     "ModelUsage",
     "CREDENTIAL_KINDS",
     "USAGE_STATUSES",
+    "MetricResult",
+    "ScoreArtifact",
+    "TestCaseResult",
+    "TEST_GROUPS",
+    "TEST_OUTCOMES",
     "Outbox",
     "ProvisionedInstance",
     "ResourcePool",

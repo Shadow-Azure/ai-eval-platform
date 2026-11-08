@@ -47,6 +47,10 @@ M2 把评测执行与具体数据集、Agent 解耦：平台只通过 repository
 
 Runner 用短期 token 调用 `/model-gateway/v1`；网关校验租户、模型配置、允许模型、attempt 与预算，解密供应商密钥后转发请求，并按 attempt 记录 token 用量与成本。供应商错误归一化为稳定错误码。
 
+## 评分与结果
+
+`backend/` 的 scoring 模块解析 SWE-bench 官方报告，把 F2P/P2P 测试级结果写入 `test_case_result`，并按数据集指标定义生成运行中与最终 `metric_result`。`resolved_rate` 分母固定为选中用例总数。
+
 ## 扩展位置
 
 - 产品运行时和评测执行器落地后，在本页增加组成、数据流和外部依赖，而不是把设计争论塞入 README。
