@@ -15,9 +15,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
-from hashlib import sha256
 
-import pytest
 from app.config import get_settings
 from app.models import EvalCaseAttempt, EvalCaseRun, EvalEvent, EvalRun, Outbox
 from app.seed import ensure_default_scope
@@ -26,161 +24,17 @@ from app.services.short_token import issue_short_token
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from tests.backend.case_helpers import (
+    SECRET,
+    auth,
+    case_url,
+    completion_body,
+    failure_body,
+    heartbeat_body,
+    started_body,
+    upload_body,
+)
 from tests.backend.object_stub import StubObjectStore
-
-SECRET = "platform-task-secret"
-
-
-@pytest.fixture
-def eval_env(session: Session, client: TestClient, configure_settings):
-    """One seeded evaluation (2 cases, 1 shard) with token auth + stub store.
-
-    The fixed runner registers via its heartbeat first (production shape), so
-    X-Runner-Id bindings in callbacks resolve like on the host.
-    """
-
-    configure_settings(RUNNER_TASK_SECRET=SECRET)
-    ensure_default_scope(session)
-    registered = client.post(
-        "/runner/v1/runners/heartbeat",
-        json={
-            "runner_id": "fixed-linux-eval",
-            "name": "fixed-linux-eval",
-            "labels": ["self-hosted", "linux", "eval"],
-            "status": "online",
-            "current_case_attempt_id": None,
-        },
-    )
-    assert registered.status_code == 200
-    with StubObjectStore() as store:
-        configure_settings(
-            S3_ENDPOINT=store.endpoint,
-            S3_ACCESS_KEY="ak",
-            S3_SECRET_KEY="sk",
-        )
-        run, _ = evaluations.create_synthetic_evaluation(
-            session,
-            name="回调冒烟",
-            case_keys=["case-a", "case-b"],
-            idempotency_key="cb-env",
-            created_by="agent",
-            settings=get_settings(),
-        )
-        cases = {
-            c.case_key: c.id
-            for c in session.query(EvalCaseRun).filter(EvalCaseRun.eval_run_id == run.id).all()
-        }
-        yield {
-            "session": session,
-            "run_id": run.id,
-            "cases": cases,
-            "store": store,
-            "shard": list(
-                session.query(EvalCaseAttempt)
-                .filter(EvalCaseAttempt.eval_case_run_id == cases["case-a"])
-                .all()
-            )[0].shard_id,
-        }
-
-
-def token_for(env: dict, attempt: int = 1) -> str:
-    return issue_short_token(
-        {
-            "eval_run_id": env["run_id"],
-            "shard_id": env["shard"],
-            "attempt": attempt,
-            "pool_id": "fixed-linux",
-        },
-        SECRET,
-        ttl_seconds=600,
-    )
-
-
-def auth(env: dict, attempt: int = 1) -> dict:
-    return {
-        "Authorization": f"Bearer {token_for(env, attempt)}",
-        "X-Runner-Id": "fixed-linux-eval",
-    }
-
-
-def register_score_object(env: dict, case_run_id: str, size: int = 24) -> dict:
-    digest = sha256(f"{case_run_id}:{size}".encode()).hexdigest()
-    object_key = f"evaluations/{env['run_id']}/objects/{digest}"
-    env["store"].add(object_key, size)
-    return {"object_key": object_key, "sha256": digest, "size": size}
-
-
-def case_url(env: dict, case_run_id: str, action: str) -> str:
-    return f"/runner/v1/case-runs/{case_run_id}/{action}"
-
-
-def started_body(env: dict, case_run_id: str, attempt: int = 1, event_id: str | None = None) -> dict:
-    return {
-        "schema_version": "1.0",
-        "event_id": event_id or f"evt_{case_run_id}_started_{attempt}",
-        "case_run_id": case_run_id,
-        "attempt": attempt,
-        "runner_id": "fixed-linux-eval",
-        "occurred_at": datetime.now(UTC).isoformat(),
-    }
-
-
-def heartbeat_body(case_run_id: str, sequence: int, attempt: int = 1, event_id: str | None = None) -> dict:
-    return {
-        "schema_version": "1.0",
-        "event_id": event_id or f"evt_{case_run_id}_hb_{sequence}",
-        "case_run_id": case_run_id,
-        "attempt": attempt,
-        "sequence": sequence,
-        "phase": "executing",
-        "progress": {"completed": 0, "total": 1},
-        "occurred_at": datetime.now(UTC).isoformat(),
-    }
-
-
-def completion_body(env: dict, case_run_id: str, *, attempt: int = 1, score: dict | None = None) -> dict:
-    return {
-        "schema_version": "1.0",
-        "event_id": f"evt_{case_run_id}_completed_{attempt}",
-        "case_run_id": case_run_id,
-        "attempt": attempt,
-        "sequence": 2,
-        "execution_status": "succeeded",
-        "result_status": "resolved",
-        "score_manifest": score or register_score_object(env, case_run_id),
-        "summary": {"duration_ms": 1200, "input_tokens": 0, "output_tokens": 0},
-    }
-
-
-def failure_body(
-    case_run_id: str,
-    *,
-    attempt: int = 1,
-    retryable: bool = False,
-    error_code: str = "runtime_error",
-    event_id: str | None = None,
-) -> dict:
-    return {
-        "schema_version": "1.0",
-        "event_id": event_id or f"evt_{case_run_id}_failed_{attempt}",
-        "case_run_id": case_run_id,
-        "attempt": attempt,
-        "sequence": 3,
-        "error_code": error_code,
-        "retryable": retryable,
-        "error_summary": "合成注入失败",
-        "phase": "executing",
-    }
-
-
-def upload_body(env: dict, case_run_id: str) -> dict:
-    score = register_score_object(env, case_run_id)
-    return {
-        "schema_version": "1.0",
-        "case_run_id": case_run_id,
-        "attempt": 1,
-        "objects": [{"artifact_kind": "score", **score, "content_type": "application/json"}],
-    }
 
 
 def attempt_rows(env: dict, case_run_id: str) -> list[EvalCaseAttempt]:

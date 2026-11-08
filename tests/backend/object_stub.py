@@ -25,6 +25,14 @@ class StubObjectHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(size))
         self.end_headers()
 
+    def do_PUT(self) -> None:  # noqa: N802
+        path = self.path.split("?", 1)[0]
+        length = int(self.headers.get("Content-Length") or 0)
+        self.rfile.read(length)
+        getattr(self.server, "known_objects", {})[path] = length
+        self.send_response(200)
+        self.end_headers()
+
     def log_message(self, *_args) -> None:
         return
 

@@ -8,6 +8,7 @@ Routes consumed by the deployed fixed-runner heartbeat agent:
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Response
@@ -23,8 +24,13 @@ from ..services import case_attempts
 from ..services import runners as runner_service
 from ..services.case_attempts import CaseCallbackError
 from ..services.evaluations import SHARD_DISPATCH_TOPIC
+from ..services.object_store import object_store_from_settings
 from ..services.short_token import ShortTokenInvalid, issue_short_token, verify_short_token
 from .errors import error_detail
+
+
+def datetime_now_utc() -> datetime:
+    return datetime.now(UTC)
 
 router = APIRouter(tags=["runners"])
 
@@ -236,6 +242,69 @@ def _callback_error(exc: CaseCallbackError) -> HTTPException:
         status_code=exc.status_code,
         detail=error_detail(exc.code, str(exc)),
     )
+
+
+class UploadObjectRequest(BaseModel):
+    artifact_kind: Literal["score", "trace", "artifact"]
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    size: int = Field(ge=0)
+    content_type: str = Field(min_length=1, max_length=128)
+
+
+class UploadUrlsRequest(BaseModel):
+    attempt: int = Field(ge=1)
+    objects: list[UploadObjectRequest] = Field(min_length=1, max_length=32)
+
+
+@router.post("/runner/v1/case-runs/{case_run_id}/upload-urls")
+def case_upload_urls(
+    case_run_id: str,
+    payload: UploadUrlsRequest,
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+    token_claims: dict | None = Depends(require_case_token),
+) -> dict:
+    """Exchange computed object digests for platform-owned keys and time-
+    limited presigned PUT addresses (design 04 §5). Existence/size still gets
+    verified at the uploads callback and at completion."""
+
+    try:
+        ctx = case_attempts.resolve_context(
+            session, case_run_id=case_run_id, attempt_no=payload.attempt
+        )
+    except case_attempts.CaseNotFound as exc:
+        raise _callback_error(exc) from exc
+    except case_attempts.StaleAttempt as exc:
+        raise _callback_error(exc) from exc
+    _check_token_bindings(token_claims, case_run=ctx.case_run, attempt=ctx.attempt)
+
+    store = object_store_from_settings(settings)
+    if store is None:
+        raise HTTPException(
+            status_code=503,
+            detail=error_detail("object_store_unavailable", "对象存储未配置（S3_* 环境变量缺失）"),
+        )
+
+    now = datetime_now_utc()
+    uploads = []
+    for item in payload.objects:
+        object_key = (
+            f"evaluations/{ctx.run.id}/{ctx.attempt.shard_id}"
+            f"/attempt{payload.attempt}/{case_run_id}/{item.artifact_kind}/{item.sha256}"
+        )
+        uploads.append(
+            {
+                "artifact_kind": item.artifact_kind,
+                "sha256": item.sha256,
+                "size": item.size,
+                "object_key": object_key,
+                "upload_url": store.presign_put_url(object_key, expires=900, now=now),
+                "expires_at": (now + timedelta(seconds=900)).isoformat(timespec="microseconds"),
+                "method": "PUT",
+                "headers": {"content-type": item.content_type},
+            }
+        )
+    return {"ok": True, "case_run_id": case_run_id, "uploads": uploads}
 
 
 @router.post(
