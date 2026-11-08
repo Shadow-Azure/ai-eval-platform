@@ -1,0 +1,43 @@
+# Reference template for the private runner repository.
+# M2-05 activates a copy under .github/workflows; M2-04 replaces the demo
+# secrets below with OIDC/short-lived credentials. Do not commit real values.
+name: eval-shard
+
+on:
+  repository_dispatch:
+    types: [eval-shard]
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: eval-shard-${{ github.event.client_payload.shard_id }}
+  cancel-in-progress: false
+
+jobs:
+  synthetic-shard:
+    runs-on: [self-hosted, linux, eval]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validate and execute synthetic shard
+        env:
+          DISPATCH_PAYLOAD: ${{ toJson(github.event.client_payload) }}
+          RUNNER_TASK_TOKEN: ${{ secrets.RUNNER_TASK_TOKEN }}
+          RUNNER_TASK_SECRET: ${{ secrets.RUNNER_TASK_SECRET }}
+          RUNNER_STATE_DIR: ${{ runner.temp }}/eval-state
+          RUNNER_OBJECT_ROOT: ${{ runner.temp }}/eval-objects
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_STATE_DIR" "$RUNNER_OBJECT_ROOT"
+          printf '%s' "$DISPATCH_PAYLOAD" > "$RUNNER_TEMP/dispatch.json"
+          node runner/lib/contracts.mjs dispatch "$RUNNER_TEMP/dispatch.json"
+          node runner/scripts/synthetic-task.mjs \
+            --dispatch "$RUNNER_TEMP/dispatch.json" \
+            --state-dir "$RUNNER_STATE_DIR" \
+            --object-store-root "$RUNNER_OBJECT_ROOT"

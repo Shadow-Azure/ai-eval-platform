@@ -6,7 +6,7 @@
 kind: issue
 milestone: m2
 priority: P0
-status: backlog
+status: in-progress
 scope:
   - .agents/flow/issues/m2-03-runner-contract.*
   - runner-contract/**

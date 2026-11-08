@@ -2,7 +2,7 @@
 
 [English](architecture.en.md) | 中文
 
-当前仓库处于评测平台初始化阶段。已有结构只负责工程协作、文档一致性和可复用工作流；评测任务的运行架构、数据模型与外部接口尚未落地。
+当前仓库处于评测平台初始化阶段。M2 开始落地执行底座：`runner-contract/` 与 `runner/` 先冻结 Runner 任务协议；控制面、数据库与交付流水线按 milestone 逐步补齐。
 
 ## 组成
 
@@ -13,6 +13,8 @@
 | `.agents/skills/` | 从 StudyWiki 同步的任务技能与模板 | 不参与本仓双语配对 |
 | `scripts/` | 文档与流程机械门禁 | 不承担产品运行时 |
 | `.github/workflows/` | 文档和流程的 CI 裁决 | 无外部发布流程 |
+| `runner-contract/` | Runner 派发、清单、心跳与回传的版本化 Schema | 只定义契约，不含平台服务 |
+| `runner/` | 通用 workflow 模板、合成任务与本地契约测试 | 不含数据集或 Agent 特例 |
 
 ## 文档流水线
 
@@ -30,6 +32,10 @@ index -> budgets -> wrap -> pairing -> terminology
 ```
 
 中文文件是 `foo.md`，英文侧是 `foo.en.md`，记录是 `foo.i18n.yaml`。记录保存两侧确认时的 blob hash，任何一侧漂移都会让配对门禁失败。
+
+## Runner 契约
+
+M2 把评测执行与具体数据集、Agent 解耦：平台只通过 repository_dispatch 传递 eval_run、shard、attempt、manifest 地址与 digest，Runner 校验 token、清单和 digest 后执行，并以心跳、上传清单、完成或失败回调回传。`runner-contract/` 保存版本化 Schema，`runner/` 保存通用 workflow 模板、确定性合成任务和本地契约测试；真实 OSS、OIDC 与平台回调由后续 issue 接入。
 
 ## 扩展位置
 

@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-eval-platform.local/runner-contract/v1/failure.schema.json",
+  "title": "Case attempt failure",
+  "description": "Terminal or retryable failure callback for one case attempt. retryable decides whether the platform may create a new attempt.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "event_id", "case_run_id", "attempt", "sequence", "error_code", "retryable", "error_summary", "phase"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "event_id": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "case_run_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "attempt": { "type": "integer", "minimum": 1 },
+    "sequence": { "type": "integer", "minimum": 0 },
+    "error_code": {
+      "enum": [
+        "manifest_invalid",
+        "manifest_digest_mismatch",
+        "token_invalid",
+        "attempt_mismatch",
+        "dispatch_duplicate",
+        "upload_failed",
+        "callback_retryable",
+        "callback_permanent",
+        "runtime_error"
+      ]
+    },
+    "retryable": { "type": "boolean" },
+    "error_summary": { "type": "string", "minLength": 1, "maxLength": 1000 },
+    "phase": { "type": "string", "minLength": 1, "maxLength": 64 }
+  }
+}
