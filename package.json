@@ -1,0 +1,13 @@
+{
+  "name": "ai-eval-platform",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "verify:flow": "node scripts/verify-flow.mjs",
+    "verify:flow-online": "node scripts/verify-flow-online.mjs",
+    "flow:new-issue": "node scripts/flow-new-issue.mjs",
+    "flow:sync": "node scripts/flow-sync.mjs",
+    "install:hooks": "node scripts/install-git-hooks.mjs"
+  }
+}

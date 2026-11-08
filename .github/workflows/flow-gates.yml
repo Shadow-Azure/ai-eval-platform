@@ -1,0 +1,74 @@
+name: Flow Gates
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: flow-gates-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  flow-offline:
+    name: flow-offline
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: 门禁自测试
+        run: npm test
+      - name: 流程树静态校验
+        shell: bash
+        run: |
+          if [ ! -f .agents/flow/roadmap.md ]; then
+            echo "flow gate is pending: .agents/flow/roadmap.md has not been created"
+            exit 0
+          fi
+          npm run verify:flow
+      - name: PR 引用与 scope 校验
+        if: github.event_name == 'pull_request'
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          if [ ! -f .agents/flow/roadmap.md ]; then
+            echo "flow diff gate is pending: .agents/flow/roadmap.md has not been created"
+            exit 0
+          fi
+          node scripts/verify-flow.mjs --diff origin/${{ github.base_ref }}
+
+  flow-online:
+    name: flow-online
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: 流程树与 GitHub 双侧一致性
+        shell: bash
+        env:
+          FLOW_TOKEN: ${{ secrets.FLOW_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          if [ ! -f .agents/flow/roadmap.md ]; then
+            echo "flow online gate is pending: .agents/flow/roadmap.md has not been created"
+            exit 0
+          fi
+          if [ -z "${FLOW_TOKEN:-}" ]; then
+            echo "FLOW_TOKEN is required: it must be a PAT with project read access"
+            exit 1
+          fi
+          GH_TOKEN="$FLOW_TOKEN" FLOW_PROJECT_CHECK=1 node scripts/verify-flow-online.mjs
