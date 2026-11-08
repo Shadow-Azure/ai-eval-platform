@@ -16,6 +16,7 @@ scope:
   - docs/design/eval-platform-detailed-design.*
   - docs/README.*
   - reports/**
+  - scripts/doc-budgets.manifest.json
 adr: []
 github:
   number: 5
