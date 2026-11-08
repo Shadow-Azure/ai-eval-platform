@@ -1,5 +1,5 @@
 # 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
 # git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
 #   pnpm run record:i18n -- .agents/flow/issues/m3-01-swebench-dataset-import.md
-m3-01-swebench-dataset-import.md: ee8fda6273b1946bde3118a084cbe02dcd927968
-m3-01-swebench-dataset-import.en.md: 72d18155bca2538b8f0a491d9b79ead6c4aece0f
+m3-01-swebench-dataset-import.md: 17a1c11459639a36b59098de6f68d6261189d2c0
+m3-01-swebench-dataset-import.en.md: ba82a1b30a1e469f9ee5cc27354e9e123e92e6dd

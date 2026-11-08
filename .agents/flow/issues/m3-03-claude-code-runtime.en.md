@@ -6,7 +6,7 @@ English | [中文](m3-03-claude-code-runtime.md)
 kind: issue
 milestone: m3
 priority: P0
-status: ready
+status: in-progress
 scope:
   - .agents/flow/**
   - backend/**

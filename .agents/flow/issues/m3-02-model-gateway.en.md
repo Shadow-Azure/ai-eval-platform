@@ -6,7 +6,7 @@ English | [中文](m3-02-model-gateway.md)
 kind: issue
 milestone: m3
 priority: P0
-status: ready
+status: in-progress
 scope:
   - .agents/flow/**
   - backend/**
