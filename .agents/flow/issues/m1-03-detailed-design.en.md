@@ -6,7 +6,7 @@ English | [中文](m1-03-detailed-design.md)
 kind: issue
 milestone: m1
 priority: P0
-status: ready
+status: done
 scope:
   - .agents/flow/**
   - .agents/flow/issues/m1-03-detailed-design.*
