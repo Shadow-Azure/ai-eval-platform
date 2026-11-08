@@ -1,11 +1,12 @@
 {
   "//": "常驻文档词数上限。超限时先搬层或压缩；提高上限须在 PR 中说明。",
+  "// docs/design/eval-platform-architecture.md": "M1-02 architecture scope adds resource capability validation plus Git-backed Skill/Command/Subagent asset sources, editable refs, immutable commit snapshots, and runtime materialization.",
   "README.md": 420,
   "AGENTS.md": 520,
   "docs/AGENTS.md": 500,
   "docs/README.md": 520,
   "docs/architecture.md": 650,
-  "docs/design/eval-platform-architecture.md": 10200,
+  "docs/design/eval-platform-architecture.md": 11500,
   "docs/development.md": 550,
   "docs/i18n/README.md": 550,
   "docs/i18n/terminology.md": 220,

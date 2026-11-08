@@ -6,7 +6,7 @@ This document is the finalized architecture design. It covers functional scope, 
 
 ## 1. Goals and Scope
 
-The platform standardizes the evaluation of AI coding agents: it manages evaluation datasets and cases, configures evaluated models and API keys, launches evaluations by combining agent runtime × development skill × model × resource pool, shows live progress and dataset-specific result metrics, and lets users review the full session traces of the primary and sub agents from any case.
+The platform standardizes the evaluation of AI coding agents: it manages evaluation datasets and cases, configures evaluated models and API keys, launches evaluations by combining agent runtime × agent asset source × model × resource pool, shows live progress and dataset-specific result metrics, and lets users review the full session traces of the primary and sub agents from any case.
 
 - Username and password login; single tenant at the start, with the data model reserving multi-tenant support (organization, workspace, project).
 - Pluggable datasets: SWE-bench is supported first, and adding a new benchmark only requires a dataset adapter plus registered metric definitions.
@@ -67,7 +67,7 @@ Figure 1 Overall architecture
 
 ## 4. Evaluation Execution Flow
 
-1. The user selects a dataset version, agent runtime, development skill, model credential, and resource pool in the platform; submitting creates an evaluation (eval_run), and cases are written to the case table in batches of at most 256.
+1. The user selects a dataset version, agent runtime, agent asset source with an editable ref, model credential, and resource pool in the platform; submitting creates an evaluation (eval_run), and cases are written to the case table in batches of at most 256.
 2. For each batch the dispatcher calls the GitHub REST API to send a repository_dispatch event whose payload carries the evaluation ID, the case list of the batch, the callback address, and the timeout.
 3. Once a runner picks up the task, the in-job runner script starts: it fetches the case and environment definition, prepares the code repository inside the sandbox, drives the agent runtime in headless mode (Claude Code first, using stream-json output), and then collects the patch and session files produced by the model.
 4. The official SWE-bench scoring image runs inside the sandbox to decide whether the case is resolved and to produce test output; the in-job script uploads the scoring report, the artifact bundle, and the raw session files to OSS, and calls the platform callback API to report the case status and summary metrics.
@@ -95,13 +95,29 @@ Datasets and dataset versions are separate, and versions are immutable; cases st
 
 A model configuration records the provider, endpoint URL, and model name, all integrated through the OpenAI-compatible protocol; API keys are stored encrypted and are only decrypted when dispatching tasks. When launching an evaluation, the user can reference an existing credential or enter a new one temporarily; temporary credentials bind only to that evaluation. Tasks sent to runners carry short-lived credentials issued by the platform, never written to the runner machine.
 
-### 5.4 Agent Runtimes and Skills
+### 5.4 Agent Runtimes and Assets
 
-An agent runtime records its name, version, and launch command template; Claude Code is the first integration, followed by Codex, OpenCode, and pi under the same adapter interface. A development skill ships with the task as evaluation input, for example by mounting skill files into the agent workspace so the agent loads them natively. The adapter interface has three fixed stages: start with streaming events, collect raw session files, and normalize into the unified trace model.
+An agent runtime records its name, version, and launch command template; Claude Code is the first integration, followed by Codex, OpenCode, and pi under the same adapter interface. Agent assets ship with the task as evaluation input, and the runtime adapter maps the required skills, commands, and subagents into the workspace for native loading. The adapter interface has three fixed stages: start with streaming events, collect raw session files, and normalize into the unified trace model.
+
+Skills, commands, and subagents belong to configurable agent asset sources. An asset source binds a Git repository, tenant-level source connection, default ref, scan paths, selection mode, and asset types; selection mode supports all assets under a directory or only explicit paths. A skill is identified by a directory containing `SKILL.md`, while commands and subagents are recognized by the target runtime adapter in their native formats; when recognition is unreliable, the user must specify the type explicitly rather than relying on file extensions.
+
+When launching an evaluation, the user selects an asset source and the ref field is prefilled with the source's default ref; the user may change it to another branch, tag, or commit. After submission, the platform resolves `requested_ref` to `resolved_commit`, verifies that the selected paths and assets exist under the requested permission scope, freezes the asset list, content digest, and runtime prerequisites, and writes an immutable package containing only the selected assets to OSS. Every shard in an evaluation uses the same snapshot; later commits, branch moves, or branch deletion do not change an evaluation that has started, and runners never return to Git during execution.
+
+The asset source records the resolved commit, tree digest, configuration selection, ownership, and auditor; an evaluation references the immutable snapshot rather than a mutable repository ref. Superpowers can be read as a complete asset source rooted at `skills/`. OpenSpec's `skills/` is a skill source, while its commands are generated in the target runtime by `openspec init/update`, so such repositories must declare their runtime prerequisites in the asset source. Adapters perform runtime materialization: Claude Code uses `.claude/` asset directories, while Codex, OpenCode, and pi share `.agents/` skill directories; commands and subagents continue to use each runtime's native format.
 
 ### 5.5 Resource Pool
 
 The resource pool registers self-hosted runner metadata and labels; GitHub routes tasks to the Mac mini or Linux machines by runs-on labels. All runners run in ephemeral mode: take one task, execute, deregister, and let a daemon on the machine re-register automatically, so no long-lived credentials or state remain. The Mac mini handles macOS-specific cases with one tart virtual machine per task; Linux machines run Docker sandboxes for container-based benchmarks. Privacy requirements: the repository hosting evaluations must be private, and runner machines store no long-lived credentials. Resource pools are separated from access credentials: credentials are registered as tenant-level resource connections, a pool references a connection and stores only pool parameters, and one connection can back multiple pools; with multi-tenancy, each tenant keeps its own connections, invisible to other tenants. In the single-tenant phase, every connection automatically belongs to the default tenant, the mechanism is identical to multi-tenancy, and enabling multi-tenancy requires no data model migration.
+
+Resource connections and provisioning modes combine under capability constraints rather than as two freely paired dropdowns. A resource connection records its provider, region, and capability list, while each provisioner declares the connection capabilities it requires; the pool creation UI first selects a connection and then enables only compatible provisioning modes, and the backend validates the pair again before calling the provisioner. For example, a GitHub private runner connection can use only self-owned machine registration or runner groups, while Aliyun spot instances must reference an Aliyun connection with ECS creation permission. An incompatible request returns `connection_provider_mismatch`, creates no pool, and never reaches instance creation. Table 8a lists the compatibility relationships.
+
+Table 8a Resource connection and provisioning mode compatibility
+
+| Resource connection | Allowed provisioning modes | Typical incompatible combination |
+|---|---|---|
+| GitHub private runner | Self-owned machine registration, user-managed runner groups | Spot, pay-as-you-go, or subscription ECS; the connection has no cloud-provider API permission |
+| Aliyun ECS | Subscription ECS, pay-as-you-go ECS, spot ECS | Self-owned machine registration or user-managed runner groups; these belong to a GitHub runner connection |
+| Aliyun ECI | Elastic Container Instance ECI | ECS spot and self-owned machine registration; these belong to the corresponding connection and provisioner |
 
 ### 5.6 Scheduling and Live Progress
 
@@ -170,12 +186,14 @@ Table 2 Core data model
 |---|---|---|
 | tenant / user / workspace / project | Multi-tenant skeleton | Tenant ID, role, workspace and project membership |
 | credential | Model credentials | Provider, endpoint URL, encrypted key, owning project |
-| connection | Resource connection (tenant-level access credential) | Provider, region, encrypted credential, status, last verification time |
+| connection | Resource connection (tenant-level access credential) | Provider, region, capability list, encrypted credential, status, last verification time |
 | dataset / dataset_version / case | Datasets and cases | Version, SWE-bench standard fields, custom JSONB |
 | metric_definition | Per-dataset metric definitions | Metric name, computation, presentation form |
-| agent_runtime / skill | Runtimes and skills | Name, version, command template, content address |
-| resource_pool / runner | Resource pool registry | Connection ID, labels, status, last heartbeat |
-| eval_run / eval_case_run | Evaluations and case executions | State machine, metric snapshots, session ID, timeout |
+| agent_runtime | Agent runtime adapters | Name, version, command template, trace format |
+| agent_asset_source | Git asset sources | Repository, source connection, default ref, scan paths, selection mode, asset types |
+| agent_asset_snapshot / agent_asset | Immutable asset snapshots and assets | Resolved commit, tree digest, OSS address, content hash |
+| resource_pool / runner | Resource pool registry | Connection ID, provisioning mode, labels, status, last heartbeat |
+| eval_run / eval_case_run | Evaluations and case executions | State machine, metric snapshots, asset snapshot, session ID, timeout |
 | session / span | Normalized traces | Parent session, span kind, attribute JSONB, tokens and cost |
 
 ## 7. Concurrency Capacity
@@ -205,11 +223,11 @@ The spot provisioner watches the dispatch queue: when queued tasks exceed baseli
 
 ### 8.3 Provisioner Extension Mechanism
 
-Adding a provisioning mode takes three steps: implement the provisioner interface (create, release, health check), register the mode definition and configuration form in the platform, and users can then prepare resources and connect them to a pool. The dispatcher schedules only by pool labels and capacity and is unaware of provisioning mode differences; exceptions such as instance reclamation and machine dropout are handled uniformly by the retry and re-registration flows. The same mechanism also covers the future execution backend switch: when self-built workers plus a queue land, the provisioner interface stays unchanged and only the registration target of execution machines changes from GitHub runners to platform workers.
+Adding a provisioning mode takes three steps: implement the provisioner interface (connection capability declaration, create, release, and health check), register the mode definition and configuration form in the platform, and users can then prepare resources and connect them to a pool. The connection capability declaration fixes the required provider and capability keys; the API validates them before saving a pool, and the configuration UI enables or disables modes from the same declaration. The dispatcher schedules only by pool labels and capacity and is unaware of provisioning mode differences; exceptions such as instance reclamation and machine dropout are handled uniformly by the retry and re-registration flows. The same mechanism also covers the future execution backend switch: when self-built workers plus a queue land, the provisioner interface stays unchanged and only the registration target of execution machines changes from GitHub runners to platform workers.
 
 ### 8.4 Resource Pool Configuration Flow
 
-Resource pool configuration follows two steps: create a connection first, then a pool. A connection is the access credential of a cloud account, tenant-level and reusable; a pool references a connection and stores only pool parameters, and one connection can back multiple pools. Take the spot elastic pool as an example: the user fills in the Alibaba Cloud key on the resource connection page and the platform performs read-only verification; then the user selects that connection and the spot mode on the resource pool page and fills in the region, vSwitch, instance type, per-instance capacity, and pool limit, and the provisioner takes over. When queued tasks exceed baseline capacity, it creates instances and registers them as ephemeral runners tagged with the pool; instances are released when tasks finish or when reclaimed, and the pool page shows capacity, online execution machines, and today's spend in real time. The self-owned machine mode is simpler: run the one-line registration script provided by the platform on the machine, and it registers as an ephemeral runner tagged with the pool. The difference between the two modes lives only inside the provisioner and is fully transparent to scheduling and evaluation.
+Resource pool configuration follows two steps: create a connection first, then a pool. A connection is the access credential of a cloud account, tenant-level and reusable; a pool references a connection and stores only pool parameters, and one connection can back multiple pools. The resource pool page exposes compatible provisioning modes only after a connection is selected: a GitHub private runner connection shows self-owned machine registration and runner groups while disabling cloud modes such as spot with an explanation that an Aliyun ECS connection is required; an Aliyun ECS connection enables only subscription, pay-as-you-go, and spot modes. Take the spot elastic pool as an example: the user fills in the Alibaba Cloud key on the resource connection page and the platform performs read-only verification; then the user selects that connection and the spot mode on the resource pool page and fills in the region, vSwitch, instance type, per-instance capacity, and pool limit, and the provisioner takes over. When queued tasks exceed baseline capacity, it creates instances and registers them as ephemeral runners tagged with the pool; instances are released when tasks finish or when reclaimed, and the pool page shows capacity, online execution machines, and today's spend in real time. The self-owned machine mode is simpler: run the one-line registration script provided by the platform on the machine, and it registers as an ephemeral runner tagged with the pool. The difference between the two modes lives only inside the provisioner and is fully transparent to scheduling and evaluation.
 
 ### 8.5 Adding a Resource Pool (Aliyun Spot Pool Example)
 
@@ -331,7 +349,7 @@ Table 6 Service call flow
 | 2 | API service, dispatcher | PostgreSQL, Redis | Database and cache protocols | Business reads and writes, cache, task locks | Every request and every dispatch |
 | 3 | Dispatcher | GitHub | Dispatch API (repository_dispatch) | Evaluation ID, case batch, callback address | Evaluation start and redispatch |
 | 4 | GitHub | Runner machines | Task assignment | Case definition and short-lived credentials | When an eligible idle runner exists |
-| 5 | In-job script | Agent sandbox | Local commands and streaming output | Prompt, development skills, model data stream | While a case executes |
+| 5 | In-job script | Agent sandbox | Local commands and streaming output | Prompt, agent asset snapshot, model data stream | While a case executes |
 | 6 | In-job script | API service | HTTPS callback | Heartbeat, case status, metric summary | During execution and on case completion |
 | 7 | In-job script | OSS | Upload API | Scoring report, artifact bundle, raw session files | On case completion |
 | 8 | Trace importer | PostgreSQL, OSS | Write and read | Normalized sessions and spans, raw file retention | After receiving the completion callback |
@@ -348,7 +366,7 @@ After logging in, an administrator enters model credentials, imports datasets, a
 
 ### 11.2 Launching an Evaluation Scenario
 
-An evaluation owner selects a dataset version, agent runtime, development skill, model credential, and resource pool on the launch page. After submission, the API service creates an evaluation and writes cases into the case table in batches; the dispatcher calls the dispatch API batch by batch, and GitHub assigns tasks to runners with the requested labels. The script on the runner pulls the task package (case definition, short-lived credentials, skill files) and drives the agent inside the sandbox until a patch is produced.
+An evaluation owner selects a dataset version, agent runtime, agent asset source, Git ref, model credential, and resource pool on the launch page. After submission, the API service resolves the ref and commit, generates an immutable asset snapshot, creates an evaluation, and writes cases into the case table in batches; the dispatcher calls the dispatch API batch by batch, and GitHub assigns tasks to runners with the requested labels. The script on the runner pulls the task package (case definition, short-lived credentials, asset snapshot) and drives the agent inside the sandbox until a patch is produced.
 
 ### 11.3 Watching Progress Scenario
 
