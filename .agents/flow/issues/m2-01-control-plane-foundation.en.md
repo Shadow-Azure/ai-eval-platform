@@ -12,6 +12,7 @@ scope:
   - backend/**
   - web/**
   - plans/**
+  - reports/**
   - tests/**
   - pyproject.toml
   - package.json
