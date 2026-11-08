@@ -46,6 +46,8 @@ jobs:
           file: backend/Dockerfile
           platforms: linux/amd64
           push: true
+          provenance: false
+          sbom: false
           tags: ${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/ai-eval-platform-api:${{ github.sha }}
       - name: Build and push web image
         id: web
@@ -55,6 +57,8 @@ jobs:
           file: web/Dockerfile
           platforms: linux/amd64
           push: true
+          provenance: false
+          sbom: false
           tags: ${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/ai-eval-platform-web:${{ github.sha }}
 
   deploy:
