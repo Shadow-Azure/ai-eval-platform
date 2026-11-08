@@ -6,7 +6,7 @@
 kind: issue
 milestone: m2
 priority: P0
-status: in-progress
+status: done
 scope:
   - .agents/flow/issues/m2-02-delivery-pipeline.*
   - .github/workflows/**
