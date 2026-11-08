@@ -1,0 +1,27 @@
+:root {
+  --primary: #1677ff;
+  --primary-dark: #0958d9;
+  --primary-soft: #e6f4ff;
+  --ink: #1f2937;
+  --ink-2: #4b5563;
+  --muted: #8792a2;
+  --line: #e7ecf3;
+  --line-strong: #d9e1ec;
+  --surface: #ffffff;
+  --surface-2: #f7f9fc;
+  --canvas: #f2f5fa;
+  --success: #16a36a;
+  --success-soft: #e9f8f1;
+  --warning: #d48806;
+  --warning-soft: #fff7e6;
+  --danger: #d92d20;
+  --danger-soft: #fff1f0;
+  --violet: #7c3aed;
+  --violet-soft: #f4edff;
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04);
+  --shadow-md: 0 10px 30px rgba(27, 46, 94, 0.08);
+  --shadow-lg: 0 24px 70px rgba(27, 46, 94, 0.18);
+  --sidebar: 236px;
+  --radius: 10px;
+  --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+}

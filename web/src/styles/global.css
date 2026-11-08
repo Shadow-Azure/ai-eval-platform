@@ -1,0 +1,261 @@
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--canvas);
+}
+
+body {
+  margin: 0;
+  min-width: 1080px;
+  color: var(--ink);
+  background:
+    radial-gradient(circle at 72% -20%, rgba(22, 119, 255, 0.12), transparent 30%),
+    var(--canvas);
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  font-size: 14px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+a {
+  color: var(--primary);
+  text-decoration: none;
+}
+
+h1,
+h2,
+h3,
+h4,
+p {
+  margin-top: 0;
+}
+
+:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+::selection {
+  color: var(--ink);
+  background: #d6e9ff;
+}
+
+.icon {
+  flex: 0 0 auto;
+  display: block;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.mono {
+  font-family: var(--mono);
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.small {
+  font-size: 11px;
+}
+
+.truncate {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.text-danger {
+  color: var(--danger);
+}
+
+.row-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  color: var(--ink-2);
+  background: #fafbfc;
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.tag-primary {
+  color: #1768c5;
+  border-color: #b9dcff;
+  background: var(--primary-soft);
+}
+
+.tag-success {
+  color: #0b7b4b;
+  border-color: #b7ead3;
+  background: var(--success-soft);
+}
+
+.tag-warning {
+  color: #9b6500;
+  border-color: #f3d38a;
+  background: var(--warning-soft);
+}
+
+.tag-danger {
+  color: #b42318;
+  border-color: #ffc1bd;
+  background: var(--danger-soft);
+}
+
+.tag-violet {
+  color: #6d28d9;
+  border-color: #d8c2ff;
+  background: var(--violet-soft);
+}
+
+.tag-neutral {
+  color: #5d6778;
+  background: #f3f5f8;
+}
+
+.status-dot {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid #b9dcff;
+  border-radius: 8px;
+  color: #135da9;
+  background: #f2f8ff;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.banner.warning {
+  color: #865b00;
+  border-color: #f3d38a;
+  background: #fffaeb;
+}
+
+.banner.danger {
+  color: #a31b13;
+  border-color: #ffc1bd;
+  background: #fff5f4;
+}
+
+.banner.success {
+  color: #0b7b4b;
+  border-color: #b7ead3;
+  background: #effaf5;
+}
+
+.banner .icon {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+.banner strong {
+  font-weight: 700;
+}
+
+.progress {
+  height: 7px;
+  overflow: hidden;
+  border-radius: 20px;
+  background: #edf1f6;
+}
+
+.progress > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #1677ff, #4096ff);
+  transition: width 0.4s ease;
+}
+
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  border-radius: 5px;
+  background: #edf1f6;
+}
+
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.7), transparent);
+  transform: translateX(-100%);
+  animation: shimmer 1.3s infinite;
+}
+
+@keyframes shimmer {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+/* Ant Design is themed through ConfigProvider; these keep its controls aligned
+   with the prototype's compact 12px control typography. */
+.ant-btn {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.ant-btn-lg {
+  font-size: 13px;
+}
+
+.ant-btn-link {
+  font-weight: 600;
+}
