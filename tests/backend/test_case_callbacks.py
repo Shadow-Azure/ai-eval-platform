@@ -515,10 +515,26 @@ def test_completion_clears_case_error_fields(eval_env, client) -> None:
     )
     assert failed.json()["retry_queued"] is True
 
-    # 重试 attempt（attempt_no=2）成功完成
+    # 重试 attempt（attempt_no=2）成功完成——token 绑定重试分片（生产形态）
+    retry_shard = (
+        env["session"].query(EvalCaseAttempt)
+        .filter(EvalCaseAttempt.eval_case_run_id == case_run_id)
+        .filter(EvalCaseAttempt.attempt_no == 2)
+        .one()
+        .shard_id
+    )
+    retry_token = issue_short_token(
+        {"eval_run_id": env["run_id"], "shard_id": retry_shard, "attempt": 2},
+        SECRET,
+        ttl_seconds=600,
+    )
     completion = completion_body(env, case_run_id, attempt=2)
     completion["event_id"] = "evt_retry_completed"
-    ok = client.post(case_url(env, case_run_id, "completed"), json=completion, headers=auth(env, attempt=2))
+    ok = client.post(
+        case_url(env, case_run_id, "completed"),
+        json=completion,
+        headers={"Authorization": f"Bearer {retry_token}"},
+    )
     assert ok.status_code == 200, ok.text
 
     env["session"].expire_all()
