@@ -8,7 +8,7 @@ Connect the platform control plane, PostgreSQL, Aliyun deployment, a fixed Linux
 kind: milestone
 id: m2
 title: 可执行底座
-status: planned
+status: done
 github:
   number: 2
   url: https://github.com/Shadow-Azure/ai-eval-platform/milestone/2

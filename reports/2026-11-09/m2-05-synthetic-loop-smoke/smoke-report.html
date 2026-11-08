@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>M2-05 合成评测执行链路 · 主机端到端集成冒烟报告</title>
+  <style>
+    :root{
+      color-scheme:light;
+      --bg:#f4f7fb;--card:#fff;--ink:#16202f;--ink2:#55637a;--ink3:#7b869b;
+      --line:#dde4ee;--accent:#2563eb;--accent-wash:#e8efff;--good:#157347;
+      --good-wash:#e7f6ee;--warn:#b45309;--warn-wash:#fff2dd;--bad:#c9282e;
+      --bad-wash:#ffeded;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:radial-gradient(circle at 8% 0,#dbe9ff 0,transparent 32rem),radial-gradient(circle at 92% 4%,#e7f1ff 0,transparent 28rem),var(--bg);color:var(--ink);font:14px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Noto Sans CJK SC",sans-serif}
+    main{max-width:1220px;margin:auto;padding:36px 28px 72px}
+    .hero{padding:30px 34px;border:1px solid #dbe3ee;border-radius:24px;background:rgba(255,255,255,.92);box-shadow:0 18px 44px #17202f12}
+    .eyebrow{margin:0;color:var(--accent);font-size:12px;font-weight:800;letter-spacing:.16em;text-transform:uppercase}
+    h1{margin:10px 0 8px;font-size:clamp(28px,4vw,44px);letter-spacing:-.04em}
+    .summary{margin:0;max-width:850px;color:var(--ink2);font-size:15px}
+    .meta{display:block;margin-top:8px;color:var(--ink3);font-size:12px}
+    .metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-top:26px}
+    .metric{padding:16px 18px;border:1px solid var(--line);border-radius:16px;background:#fafbfd}
+    .metric b{display:block;font-size:30px;letter-spacing:-.04em}
+    .metric span{display:block;margin-top:2px;color:var(--ink3);font-size:12px}
+    section{margin-top:28px}
+    .head{display:flex;align-items:baseline;justify-content:space-between;gap:16px;margin:0 4px 14px}
+    h2{margin:0;font-size:21px;letter-spacing:-.03em}
+    .head small{color:var(--ink3);white-space:nowrap}
+    .card{padding:22px;border:1px solid var(--line);border-radius:20px;background:var(--card);box-shadow:0 5px 22px #17202f08}
+    .facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin:0}
+    .fact{padding:13px 16px;border:1px solid #eceff5;border-radius:12px;background:#fafbfd}
+    .fact dt{color:var(--ink3);font-size:11px;font-weight:700}
+    .fact dd{margin:3px 0 0;overflow-wrap:anywhere}
+    code{font-family:var(--mono);font-size:.9em;color:#29456d;overflow-wrap:anywhere}
+    .status{display:inline-flex;padding:3px 8px;border-radius:999px;font-size:11px;font-weight:800;white-space:nowrap;background:#eef1f6;color:var(--ink2)}
+    .status.pass,.status.fixed{background:var(--good-wash);color:var(--good)}
+    .status.warn,.status.manual{background:var(--warn-wash);color:var(--warn)}
+    .status.fail{background:var(--bad-wash);color:var(--bad)}
+    .tableWrap{overflow:auto;border:1px solid var(--line);border-radius:18px;background:var(--card);box-shadow:0 5px 22px #17202f08}
+    table{width:100%;min-width:920px;border-collapse:collapse}
+    th,td{padding:12px 15px;border-bottom:1px solid #edf0f5;text-align:left;vertical-align:top}
+    th{position:sticky;top:0;background:#fafbfe;color:var(--ink2);font-size:12px}
+    tr:last-child td{border-bottom:0}
+    tr:hover{background:#fcfdff}
+    .num{color:var(--ink3);font-family:var(--mono);font-size:12px}
+    .evidence{color:var(--ink3);font-size:12px}
+    .issues{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px}
+    .issueCard{padding:18px 21px;border:1px solid #ffcece;border-left:5px solid var(--bad);border-radius:16px;background:#fffbfb}
+    .issueCard h3{margin:0;color:#b91c1c;font-size:16px}
+    .issueCard p{margin:8px 0;color:var(--ink2)}
+    .issueCard dt{color:var(--ink3);font-size:11px;font-weight:700}
+    .issueCard dd{margin:2px 0 0;color:var(--ink2)}
+    .tag{float:right;padding:3px 8px;border-radius:999px;background:#fee4e4;color:#9a1b21;font-size:11px;font-weight:800}
+    .fixed{display:inline-flex;gap:5px;align-items:center;margin-top:11px;padding:6px 10px;border-radius:999px;background:var(--good-wash);color:var(--good);font-size:12px;font-weight:800}
+    .shots{display:grid;grid-template-columns:repeat(auto-fit,minmax(430px,1fr));gap:16px}
+    figure{margin:0;overflow:hidden;border:1px solid var(--line);border-radius:18px;background:#fff;box-shadow:0 6px 22px #17202f08}
+    figure.wide{grid-column:1/-1}
+    img{display:block;width:100%;max-height:500px;object-fit:contain;background:#eef2f7}
+    figcaption{display:flex;gap:9px;align-items:flex-start;padding:11px 14px;border-top:1px solid #edf0f5;background:#fafbfd;color:var(--ink2);font-size:12.5px}
+    figcaption b{flex:none;color:var(--ink)}
+    .issue-shot{border-color:#ffcece}
+    .conclusion{border:1px solid #c8e5d2;border-radius:20px;background:linear-gradient(135deg,#f2fbf6,white 54%)}
+    .conclusion.warn{border-color:#f1d9a4;background:linear-gradient(135deg,#fff8e8,white 54%)}
+    .conclusion.fail{border-color:#ffc9c9;background:linear-gradient(135deg,#fff5f5,white 54%)}
+    .conclusion ul{margin:12px 0 0;padding-left:20px;color:#344155}
+    .conclusion li+li{margin-top:7px}
+    .empty{padding:20px;text-align:center;color:var(--ink3);background:#fafbfd;border:1px dashed var(--line);border-radius:12px}
+    .foot{margin-top:24px;color:var(--ink3);font-size:12px;text-align:center}
+    @media(max-width:860px){main{padding:22px 14px 52px}.hero{padding:23px}.shots{grid-template-columns:1fr}.head{align-items:flex-start;flex-direction:column;gap:4px}}
+    @media print{body{background:white}main{max-width:none;padding:0}.card,.issueCard,figure,.tableWrap{box-shadow:none;break-inside:avoid}img{max-height:420px}}
+  </style>
+</head>
+<body>
+<main>
+  <header class="hero">
+    <p class="eyebrow">PR #43 · branch agent/m2-05-synthetic-execution-loop</p>
+    <h1>M2-05 合成评测执行链路 · 主机端到端集成冒烟报告</h1>
+    <p class="summary">在固定 Runner 主机（ECS 47.98.144.243）上以 PR 分支镜像临时替换平台 api/worker 容器，从创建合成评测开始走完整真实链路：事务 outbox → repository_dispatch 真实送达 GitHub（队列拾取出现真实 run）→ manifest 端点下发字节稳定清单并签发平台短期 token → PR 分支 synthetic-task 在 Runner 主机执行确定性合成任务 → SigV4 预签名 PUT 上传结果对象至 S3 兼容存储 → started/heartbeat/uploads/completed 回调 → 平台校验对象存在与大小 → PostgreSQL 终态 completed。另覆盖鉴权 401、重复回调幂等、对象缺失/Runner 失败/派发链路三类故障注入、可重试失败生成恰好一个新 attempt、Worker 重启恢复、取消收口。验证后主机逐字节恢复原状（compose/.env diff 为空，镜像回原 digest，DB 迁移受控降级回 0002）。本环境无 GUI 自动化能力，computer-use GUI 冒烟未执行，以可执行集成测试 + CLI 驱动的真实部署验证替代。</p>
+    <span class="meta">2026-11-09 03:28–03:46 (UTC+8) · api/worker 镜像 ai-eval-platform-api:m205-pr-branch（含 0003 迁移）· 对象存储：主机 MinIO（S3 兼容 OSS 等价物，主机 .env 无真实 OSS 凭据）· 验证后恢复原 digest 4204aa85cd7c/aeffee76d0d0</span>
+    <div class="metrics"><div class="metric"><b>11</b><span>冒烟场景通过</span></div><div class="metric"><b>2/2</b><span>终态用例写回 PostgreSQL</span></div><div class="metric"><b>3</b><span>冒烟抓出并修复的缺陷</span></div><div class="metric"><b>6/6</b><span>CI 检查全绿</span></div></div>
+  </header>
+
+  <section>
+    <div class="head"><h2>Environment and Artifact</h2><small>2026-11-09 03:28–03:46 (UTC+8) · api/worker 镜像 ai-eval-platform-api:m205-pr-branch（含 0003 迁移）· 对象存储：主机 MinIO（S3 兼容 OSS 等价物，主机 .env 无真实 OSS 凭据）· 验证后恢复原 digest 4204aa85cd7c/aeffee76d0d0</small></div>
+    <article class="card"><dl class="facts"><div class="fact"><dt>平台分支</dt><dd>agent/m2-05-synthetic-execution-loop（基于 main 0b2bd37，PR #43）</dd></div><div class="fact"><dt>Runner 主机</dt><dd>Ubuntu 24.04 x86_64 · Docker 29 · compose 栈 api/web/worker/postgres/redis</dd></div><div class="fact"><dt>GitHub</dt><dd>repository_dispatch 真实送达（run 42515244428 等，main 旧版 workflow 消费）· PR 分支 workflow_dispatch 引导 run 42516469781 success</dd></div><div class="fact"><dt>对象存储</dt><dd>MinIO（S3 兼容，host 网络 :9000，bucket eval-artifacts）——主机 .env 无真实 OSS 凭据，按验收口径使用 MinIO 等价物走通真实 HTTP 链路</dd></div><div class="fact"><dt>鉴权</dt><dd>RUNNER_TASK_SECRET 注入后 case 回调仅认平台签发短期 token（X-Runner-Task-Token 经 manifest 响应头下发）</dd></div></dl></article>
+  </section>
+
+  <section>
+    <div class="head"><h2>Scenario Matrix</h2><small>10 pass · 2 fixed</small></div>
+    <div class="tableWrap"><table><table><thead><tr><th>#</th><th>场景</th><th>结果</th><th>明细</th><th>证据</th></tr></thead><tbody><tr><td class="num">01</td><td>PR 镜像部署 + 迁移 0003</td><td><span class="status pass">PASS</span></td><td>主机构建 PR 分支镜像并替换 api/worker；alembic head 升至 0003_outbox_cancelled；readyz db+redis ok；心跳 agent 每 30s 2xx 持续。</td><td class="evidence">psql: version_num=0003_outbox_cancelled<br>GET :8080/readyz → {&quot;checks&quot;:{&quot;database&quot;:&quot;ok&quot;,&quot;redis&quot;:&quot;ok&quot;}}<br>journalctl heartbeat {&quot;status&quot;:&quot;online&quot;} 连续 2xx</td></tr><tr><td class="num">02</td><td>创建合成评测（queued + 事务 outbox）</td><td><span class="status pass">PASS</span></td><td>POST /api/v1/evaluations → 201；run queued 2 cases；outbox 一行 pending 携带契约校验过的 client_payload + 字节稳定 manifest 原文 + sha256 digest。</td><td class="evidence">201 {&quot;id&quot;:&quot;85bb1a35…&quot;,&quot;status&quot;:&quot;queued&quot;,&quot;total_cases&quot;:2}<br>outbox: pending | 85bb…:shard_000:1</td></tr><tr><td class="num">03</td><td>Worker 派发 → repository_dispatch 真实送达</td><td><span class="status pass">PASS</span></td><td>worker 一轮消费 outbox（pending=1→0）；GitHub API 返回 204；Actions 出现真实 repository_dispatch run（旧版 main workflow 消费，红为预期——新版 workflow 尚在 PR 分支）；outbox 落对账信息 dispatched_at + github_status=204。</td><td class="evidence">gh run 42515244428 event=repository_dispatch created 19:28:52Z<br>outbox: sent | dispatched_at=19:28:49.500Z | gh_status=204<br>eval_event: eval.dispatched</td></tr><tr><td class="num">04</td><td>manifest 端点 + 平台短期 token 签发</td><td><span class="status pass">PASS</span></td><td>GET /runner/v1/shards/{shard}/manifest 返回字节稳定清单（与 outbox 存储文本一致）并经 X-Runner-Task-Token 下发 attempt 绑定 token；claims 含 eval_run_id/shard_id/attempt/pool_id + exp。</td><td class="evidence">curl -D → 200 + x-runner-task-token: v1.eyJhdHRl…<br>token claims: {attempt:1, eval_run_id:85bb…, shard_id:shard_000, pool_id:default, exp:…}<br>host-evidence/manifest-headers.txt</td></tr><tr><td class="num">05</td><td>Runner 真实执行 + 鉴权（M2-04 遗留 b）</td><td><span class="status fixed">FIXED</span></td><td>PR 分支 synthetic-task 以 RUNNER_PRESIGN_UPLOADS=1、无任何环境密钥执行：拉 manifest → 取 token → started/heartbeat 回调 200。首跑 401 暴露缺陷（case 路由残留 runner 面 token 依赖），修复后（token 统一）平台 token 直通；无 token 请求 401 runner_token_invalid。</td><td class="evidence">修复前：started 回调失败：HTTP 401（host-evidence/runner-side.out 首次）<br>修复后：{&quot;status&quot;:&quot;completed&quot;} exit=0<br>S08a 无 token → 401 runner_token_invalid（host-evidence/evidence/s08a-no-token.txt）</td></tr><tr><td class="num">06</td><td>OSS 预签名上传 + 对象校验</td><td><span class="status fixed">FIXED</span></td><td>upload-urls 换取平台自有对象键 + 900s 预签名 PUT → 真实 HTTP PUT 至 MinIO → uploads 回调 → completed 时平台 HEAD 校验对象存在与大小。首跑 PUT 403 暴露 SigV4 凭据斜杠未编码缺陷，修复后上传成功（2 对象/case：score 287B + trace 152B）。</td><td class="evidence">修复前：对象上传失败：HTTP 403 SignatureDoesNotMatch<br>修复后：objects=[score sha256=cd2b…8bfd size=287, trace sha256=31b7…c857 size=152]<br>平台 HEAD 校验通过 → case.completed 落库（PostgreSQL eval_event 含 score_manifest）</td></tr><tr><td class="num">07</td><td>重复回调幂等</td><td><span class="status pass">PASS</span></td><td>以相同 event_id 重放 completed 回调 → 200 deduped=true，succeeded_count 与 run 状态不变（2 completed）。</td><td class="evidence">replay → {&quot;deduped&quot;:true,&quot;status&quot;:&quot;succeeded&quot;}<br>counters before=[2 completed] after=[2 completed]（host-evidence/evidence/s07-duplicate.txt）</td></tr><tr><td class="num">08</td><td>故障注入：对象缺失 → 可诊断失败态</td><td><span class="status pass">PASS</span></td><td>completed 指向不存在对象 → 409 artifact_missing；attempt artifact_missing、case failed、run failed（单用例无成功结果）——绝不标完整成功，也不永久 queued。</td><td class="evidence">409 {&quot;code&quot;:&quot;artifact_missing&quot;}<br>run2: status=failed failed:1 case:failed artifact_missing（host-evidence/evidence/s08b-missing.txt）</td></tr><tr><td class="num">09</td><td>故障注入：Runner 失败 + 重试语义</td><td><span class="status pass">PASS</span></td><td>可重试失败 → retry_queued=true，恰好生成一个新 attempt（1:failed / 2:queued）+ 一条重试 dispatch（sent）；attempt 2 非可重试失败 → run failed 终态，无 attempt 3。</td><td class="evidence">attempts: 1:failed 2:queued；outbox 重试行 sent（host-evidence/evidence/s08c-retry.txt)<br>permanent → {&quot;retry_queued&quot;:false}；run3: failed attempts:2（host-evidence/evidence/s08d-terminal.txt）</td></tr><tr><td class="num">10</td><td>Worker 重启恢复（不重复 attempt）</td><td><span class="status pass">PASS</span></td><td>worker 暂停期间创建评测（outbox pending）→ 恢复后恰好派发一次（outbox attempts=1，attempt 行=2 即 2 case × 1），无重复派发、无重复 attempt。</td><td class="evidence">docker pause/unpause；attempts=2；outbox attempts=1（host-evidence/evidence/s09-restart.txt）<br>worker log: dispatch sent=1 retried=0 failed=0 recovered=0</td></tr><tr><td class="num">11</td><td>取消收口 + 恢复原状</td><td><span class="status pass">PASS</span></td><td>取消非终态评测 → run cancelled、pending outbox 行 cancelled（对账证据保留 last_error=run_cancelled）；随后恢复主机：compose 与 .env 逐字节还原（diff 空）、api/worker/web 回原 ACR digest、DB 受控降级 0003→0002（smoke cancelled 行先转 failed 保 CHECK 兼容）、MinIO 容器移除、readyz ok、心跳恢复 2xx。</td><td class="evidence">POST cancel → 200 status=cancelled；outbox=cancelled<br>COMPOSE-RESTORED-BYTE-EQUAL / ENV-RESTORED-BYTE-EQUAL<br>api-image-id=4204aa85cd7c（原）· readyz db+redis ok · heartbeat online</td></tr><tr><td class="num">12</td><td>GitHub 队列拾取 + 新 workflow 引导（M2-04 遗留 a）</td><td><span class="status pass">PASS</span></td><td>真实 repository_dispatch 被 GitHub 队列接受并落到 fixed-linux-eval（main 旧版 workflow 消费，出现真实 run——队列拾取一跳激活）；PR 分支新 workflow 以 workflow_dispatch 触发，bootstrap job 在真实 Runner 上调平台 API 创建评测（db32ec0d，queued）并由平台派发（outbox sent gh=204）。repository_dispatch 的 main run 红色为预期：新版 workflow 合入 main 后替换，届时闭环由合并后部署接管。</td><td class="evidence">run 42516469781 workflow_dispatch @PR-branch → success<br>run log: evaluation created: db32ec0d… status=queued<br>outbox: db32ec0d…:shard_000:1 sent gh=204</td></tr></tbody></table></table></div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Issues and Observations</h2><small>P1 case 回调路由残留 runner 面 token 依赖（修复于 PR 内）<br>P1 SigV4 X-Amz-Credential 斜杠未编码（修复于 PR 内）<br>P3 重试成功后 case 行残留旧失败 error_code（修复于 PR 内）<br>P2 repository_dispatch 的 main run 为红色（预期，合并后消解）<br>P3 真实 Aliyun OSS 凭据不可用，对象存储使用 MinIO 等价物<br>P3 GUI 冒烟未执行</small></div>
+    <div class="issues"><article class="issueCard"><span class="tag">P1</span><h3>case 回调路由残留 runner 面 token 依赖（修复于 PR 内）</h3><dl><div><dt>现象</dt><dd>RUNNER_HEARTBEAT_TOKEN 配置后，平台短期 token 的 started 回调被 401（require_runner_token 先于 require_case_token 执行）。</dd></div><div><dt>修复</dt><dd>移除 case 路由的 require_runner_token；case 端点只认 RUNNER_TASK_SECRET 配置下的平台签发 token（M2-04 遗留 b 收口）；新增统一鉴权测试。</dd></div></dl><div class="fixed">FIXED（commit 204fc91，重部署后 PASS）</div></article><article class="issueCard"><span class="tag">P1</span><h3>SigV4 X-Amz-Credential 斜杠未编码（修复于 PR 内）</h3><dl><div><dt>现象</dt><dd>预签名 PUT 被真实 MinIO 拒签（SignatureDoesNotMatch 403）——规范查询串中凭据值的 scope 斜杠必须编码为 %2F。</dd></div><div><dt>修复</dt><dd>canonical 查询与最终 URL 统一使用编码后的凭据值；对象存储测试新增 X-Amz-Credential=ak%2F… 断言。</dd></div></dl><div class="fixed">FIXED（commit 5d0fc02，重部署后 PASS）</div></article><article class="issueCard"><span class="tag">P3</span><h3>重试成功后 case 行残留旧失败 error_code（修复于 PR 内）</h3><dl><div><dt>现象</dt><dd>case-1 经 attempt 2 成功后 error_code 仍为 upload_failed。</dd></div><div><dt>修复</dt><dd>成功完成回调清空 case 行 error_code/error_summary；失败历史保留在 attempt 行。</dd></div></dl><div class="fixed">FIXED（commit 2e7b0c9）</div></article><article class="issueCard"><span class="tag">P2</span><h3>repository_dispatch 的 main run 为红色（预期，合并后消解）</h3><dl><div><dt>原因</dt><dd>repository_dispatch 触发的 workflow 取自默认分支（main）＝旧版 eval-shard.yml（演示 token/本地清单），对新平台回调 401；PR 分支上的新版 workflow 只能由 workflow_dispatch 按 ref 触发。</dd></div><div><dt>已验证</dt><dd>新版 workflow 的引导跳已在 PR 分支真实跑通（run 42516469781 success）；合入 main 后 repository_dispatch 自动消费新版，无需额外动作。</dd></div></dl><div class="fixed">合并后消解</div></article><article class="issueCard"><span class="tag">P3</span><h3>真实 Aliyun OSS 凭据不可用，对象存储使用 MinIO 等价物</h3><dl><div><dt>原因</dt><dd>主机 .env 无 S3_ENDPOINT/S3_ACCESS_KEY/S3_SECRET_KEY（全盘检索无 OSS 凭据）；按验收『本机测试可用 mock/MinIO 等价物』执行。</dd></div><div><dt>已覆盖</dt><dd>预签名 PUT/HEAD 校验为真实 HTTP SigV4 链路（与 Aliyun OSS S3 兼容端点同一协议族）；OSS region 差异由 settings.s3_region 配置承载，接入真实 OSS 时仅需 .env 注入。</dd></div></dl><div class="fixed">等价物替代（验收允许）</div></article><article class="issueCard"><span class="tag">P3</span><h3>GUI 冒烟未执行</h3><dl><div><dt>原因</dt><dd>本执行环境无 computer-use GUI 自动化能力。</dd></div><div><dt>替代覆盖</dt><dd>Web 端 /evals 视图为纯数据展示（列表/详情/时间线），其数据链路由 API 级端到端冒烟与 108 项 pytest 覆盖。</dd></div></dl><div class="fixed">以真实部署验证替代</div></article></div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Evidence</h2><small>no screenshots</small></div>
+    <div class="shots"><div class="empty">No screenshots were attached.</div></div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Automated Coverage Assessment</h2><small>no coverage assessment</small></div>
+    <div class="tableWrap"><table><div class="empty">No coverage assessment was attached.</div></table></div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Conclusion</h2><small></small></div>
+    <article class="card conclusion info"><p><strong></strong></p></article>
+  </section>
+
+  <p class="foot">M2-05 · reports/2026-11-09/m2-05-synthetic-loop-smoke/ · 原始证据见 host-evidence/（manifest 头、回调输出、注入结果、恢复 diff）</p>
+</main>
+</body>
+</html>

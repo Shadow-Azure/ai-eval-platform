@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { AppShell } from "../components/AppShell";
 import { PlaceholderPage } from "../components/PlaceholderPage";
+import { EvalsPage } from "../pages/EvalsPage";
 import { LoginPage } from "../pages/LoginPage";
 import { NotFoundPage } from "../pages/NotFoundPage";
 import { OverviewPage } from "../pages/OverviewPage";
@@ -31,12 +32,6 @@ const placeholders = [
     description: "管理资源连接、供给模式与 Runner 在线容量。",
   },
   {
-    path: "evals",
-    eyebrow: "Evaluation · Eval runs",
-    title: "评测任务",
-    description: "查看评测运行、用例进展、结果快照与会话轨迹。",
-  },
-  {
     path: "evals/new",
     eyebrow: "Evaluation · Launch",
     title: "发起评测",
@@ -57,6 +52,7 @@ export function AppRoutes() {
       <Route element={<AppShell />}>
         <Route index element={<Navigate to="/overview" replace />} />
         <Route path="/overview" element={<OverviewPage />} />
+        <Route path="/evals" element={<EvalsPage />} />
         {placeholders.map((page) => (
           <Route
             key={page.path}

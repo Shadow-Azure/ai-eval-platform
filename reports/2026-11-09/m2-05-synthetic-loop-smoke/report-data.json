@@ -1,0 +1,101 @@
+{
+  "title": "M2-05 合成评测执行链路 · 主机端到端集成冒烟报告",
+  "eyebrow": "PR #43 · branch agent/m2-05-synthetic-execution-loop",
+  "summary": "在固定 Runner 主机（ECS 47.98.144.243）上以 PR 分支镜像临时替换平台 api/worker 容器，从创建合成评测开始走完整真实链路：事务 outbox → repository_dispatch 真实送达 GitHub（队列拾取出现真实 run）→ manifest 端点下发字节稳定清单并签发平台短期 token → PR 分支 synthetic-task 在 Runner 主机执行确定性合成任务 → SigV4 预签名 PUT 上传结果对象至 S3 兼容存储 → started/heartbeat/uploads/completed 回调 → 平台校验对象存在与大小 → PostgreSQL 终态 completed。另覆盖鉴权 401、重复回调幂等、对象缺失/Runner 失败/派发链路三类故障注入、可重试失败生成恰好一个新 attempt、Worker 重启恢复、取消收口。验证后主机逐字节恢复原状（compose/.env diff 为空，镜像回原 digest，DB 迁移受控降级回 0002）。本环境无 GUI 自动化能力，computer-use GUI 冒烟未执行，以可执行集成测试 + CLI 驱动的真实部署验证替代。",
+  "meta": "2026-11-09 03:28–03:46 (UTC+8) · api/worker 镜像 ai-eval-platform-api:m205-pr-branch（含 0003 迁移）· 对象存储：主机 MinIO（S3 兼容 OSS 等价物，主机 .env 无真实 OSS 凭据）· 验证后恢复原 digest 4204aa85cd7c/aeffee76d0d0",
+  "metrics": [
+    { "value": "11", "label": "冒烟场景通过" },
+    { "value": "2/2", "label": "终态用例写回 PostgreSQL" },
+    { "value": "3", "label": "冒烟抓出并修复的缺陷" },
+    { "value": "6/6", "label": "CI 检查全绿" }
+  ],
+  "facts": [
+    { "label": "平台分支", "value": "agent/m2-05-synthetic-execution-loop（基于 main 0b2bd37，PR #43）" },
+    { "label": "Runner 主机", "value": "Ubuntu 24.04 x86_64 · Docker 29 · compose 栈 api/web/worker/postgres/redis" },
+    { "label": "GitHub", "value": "repository_dispatch 真实送达（run 42515244428 等，main 旧版 workflow 消费）· PR 分支 workflow_dispatch 引导 run 42516469781 success" },
+    { "label": "对象存储", "value": "MinIO（S3 兼容，host 网络 :9000，bucket eval-artifacts）——主机 .env 无真实 OSS 凭据，按验收口径使用 MinIO 等价物走通真实 HTTP 链路" },
+    { "label": "鉴权", "value": "RUNNER_TASK_SECRET 注入后 case 回调仅认平台签发短期 token（X-Runner-Task-Token 经 manifest 响应头下发）" }
+  ],
+  "matrix": {
+    "columns": ["#", "场景", "结果", "明细", "证据"],
+    "rows": [
+      { "id": "01", "name": "PR 镜像部署 + 迁移 0003", "status": { "kind": "pass", "label": "PASS" }, "detail": "主机构建 PR 分支镜像并替换 api/worker；alembic head 升至 0003_outbox_cancelled；readyz db+redis ok；心跳 agent 每 30s 2xx 持续。", "evidence": ["psql: version_num=0003_outbox_cancelled", "GET :8080/readyz → {\"checks\":{\"database\":\"ok\",\"redis\":\"ok\"}}", "journalctl heartbeat {\"status\":\"online\"} 连续 2xx"] },
+      { "id": "02", "name": "创建合成评测（queued + 事务 outbox）", "status": { "kind": "pass", "label": "PASS" }, "detail": "POST /api/v1/evaluations → 201；run queued 2 cases；outbox 一行 pending 携带契约校验过的 client_payload + 字节稳定 manifest 原文 + sha256 digest。", "evidence": ["201 {\"id\":\"85bb1a35…\",\"status\":\"queued\",\"total_cases\":2}", "outbox: pending | 85bb…:shard_000:1"] },
+      { "id": "03", "name": "Worker 派发 → repository_dispatch 真实送达", "status": { "kind": "pass", "label": "PASS" }, "detail": "worker 一轮消费 outbox（pending=1→0）；GitHub API 返回 204；Actions 出现真实 repository_dispatch run（旧版 main workflow 消费，红为预期——新版 workflow 尚在 PR 分支）；outbox 落对账信息 dispatched_at + github_status=204。", "evidence": ["gh run 42515244428 event=repository_dispatch created 19:28:52Z", "outbox: sent | dispatched_at=19:28:49.500Z | gh_status=204", "eval_event: eval.dispatched"] },
+      { "id": "04", "name": "manifest 端点 + 平台短期 token 签发", "status": { "kind": "pass", "label": "PASS" }, "detail": "GET /runner/v1/shards/{shard}/manifest 返回字节稳定清单（与 outbox 存储文本一致）并经 X-Runner-Task-Token 下发 attempt 绑定 token；claims 含 eval_run_id/shard_id/attempt/pool_id + exp。", "evidence": ["curl -D → 200 + x-runner-task-token: v1.eyJhdHRl…", "token claims: {attempt:1, eval_run_id:85bb…, shard_id:shard_000, pool_id:default, exp:…}", "host-evidence/manifest-headers.txt"] },
+      { "id": "05", "name": "Runner 真实执行 + 鉴权（M2-04 遗留 b）", "status": { "kind": "fixed", "label": "FIXED" }, "detail": "PR 分支 synthetic-task 以 RUNNER_PRESIGN_UPLOADS=1、无任何环境密钥执行：拉 manifest → 取 token → started/heartbeat 回调 200。首跑 401 暴露缺陷（case 路由残留 runner 面 token 依赖），修复后（token 统一）平台 token 直通；无 token 请求 401 runner_token_invalid。", "evidence": ["修复前：started 回调失败：HTTP 401（host-evidence/runner-side.out 首次）", "修复后：{\"status\":\"completed\"} exit=0", "S08a 无 token → 401 runner_token_invalid（host-evidence/evidence/s08a-no-token.txt）"] },
+      { "id": "06", "name": "OSS 预签名上传 + 对象校验", "status": { "kind": "fixed", "label": "FIXED" }, "detail": "upload-urls 换取平台自有对象键 + 900s 预签名 PUT → 真实 HTTP PUT 至 MinIO → uploads 回调 → completed 时平台 HEAD 校验对象存在与大小。首跑 PUT 403 暴露 SigV4 凭据斜杠未编码缺陷，修复后上传成功（2 对象/case：score 287B + trace 152B）。", "evidence": ["修复前：对象上传失败：HTTP 403 SignatureDoesNotMatch", "修复后：objects=[score sha256=cd2b…8bfd size=287, trace sha256=31b7…c857 size=152]", "平台 HEAD 校验通过 → case.completed 落库（PostgreSQL eval_event 含 score_manifest）"] },
+      { "id": "07", "name": "重复回调幂等", "status": { "kind": "pass", "label": "PASS" }, "detail": "以相同 event_id 重放 completed 回调 → 200 deduped=true，succeeded_count 与 run 状态不变（2 completed）。", "evidence": ["replay → {\"deduped\":true,\"status\":\"succeeded\"}", "counters before=[2 completed] after=[2 completed]（host-evidence/evidence/s07-duplicate.txt）"] },
+      { "id": "08", "name": "故障注入：对象缺失 → 可诊断失败态", "status": { "kind": "pass", "label": "PASS" }, "detail": "completed 指向不存在对象 → 409 artifact_missing；attempt artifact_missing、case failed、run failed（单用例无成功结果）——绝不标完整成功，也不永久 queued。", "evidence": ["409 {\"code\":\"artifact_missing\"}", "run2: status=failed failed:1 case:failed artifact_missing（host-evidence/evidence/s08b-missing.txt）"] },
+      { "id": "09", "name": "故障注入：Runner 失败 + 重试语义", "status": { "kind": "pass", "label": "PASS" }, "detail": "可重试失败 → retry_queued=true，恰好生成一个新 attempt（1:failed / 2:queued）+ 一条重试 dispatch（sent）；attempt 2 非可重试失败 → run failed 终态，无 attempt 3。", "evidence": ["attempts: 1:failed 2:queued；outbox 重试行 sent（host-evidence/evidence/s08c-retry.txt)", "permanent → {\"retry_queued\":false}；run3: failed attempts:2（host-evidence/evidence/s08d-terminal.txt）"] },
+      { "id": "10", "name": "Worker 重启恢复（不重复 attempt）", "status": { "kind": "pass", "label": "PASS" }, "detail": "worker 暂停期间创建评测（outbox pending）→ 恢复后恰好派发一次（outbox attempts=1，attempt 行=2 即 2 case × 1），无重复派发、无重复 attempt。", "evidence": ["docker pause/unpause；attempts=2；outbox attempts=1（host-evidence/evidence/s09-restart.txt）", "worker log: dispatch sent=1 retried=0 failed=0 recovered=0"] },
+      { "id": "11", "name": "取消收口 + 恢复原状", "status": { "kind": "pass", "label": "PASS" }, "detail": "取消非终态评测 → run cancelled、pending outbox 行 cancelled（对账证据保留 last_error=run_cancelled）；随后恢复主机：compose 与 .env 逐字节还原（diff 空）、api/worker/web 回原 ACR digest、DB 受控降级 0003→0002（smoke cancelled 行先转 failed 保 CHECK 兼容）、MinIO 容器移除、readyz ok、心跳恢复 2xx。", "evidence": ["POST cancel → 200 status=cancelled；outbox=cancelled", "COMPOSE-RESTORED-BYTE-EQUAL / ENV-RESTORED-BYTE-EQUAL", "api-image-id=4204aa85cd7c（原）· readyz db+redis ok · heartbeat online"] },
+      { "id": "12", "name": "GitHub 队列拾取 + 新 workflow 引导（M2-04 遗留 a）", "status": { "kind": "pass", "label": "PASS" }, "detail": "真实 repository_dispatch 被 GitHub 队列接受并落到 fixed-linux-eval（main 旧版 workflow 消费，出现真实 run——队列拾取一跳激活）；PR 分支新 workflow 以 workflow_dispatch 触发，bootstrap job 在真实 Runner 上调平台 API 创建评测（db32ec0d，queued）并由平台派发（outbox sent gh=204）。repository_dispatch 的 main run 红色为预期：新版 workflow 合入 main 后替换，届时闭环由合并后部署接管。", "evidence": ["run 42516469781 workflow_dispatch @PR-branch → success", "run log: evaluation created: db32ec0d… status=queued", "outbox: db32ec0d…:shard_000:1 sent gh=204"] }
+    ]
+  },
+  "issues": [
+    {
+      "severity": "P1",
+      "title": "case 回调路由残留 runner 面 token 依赖（修复于 PR 内）",
+      "facts": [
+        { "label": "现象", "value": "RUNNER_HEARTBEAT_TOKEN 配置后，平台短期 token 的 started 回调被 401（require_runner_token 先于 require_case_token 执行）。" },
+        { "label": "修复", "value": "移除 case 路由的 require_runner_token；case 端点只认 RUNNER_TASK_SECRET 配置下的平台签发 token（M2-04 遗留 b 收口）；新增统一鉴权测试。" }
+      ],
+      "state": { "kind": "fixed", "label": "FIXED（commit 204fc91，重部署后 PASS）" }
+    },
+    {
+      "severity": "P1",
+      "title": "SigV4 X-Amz-Credential 斜杠未编码（修复于 PR 内）",
+      "facts": [
+        { "label": "现象", "value": "预签名 PUT 被真实 MinIO 拒签（SignatureDoesNotMatch 403）——规范查询串中凭据值的 scope 斜杠必须编码为 %2F。" },
+        { "label": "修复", "value": "canonical 查询与最终 URL 统一使用编码后的凭据值；对象存储测试新增 X-Amz-Credential=ak%2F… 断言。" }
+      ],
+      "state": { "kind": "fixed", "label": "FIXED（commit 5d0fc02，重部署后 PASS）" }
+    },
+    {
+      "severity": "P3",
+      "title": "重试成功后 case 行残留旧失败 error_code（修复于 PR 内）",
+      "facts": [
+        { "label": "现象", "value": "case-1 经 attempt 2 成功后 error_code 仍为 upload_failed。" },
+        { "label": "修复", "value": "成功完成回调清空 case 行 error_code/error_summary；失败历史保留在 attempt 行。" }
+      ],
+      "state": { "kind": "fixed", "label": "FIXED（commit 2e7b0c9）" }
+    },
+    {
+      "severity": "P2",
+      "title": "repository_dispatch 的 main run 为红色（预期，合并后消解）",
+      "facts": [
+        { "label": "原因", "value": "repository_dispatch 触发的 workflow 取自默认分支（main）＝旧版 eval-shard.yml（演示 token/本地清单），对新平台回调 401；PR 分支上的新版 workflow 只能由 workflow_dispatch 按 ref 触发。" },
+        { "label": "已验证", "value": "新版 workflow 的引导跳已在 PR 分支真实跑通（run 42516469781 success）；合入 main 后 repository_dispatch 自动消费新版，无需额外动作。" }
+      ],
+      "state": { "kind": "warn", "label": "合并后消解" }
+    },
+    {
+      "severity": "P3",
+      "title": "真实 Aliyun OSS 凭据不可用，对象存储使用 MinIO 等价物",
+      "facts": [
+        { "label": "原因", "value": "主机 .env 无 S3_ENDPOINT/S3_ACCESS_KEY/S3_SECRET_KEY（全盘检索无 OSS 凭据）；按验收『本机测试可用 mock/MinIO 等价物』执行。" },
+        { "label": "已覆盖", "value": "预签名 PUT/HEAD 校验为真实 HTTP SigV4 链路（与 Aliyun OSS S3 兼容端点同一协议族）；OSS region 差异由 settings.s3_region 配置承载，接入真实 OSS 时仅需 .env 注入。" }
+      ],
+      "state": { "kind": "warn", "label": "等价物替代（验收允许）" }
+    },
+    {
+      "severity": "P3",
+      "title": "GUI 冒烟未执行",
+      "facts": [
+        { "label": "原因", "value": "本执行环境无 computer-use GUI 自动化能力。" },
+        { "label": "替代覆盖", "value": "Web 端 /evals 视图为纯数据展示（列表/详情/时间线），其数据链路由 API 级端到端冒烟与 108 项 pytest 覆盖。" }
+      ],
+      "state": { "kind": "manual", "label": "以真实部署验证替代" }
+    }
+  ],
+  "coverage": {
+    "automated": "pytest 108 passed 1 skipped（CI PostgreSQL 真库跑 migration；本地 sqlite 双侧）· node --test 53 passed（契约/runner 行为/workflow 钉住）· web typecheck+build 绿 · verify:flow/--diff/online 与 verify:docs 全绿",
+    "gaps": "真实 Aliyun OSS 未打（凭据缺失，MinIO 等价）；oidc token 换发未做（HMAC 短期 token 替代，M3+ 演进）；SSE 未涉及（M3 事件流）。"
+  },
+  "conclusion": {
+    "status": { "kind": "pass", "label": "PASS" },
+    "statement": "合成评测全链路在真实主机上闭环成立：创建 → 派发（真实 GitHub 送达 + 队列拾取）→ Runner 执行 → 预签名对象上传 → 回调状态持久化 → PostgreSQL 终态，重复/乱序/重启/三类故障注入均符合验收。冒烟抓出的 3 个缺陷已在 PR 内以 RED→GREEN 修复并复验。"
+  },
+  "footer": "M2-05 · reports/2026-11-09/m2-05-synthetic-loop-smoke/ · 原始证据见 host-evidence/（manifest 头、回调输出、注入结果、恢复 diff）"
+}

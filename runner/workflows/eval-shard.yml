@@ -1,6 +1,9 @@
 # Reference template for the private runner repository.
-# M2-05 activates a copy under .github/workflows; M2-04 replaces the demo
-# secrets below with OIDC/short-lived credentials. Do not commit real values.
+# M2-05: the platform owns dispatch/token/OSS — the workflow only validates
+# the dispatch payload and executes the synthetic task. The short-lived task
+# token arrives with the manifest (X-Runner-Task-Token) and never enters the
+# workflow env; presigned PUTs carry the object-store credential in the URL.
+# Do not commit real values here.
 name: eval-shard
 
 on:
@@ -12,7 +15,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: eval-shard-${{ github.event.client_payload.shard_id }}
+  group: eval-shard-${{ github.event.client_payload.dispatch_key }}
   cancel-in-progress: false
 
 jobs:
@@ -28,8 +31,7 @@ jobs:
       - name: Validate and execute synthetic shard
         env:
           DISPATCH_PAYLOAD: ${{ toJson(github.event.client_payload) }}
-          RUNNER_TASK_TOKEN: ${{ secrets.RUNNER_TASK_TOKEN }}
-          RUNNER_TASK_SECRET: ${{ secrets.RUNNER_TASK_SECRET }}
+          RUNNER_PRESIGN_UPLOADS: "1"
           RUNNER_STATE_DIR: ${{ runner.temp }}/eval-state
           RUNNER_OBJECT_ROOT: ${{ runner.temp }}/eval-objects
         run: |

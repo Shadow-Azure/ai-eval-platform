@@ -1,0 +1,23 @@
+{
+  "attempt": 1,
+  "callback_base_url": "http://127.0.0.1:8000",
+  "case_timeout_seconds": 3600,
+  "cases": [
+    {
+      "case_key": "smoke-case-1",
+      "case_run_id": "d9827f46-4a3f-4eb7-837c-ed3bcafad7d0",
+      "dataset_case_id": "smoke-case-1"
+    },
+    {
+      "case_key": "smoke-case-2",
+      "case_run_id": "c2b2659a-7d90-4f53-853a-17e2ae2dcda1",
+      "dataset_case_id": "smoke-case-2"
+    }
+  ],
+  "deadline": "2026-11-08T19:58:48.718429Z",
+  "dispatch_key": "85bb1a35-c1e6-458a-a85b-2ee36378808c:shard_000:1",
+  "eval_run_id": "85bb1a35-c1e6-458a-a85b-2ee36378808c",
+  "max_attempts": 2,
+  "schema_version": "1.0",
+  "shard_id": "shard_000"
+}

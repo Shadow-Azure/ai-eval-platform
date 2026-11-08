@@ -10,6 +10,7 @@ const schemaDir = join(here, "..", "..", "runner-contract", "schemas", "v1");
 const FILES = {
   dispatch: "dispatch.schema.json",
   manifest: "task-manifest.schema.json",
+  started: "started.schema.json",
   heartbeat: "heartbeat.schema.json",
   upload: "upload-manifest.schema.json",
   completion: "completion.schema.json",
@@ -34,6 +35,7 @@ export function validatePayload(kind, payload) {
 
 export const validateDispatch = (payload) => validatePayload("dispatch", payload);
 export const validateManifest = (payload) => validatePayload("manifest", payload);
+export const validateStarted = (payload) => validatePayload("started", payload);
 export const validateHeartbeat = (payload) => validatePayload("heartbeat", payload);
 export const validateUpload = (payload) => validatePayload("upload", payload);
 export const validateCompletion = (payload) => validatePayload("completion", payload);

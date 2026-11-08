@@ -1,0 +1,2 @@
+permanent fail -> {"ok":true,"case_run_id":"beeac6b4-81b5-4ab0-bf2c-01ed79f5687d","runner_id":null,"runner_status":null,"run_id":"5741ae70-fddf-4641-bce3-b050c13d0d9a","deduped":false,"status":"failed","retry_queued":false}
+run3: failed failed: 1 attempts: 2
