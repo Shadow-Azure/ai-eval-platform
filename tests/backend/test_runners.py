@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 from app.config import get_settings
+from app.defaults import DEFAULT_PROJECT_ID, DEFAULT_TENANT_ID
 from app.models import Runner
 from app.seed import ensure_default_scope
 from fastapi.testclient import TestClient
@@ -525,3 +526,44 @@ def test_worker_sweep_once_uses_configured_timeout(
     backdate_last_heartbeat(seeded, seconds=130)
     with Session(engine) as worker_session:
         assert sweep_once(worker_session) == 1
+
+
+def test_heartbeat_adopts_runner_row_left_in_stale_pool(
+    seeded: Session, client: TestClient
+) -> None:
+    """A leftover row for the same machine under another pool must be adopted,
+    not duplicated (seen with data left by an earlier M2-04 attempt)."""
+    from app.models import ResourcePool
+    from app.services.runners import ensure_fixed_pool
+
+    old_pool = ResourcePool(
+        tenant_id=str(DEFAULT_TENANT_ID),
+        project_id=str(DEFAULT_PROJECT_ID),
+        name="stale-attempt-pool",
+        provider_key="fixed",
+        labels_json={},
+        status="active",
+    )
+    seeded.add(old_pool)
+    seeded.flush()
+    stale = Runner(
+        tenant_id=str(DEFAULT_TENANT_ID),
+        resource_pool_id=old_pool.id,
+        provider_runner_id="fixed-linux-eval",
+        name="fixed-linux-eval",
+        labels_json=[],
+        status="offline",
+    )
+    seeded.add(stale)
+    seeded.commit()
+
+    response = client.post("/runner/v1/runners/heartbeat", json=agent_payload())
+    assert response.status_code == 200
+
+    seeded.expire_all()
+    rows = seeded.query(Runner).filter(Runner.provider_runner_id == "fixed-linux-eval").all()
+    assert len(rows) == 1
+    adopted = rows[0]
+    assert adopted.resource_pool_id == ensure_fixed_pool(seeded).id
+    assert adopted.status == "online"
+    assert json.loads(json.dumps(adopted.labels_json)) == ["self-hosted", "linux", "eval"]

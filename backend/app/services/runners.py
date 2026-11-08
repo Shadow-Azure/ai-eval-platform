@@ -126,6 +126,16 @@ def record_runner_heartbeat(
 
     runner = _find_runner(session, pool, runner_id)
     if runner is None:
+        # A row for the same machine may exist under a stale pool (e.g. data
+        # left by an earlier deployment attempt): adopt it instead of
+        # duplicating the runner across pools.
+        runner = session.scalar(
+            select(Runner).where(
+                Runner.tenant_id == str(DEFAULT_TENANT_ID),
+                Runner.provider_runner_id == runner_id,
+            )
+        )
+    if runner is None:
         runner = Runner(
             tenant_id=str(DEFAULT_TENANT_ID),
             resource_pool_id=pool.id,
@@ -137,6 +147,7 @@ def record_runner_heartbeat(
         )
         session.add(runner)
     else:
+        runner.resource_pool_id = pool.id
         runner.name = name
         runner.labels_json = labels
         if runner.deregistered_at is not None:
