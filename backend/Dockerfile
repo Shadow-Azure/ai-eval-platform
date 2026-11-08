@@ -10,6 +10,8 @@ WORKDIR /app
 
 COPY pyproject.toml ./
 COPY backend ./backend
+# Runner contract schemas are loaded at runtime by app/runner_contracts.py.
+COPY runner-contract ./runner-contract
 
 ARG PIP_INDEX_URL=https://pypi.org/simple
 RUN pip install --no-cache-dir --index-url "${PIP_INDEX_URL}" .

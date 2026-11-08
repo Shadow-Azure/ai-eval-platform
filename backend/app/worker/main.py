@@ -1,7 +1,8 @@
 """Minimal worker loop for M2-01.
 
-The dispatcher and ingestion workers arrive with M2-05; this process only proves
-that a second long-running container shares the database and can be health-checked.
+The dispatcher and ingestion workers arrive with M2-05; this process also runs
+the M2-04 runner offline sweep each poll so stale fixed runners flip to
+offline even when nobody queries the API.
 """
 
 from __future__ import annotations
@@ -12,12 +13,21 @@ from pathlib import Path
 from types import FrameType
 
 from sqlalchemy import func, select
+from sqlalchemy.orm import Session
 
 from ..config import get_settings
 from ..db import SessionLocal
 from ..models import Outbox
+from ..services.runners import sweep_stale_runners
 
 _STOP = False
+
+
+def sweep_once(session: Session) -> int:
+    """One runner offline sweep with the configured heartbeat timeout."""
+
+    settings = get_settings()
+    return sweep_stale_runners(session, timeout_seconds=settings.runner_heartbeat_timeout_seconds)
 
 
 def _handle_signal(_signum: int, _frame: FrameType | None) -> None:
@@ -46,6 +56,13 @@ def main() -> int:
         except Exception as exc:  # pragma: no cover - retried on the next loop
             print(f"worker: database check failed: {exc}", flush=True)
             pending = -1
+        try:
+            with SessionLocal() as session:
+                swept = sweep_once(session)
+            if swept:
+                print(f"worker: swept {swept} stale runner(s) offline", flush=True)
+        except Exception as exc:  # pragma: no cover - retried on the next loop
+            print(f"worker: runner sweep failed: {exc}", flush=True)
         heartbeat.write_text(str(time.time()), encoding="utf-8")
         print(f"worker: heartbeat pending_outbox={pending}", flush=True)
         time.sleep(settings.worker_poll_seconds)

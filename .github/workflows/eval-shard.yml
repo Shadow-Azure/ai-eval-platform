@@ -1,0 +1,69 @@
+# Synthetic shard workflow executed on the fixed self-hosted Linux runner.
+#
+# M2-04: verifies the fixed runner actually picks work up from the GitHub
+# queue, executes the synthetic task in the container and posts contract
+# heartbeats/callbacks to the platform API. M2-05 will evolve this into the
+# real dispatch loop (repository_dispatch payload from the platform, OIDC or
+# short-term scoped tokens instead of the generated demo token).
+#
+# Safety: no model keys, cloud AKs or platform admin tokens are used here.
+# The demo task token is generated per run (HMAC, development-only-secret)
+# and kept in the runner temp dir; callback auth currently relies on the
+# platform runner-plane token when configured.
+name: eval-shard
+
+on:
+  workflow_dispatch:
+    inputs:
+      eval_run_id:
+        description: "Eval run id for the synthetic shard"
+        default: "eval_m204_smoke"
+      shard_id:
+        description: "Shard id"
+        default: "shard_m204"
+      callback_base_url:
+        description: "Platform API base URL reachable from the runner host"
+        default: "http://127.0.0.1:8000"
+  repository_dispatch:
+    types: [eval-shard]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: eval-shard-${{ github.event.client_payload.shard_id || inputs.shard_id || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  synthetic-shard:
+    runs-on: [self-hosted, linux, eval]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare synthetic dispatch payload
+        env:
+          EVAL_RUN_ID: ${{ github.event.client_payload.eval_run_id || inputs.eval_run_id || 'eval_m204_smoke' }}
+          SHARD_ID: ${{ github.event.client_payload.shard_id || inputs.shard_id || 'shard_m204' }}
+          CALLBACK_BASE_URL: ${{ github.event.client_payload.callback_base_url || inputs.callback_base_url || 'http://127.0.0.1:8000' }}
+        run: |
+          set -euo pipefail
+          node scripts/make-eval-dispatch.mjs \
+            --out-dir "$RUNNER_TEMP/eval-dispatch" \
+            --eval-run-id "$EVAL_RUN_ID" \
+            --shard-id "$SHARD_ID" \
+            --callback-base-url "$CALLBACK_BASE_URL"
+
+      - name: Execute synthetic shard with heartbeats
+        env:
+          RUNNER_TASK_SECRET: development-only-secret
+          RUNNER_STATE_DIR: ${{ runner.temp }}/eval-state
+          RUNNER_OBJECT_ROOT: ${{ runner.temp }}/eval-objects
+        run: |
+          set -euo pipefail
+          RUNNER_TASK_TOKEN="$(cat "$RUNNER_TEMP/eval-dispatch/task-token")"
+          export RUNNER_TASK_TOKEN
+          node runner/scripts/synthetic-task.mjs \
+            --dispatch "$RUNNER_TEMP/eval-dispatch/dispatch.json" \
+            --state-dir "$RUNNER_STATE_DIR" \
+            --object-store-root "$RUNNER_OBJECT_ROOT"
