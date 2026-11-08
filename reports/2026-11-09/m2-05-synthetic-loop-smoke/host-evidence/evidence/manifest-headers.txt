@@ -1,7 +1,7 @@
 HTTP/1.1 200 OK
 date: Sun, 08 Nov 2026 19:41:45 GMT
 server: uvicorn
-x-runner-task-token: v1.eyJhdHRlbXB0IjoxLCJldmFsX3J1bl9pZCI6Ijg1YmIxYTM1LWMxZTYtNDU4YS1hODViLTJlZTM2Mzc4ODA4YyIsImV4cCI6MTc5NDE2NzIwNSwicG9vbF9pZCI6ImRlZmF1bHQiLCJzaGFyZF9pZCI6InNoYXJkXzAwMCJ9.ej2YhELSypAizsnU9vJI6g9n9pIwigfplaRrFbH9h5M
+x-runner-task-token: v1.<redacted-expired-token>
 cache-control: no-store
 x-shard-dispatch-key: 85bb1a35-c1e6-458a-a85b-2ee36378808c:shard_000:1
 content-length: 658
