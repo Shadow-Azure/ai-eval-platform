@@ -213,6 +213,27 @@ def test_login_writes_an_audit_entry(
     assert actions == ["auth.login", "auth.logout"]
 
 
+def test_password_reset_revokes_existing_sessions(
+    anonymous_client: TestClient, session: Session
+) -> None:
+    add_viewer(session)
+    assert login(anonymous_client, TEST_VIEWER_EMAIL, TEST_VIEWER_PASSWORD).status_code == 200
+    token = anonymous_client.cookies.get("eval_session")
+    assert token
+
+    updated = identity.set_password(
+        session, email=TEST_VIEWER_EMAIL, password="new-viewer-password"
+    )
+    assert updated is not None
+    session.commit()
+
+    set_cookie(anonymous_client, token)
+    assert anonymous_client.get("/api/v1/auth/me").status_code == 401
+    anonymous_client.cookies.clear()
+    assert login(anonymous_client, TEST_VIEWER_EMAIL, TEST_VIEWER_PASSWORD).status_code == 401
+    assert login(anonymous_client, TEST_VIEWER_EMAIL, "new-viewer-password").status_code == 200
+
+
 # ---------------------------------------------------------------------------
 # Console access control
 # ---------------------------------------------------------------------------
