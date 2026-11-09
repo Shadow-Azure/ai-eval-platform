@@ -52,6 +52,10 @@ EXPECTED_TABLES = {
     "membership",
     "auth_session",
     "audit_log",
+    # M3-02 模型凭据、网关配置与用量（design 04 §7 / 05 §3）
+    "credential",
+    "model_config",
+    "model_usage",
 }
 
 

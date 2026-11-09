@@ -6,13 +6,14 @@
 kind: issue
 milestone: m3
 priority: P0
-status: ready
+status: in-progress
 scope:
   - .agents/flow/issues/m3-02-model-gateway-tokens.*
   - backend/**
   - runner/**
   - deploy/**
   - tests/**
+  - pyproject.toml
 adr: []
 github:
   number: 46

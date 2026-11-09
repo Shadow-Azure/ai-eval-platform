@@ -13,6 +13,7 @@ import hashlib
 import json
 import uuid
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from urllib.parse import urlencode
 
 from sqlalchemy import func, select
@@ -25,6 +26,7 @@ from ..models import (
     EvalCaseRun,
     EvalEvent,
     EvalRun,
+    ModelConfig,
     Outbox,
 )
 from ..runner_contracts import ContractInvalid, validate_payload
@@ -91,6 +93,9 @@ def create_synthetic_evaluation(
     shard_size: int | None = None,
     idempotency_key: str | None = None,
     created_by: str,
+    model_config_id: str | None = None,
+    model_name: str | None = None,
+    model_budget_usd: Decimal | float | str | None = None,
     settings: Settings | None = None,
     now: datetime | None = None,
 ) -> tuple[EvalRun, bool]:
@@ -109,6 +114,22 @@ def create_synthetic_evaluation(
     idempotency_key = idempotency_key or str(uuid.uuid4())
 
     tenant_id = str(DEFAULT_TENANT_ID)
+    config = None
+    if model_config_id:
+        config = session.get(ModelConfig, model_config_id)
+        if config is None or config.tenant_id != tenant_id:
+            raise EvaluationInvalid("模型配置不存在或不可用", field="model_config_id")
+        if not model_name:
+            model_name = config.model_name
+        if model_name != config.model_name:
+            raise EvaluationInvalid("model_name 必须与模型配置一致", field="model_name")
+    elif model_name:
+        raise EvaluationInvalid("指定 model_name 时必须同时指定 model_config_id", field="model_name")
+    budget = None
+    if model_budget_usd is not None:
+        budget = Decimal(str(model_budget_usd))
+        if budget < 0:
+            raise EvaluationInvalid("model_budget_usd 不能为负", field="model_budget_usd")
     project_id = str(DEFAULT_PROJECT_ID)
     existing = session.scalar(
         select(EvalRun).where(
@@ -129,6 +150,9 @@ def create_synthetic_evaluation(
         shard_size=shard_size,
         total_cases=len(cleaned),
         queued_count=len(cleaned),
+        model_config_id=model_config_id,
+        model_name=model_name,
+        model_budget_usd=budget,
         idempotency_key=idempotency_key[:128],
         created_by=created_by[:128],
         max_attempts=2,
@@ -326,6 +350,9 @@ def evaluation_summary(run: EvalRun) -> dict:
         "succeeded_count": run.succeeded_count,
         "failed_count": run.failed_count,
         "shard_size": run.shard_size,
+        "model_config_id": run.model_config_id,
+        "model_name": run.model_name,
+        "model_budget_usd": str(run.model_budget_usd) if run.model_budget_usd is not None else None,
         "created_at": _iso(run.created_at),
         "started_at": _iso(run.started_at),
         "finished_at": _iso(run.finished_at),

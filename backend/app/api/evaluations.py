@@ -27,6 +27,11 @@ class CreateEvaluationRequest(BaseModel):
     case_keys: list[str] = Field(min_length=1)
     shard_size: int | None = Field(default=None, ge=1, le=256)
     idempotency_key: str | None = Field(default=None, max_length=128)
+    # M3-02: optional model binding so the runner can obtain a short-lived
+    # gateway token from the shard manifest.
+    model_config_id: str | None = Field(default=None, max_length=36)
+    model_name: str | None = Field(default=None, max_length=200)
+    model_budget_usd: float | None = Field(default=None, ge=0)
 
 
 @router.post("/api/v1/evaluations")
@@ -45,6 +50,9 @@ def create_evaluation(
             shard_size=payload.shard_size,
             idempotency_key=payload.idempotency_key,
             created_by=context.user.email,
+            model_config_id=payload.model_config_id,
+            model_name=payload.model_name,
+            model_budget_usd=payload.model_budget_usd,
             settings=settings,
         )
     except evaluation_service.EvaluationInvalid as exc:
