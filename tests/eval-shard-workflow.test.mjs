@@ -16,7 +16,7 @@ test("eval-shard workflow consumes real platform dispatches", () => {
     "types: [eval-shard]",
     "self-hosted",
     "runner/lib/contracts.mjs dispatch",
-    "runner/scripts/synthetic-task.mjs",
+    "runner/scripts/real-task.mjs",
     "RUNNER_PRESIGN_UPLOADS",
     "github.event.client_payload",
     "contents: read",
