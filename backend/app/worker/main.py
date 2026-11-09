@@ -68,11 +68,18 @@ def main() -> int:
         try:
             with SessionLocal() as session:
                 outcome = dispatch_once(session)
-            if outcome.dispatched or outcome.retried or outcome.failed or outcome.recovered:
+            if (
+                outcome.dispatched
+                or outcome.retried
+                or outcome.failed
+                or outcome.recovered
+                or outcome.queued
+            ):
                 print(
                     "worker: dispatch "
                     f"sent={outcome.dispatched} retried={outcome.retried} "
-                    f"failed={outcome.failed} recovered={outcome.recovered}",
+                    f"failed={outcome.failed} recovered={outcome.recovered} "
+                    f"queued={outcome.queued}",
                     flush=True,
                 )
         except Exception as exc:  # pragma: no cover - retried on the next loop

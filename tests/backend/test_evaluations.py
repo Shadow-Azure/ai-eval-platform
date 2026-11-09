@@ -143,7 +143,7 @@ def test_create_is_idempotent_on_client_key(seeded: Session, configure_settings)
         {"case_keys": []},
         {"case_keys": ["ok", ""]},
         {"case_keys": [123]},
-        {"case_keys": ["x"] * 300},
+        {"case_keys": ["x"] * 1001},
         {"shard_size": 0},
         {"shard_size": 300},
     ],

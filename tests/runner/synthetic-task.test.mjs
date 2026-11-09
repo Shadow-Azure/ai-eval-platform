@@ -244,6 +244,12 @@ test("workflow template reuses the same scripts and has no secret material", () 
     "runner/lib/contracts.mjs",
     "contents: read",
     "id-token: write",
+    // M4-01: the template keeps the prepare/execute per-case matrix.
+    "runner/scripts/plan-cases.mjs",
+    "needs: prepare",
+    "fail-fast: false",
+    "case: ${{ fromJson(needs.prepare.outputs.cases) }}",
+    '--case "${{ matrix.case.id }}"',
   ]) {
     assert.ok(text.includes(expected), `workflow missing ${expected}`);
   }

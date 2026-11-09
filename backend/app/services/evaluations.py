@@ -94,6 +94,7 @@ def create_synthetic_evaluation(
     name: str,
     case_keys: list[str],
     shard_size: int | None = None,
+    requested_concurrency: int | None = None,
     idempotency_key: str | None = None,
     created_by: str,
     model_config_id: str | None = None,
@@ -118,9 +119,18 @@ def create_synthetic_evaluation(
 
     settings = settings or Settings()
     now = _now(now)
-    shard_size = shard_size if shard_size is not None else 64
-    if not isinstance(shard_size, int) or not 1 <= shard_size <= 256:
-        raise EvaluationInvalid("shard_size 必须在 1..256 之间", field="shard_size")
+    shard_size = shard_size if shard_size is not None else settings.eval_shard_size_default
+    # GitHub runs at most 256 jobs per workflow run; the prepare job plus one
+    # matrix job per case must stay inside that envelope (255 + 1 = 256).
+    if not isinstance(shard_size, int) or not 1 <= shard_size <= 255:
+        raise EvaluationInvalid("shard_size 必须在 1..255 之间", field="shard_size")
+    requested = (
+        requested_concurrency
+        if requested_concurrency is not None
+        else settings.eval_default_requested_concurrency
+    )
+    if not isinstance(requested, int) or not 1 <= requested <= 256:
+        raise EvaluationInvalid("requested_concurrency 必须在 1..256 之间", field="requested_concurrency")
     idempotency_key = idempotency_key or str(uuid.uuid4())
 
     tenant_id = str(DEFAULT_TENANT_ID)
@@ -201,7 +211,9 @@ def create_synthetic_evaluation(
         project_id=project_id,
         name=(name or "合成评测")[:200],
         status="queued",
-        requested_concurrency=1,
+        requested_concurrency=requested,
+        effective_concurrency=None,
+        queue_reason=None,
         shard_size=shard_size,
         total_cases=total_cases,
         queued_count=total_cases,
@@ -415,6 +427,9 @@ def evaluation_summary(run: EvalRun) -> dict:
         "succeeded_count": run.succeeded_count,
         "failed_count": run.failed_count,
         "shard_size": run.shard_size,
+        "requested_concurrency": run.requested_concurrency,
+        "effective_concurrency": run.effective_concurrency,
+        "queue_reason": run.queue_reason,
         "model_config_id": run.model_config_id,
         "model_name": run.model_name,
         "model_budget_usd": str(run.model_budget_usd) if run.model_budget_usd is not None else None,

@@ -1,0 +1,437 @@
+{
+  "eval_run_id": "c2b74932-0600-44b0-be52-408f56611fc9",
+  "requested_concurrency": 2,
+  "effective_concurrency": 2,
+  "queue_reason": null,
+  "dispatch_key": "c2b74932-0600-44b0-be52-408f56611fc9:shard_000:1",
+  "case_count": 4,
+  "attempt_count": 4,
+  "peak_running": 2,
+  "timeline": [
+    {
+      "t": 0.002,
+      "running": 0
+    },
+    {
+      "t": 0.061,
+      "running": 0
+    },
+    {
+      "t": 0.121,
+      "running": 0
+    },
+    {
+      "t": 0.176,
+      "running": 0
+    },
+    {
+      "t": 0.243,
+      "running": 1
+    },
+    {
+      "t": 0.299,
+      "running": 2
+    },
+    {
+      "t": 0.352,
+      "running": 0
+    },
+    {
+      "t": 0.406,
+      "running": 0
+    },
+    {
+      "t": 0.467,
+      "running": 0
+    },
+    {
+      "t": 0.523,
+      "running": 0
+    },
+    {
+      "t": 0.577,
+      "running": 0
+    },
+    {
+      "t": 0.634,
+      "running": 0
+    },
+    {
+      "t": 0.687,
+      "running": 0
+    },
+    {
+      "t": 0.74,
+      "running": 0
+    },
+    {
+      "t": 0.793,
+      "running": 0
+    },
+    {
+      "t": 0.854,
+      "running": 0
+    },
+    {
+      "t": 0.912,
+      "running": 0
+    },
+    {
+      "t": 0.974,
+      "running": 0
+    },
+    {
+      "t": 1.025,
+      "running": 0
+    },
+    {
+      "t": 1.081,
+      "running": 0
+    },
+    {
+      "t": 1.141,
+      "running": 0
+    },
+    {
+      "t": 1.199,
+      "running": 0
+    },
+    {
+      "t": 1.259,
+      "running": 0
+    },
+    {
+      "t": 1.316,
+      "running": 0
+    },
+    {
+      "t": 1.373,
+      "running": 0
+    },
+    {
+      "t": 1.43,
+      "running": 0
+    },
+    {
+      "t": 1.484,
+      "running": 0
+    },
+    {
+      "t": 1.541,
+      "running": 0
+    },
+    {
+      "t": 1.597,
+      "running": 0
+    },
+    {
+      "t": 1.658,
+      "running": 0
+    },
+    {
+      "t": 1.719,
+      "running": 0
+    },
+    {
+      "t": 1.774,
+      "running": 0
+    },
+    {
+      "t": 1.826,
+      "running": 0
+    },
+    {
+      "t": 1.888,
+      "running": 0
+    },
+    {
+      "t": 1.941,
+      "running": 0
+    },
+    {
+      "t": 1.992,
+      "running": 0
+    },
+    {
+      "t": 2.051,
+      "running": 0
+    },
+    {
+      "t": 2.107,
+      "running": 0
+    },
+    {
+      "t": 2.165,
+      "running": 0
+    },
+    {
+      "t": 2.224,
+      "running": 0
+    },
+    {
+      "t": 2.277,
+      "running": 0
+    },
+    {
+      "t": 2.332,
+      "running": 0
+    },
+    {
+      "t": 2.391,
+      "running": 0
+    },
+    {
+      "t": 2.453,
+      "running": 0
+    },
+    {
+      "t": 2.508,
+      "running": 0
+    },
+    {
+      "t": 2.565,
+      "running": 0
+    },
+    {
+      "t": 2.624,
+      "running": 0
+    },
+    {
+      "t": 2.678,
+      "running": 0
+    },
+    {
+      "t": 2.738,
+      "running": 0
+    },
+    {
+      "t": 2.8,
+      "running": 0
+    },
+    {
+      "t": 2.859,
+      "running": 0
+    },
+    {
+      "t": 2.913,
+      "running": 0
+    },
+    {
+      "t": 2.965,
+      "running": 0
+    },
+    {
+      "t": 3.025,
+      "running": 0
+    },
+    {
+      "t": 3.085,
+      "running": 0
+    },
+    {
+      "t": 3.138,
+      "running": 0
+    },
+    {
+      "t": 3.197,
+      "running": 0
+    },
+    {
+      "t": 3.261,
+      "running": 0
+    },
+    {
+      "t": 3.318,
+      "running": 0
+    },
+    {
+      "t": 3.374,
+      "running": 0
+    },
+    {
+      "t": 3.43,
+      "running": 0
+    },
+    {
+      "t": 3.489,
+      "running": 0
+    },
+    {
+      "t": 3.548,
+      "running": 0
+    },
+    {
+      "t": 3.606,
+      "running": 0
+    },
+    {
+      "t": 3.66,
+      "running": 0
+    },
+    {
+      "t": 3.716,
+      "running": 0
+    },
+    {
+      "t": 3.771,
+      "running": 0
+    },
+    {
+      "t": 3.825,
+      "running": 0
+    },
+    {
+      "t": 3.885,
+      "running": 0
+    },
+    {
+      "t": 3.946,
+      "running": 0
+    },
+    {
+      "t": 4.007,
+      "running": 0
+    },
+    {
+      "t": 4.06,
+      "running": 0
+    },
+    {
+      "t": 4.112,
+      "running": 0
+    },
+    {
+      "t": 4.172,
+      "running": 0
+    },
+    {
+      "t": 4.228,
+      "running": 0
+    },
+    {
+      "t": 4.285,
+      "running": 0
+    },
+    {
+      "t": 4.342,
+      "running": 0
+    },
+    {
+      "t": 4.404,
+      "running": 0
+    },
+    {
+      "t": 4.458,
+      "running": 0
+    },
+    {
+      "t": 4.516,
+      "running": 0
+    },
+    {
+      "t": 4.576,
+      "running": 0
+    },
+    {
+      "t": 4.638,
+      "running": 0
+    },
+    {
+      "t": 4.698,
+      "running": 0
+    },
+    {
+      "t": 4.757,
+      "running": 0
+    },
+    {
+      "t": 4.813,
+      "running": 0
+    },
+    {
+      "t": 4.865,
+      "running": 0
+    },
+    {
+      "t": 4.925,
+      "running": 0
+    },
+    {
+      "t": 4.983,
+      "running": 0
+    },
+    {
+      "t": 5.044,
+      "running": 0
+    },
+    {
+      "t": 5.102,
+      "running": 0
+    },
+    {
+      "t": 5.16,
+      "running": 0
+    },
+    {
+      "t": 5.213,
+      "running": 0
+    },
+    {
+      "t": 5.273,
+      "running": 0
+    },
+    {
+      "t": 5.326,
+      "running": 2
+    }
+  ],
+  "runner_results": [
+    {
+      "case_index": 0,
+      "exit_code": 0,
+      "status": "completed",
+      "stderr_tail": []
+    },
+    {
+      "case_index": 1,
+      "exit_code": 0,
+      "status": "completed",
+      "stderr_tail": []
+    },
+    {
+      "case_index": 2,
+      "exit_code": 0,
+      "status": "completed",
+      "stderr_tail": []
+    },
+    {
+      "case_index": 3,
+      "exit_code": 0,
+      "status": "completed",
+      "stderr_tail": []
+    }
+  ],
+  "cases": [
+    {
+      "case_key": "smoke-case-0",
+      "execution_status": "succeeded",
+      "result_status": "resolved"
+    },
+    {
+      "case_key": "smoke-case-1",
+      "execution_status": "succeeded",
+      "result_status": "resolved"
+    },
+    {
+      "case_key": "smoke-case-2",
+      "execution_status": "succeeded",
+      "result_status": "resolved"
+    },
+    {
+      "case_key": "smoke-case-3",
+      "execution_status": "succeeded",
+      "result_status": "resolved"
+    }
+  ],
+  "elapsed_seconds": 5.42
+}

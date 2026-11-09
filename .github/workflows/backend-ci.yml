@@ -83,3 +83,16 @@ jobs:
           node-version: 22
       - name: Static deploy contract tests
         run: node --test tests/deploy/*.test.mjs
+
+  runner:
+    name: runner (node contract tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # tests/runner was previously only runnable locally; M4-01 makes the
+      # per-case matrix entry and plan-cases script gated in CI.
+      - name: Runner and matrix tests
+        run: node --test tests/runner/*.test.mjs

@@ -15,6 +15,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ..config import get_settings
 from ..datasets import AdapterNotFound, get_adapter
 from ..defaults import DEFAULT_TENANT_ID
 from ..models import (
@@ -27,6 +28,7 @@ from ..models import (
 )
 from ..runtimes.base import AssetSnapshot
 from ..runtimes.claude_code import get_runtime_adapter
+from . import capacity
 
 
 @dataclass(frozen=True)
@@ -49,6 +51,8 @@ class PreflightIssue:
 class PreflightResult:
     blockers: tuple[PreflightIssue, ...] = ()
     warnings: tuple[PreflightIssue, ...] = ()
+    # M4-01: the cap the evaluation will actually get at scheduling time.
+    effective_concurrency: int = 0
 
     @property
     def ready(self) -> bool:
@@ -59,6 +63,7 @@ class PreflightResult:
             "ready": self.ready,
             "blockers": [issue.as_dict() for issue in self.blockers],
             "warnings": [issue.as_dict() for issue in self.warnings],
+            "effective_concurrency": self.effective_concurrency,
         }
 
 
@@ -92,6 +97,7 @@ def check_preparation(
     tenant_id = str(DEFAULT_TENANT_ID)
     blockers: list[PreflightIssue] = []
     warnings: list[PreflightIssue] = []
+    effective = 0
 
     if requested_concurrency < 1:
         blockers.append(
@@ -107,7 +113,7 @@ def check_preparation(
                 "runtime_key",
             )
         )
-        return PreflightResult(tuple(blockers), tuple(warnings))
+        return PreflightResult(tuple(blockers), tuple(warnings), effective)
 
     if runtime_version and not runtime_version.startswith(
         adapter.runtime_version.split(".")[0] + "."
@@ -251,6 +257,11 @@ def check_preparation(
                     {"online": online},
                 )
             )
+        effective = capacity.combine_effective_concurrency(
+            requested_concurrency,
+            capacity.pool_runner_capacity(session, pool, settings=get_settings()),
+            capacity.pool_max_capacity(pool),
+        )
 
     if not (scoring_image_digest or "").strip():
         blockers.append(
@@ -285,4 +296,4 @@ def check_preparation(
             PreflightIssue("assets_empty", "未选择 Agent 资产，Runtime 将只使用内置能力", "assets")
         )
 
-    return PreflightResult(tuple(blockers), tuple(warnings))
+    return PreflightResult(tuple(blockers), tuple(warnings), effective)

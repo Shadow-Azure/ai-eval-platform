@@ -382,6 +382,15 @@ def case_callback(
     try:
         result = handler(session, **kwargs)
     except case_attempts.CaseCallbackError as exc:
+        # A rejected callback (e.g. 429 capacity_waiting on started) must not
+        # leave the runner bound to a case it never started, or the next job on
+        # that runner would fail with runner_busy_conflict and skip the gate.
+        if (
+            runner is not None
+            and action in CASE_BIND_ACTIONS
+            and runner.busy_case_attempt_id == case_run_id
+        ):
+            runner_service.release_case(session, runner=runner)
         raise _callback_error(exc) from exc
 
     return {

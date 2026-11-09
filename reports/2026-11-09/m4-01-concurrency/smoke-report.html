@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>M4-01 用例级 Matrix 与有效并发调度 · 集成冒烟</title>
+  <style>
+    :root{
+      color-scheme:light;
+      --bg:#f4f7fb;--card:#fff;--ink:#16202f;--ink2:#55637a;--ink3:#7b869b;
+      --line:#dde4ee;--accent:#2563eb;--accent-wash:#e8efff;--good:#157347;
+      --good-wash:#e7f6ee;--warn:#b45309;--warn-wash:#fff2dd;--bad:#c9282e;
+      --bad-wash:#ffeded;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:radial-gradient(circle at 8% 0,#dbe9ff 0,transparent 32rem),radial-gradient(circle at 92% 4%,#e7f1ff 0,transparent 28rem),var(--bg);color:var(--ink);font:14px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Noto Sans CJK SC",sans-serif}
+    main{max-width:1220px;margin:auto;padding:36px 28px 72px}
+    .hero{padding:30px 34px;border:1px solid #dbe3ee;border-radius:24px;background:rgba(255,255,255,.92);box-shadow:0 18px 44px #17202f12}
+    .eyebrow{margin:0;color:var(--accent);font-size:12px;font-weight:800;letter-spacing:.16em;text-transform:uppercase}
+    h1{margin:10px 0 8px;font-size:clamp(28px,4vw,44px);letter-spacing:-.04em}
+    .summary{margin:0;max-width:850px;color:var(--ink2);font-size:15px}
+    .meta{display:block;margin-top:8px;color:var(--ink3);font-size:12px}
+    .metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-top:26px}
+    .metric{padding:16px 18px;border:1px solid var(--line);border-radius:16px;background:#fafbfd}
+    .metric b{display:block;font-size:30px;letter-spacing:-.04em}
+    .metric span{display:block;margin-top:2px;color:var(--ink3);font-size:12px}
+    section{margin-top:28px}
+    .head{display:flex;align-items:baseline;justify-content:space-between;gap:16px;margin:0 4px 14px}
+    h2{margin:0;font-size:21px;letter-spacing:-.03em}
+    .head small{color:var(--ink3);white-space:nowrap}
+    .card{padding:22px;border:1px solid var(--line);border-radius:20px;background:var(--card);box-shadow:0 5px 22px #17202f08}
+    .facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin:0}
+    .fact{padding:13px 16px;border:1px solid #eceff5;border-radius:12px;background:#fafbfd}
+    .fact dt{color:var(--ink3);font-size:11px;font-weight:700}
+    .fact dd{margin:3px 0 0;overflow-wrap:anywhere}
+    code{font-family:var(--mono);font-size:.9em;color:#29456d;overflow-wrap:anywhere}
+    .status{display:inline-flex;padding:3px 8px;border-radius:999px;font-size:11px;font-weight:800;white-space:nowrap;background:#eef1f6;color:var(--ink2)}
+    .status.pass,.status.fixed{background:var(--good-wash);color:var(--good)}
+    .status.warn,.status.manual{background:var(--warn-wash);color:var(--warn)}
+    .status.fail{background:var(--bad-wash);color:var(--bad)}
+    .tableWrap{overflow:auto;border:1px solid var(--line);border-radius:18px;background:var(--card);box-shadow:0 5px 22px #17202f08}
+    table{width:100%;min-width:920px;border-collapse:collapse}
+    th,td{padding:12px 15px;border-bottom:1px solid #edf0f5;text-align:left;vertical-align:top}
+    th{position:sticky;top:0;background:#fafbfe;color:var(--ink2);font-size:12px}
+    tr:last-child td{border-bottom:0}
+    tr:hover{background:#fcfdff}
+    .num{color:var(--ink3);font-family:var(--mono);font-size:12px}
+    .evidence{color:var(--ink3);font-size:12px}
+    .issues{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px}
+    .issueCard{padding:18px 21px;border:1px solid #ffcece;border-left:5px solid var(--bad);border-radius:16px;background:#fffbfb}
+    .issueCard h3{margin:0;color:#b91c1c;font-size:16px}
+    .issueCard p{margin:8px 0;color:var(--ink2)}
+    .issueCard dt{color:var(--ink3);font-size:11px;font-weight:700}
+    .issueCard dd{margin:2px 0 0;color:var(--ink2)}
+    .tag{float:right;padding:3px 8px;border-radius:999px;background:#fee4e4;color:#9a1b21;font-size:11px;font-weight:800}
+    .fixed{display:inline-flex;gap:5px;align-items:center;margin-top:11px;padding:6px 10px;border-radius:999px;background:var(--good-wash);color:var(--good);font-size:12px;font-weight:800}
+    .shots{display:grid;grid-template-columns:repeat(auto-fit,minmax(430px,1fr));gap:16px}
+    figure{margin:0;overflow:hidden;border:1px solid var(--line);border-radius:18px;background:#fff;box-shadow:0 6px 22px #17202f08}
+    figure.wide{grid-column:1/-1}
+    img{display:block;width:100%;max-height:500px;object-fit:contain;background:#eef2f7}
+    figcaption{display:flex;gap:9px;align-items:flex-start;padding:11px 14px;border-top:1px solid #edf0f5;background:#fafbfd;color:var(--ink2);font-size:12.5px}
+    figcaption b{flex:none;color:var(--ink)}
+    .issue-shot{border-color:#ffcece}
+    .conclusion{border:1px solid #c8e5d2;border-radius:20px;background:linear-gradient(135deg,#f2fbf6,white 54%)}
+    .conclusion.warn{border-color:#f1d9a4;background:linear-gradient(135deg,#fff8e8,white 54%)}
+    .conclusion.fail{border-color:#ffc9c9;background:linear-gradient(135deg,#fff5f5,white 54%)}
+    .conclusion ul{margin:12px 0 0;padding-left:20px;color:#344155}
+    .conclusion li+li{margin-top:7px}
+    .empty{padding:20px;text-align:center;color:var(--ink3);background:#fafbfd;border:1px dashed var(--line);border-radius:12px}
+    .foot{margin-top:24px;color:var(--ink3);font-size:12px;text-align:center}
+    @media(max-width:860px){main{padding:22px 14px 52px}.hero{padding:23px}.shots{grid-template-columns:1fr}.head{align-items:flex-start;flex-direction:column;gap:4px}}
+    @media print{body{background:white}main{max-width:none;padding:0}.card,.issueCard,figure,.tableWrap{box-shadow:none;break-inside:avoid}img{max-height:420px}}
+  </style>
+</head>
+<body>
+<main>
+  <header class="hero">
+    <p class="eyebrow">Smoke Report · issue #78</p>
+    <h1>M4-01 用例级 Matrix 与有效并发调度 · 集成冒烟</h1>
+    <p class="summary">真实控制面 + 两个 Runner 进程：4 个用例同时发起，requested_concurrency=2，有效并发=2，采样峰值运行 2，4/4 用例成功；两个超额 Job 以 429 capacity_waiting 等待后补位，attempt 恒为 4。</p>
+    <span class="meta">2026-11-09 · macOS 26 · Python 3.14.4 · Node v25.9.0 · commit cd32c7b</span>
+    <div class="metrics"><div class="metric"><b>4/4</b><span>用例成功</span></div><div class="metric"><b>2</b><span>有效并发</span></div><div class="metric"><b>2</b><span>峰值运行</span></div><div class="metric"><b>4</b><span>attempt 数</span></div><div class="metric"><b>5.42s</b><span>容量等待耗时</span></div></div>
+  </header>
+
+  <section>
+    <div class="head"><h2>Environment and Artifact</h2><small>2026-11-09 · macOS 26 · Python 3.14.4 · Node v25.9.0 · commit cd32c7b</small></div>
+    <article class="card"><dl class="facts"><div class="fact"><dt>Issue</dt><dd>#78 实现用例级 Matrix 与有效并发调度</dd></div><div class="fact"><dt>分支</dt><dd>agent/m4-01-case-matrix-concurrency</dd></div><div class="fact"><dt>控制面</dt><dd>uvicorn + SQLite（一次性库，alembic upgrade head）</dd></div><div class="fact"><dt>Runner</dt><dd>4 个 real-task.mjs 进程，2 个注册 Runner，--case 单用例执行</dd></div><div class="fact"><dt>派发</dt><dd>使用评测 outbox 的 dispatch payload，未调用 GitHub</dd></div><div class="fact"><dt>自动化</dt><dd>248 backend + 67 node + 47 runner tests</dd></div></dl></article>
+  </section>
+
+  <section>
+    <div class="head"><h2>Scenario Matrix</h2><small>8 pass</small></div>
+    <div class="tableWrap"><table><table><thead><tr><th>#</th><th>场景</th><th>结果</th><th>说明</th><th>证据</th></tr></thead><tbody><tr><td class="num">01</td><td>真实控制面启动与迁移</td><td><span class="status pass">PASS</span></td><td>alembic upgrade head（含 0010 queue_reason）+ seed + /healthz 就绪。</td><td class="evidence">evidence.json<br>CI migration dry-run</td></tr><tr><td class="num">02</td><td>两个 Runner 注册并绑定固定池</td><td><span class="status pass">PASS</span></td><td>heartbeat 注册 2 个 online Runner，评测绑定同一资源池，有效并发=2。</td><td class="evidence">evidence.json</td></tr><tr><td class="num">03</td><td>4 个用例并发的用例级执行</td><td><span class="status pass">PASS</span></td><td>4 个 real-task.mjs --case 同时启动，全部 completed，attempt 数恒为 4（无重复）。</td><td class="evidence">evidence.json</td></tr><tr><td class="num">04</td><td>并发硬上限</td><td><span class="status pass">PASS</span></td><td>采样峰值 running=2；超额 Job 429 等待 5.42s 后补位成功，从未超过 cap。</td><td class="evidence">evidence.json</td></tr><tr><td class="num">05</td><td>500 用例分片结构</td><td><span class="status pass">PASS</span></td><td>8 个 shard（7×64+52），每个 manifest ≤64 用例。</td><td class="evidence">tests/backend/test_capacity_scheduling.py::test_500_cases_form_8_shards_of_64</td></tr><tr><td class="num">06</td><td>Dispatcher 容量闸门</td><td><span class="status pass">PASS</span></td><td>无 Runner 时 8 个分片保持 pending；有 8 Runner 时一次只放行 1 个分片。</td><td class="evidence">tests/backend/test_capacity_scheduling.py::test_gate_holds_shards_when_no_runner<br>test_gate_releases_one_shard_at_a_time</td></tr><tr><td class="num">07</td><td>prepare/matrix workflow 结构</td><td><span class="status pass">PASS</span></td><td>prepare 输出 cases，execute 每 Job 一个 --case；fail-fast:false；无 secrets。</td><td class="evidence">tests/eval-shard-workflow.test.mjs</td></tr><tr><td class="num">08</td><td>重复 Job 与重放</td><td><span class="status pass">PASS</span></td><td>同 state-dir 重放输出 duplicate_dispatch，平台请求数不增；retryable 退出释放 claim。</td><td class="evidence">tests/runner/case-entry.test.mjs</td></tr></tbody></table></table></div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Issues and Observations</h2><small>P1 SQLite 下 started 并发闸门被并发请求越过（冒烟首轮发现）<br>Info 本轮未执行 GUI/Computer Use 场景</small></div>
+    <div class="issues"><article class="issueCard"><span class="tag">P1</span><h3>SQLite 下 started 并发闸门被并发请求越过（冒烟首轮发现）</h3><dl><div><dt>实际</dt><dd>4 个同时 started 的用例采样到 running=3/4，超过 cap=2。</dd></div><div><dt>预期</dt><dd>任意时刻 running ≤ effective_concurrency。</dd></div><div><dt>根因</dt><dd>check-then-act 无写锁；SQLite 忽略 SELECT ... FOR UPDATE，且事务读取到旧快照。</dd></div><div><dt>修复</dt><dd>在计数前 flush eval_run 写入（Postgres 行锁 / SQLite 写锁）串行化 started；修复后峰值恒为 2。</dd></div></dl><div class="fixed">Fixed · cd32c7b</div></article><article class="issueCard"><span class="tag">Info</span><h3>本轮未执行 GUI/Computer Use 场景</h3><dl><div><dt>原因</dt><dd>M4-01 的 scope 不含 web/**（并发输入属 M5-04、详情展示属 M5-05），本环境也未提供 Computer Use/@oai/sky 工具。</dd></div><div><dt>替代证据</dt><dd>真实 HTTP 控制面 + 真实 runner 进程 + 数据库采样（evidence.json），并在 CI 中运行 362 个自动化测试。</dd></div></dl><div class="fixed">Not applicable</div></article></div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Evidence</h2><small>no screenshots</small></div>
+    <div class="shots"><div class="empty">No screenshots were attached.</div></div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Automated Coverage Assessment</h2><small>4 areas reviewed</small></div>
+    <div class="tableWrap"><table><table><thead><tr><th>领域</th><th>覆盖</th><th>结论</th><th>建议</th></tr></thead><tbody><tr><td>有效并发公式</td><td>UT</td><td>min(requested, runners, pool max) 覆盖含 stale heartbeat。</td><td>M4-03 引入 max_capacity 列后替换 labels 读取点。</td></tr><tr><td>分片与派发闸门</td><td>UT + IT</td><td>500→8 分片、无容量保持 pending、按 ceil(cap/shard) 放行。</td><td>M4-04 竞价扩容后复测真实容量变化。</td></tr><tr><td>用例级硬上限</td><td>IT</td><td>真实双 Runner + 4 并发用例峰值 2，429 等待后补位。</td><td>Postgres CI 下再跑一次并发 started 压测。</td></tr><tr><td>重复执行/重放</td><td>UT + IT</td><td>本地 claim + 平台 started/completed 幂等，attempt 不重复。</td><td>M4-02 对账覆盖跨机器重放窗口。</td></tr></tbody></table></table></div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Conclusion</h2><small>通过（含 1 个冒烟发现并已修复的问题）</small></div>
+    <article class="card conclusion pass"><p><strong>真实控制面与两个 Runner 的端到端冒烟证明：有效并发=2 时峰值运行=2，4/4 用例成功，超额工作等待而不是失败或重复执行。</strong></p><ul><li>SQLite 冒烟暴露的 started 竞态已用写锁串行化修复（cd32c7b）。</li><li>GUI 场景留待 M5-04/M5-05 的 UI 工作；本 issue 无前端 scope。</li><li>Postgres 下的并发压测建议并入 CI 或发布演练。</li></ul></article>
+  </section>
+
+  <p class="foot">M4-01 · issue #78 · evidence.json 为原始采样</p>
+</main>
+</body>
+</html>

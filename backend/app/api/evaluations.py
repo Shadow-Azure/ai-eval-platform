@@ -43,7 +43,11 @@ class PrepareRequest(BaseModel):
 class CreateEvaluationRequest(BaseModel):
     name: str | None = Field(default=None, max_length=200)
     case_keys: list[str] | None = None
-    shard_size: int | None = Field(default=None, ge=1, le=256)
+    # GitHub allows at most 256 jobs per workflow run; the prepare job plus one
+    # matrix job per case must fit, so the shard cap is 255 (design 06 §3.1).
+    shard_size: int | None = Field(default=None, ge=1, le=255)
+    # M4-01: per-evaluation hard cap for simultaneously running cases.
+    requested_concurrency: int | None = Field(default=None, ge=1, le=256)
     idempotency_key: str | None = Field(default=None, max_length=128)
     # M3-02: optional model binding so the runner can obtain a short-lived
     # gateway token from the shard manifest.
@@ -91,6 +95,11 @@ def create_evaluation(
     context: identity.AuthContext = Depends(require_admin),
 ) -> dict:
     settings = get_settings()
+    requested_concurrency = (
+        payload.requested_concurrency
+        if payload.requested_concurrency is not None
+        else settings.eval_default_requested_concurrency
+    )
     if payload.dataset_version_id:
         if not (payload.model_config_id and payload.resource_pool_id):
             raise HTTPException(
@@ -109,7 +118,7 @@ def create_evaluation(
             runtime_key=payload.runtime_key or "claude-code",
             runtime_version=payload.runtime_version,
             resource_pool_id=payload.resource_pool_id,
-            requested_concurrency=1,
+            requested_concurrency=requested_concurrency,
             scoring_image_digest=payload.scoring_image_digest,
             execution_image_digest=payload.execution_image_digest,
             assets_resolved=payload.assets_resolved,
@@ -135,6 +144,7 @@ def create_evaluation(
             name=payload.name or ("合成评测" if not payload.dataset_version_id else ""),
             case_keys=payload.case_keys or [],
             shard_size=payload.shard_size,
+            requested_concurrency=requested_concurrency,
             idempotency_key=payload.idempotency_key,
             created_by=context.user.email,
             model_config_id=payload.model_config_id,

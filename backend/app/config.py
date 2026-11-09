@@ -82,8 +82,18 @@ class Settings(BaseSettings):
     # Synthetic shard manifest lifetime (dispatch expiry + case deadline).
     eval_shard_ttl_seconds: int = 3600
     eval_shard_deadline_minutes: int = 30
-    # Cap synthetic case keys per evaluation creation call.
-    eval_max_cases: int = 256
+    # Cap synthetic case keys (and dataset cases) per evaluation creation call.
+    # M4-01 acceptance needs 500 cases → 8 shards of 64, so the old 256 cap
+    # could not reach the case-level matrix contract.
+    eval_max_cases: int = 1000
+    # M4-01 concurrency. The requested cap is the per-evaluation hard limit;
+    # effective concurrency = min(requested, online pool runners, pool max).
+    eval_default_requested_concurrency: int = 8
+    eval_shard_size_default: int = 64
+    # Capacity gate: keep shards queued when the evaluation has no effective
+    # capacity instead of letting the GitHub queue be the only throttle.
+    dispatch_capacity_gate: bool = True
+    dispatch_capacity_retry_seconds: float = 10.0
 
     # M3-02 centralized model gateway. Credentials are encrypted with a
     # host-local Fernet key (SECRET_BOX_KEY); the gateway signs short-lived

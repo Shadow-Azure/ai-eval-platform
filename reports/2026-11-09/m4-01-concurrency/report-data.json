@@ -1,0 +1,254 @@
+{
+  "title": "M4-01 用例级 Matrix 与有效并发调度 · 集成冒烟",
+  "eyebrow": "Smoke Report · issue #78",
+  "summary": "真实控制面 + 两个 Runner 进程：4 个用例同时发起，requested_concurrency=2，有效并发=2，采样峰值运行 2，4/4 用例成功；两个超额 Job 以 429 capacity_waiting 等待后补位，attempt 恒为 4。",
+  "meta": "2026-11-09 · macOS 26 · Python 3.14.4 · Node v25.9.0 · commit cd32c7b",
+  "metrics": [
+    {
+      "value": "4/4",
+      "label": "用例成功"
+    },
+    {
+      "value": "2",
+      "label": "有效并发"
+    },
+    {
+      "value": "2",
+      "label": "峰值运行"
+    },
+    {
+      "value": "4",
+      "label": "attempt 数"
+    },
+    {
+      "value": "5.42s",
+      "label": "容量等待耗时"
+    }
+  ],
+  "facts": [
+    {
+      "label": "Issue",
+      "value": "#78 实现用例级 Matrix 与有效并发调度"
+    },
+    {
+      "label": "分支",
+      "value": "agent/m4-01-case-matrix-concurrency"
+    },
+    {
+      "label": "控制面",
+      "value": "uvicorn + SQLite（一次性库，alembic upgrade head）"
+    },
+    {
+      "label": "Runner",
+      "value": "4 个 real-task.mjs 进程，2 个注册 Runner，--case 单用例执行"
+    },
+    {
+      "label": "派发",
+      "value": "使用评测 outbox 的 dispatch payload，未调用 GitHub"
+    },
+    {
+      "label": "自动化",
+      "value": "248 backend + 67 node + 47 runner tests"
+    }
+  ],
+  "matrix": {
+    "columns": [
+      "#",
+      "场景",
+      "结果",
+      "说明",
+      "证据"
+    ],
+    "rows": [
+      {
+        "id": "01",
+        "name": "真实控制面启动与迁移",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "alembic upgrade head（含 0010 queue_reason）+ seed + /healthz 就绪。",
+        "evidence": [
+          "evidence.json",
+          "CI migration dry-run"
+        ]
+      },
+      {
+        "id": "02",
+        "name": "两个 Runner 注册并绑定固定池",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "heartbeat 注册 2 个 online Runner，评测绑定同一资源池，有效并发=2。",
+        "evidence": [
+          "evidence.json"
+        ]
+      },
+      {
+        "id": "03",
+        "name": "4 个用例并发的用例级执行",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "4 个 real-task.mjs --case 同时启动，全部 completed，attempt 数恒为 4（无重复）。",
+        "evidence": [
+          "evidence.json"
+        ]
+      },
+      {
+        "id": "04",
+        "name": "并发硬上限",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "采样峰值 running=2；超额 Job 429 等待 5.42s 后补位成功，从未超过 cap。",
+        "evidence": [
+          "evidence.json"
+        ]
+      },
+      {
+        "id": "05",
+        "name": "500 用例分片结构",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "8 个 shard（7×64+52），每个 manifest ≤64 用例。",
+        "evidence": [
+          "tests/backend/test_capacity_scheduling.py::test_500_cases_form_8_shards_of_64"
+        ]
+      },
+      {
+        "id": "06",
+        "name": "Dispatcher 容量闸门",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "无 Runner 时 8 个分片保持 pending；有 8 Runner 时一次只放行 1 个分片。",
+        "evidence": [
+          "tests/backend/test_capacity_scheduling.py::test_gate_holds_shards_when_no_runner",
+          "test_gate_releases_one_shard_at_a_time"
+        ]
+      },
+      {
+        "id": "07",
+        "name": "prepare/matrix workflow 结构",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "prepare 输出 cases，execute 每 Job 一个 --case；fail-fast:false；无 secrets。",
+        "evidence": [
+          "tests/eval-shard-workflow.test.mjs"
+        ]
+      },
+      {
+        "id": "08",
+        "name": "重复 Job 与重放",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "同 state-dir 重放输出 duplicate_dispatch，平台请求数不增；retryable 退出释放 claim。",
+        "evidence": [
+          "tests/runner/case-entry.test.mjs"
+        ]
+      }
+    ]
+  },
+  "issues": [
+    {
+      "severity": "P1",
+      "title": "SQLite 下 started 并发闸门被并发请求越过（冒烟首轮发现）",
+      "facts": [
+        {
+          "label": "实际",
+          "value": "4 个同时 started 的用例采样到 running=3/4，超过 cap=2。"
+        },
+        {
+          "label": "预期",
+          "value": "任意时刻 running ≤ effective_concurrency。"
+        },
+        {
+          "label": "根因",
+          "value": "check-then-act 无写锁；SQLite 忽略 SELECT ... FOR UPDATE，且事务读取到旧快照。"
+        },
+        {
+          "label": "修复",
+          "value": "在计数前 flush eval_run 写入（Postgres 行锁 / SQLite 写锁）串行化 started；修复后峰值恒为 2。"
+        }
+      ],
+      "state": {
+        "kind": "fixed",
+        "label": "Fixed · cd32c7b"
+      }
+    },
+    {
+      "severity": "Info",
+      "title": "本轮未执行 GUI/Computer Use 场景",
+      "facts": [
+        {
+          "label": "原因",
+          "value": "M4-01 的 scope 不含 web/**（并发输入属 M5-04、详情展示属 M5-05），本环境也未提供 Computer Use/@oai/sky 工具。"
+        },
+        {
+          "label": "替代证据",
+          "value": "真实 HTTP 控制面 + 真实 runner 进程 + 数据库采样（evidence.json），并在 CI 中运行 362 个自动化测试。"
+        }
+      ],
+      "state": {
+        "kind": "info",
+        "label": "Not applicable"
+      }
+    }
+  ],
+  "coverage": {
+    "columns": [
+      "领域",
+      "覆盖",
+      "结论",
+      "建议"
+    ],
+    "rows": [
+      [
+        "有效并发公式",
+        "UT",
+        "min(requested, runners, pool max) 覆盖含 stale heartbeat。",
+        "M4-03 引入 max_capacity 列后替换 labels 读取点。"
+      ],
+      [
+        "分片与派发闸门",
+        "UT + IT",
+        "500→8 分片、无容量保持 pending、按 ceil(cap/shard) 放行。",
+        "M4-04 竞价扩容后复测真实容量变化。"
+      ],
+      [
+        "用例级硬上限",
+        "IT",
+        "真实双 Runner + 4 并发用例峰值 2，429 等待后补位。",
+        "Postgres CI 下再跑一次并发 started 压测。"
+      ],
+      [
+        "重复执行/重放",
+        "UT + IT",
+        "本地 claim + 平台 started/completed 幂等，attempt 不重复。",
+        "M4-02 对账覆盖跨机器重放窗口。"
+      ]
+    ]
+  },
+  "conclusion": {
+    "kind": "pass",
+    "label": "通过（含 1 个冒烟发现并已修复的问题）",
+    "summary": "真实控制面与两个 Runner 的端到端冒烟证明：有效并发=2 时峰值运行=2，4/4 用例成功，超额工作等待而不是失败或重复执行。",
+    "points": [
+      "SQLite 冒烟暴露的 started 竞态已用写锁串行化修复（cd32c7b）。",
+      "GUI 场景留待 M5-04/M5-05 的 UI 工作；本 issue 无前端 scope。",
+      "Postgres 下的并发压测建议并入 CI 或发布演练。"
+    ]
+  },
+  "footer": "M4-01 · issue #78 · evidence.json 为原始采样"
+}

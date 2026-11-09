@@ -8,11 +8,14 @@ function sleep(ms) {
  * At-least-once callback delivery. Retries network errors, 429 and 5xx with a
  * bounded exponential backoff; never retries other 4xx. event_id is sent as
  * Idempotency-Key so the platform can dedupe retransmissions.
+ *
+ * `retryOn429: false` hands 429 to the caller instead (the started callback
+ * owns the per-evaluation capacity wait with its own 5s→60s backoff).
  */
 export async function postCallback(
   url,
   payload,
-  { eventId, retries = 4, baseDelayMs = 10, token, timeoutMs = 5000 } = {},
+  { eventId, retries = 4, baseDelayMs = 10, token, timeoutMs = 5000, retryOn429 = true } = {},
 ) {
   if (url.startsWith("file://")) {
     writeFileSync(new URL(url), `${JSON.stringify(payload, null, 2)}\n`);
@@ -36,6 +39,7 @@ export async function postCallback(
       last = { ok: response.ok, status: response.status, attempts: attempt, body };
       if (response.ok) return last;
       if (response.status === 409) return { ...last, stale: true };
+      if (response.status === 429 && !retryOn429) return last;
       if (response.status < 500 && response.status !== 429) return last;
     } catch (error) {
       last = { ok: false, status: 0, attempts: attempt, body: String(error.message ?? error) };
