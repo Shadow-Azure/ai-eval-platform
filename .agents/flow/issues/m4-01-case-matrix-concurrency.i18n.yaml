@@ -1,5 +1,5 @@
 # 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
 # git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
 #   pnpm run record:i18n -- .agents/flow/issues/m4-01-case-matrix-concurrency.md
-m4-01-case-matrix-concurrency.md: dc22f917e479947cfcaa20d5da8a2c156a260d6a
-m4-01-case-matrix-concurrency.en.md: f31ecb93e50e697eee804cff88cffbebb6059dbe
+m4-01-case-matrix-concurrency.md: 506908d12a2b2fa15e9389bc8c89f2c5aa4223a6
+m4-01-case-matrix-concurrency.en.md: 5bf1f059abf13c4b8d14b7d82c4f5b5d44529902
