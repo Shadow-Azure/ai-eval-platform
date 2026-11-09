@@ -217,6 +217,7 @@ def main() -> int:
             if running is not None:
                 peak = max(peak, running)
                 timeline.append({"t": round(time.monotonic() - deadline + args.timeout, 3), "running": running})
+            time.sleep(0.05)
 
         results = []
         for index, proc in procs:
