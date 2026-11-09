@@ -10,6 +10,7 @@ from .api.evaluations import router as evaluations_router
 from .api.health import router as health_router
 from .api.model_configs import router as model_configs_router
 from .api.model_gateway import router as model_gateway_router
+from .api.operations import router as operations_router
 from .api.overview import router as overview_router
 from .api.results import router as results_router
 from .api.runners import router as runners_router
@@ -49,6 +50,10 @@ def create_app() -> FastAPI:
     app.include_router(results_router, dependencies=[Depends(require_session)])
     app.include_router(runtimes_router, dependencies=[Depends(require_session)])
     app.include_router(model_configs_router, dependencies=[Depends(require_session)])
+    # The operations status endpoint also requires the administrator role
+    # (enforced in the router); the session dependency is kept for consistency
+    # with the other console APIs.
+    app.include_router(operations_router, dependencies=[Depends(require_session)])
     # The model gateway authenticates its own short-lived runner tokens.
     app.include_router(model_gateway_router)
     return app

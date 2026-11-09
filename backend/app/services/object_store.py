@@ -87,15 +87,21 @@ class ObjectStore:
         key = _sign(key, "s3")
         return _sign(key, "aws4_request")
 
-    def _presign(self, method: str, object_key: str, expires: int, now: datetime) -> str:
+    def _presign(self, method: str, object_key: str | None, expires: int, now: datetime) -> str:
         amz_date, date_stamp = self._amz_date(now)
         parsed = urlparse(self.endpoint)
         host = parsed.netloc
         if self._virtual_hosted():
             host = f"{self.bucket}.{host}"
-            canonical_uri = _uri_encode_path(f"/{object_key}")
+            canonical_uri = (
+                _uri_encode_path(f"/{object_key}") if object_key is not None else "/"
+            )
         else:
-            canonical_uri = _uri_encode_path(f"/{self.bucket}/{object_key}")
+            canonical_uri = (
+                _uri_encode_path(f"/{self.bucket}/{object_key}")
+                if object_key is not None
+                else _uri_encode_path(f"/{self.bucket}")
+            )
         scope = f"{date_stamp}/{self.region}/s3/aws4_request"
         # SigV4: the credential element in the canonical query is URL-encoded
         # including its "/" separators (raw slashes → SignatureDoesNotMatch on
@@ -190,6 +196,30 @@ class ObjectStore:
             raise ObjectSizeMismatch(
                 f"对象 {object_key} 大小不一致：远端 {size}，回调声明 {expected_size}"
             )
+
+    def head_bucket(
+        self,
+        *,
+        timeout: float = 3.0,
+        now: datetime | None = None,
+    ) -> None:
+        """Cheap liveness probe: signed HEAD on the bucket itself (M3-06).
+
+        200 means the endpoint answered and the credentials can see the bucket;
+        404 and 403 surface as ObjectStoreError. The short timeout keeps the
+        administrator operations page responsive when OSS is unreachable.
+        """
+
+        now = now or datetime.now(UTC)
+        url = self._presign("HEAD", None, 60, now)
+        request = urllib.request.Request(url, method="HEAD")
+        try:
+            with urllib.request.urlopen(request, timeout=timeout):
+                return
+        except urllib.error.HTTPError as exc:
+            raise ObjectStoreError(f"HEAD bucket 返回 HTTP {exc.code}") from exc
+        except urllib.error.URLError as exc:
+            raise ObjectStoreError(f"HEAD bucket 失败：{exc.reason}") from exc
 
 
 def object_store_from_settings(settings) -> ObjectStore | None:

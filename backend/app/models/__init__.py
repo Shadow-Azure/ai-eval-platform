@@ -33,6 +33,7 @@ from .identity import (
     Workspace,
 )
 from .model import CREDENTIAL_KINDS, USAGE_STATUSES, Credential, ModelConfig, ModelUsage
+from .operations import ServiceHeartbeat
 from .outbox import Outbox
 from .resources import ProvisionedInstance, ResourcePool, Runner
 from .scoring import (
@@ -59,6 +60,7 @@ __all__ = [
     "AuthSession",
     "AuditLog",
     "Outbox",
+    "ServiceHeartbeat",
     "ProvisionedInstance",
     "ResourcePool",
     "Runner",

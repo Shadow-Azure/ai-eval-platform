@@ -20,6 +20,7 @@ from ..config import get_settings
 from ..db import SessionLocal
 from ..models import Outbox
 from ..services import dispatcher
+from ..services.operations import record_worker_heartbeat
 from ..services.runners import sweep_stale_runners
 
 _STOP = False
@@ -83,6 +84,11 @@ def main() -> int:
                 print(f"worker: swept {swept} stale runner(s) offline", flush=True)
         except Exception as exc:  # pragma: no cover - retried on the next loop
             print(f"worker: runner sweep failed: {exc}", flush=True)
+        try:
+            with SessionLocal() as session:
+                record_worker_heartbeat(session, pending_outbox=pending)
+        except Exception as exc:  # pragma: no cover - retried on the next loop
+            print(f"worker: operations heartbeat failed: {exc}", flush=True)
         heartbeat.write_text(str(time.time()), encoding="utf-8")
         print(f"worker: heartbeat pending_outbox={pending}", flush=True)
         time.sleep(settings.worker_poll_seconds)

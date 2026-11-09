@@ -19,6 +19,7 @@ from app.services.object_store import (
     ObjectMissing,
     ObjectSizeMismatch,
     ObjectStore,
+    ObjectStoreError,
 )
 
 
@@ -29,6 +30,12 @@ class StubObjectHandler(BaseHTTPRequestHandler):
 
     def do_HEAD(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
+        if parsed.path == "/eval-artifacts":
+            # Bucket-level HEAD used by the operations liveness probe.
+            self.send_response(200)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         parts = parsed.path.lstrip("/").split("/", 1)
         if len(parts) != 2 or parts[0] != "eval-artifacts":
             self.send_response(404)
@@ -124,6 +131,20 @@ def test_verify_object_exists_with_matching_size(endpoint: str) -> None:
 def test_verify_object_without_size_gate(endpoint: str) -> None:
     store = make_store(endpoint)
     store.verify_object("objects/aaa", now=now())
+
+
+def test_head_bucket_liveness_probe(endpoint: str) -> None:
+    store = make_store(endpoint)
+    store.head_bucket(timeout=2)
+
+    wrong_bucket = ObjectStore(
+        endpoint=endpoint,
+        bucket="missing-bucket",
+        access_key="akTest",
+        secret_key="skTest",
+    )
+    with pytest.raises(ObjectStoreError):
+        wrong_bucket.head_bucket(timeout=2)
 
 
 def test_signature_is_real_hmac_over_canonical_request(endpoint: str) -> None:
