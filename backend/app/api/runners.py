@@ -18,7 +18,8 @@ from sqlalchemy.orm import Session
 
 from ..config import Settings, get_settings
 from ..db import get_session
-from ..models import EvalCaseAttempt, EvalCaseRun, EvalRun, Outbox
+from ..model_gateway.tokens import GatewayClaims, issue_gateway_token
+from ..models import EvalCaseAttempt, EvalCaseRun, EvalRun, ModelConfig, Outbox
 from ..runner_contracts import ContractInvalid, validate_payload
 from ..services import case_attempts
 from ..services import runners as runner_service
@@ -456,6 +457,42 @@ def shard_manifest(
         "pool_id": run.resource_pool_id or "default",
     }
     token = issue_short_token(claims, effective_task_secret(settings), ttl_seconds=300)
+    model_headers: dict[str, str] = {}
+    if run.model_config_id:
+        config = session.get(ModelConfig, run.model_config_id)
+        if (
+            config is None
+            or config.tenant_id != run.tenant_id
+            or not run.model_name
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail=error_detail(
+                    "model_config_unavailable",
+                    "评测绑定的模型配置不可用，请联系管理员重新选择模型",
+                ),
+            )
+        model_claims = GatewayClaims(
+            tenant_id=run.tenant_id,
+            model_config_id=config.id,
+            allowed_models=(run.model_name,),
+            eval_run_id=run.id,
+            shard_id=shard_id,
+            attempt=attempt,
+            budget_usd=float(run.model_budget_usd) if run.model_budget_usd is not None else None,
+        )
+        model_token = issue_gateway_token(
+            model_claims,
+            settings.gateway_secret,
+            ttl_seconds=settings.gateway_token_ttl_seconds,
+        )
+        gateway_base = settings.runner_callback_base_url.rstrip("/")
+        model_headers = {
+            "X-Runner-Model-Token": model_token,
+            "X-Runner-Model-Name": run.model_name,
+            "X-Runner-Model-Openai-Base-Url": f"{gateway_base}/model-gateway/v1",
+            "X-Runner-Model-Anthropic-Base-Url": f"{gateway_base}/model-gateway/anthropic",
+        }
     manifest_text = row.payload_json["manifest_text"]
     return Response(
         content=manifest_text,
@@ -464,5 +501,6 @@ def shard_manifest(
             "X-Runner-Task-Token": token,
             "Cache-Control": "no-store",
             "X-Shard-Dispatch-Key": dispatch_key,
+            **model_headers,
         },
     )

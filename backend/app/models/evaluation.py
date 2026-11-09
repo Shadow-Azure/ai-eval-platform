@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 
 from sqlalchemy import (
     BigInteger,
@@ -9,6 +10,7 @@ from sqlalchemy import (
     ForeignKeyConstraint,
     Index,
     Integer,
+    Numeric,
     String,
     UniqueConstraint,
 )
@@ -68,6 +70,11 @@ class EvalRun(Base, TimestampMixin):
     tenant_id: Mapped[str] = tenant_fk()
     project_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     resource_pool_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    # M3-02 model binding: the gateway credential is resolved per run so a
+    # runner never sees the provider key. Synthetic runs leave these NULL.
+    model_config_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    model_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    model_budget_usd: Mapped[Decimal | None] = mapped_column(Numeric(12, 6), nullable=True)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     status: Mapped[str] = mapped_column(
         String(32), nullable=False, default="queued", server_default="queued"

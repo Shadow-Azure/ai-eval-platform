@@ -77,11 +77,36 @@ class Settings(BaseSettings):
     # Cap synthetic case keys per evaluation creation call.
     eval_max_cases: int = 256
 
+    # M3-02 centralized model gateway. Credentials are encrypted with a
+    # host-local Fernet key (SECRET_BOX_KEY); the gateway signs short-lived
+    # runner tokens with GATEWAY_TOKEN_SECRET. Both are required in
+    # production (the deploy script generates them on first rollout).
+    secret_box_key: str = ""
+    gateway_token_secret: str | None = None
+    gateway_token_ttl_seconds: int = 900
+    gateway_timeout_seconds: float = 120.0
+    # Connection-level retries for provider calls (bounded; never retries a
+    # stream that has already started).
+    gateway_connect_retries: int = 2
+
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173,http://localhost:8080"
 
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
+    def gateway_secret(self) -> str:
+        """Signing secret for short-lived model gateway tokens."""
+
+        if self.gateway_token_secret:
+            return self.gateway_token_secret
+        if self.environment.lower() in {"production", "prod"}:
+            raise RuntimeError(
+                "GATEWAY_TOKEN_SECRET is required in production; refusing to start "
+                "with the development fallback"
+            )
+        return "development-only-gateway-token-secret"
 
     @property
     def session_secret(self) -> str:

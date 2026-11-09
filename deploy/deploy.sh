@@ -29,8 +29,21 @@ ensure_secret() {
   fi
 }
 
+ensure_fernet_secret() {
+  local key="$1"
+  if ! grep -q "^${key}=..*" "$ENV_FILE" 2>/dev/null; then
+    # Fernet keys are urlsafe-base64 of exactly 32 random bytes.
+    set_env "$key" "$(openssl rand -base64 32 | tr '+/' '-_')"
+    echo "deploy: generated ${key}" >&2
+  fi
+}
+
 # Session signing secret is server-local and stable across rollouts.
 ensure_secret AUTH_SESSION_SECRET
+# M3-02: provider credentials are encrypted at rest with a host-local key and
+# the gateway signs runner tokens with its own secret.
+ensure_fernet_secret SECRET_BOX_KEY
+ensure_secret GATEWAY_TOKEN_SECRET
 if ! grep -q '^AUTH_BOOTSTRAP_ADMIN_PASSWORD=.' "$ENV_FILE" 2>/dev/null; then
   echo "deploy: WARNING AUTH_BOOTSTRAP_ADMIN_PASSWORD is not set; the console will have no login account until it is provisioned" >&2
 fi

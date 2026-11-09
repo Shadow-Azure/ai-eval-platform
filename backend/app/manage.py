@@ -22,7 +22,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .db import SessionLocal
-from .models import Membership, User
+from .models import Credential, Membership, ModelConfig, User, utcnow
+from .secrets import SecretBoxError, get_secret_box, mask_secret
 from .seed import ensure_default_scope
 from .services import identity
 
@@ -117,6 +118,98 @@ def cmd_create_admin(args: argparse.Namespace) -> int:
     return 0
 
 
+
+
+def cmd_upsert_model_config(args: argparse.Namespace) -> int:
+    """Create or rotate the provider credential used by M3 evaluations.
+
+    The API key is read from stdin so it never lands in shell history. The row
+    is encrypted with SECRET_BOX_KEY (required in production).
+    """
+
+    api_key = sys.stdin.readline().rstrip("\r\n")
+    if not api_key:
+        print("error: 未能从标准输入读取模型 API Key", file=sys.stderr)
+        return 2
+    try:
+        ciphertext, key_version = get_secret_box().encrypt(api_key)
+    except SecretBoxError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    pricing = {}
+    if args.input_per_1m is not None:
+        pricing["input_per_1m"] = args.input_per_1m
+    if args.output_per_1m is not None:
+        pricing["output_per_1m"] = args.output_per_1m
+    with SessionLocal() as session:
+        tenant, _workspace, project = ensure_default_scope(session)
+        config = session.scalar(
+            select(ModelConfig).where(
+                ModelConfig.tenant_id == tenant.id,
+                ModelConfig.project_id == project.id,
+                ModelConfig.provider == args.provider,
+                ModelConfig.base_url == args.base_url.rstrip("/"),
+                ModelConfig.model_name == args.model_name,
+            )
+        )
+        if config is None:
+            credential = Credential(
+                tenant_id=tenant.id,
+                project_id=project.id,
+                kind="model",
+                provider=args.provider,
+                ciphertext=ciphertext,
+                key_version=key_version,
+                secret_mask=mask_secret(api_key),
+                last_rotated_at=utcnow(),
+            )
+            session.add(credential)
+            session.flush()
+            config = ModelConfig(
+                tenant_id=tenant.id,
+                project_id=project.id,
+                credential_id=credential.id,
+                provider=args.provider,
+                display_name=args.display_name or args.model_name,
+                base_url=args.base_url.rstrip("/"),
+                model_name=args.model_name,
+                api_style=args.api_style,
+                limits_json={},
+                pricing_json=pricing,
+            )
+            session.add(config)
+        else:
+            if pricing:
+                config.pricing_json = pricing
+            credential = session.get(Credential, config.credential_id)
+            if credential is None:
+                credential = Credential(
+                    tenant_id=tenant.id,
+                    project_id=project.id,
+                    kind="model",
+                    provider=args.provider,
+                    ciphertext=ciphertext,
+                    key_version=key_version,
+                    secret_mask=mask_secret(api_key),
+                    last_rotated_at=utcnow(),
+                )
+                session.add(credential)
+                session.flush()
+                config.credential_id = credential.id
+            else:
+                credential.ciphertext = ciphertext
+                credential.key_version = key_version
+                credential.secret_mask = mask_secret(api_key)
+                credential.last_rotated_at = utcnow()
+                credential.revoked_at = None
+        session.commit()
+        print(
+            f"model config ready: {config.id} provider={config.provider} "
+            f"model={config.model_name} mask={credential.secret_mask}"
+        )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m app.manage", description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -132,6 +225,19 @@ def build_parser() -> argparse.ArgumentParser:
         command.add_argument("--email", required=True)
         command.add_argument("--password-stdin", action="store_true")
         command.set_defaults(func=func)
+
+    model_parser = subparsers.add_parser(
+        "upsert-model-config",
+        help="create or rotate a model provider credential (API key on stdin)",
+    )
+    model_parser.add_argument("--provider", required=True)
+    model_parser.add_argument("--base-url", required=True)
+    model_parser.add_argument("--model-name", required=True)
+    model_parser.add_argument("--display-name", default=None)
+    model_parser.add_argument("--api-style", choices=("openai", "anthropic"), default="openai")
+    model_parser.add_argument("--input-per-1m", type=float, default=None)
+    model_parser.add_argument("--output-per-1m", type=float, default=None)
+    model_parser.set_defaults(func=cmd_upsert_model_config)
     return parser
 
 

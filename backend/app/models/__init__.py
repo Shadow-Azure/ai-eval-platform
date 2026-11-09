@@ -32,6 +32,7 @@ from .identity import (
     User,
     Workspace,
 )
+from .model import CREDENTIAL_KINDS, USAGE_STATUSES, Credential, ModelConfig, ModelUsage
 from .outbox import Outbox
 from .resources import ProvisionedInstance, ResourcePool, Runner
 
@@ -64,6 +65,11 @@ __all__ = [
     "DatasetImport",
     "MetricDefinition",
     "DatasetVersionMetric",
+    "Credential",
+    "ModelConfig",
+    "ModelUsage",
+    "CREDENTIAL_KINDS",
+    "USAGE_STATUSES",
     "AGGREGATOR_WHITELIST",
     "DATASET_VERSION_STATUSES",
     "DATASET_IMPORT_STATUSES",
