@@ -2,7 +2,7 @@
 
 English | [中文](architecture.md)
 
-The repository is in M3: the execution foundation is in place, the control plane is starting to carry real datasets, the model gateway, and the execution runtime, and account-password login first narrows access.
+The repository is entering M4: the execution foundation and the real evaluation loop are in place, and concurrency scheduling, timeouts and cancellation, budget pausing, and the elastic resource pool are being completed.
 
 ## Components
 
