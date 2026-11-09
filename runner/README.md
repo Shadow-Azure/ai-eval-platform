@@ -1,6 +1,6 @@
 # Runner 参考实现（M2-03）
 
-零依赖 Node.js 参考实现，用于验证 `runner-contract/` 的协议，不调用模型、不依赖云资源。
+零依赖 Node.js 参考实现，用于验证 `runner-contract/` 的协议。`real-task.mjs` 在 dataset 任务上调用 Claude Code 与官方 F2P/P2P 评分；没有 repo 的合成任务仍走确定性 synthetic 分支。
 
 ## 测试
 
@@ -11,7 +11,7 @@ node --test tests/runner/*.test.mjs
 ## 本地执行
 
 ```sh
-node runner/scripts/synthetic-task.mjs \
+node runner/scripts/real-task.mjs \
   --dispatch /tmp/dispatch.json \
   --state-dir /tmp/eval-state \
   --object-store-root /tmp/eval-objects

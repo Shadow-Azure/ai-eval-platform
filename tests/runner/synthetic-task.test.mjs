@@ -240,7 +240,7 @@ test("workflow template reuses the same scripts and has no secret material", () 
     "repository_dispatch",
     "types: [eval-shard]",
     "self-hosted",
-    "runner/scripts/synthetic-task.mjs",
+    "runner/scripts/real-task.mjs",
     "runner/lib/contracts.mjs",
     "contents: read",
     "id-token: write",
