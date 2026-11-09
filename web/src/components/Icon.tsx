@@ -31,6 +31,7 @@ const iconPaths = {
   cpu:
     '<rect x="6" y="6" width="12" height="12" rx="2"/><rect x="9" y="9" width="6" height="6" rx="1"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/>',
   lock: '<rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3M12 14v3"/>',
+  pulse: '<path d="M3 12h4l2.2-6 4.6 12 2.4-6H21"/>',
 } as const;
 
 export type IconName = keyof typeof iconPaths;

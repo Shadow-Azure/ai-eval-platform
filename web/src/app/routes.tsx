@@ -1,5 +1,5 @@
 import { Navigate, Route, Routes } from "react-router-dom";
-import { RequireAuth } from "./auth";
+import { RequireAdmin, RequireAuth } from "./auth";
 import { AppShell } from "../components/AppShell";
 import { PlaceholderPage } from "../components/PlaceholderPage";
 import { DatasetDetailPage } from "../pages/DatasetDetailPage";
@@ -10,6 +10,7 @@ import { EvalWizardPage } from "../pages/EvalWizardPage";
 import { EvalsPage } from "../pages/EvalsPage";
 import { LoginPage } from "../pages/LoginPage";
 import { NotFoundPage } from "../pages/NotFoundPage";
+import { OperationsPage } from "../pages/OperationsPage";
 import { OverviewPage } from "../pages/OverviewPage";
 
 const placeholders = [
@@ -53,6 +54,9 @@ export function AppRoutes() {
           <Route path="/datasets" element={<DatasetsPage />} />
           <Route path="/datasets/import" element={<DatasetImportPage />} />
           <Route path="/datasets/:datasetId" element={<DatasetDetailPage />} />
+          <Route element={<RequireAdmin />}>
+            <Route path="/operations" element={<OperationsPage />} />
+          </Route>
           {placeholders.map((page) => (
             <Route
               key={page.path}

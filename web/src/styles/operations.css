@@ -1,0 +1,267 @@
+.ops-note {
+  margin-bottom: 16px;
+}
+
+.ops-checked-at {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.ops-service-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.ops-service {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #fbfcfe;
+}
+
+.ops-service-icon {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border-radius: 9px;
+  color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.ops-service-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.ops-service-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ops-service-name {
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.ops-service-summary {
+  margin-top: 3px;
+  color: var(--ink-2);
+  font-size: 11px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.ops-service-latency {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.ops-resource-grid {
+  grid-template-columns: minmax(0, 1.5fr) minmax(280px, 0.8fr);
+}
+
+.ops-pool-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 19px 0;
+}
+
+.ops-pool {
+  flex: 1;
+  min-width: 160px;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfe;
+}
+
+.ops-pool-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ops-pool-name {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.ops-pool-meta {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.ops-labels {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.ops-stat-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.ops-stat-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 0;
+  border-bottom: 1px solid #f0f3f7;
+}
+
+.ops-stat-row:first-child {
+  padding-top: 0;
+}
+
+.ops-stat-row:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.ops-stat-label {
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.ops-stat-meta {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.ops-stat-value {
+  color: var(--ink);
+  font-size: 20px;
+  letter-spacing: -0.3px;
+}
+
+.ops-stat-value.text-danger {
+  color: var(--danger);
+}
+
+.ops-stat-value.text-warning {
+  color: var(--warning);
+}
+
+.ops-db-meta {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 6px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.ops-db-meta > div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfe;
+}
+
+.ops-db-meta span {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.ops-db-meta strong {
+  color: var(--ink);
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.ops-db-table .ant-table-thead > tr > th {
+  font-size: 10px;
+}
+
+.ops-footer-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 14px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.ops-footer-note .icon {
+  color: #8b96a6;
+}
+
+@media (max-width: 1180px) {
+  .ops-service-grid,
+  .ops-resource-grid,
+  .ops-db-meta {
+    grid-template-columns: 1fr;
+  }
+}
+
+.ops-capacity-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.ops-capacity-card {
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfe;
+}
+
+.ops-capacity-card .progress {
+  margin: 2px 0 0;
+}
+
+.ops-capacity-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.ops-capacity-head strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.ops-capacity-head .muted {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.ops-capacity-meta {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+@media (max-width: 1180px) {
+  .ops-capacity-grid {
+    grid-template-columns: 1fr;
+  }
+}

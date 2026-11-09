@@ -13,7 +13,7 @@ The repository is in M3: the execution foundation is in place, the control plane
 | `scripts/` | Mechanical documentation and workflow gates | Not product runtime |
 | `.github/workflows/` | CI decisions for docs, flow, tests, and deployment | Not a local debugging substitute |
 | `backend/` | FastAPI control plane, worker, migrations, and identity/dataset/evaluation services | No agent execution and no plaintext secrets |
-| `web/` | React console: login, app shell, and evaluation pages | Reaches the control plane only through same-origin `/api` |
+| `web/` | React console: login, app shell, evaluation, and operations status pages | Reaches the control plane only through same-origin `/api` |
 | `runner-contract/` | Runner dispatch, manifest, heartbeat, and callback schemas | Contract only |
 | `runner/` | Reusable workflow, synthetic task, and contract tests | No dataset- or agent-specific branches |
 
@@ -37,6 +37,10 @@ The Chinese file is `foo.md`, the English side is `foo.en.md`, and the record is
 ## Identity and sessions
 
 Login uses an account and password; passwords are stored as salted scrypt hashes, the session cookie carries an HMAC-signed token with HttpOnly and SameSite=Lax, and the database stores only the token hash and revocation state. `/api/v1/auth/*` manages sessions, `/api/v1/*` business routes require a session, and the Runner plane keeps its own short-lived tokens. Seed creates the default administrator idempotently from `AUTH_BOOTSTRAP_ADMIN_*`, and writes are administrator-only.
+
+## Operations status
+
+An administrator can open `/operations` to see the latest liveness results for the control-plane API, PostgreSQL, Redis, object storage, the Runner plane, the dispatch worker, and the model gateway, along with resource pools and Runners, datasets, model configurations, the dispatch queue, and the database migration revision, size, key table row counts, connection usage, and storage usage. A read-only member does not see it in navigation and the API returns 403; the page refreshes every 30 seconds and can also be refreshed manually. The worker writes a heartbeat to `service_heartbeat` on every poll.
 
 ## Runner contract
 

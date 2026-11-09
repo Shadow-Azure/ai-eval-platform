@@ -60,6 +60,8 @@ EXPECTED_TABLES = {
     "score_artifact",
     "test_case_result",
     "metric_result",
+    # M3-06 管理员运营状态：Worker 心跳
+    "service_heartbeat",
 }
 
 

@@ -4,6 +4,7 @@ export interface NavItem {
   label: string;
   to: string;
   icon: IconName;
+  adminOnly?: boolean;
 }
 
 export interface NavGroup {
@@ -15,6 +16,10 @@ export const navGroups: NavGroup[] = [
   {
     section: "工作台",
     items: [{ label: "总览", to: "/overview", icon: "overview" }],
+  },
+  {
+    section: "运营",
+    items: [{ label: "运营状态", to: "/operations", icon: "pulse", adminOnly: true }],
   },
   {
     section: "配置",
@@ -40,6 +45,7 @@ export const navGroups: NavGroup[] = [
 
 const breadcrumbs: Array<{ test: (path: string) => boolean; crumbs: [string, string] }> = [
   { test: (path) => path === "/overview", crumbs: ["工作台", "总览"] },
+  { test: (path) => path === "/operations", crumbs: ["运营", "运营状态"] },
   { test: (path) => path === "/datasets", crumbs: ["配置", "数据集"] },
   { test: (path) => path === "/datasets/import", crumbs: ["配置", "导入数据集"] },
   { test: (path) => path.startsWith("/datasets/"), crumbs: ["配置", "数据集详情"] },

@@ -1,5 +1,6 @@
 import { NavLink } from "react-router-dom";
 import { navGroups } from "../app/nav";
+import { useAuth } from "../app/auth";
 import type { EntityRef } from "../api/types";
 import { Icon } from "./Icon";
 
@@ -22,6 +23,8 @@ interface SidebarProps {
 }
 
 export function Sidebar({ tenant }: SidebarProps) {
+  const { session } = useAuth();
+  const isAdmin = session?.role === "admin";
   const tenantName = tenant?.name ?? "默认组织";
   const tenantSlug = tenant?.slug ?? "default";
 
@@ -38,22 +41,28 @@ export function Sidebar({ tenant }: SidebarProps) {
       </div>
 
       <div className="sidebar-nav">
-        {navGroups.map((group) => (
-          <nav key={group.section} className="nav-group" aria-label={group.section}>
-            <div className="nav-label">{group.section}</div>
-            {group.items.map((item) => (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                end
-                className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
-              >
-                <Icon name={item.icon} size={17} />
-                <span>{item.label}</span>
-              </NavLink>
-            ))}
-          </nav>
-        ))}
+        {navGroups.map((group) => {
+          const items = group.items.filter((item) => !item.adminOnly || isAdmin);
+          if (items.length === 0) {
+            return null;
+          }
+          return (
+            <nav key={group.section} className="nav-group" aria-label={group.section}>
+              <div className="nav-label">{group.section}</div>
+              {items.map((item) => (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  end
+                  className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
+                >
+                  <Icon name={item.icon} size={17} />
+                  <span>{item.label}</span>
+                </NavLink>
+              ))}
+            </nav>
+          );
+        })}
       </div>
 
       <div className="sidebar-footer">

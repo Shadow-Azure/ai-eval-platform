@@ -8,7 +8,8 @@ import {
   type ReactNode,
 } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Navigate, Outlet, useLocation } from "react-router-dom";
+import { Button } from "antd";
+import { Navigate, Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
   fetchMe,
   login as loginRequest,
@@ -16,6 +17,8 @@ import {
   type AuthSession,
 } from "../api/auth";
 import { AUTH_UNAUTHORIZED_EVENT } from "../api/types";
+import { EmptyState } from "../components/EmptyState";
+import { PageHeading } from "../components/PageHeading";
 
 type AuthStatus = "loading" | "authenticated" | "anonymous";
 
@@ -139,6 +142,35 @@ export function RequireAuth() {
   if (status === "anonymous") {
     const next = `${location.pathname}${location.search}`;
     return <Navigate to={`/login?next=${encodeURIComponent(next)}`} replace />;
+  }
+
+  return <Outlet />;
+}
+
+export function RequireAdmin() {
+  const { session } = useAuth();
+  const navigate = useNavigate();
+
+  if (session?.role !== "admin") {
+    return (
+      <main className="page">
+        <PageHeading
+          eyebrow="Access · Administrators"
+          title="无访问权限"
+          description="运营状态页仅对平台管理员开放。"
+        />
+        <section className="card">
+          <EmptyState
+            icon="lock"
+            title="当前账号没有访问权限"
+            description="如需查看资源、服务与数据库状态，请使用平台管理员账号登录。"
+            action={
+              <Button onClick={() => navigate("/overview")}>返回总览</Button>
+            }
+          />
+        </section>
+      </main>
+    );
   }
 
   return <Outlet />;
