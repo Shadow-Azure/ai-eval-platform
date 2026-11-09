@@ -9,6 +9,7 @@ priority: P0
 status: done
 scope:
   - .agents/flow/issues/m3-04-eval-workbench-e2e.*
+  - .agents/flow/milestones/m3-first-real-evaluation.*
   - web/**
   - backend/**
   - deploy/**
