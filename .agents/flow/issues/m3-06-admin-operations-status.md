@@ -5,7 +5,7 @@
 ```yaml flow
 kind: issue
 milestone: m3
-priority: P1
+priority: P0
 status: in-progress
 scope:
   - .agents/flow/issues/m3-06-admin-operations-status.*
