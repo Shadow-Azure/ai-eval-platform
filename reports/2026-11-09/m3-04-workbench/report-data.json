@@ -1,0 +1,40 @@
+{
+  "title": "M3-04 评测工作台 UI 与首个真实用例 · 冒烟报告",
+  "eyebrow": "PR #58 · branch agent/m3-04-eval-workbench",
+  "summary": "补齐数据集目录/导入向导、数据集详情、发起评测四步向导、评测进度与结果视图。Before 截图取自已部署 main（#46 之后、#48 之前）的 /datasets 与 /evals/new 占位页；After 截图取自本地 #48 构建与真实 API 数据：SWE-bench Verified 真实用例、MiniMax 模型配置、固定 Runner 与 Claude Code Runtime。",
+  "meta": "2026-11-09 · macOS · Chrome headless 1440×900 · 中文浅色主题 · 本地 Vite + uvicorn/SQLite",
+  "metrics": [
+    { "value": "6", "label": "After 页面截图" },
+    { "value": "3", "label": "Before 页面截图" },
+    { "value": "1", "label": "真实 SWE-bench 用例" }
+  ],
+  "facts": [
+    { "label": "基线", "value": "origin/main c6121fa（#46/#47 已合入，#48 之前）" },
+    { "label": "变更", "value": "agent/m3-04-eval-workbench/complete-remaining-m3-f6e3eff5fe50" },
+    { "label": "视口", "value": "1440×900，Chrome headless" },
+    { "label": "数据", "value": "SWE-bench Verified astropy__astropy-12907；MiniMax-M2.7-highspeed；fixed-linux-eval" }
+  ],
+  "matrix": {
+    "columns": ["#", "页面", "Before", "After", "结论"],
+    "rows": [
+      { "id": "01", "name": "数据集目录", "status": { "kind": "pass", "label": "PASS" }, "before": "before-datasets.png", "after": "after-datasets.png", "detail": "占位页替换为真实数据集列表，含导入入口。" },
+      { "id": "02", "name": "数据集详情", "status": { "kind": "pass", "label": "PASS" }, "before": "—", "after": "after-dataset-detail.png", "detail": "版本、指标口径、用例与 base_commit 可见。" },
+      { "id": "03", "name": "数据集导入向导", "status": { "kind": "pass", "label": "PASS" }, "before": "—", "after": "after-dataset-import.png", "detail": "三步：来源/版本 → JSONL 记录校验 → 完成。" },
+      { "id": "04", "name": "发起评测向导", "status": { "kind": "pass", "label": "PASS" }, "before": "before-eval-wizard.png", "after": "after-eval-wizard.png", "detail": "占位页替换为四步向导；数据集/版本/模型/Runtime/资源池与预检阻塞项。" },
+      { "id": "05", "name": "评测进度与结果", "status": { "kind": "pass", "label": "PASS" }, "before": "before-evals.png", "after": "after-eval-detail.png", "detail": "状态、进度、官方口径结果卡、用例表、测试级详情与事件时间线。" },
+      { "id": "06", "name": "评测列表", "status": { "kind": "info", "label": "BASELINE" }, "before": "before-evals.png", "after": "after-evals.png", "detail": "列表沿用既有页面，仅数据从合成变为真实评测。" }
+    ]
+  },
+  "screenshots": [
+    { "src": "screenshots/before-datasets.png", "label": "Before · 数据集占位页" },
+    { "src": "screenshots/after-datasets.png", "label": "After · 数据集目录" },
+    { "src": "screenshots/after-dataset-detail.png", "label": "After · 数据集详情" },
+    { "src": "screenshots/after-dataset-import.png", "label": "After · 数据集导入向导" },
+    { "src": "screenshots/before-eval-wizard.png", "label": "Before · 发起评测占位页" },
+    { "src": "screenshots/after-eval-wizard.png", "label": "After · 发起评测向导" },
+    { "src": "screenshots/before-evals.png", "label": "Before · 评测列表" },
+    { "src": "screenshots/after-evals.png", "label": "After · 评测列表" },
+    { "src": "screenshots/after-eval-detail.png", "label": "After · 评测进度与结果" }
+  ],
+  "gaps": "真实 SWE-bench 用例的官方评分与 OSS 上传证据仍在主机侧执行；完成前本报告只覆盖 UI 与平台链路。"
+}
