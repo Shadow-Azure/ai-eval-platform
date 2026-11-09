@@ -178,7 +178,9 @@ function realCase(dispatch, item, task, { modelToken, runnerRoot }) {
     );
     const patch = (diff.stdout || "").trim();
     if (agent.status !== 0) {
-      const failureDetail = `agent exit ${agent.status}\n${(agent.stderr || "").slice(-4000)}\n${(agent.stdout || "").slice(-2000)}`;
+      const claudeStderrPath = join(workdir, "trace", "claude-stderr.log");
+      const claudeStderr = existsSync(claudeStderrPath) ? readFileSync(claudeStderrPath, "utf8") : "";
+      const failureDetail = `agent exit ${agent.status}\n${claudeStderr.slice(-6000)}\n${(agent.stderr || "").slice(-4000)}\n${(agent.stdout || "").slice(-2000)}`;
       console.error(failureDetail);
       return {
         score: {
