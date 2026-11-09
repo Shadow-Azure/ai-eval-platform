@@ -1,0 +1,15 @@
+name: add-pr-project
+on: push
+permissions:
+  contents: read
+jobs:
+  add:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.FLOW_TOKEN }}
+    steps:
+      - name: Add PR 74 to project
+        run: |
+          set -euo pipefail
+          PR_ID=$(gh api graphql -f query='query { repository(owner:"Shadow-Azure", name:"ai-eval-platform") { pullRequest(number:74) { id } } }' --jq '.data.repository.pullRequest.id')
+          gh api graphql -f query="mutation { addProjectV2ItemById(input:{projectId:\"PVT_kwHOC-0pEc4Bqr70\", contentId:\"$PR_ID\"}) { item { id } } }"
