@@ -6,7 +6,7 @@ English | [中文](m3-02-model-gateway-tokens.md)
 kind: issue
 milestone: m3
 priority: P0
-status: in-progress
+status: done
 scope:
   - .agents/flow/issues/m3-02-model-gateway-tokens.*
   - backend/**
