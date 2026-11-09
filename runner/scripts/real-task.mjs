@@ -188,13 +188,17 @@ function realCase(dispatch, item, task, { modelToken, runnerRoot }) {
 
     const tracePath = join(workdir, "trace", "claude-stream.jsonl");
     const trace = existsSync(tracePath) ? readFileSync(tracePath) : Buffer.from("");
-    spawnSync("git", ["-C", workdir, "add", "-A", "--", ".", ":(exclude).runtime-home", ":(exclude)trace"], {
+    // The workspace is chowned to the non-root agent user; host-side git
+    // commands run as root and otherwise fail with "dubious ownership",
+    // which silently produced empty patches even though the agent edited code.
+    const safe = ["-c", `safe.directory=${workdir}`];
+    spawnSync("git", [...safe, "-C", workdir, "add", "-A", "--", ".", ":(exclude).runtime-home", ":(exclude)trace"], {
       encoding: "utf8",
       timeout: 60_000,
     });
     const diff = spawnSync(
       "git",
-      ["-C", workdir, "diff", "--cached", "--", ".", ":(exclude).runtime-home", ":(exclude)trace"],
+      [...safe, "-C", workdir, "diff", "--cached", "--", ".", ":(exclude).runtime-home", ":(exclude)trace"],
       { encoding: "utf8", timeout: 60_000 },
     );
     const patch = (diff.stdout || "").trim();
