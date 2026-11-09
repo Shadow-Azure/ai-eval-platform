@@ -209,6 +209,11 @@ def _enforce_capacity_gate(ctx: CaseContext, *, now: datetime) -> None:
     run = ctx.run
     if not run.resource_pool_id or run.status not in ("queued", "running"):
         return
+    # Serialize concurrent started callbacks for one evaluation: the check below
+    # is check-then-act, so without the row lock two runners could both observe
+    # a free slot and exceed the hard cap. Postgres honours FOR UPDATE; SQLite
+    # (tests) serializes writes anyway.
+    ctx.session.get(EvalRun, run.id, with_for_update=True)
     cap = capacity.effective_concurrency(ctx.session, run, settings=get_settings(), now=now)
     run.effective_concurrency = cap
     if cap <= 0:
