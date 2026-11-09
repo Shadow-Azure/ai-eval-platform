@@ -1,8 +1,12 @@
 # Reference template for the private runner repository.
-# M2-05: the platform owns dispatch/token/OSS — the workflow only validates
-# the dispatch payload and executes the synthetic task. The short-lived task
-# token arrives with the manifest (X-Runner-TaskToken) and never enters the
-# workflow env; presigned PUTs carry the object-store credential in the URL.
+# M4-01: prepare/execute split — one workflow run per shard, one matrix job per
+# case, so the whole shard is never executed sequentially and a duplicate job
+# exits on its per-case claim before the agent starts. Excess cases wait on the
+# platform's per-evaluation concurrency cap (started → 429 capacity_waiting).
+# M2-05: the platform owns dispatch/token/OSS — the workflow only validates the
+# dispatch payload and executes the task. The short-lived task token arrives
+# with the manifest (X-Runner-TaskToken) and never enters the workflow env;
+# presigned PUTs carry the object-store credential in the URL.
 # Do not commit real values here.
 name: eval-shard
 
@@ -19,27 +23,66 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  synthetic-shard:
+  prepare:
     runs-on: [self-hosted, linux, eval]
-    timeout-minutes: 60
+    timeout-minutes: 5
+    outputs:
+      cases: ${{ steps.plan.outputs.cases }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
 
-      - name: Validate and execute synthetic shard
+      - name: Validate dispatch and plan the case matrix
         env:
           DISPATCH_PAYLOAD: ${{ toJson(github.event.client_payload) }}
+          RUNNER_STATE_DIR: ${{ runner.temp }}/eval-state
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/eval-dispatch"
+          printf '%s' "$DISPATCH_PAYLOAD" > "$RUNNER_TEMP/eval-dispatch/dispatch.json"
+          node runner/lib/contracts.mjs dispatch "$RUNNER_TEMP/eval-dispatch/dispatch.json"
+          cases=$(node runner/scripts/plan-cases.mjs \
+            --dispatch "$RUNNER_TEMP/eval-dispatch/dispatch.json" \
+            --state-dir "$RUNNER_STATE_DIR")
+          echo "cases=$cases" >> "$GITHUB_OUTPUT"
+
+  execute:
+    needs: prepare
+    if: needs.prepare.outputs.cases != '[]'
+    runs-on: [self-hosted, linux, eval]
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        case: ${{ fromJson(needs.prepare.outputs.cases) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # runner.temp is per job: never read the prepare job's dispatch file.
+      - name: Materialize and validate the dispatch payload
+        env:
+          DISPATCH_PAYLOAD: ${{ toJson(github.event.client_payload) }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/eval-dispatch"
+          printf '%s' "$DISPATCH_PAYLOAD" > "$RUNNER_TEMP/eval-dispatch/dispatch.json"
+          node runner/lib/contracts.mjs dispatch "$RUNNER_TEMP/eval-dispatch/dispatch.json"
+
+      - name: Execute exactly one case
+        env:
           RUNNER_PRESIGN_UPLOADS: "1"
           RUNNER_STATE_DIR: ${{ runner.temp }}/eval-state
           RUNNER_OBJECT_ROOT: ${{ runner.temp }}/eval-objects
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_STATE_DIR" "$RUNNER_OBJECT_ROOT"
-          printf '%s' "$DISPATCH_PAYLOAD" > "$RUNNER_TEMP/dispatch.json"
-          node runner/lib/contracts.mjs dispatch "$RUNNER_TEMP/dispatch.json"
           node runner/scripts/real-task.mjs \
-            --dispatch "$RUNNER_TEMP/dispatch.json" \
+            --dispatch "$RUNNER_TEMP/eval-dispatch/dispatch.json" \
+            --case "${{ matrix.case.id }}" \
             --state-dir "$RUNNER_STATE_DIR" \
             --object-store-root "$RUNNER_OBJECT_ROOT"

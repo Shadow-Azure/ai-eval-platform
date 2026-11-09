@@ -1,17 +1,16 @@
-# Synthetic shard workflow executed on the fixed self-hosted Linux runner.
+# One workflow run per shard, executed on the fixed self-hosted Linux runner.
 #
-# M2-05: this workflow is the real consumption side of the platform dispatch
-# loop. The platform worker POSTs a repository_dispatch whose client_payload
-# satisfies runner-contract/schemas/v1/dispatch.schema.json; the job validates
-# it, fetches the shard manifest from the platform (which also issues the
-# attempt-scoped short-term token via X-Runner-TaskToken) and executes the
-# deterministic synthetic task. Result objects are uploaded through platform
-# presigned URLs (RUNNER_PRESIGN_UPLOADS=1) and the terminal callbacks persist
-# run/case/attempt state.
+# M4-01: `prepare` turns the shard manifest into a GitHub matrix where every
+# `execute` job runs exactly one case, so a failing case never cancels its
+# siblings and duplicate/replayed jobs exit before the agent starts. Excess
+# cases wait on the platform's per-evaluation concurrency cap (started → 429
+# capacity_waiting) instead of creating extra attempts.
 #
-# No model keys, cloud AKs or long-lived platform tokens appear here: the
-# short-lived task token never enters the workflow env, it lives in the runner
-# process memory only.
+# M2-05: the platform worker POSTs a repository_dispatch whose client_payload
+# satisfies runner-contract/schemas/v1/dispatch.schema.json. The payload is a
+# reference only — opaque IDs plus the manifest URL/digest; cases, prompts and
+# the short-term token are fetched by the runner. Neither `prepare` nor
+# `execute` passes case data or credentials through the workflow env.
 #
 # workflow_dispatch (manual) is a bootstrap: it asks the platform to create a
 # synthetic evaluation, and the platform's dispatch loop triggers the real
@@ -69,10 +68,12 @@ jobs:
           print(f"evaluation created: {payload['id']} status={payload['status']}")
           PY
 
-  synthetic-shard:
+  prepare:
     if: github.event_name == 'repository_dispatch'
     runs-on: [self-hosted, linux, eval]
-    timeout-minutes: 30
+    timeout-minutes: 5
+    outputs:
+      cases: ${{ steps.plan.outputs.cases }}
     steps:
       - uses: actions/checkout@v4
 
@@ -85,7 +86,38 @@ jobs:
           printf '%s' "$DISPATCH_PAYLOAD" > "$RUNNER_TEMP/eval-dispatch/dispatch.json"
           node runner/lib/contracts.mjs dispatch "$RUNNER_TEMP/eval-dispatch/dispatch.json"
 
-      - name: Execute synthetic shard (manifest fetch → callbacks → OSS)
+      - name: Plan one matrix entry per case
+        id: plan
+        run: |
+          set -euo pipefail
+          cases=$(node runner/scripts/plan-cases.mjs \
+            --dispatch "$RUNNER_TEMP/eval-dispatch/dispatch.json" \
+            --state-dir "$RUNNER_TEMP/eval-state")
+          echo "cases=$cases" >> "$GITHUB_OUTPUT"
+
+  execute:
+    needs: prepare
+    if: github.event_name == 'repository_dispatch' && needs.prepare.outputs.cases != '[]'
+    runs-on: [self-hosted, linux, eval]
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        case: ${{ fromJson(needs.prepare.outputs.cases) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # runner.temp is per job: never read the prepare job's dispatch file.
+      - name: Materialize and validate the dispatch payload
+        env:
+          DISPATCH_PAYLOAD: ${{ toJson(github.event.client_payload) }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/eval-dispatch"
+          printf '%s' "$DISPATCH_PAYLOAD" > "$RUNNER_TEMP/eval-dispatch/dispatch.json"
+          node runner/lib/contracts.mjs dispatch "$RUNNER_TEMP/eval-dispatch/dispatch.json"
+
+      - name: Execute exactly one case
         env:
           RUNNER_PRESIGN_UPLOADS: "1"
           RUNNER_STATE_DIR: ${{ runner.temp }}/eval-state
@@ -94,5 +126,6 @@ jobs:
           set -euo pipefail
           node runner/scripts/real-task.mjs \
             --dispatch "$RUNNER_TEMP/eval-dispatch/dispatch.json" \
+            --case "${{ matrix.case.id }}" \
             --state-dir "$RUNNER_STATE_DIR" \
             --object-store-root "$RUNNER_OBJECT_ROOT"

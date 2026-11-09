@@ -10,6 +10,7 @@ import { postCallback } from "../lib/callback-client.mjs";
 import { requireValid, validateDispatch, validateManifest, validateStarted } from "../lib/contracts.mjs";
 import { DispatchGuard } from "../lib/dispatch-guard.mjs";
 import { ContractError } from "../lib/errors.mjs";
+import { fetchManifest, sha256 } from "../lib/manifest-source.mjs";
 import { LocalObjectStore } from "../lib/object-store.mjs";
 import { getDatasetAdapter, getRuntimeAdapter } from "../lib/adapters.mjs";
 
@@ -29,29 +30,58 @@ function parseArgs(argv) {
   return args;
 }
 
+/**
+ * Per-case claims (M4-01) live on the job-local state dir. A retryable exit
+ * must leave that dir reusable, so release the claim there; `callback_permanent`
+ * keeps it so a replay cannot duplicate a rejected attempt, and the
+ * `stale_attempt` exit (code 3) keeps today's behaviour.
+ */
+const CLAIM_KEEPING_CODES = new Set(["callback_permanent"]);
+let releaseClaim = null;
+
 function fail(message, code = "runtime_error", exitCode = 2) {
+  if (releaseClaim && exitCode !== 0 && !CLAIM_KEEPING_CODES.has(code)) {
+    try {
+      releaseClaim();
+    } catch (error) {
+      console.error(`claim 释放失败：${error.message}`);
+    }
+    releaseClaim = null;
+  }
   console.error(JSON.stringify({ status: "rejected", error_code: code, message }, null, 2));
   process.exit(exitCode);
 }
 
+const CAPACITY_WAIT_INITIAL_MS = 5_000;
+const CAPACITY_WAIT_MAX_MS = 60_000;
+const CAPACITY_WAIT_DEFAULT_SECONDS = 1_800;
+
+/** Hard per-evaluation cap wait budget; 0 disables waiting (tests/fast fail). */
+function capacityWaitSeconds() {
+  const raw = Number(process.env.RUNNER_CAPACITY_WAIT_SECONDS ?? CAPACITY_WAIT_DEFAULT_SECONDS);
+  return Number.isFinite(raw) && raw >= 0 ? raw : CAPACITY_WAIT_DEFAULT_SECONDS;
+}
+
 /**
- * Fetch the manifest. HTTP(S) responses also carry the platform-issued
- * short-term token in X-Runner-Task-Token (M2-05); file:// manifests are the
- * M2-04 local mode and require a token from the environment instead.
+ * A 429 from `started` means the platform is at the evaluation's hard
+ * concurrency cap (capacity_waiting). The attempt must stay queued, so retry
+ * the same started event (same event_id) with bounded exponential backoff
+ * (5s, 10s, ... capped at 60s) until RUNNER_CAPACITY_WAIT_SECONDS elapses.
+ * Returns the last 429 result when the budget is exhausted.
  */
-async function fetchManifest(manifestUrl) {
-  if (manifestUrl.startsWith("file://")) {
-    return { bytes: readFileSync(new URL(manifestUrl)), tokenHeader: null };
+async function postStartedWithCapacityWait(url, payload, { eventId, token, waitSeconds }) {
+  const deadline = Date.now() + waitSeconds * 1000;
+  let delayMs = CAPACITY_WAIT_INITIAL_MS;
+  for (;;) {
+    // Hand 429 back to this loop so the first capacity retry waits 5s, not the
+    // callback client's millisecond retry.
+    const result = await postCallback(url, payload, { eventId, token, retryOn429: false });
+    if (result.ok || result.stale || result.status !== 429) return result;
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) return result;
+    await new Promise((resolve) => setTimeout(resolve, Math.min(delayMs, remainingMs)));
+    delayMs = Math.min(delayMs * 2, CAPACITY_WAIT_MAX_MS);
   }
-  const response = await fetch(manifestUrl, { signal: AbortSignal.timeout(10000) });
-  if (!response.ok) throw new Error(`manifest 拉取失败：HTTP ${response.status}`);
-  const bytes = Buffer.from(await response.arrayBuffer());
-  return {
-    bytes,
-    tokenHeader: response.headers.get("x-runner-task-token"),
-    tasksUrl: response.headers.get("x-runner-tasks-url"),
-    modelToken: response.headers.get("x-runner-model-token"),
-  };
 }
 
 /** Decode v1.<body>.<sig> claims without signature verification (dev mode). */
@@ -63,10 +93,6 @@ function parseTokenClaims(token) {
   } catch {
     return null;
   }
-}
-
-function sha256(text) {
-  return `sha256:${createHash("sha256").update(text).digest("hex")}`;
 }
 
 function deterministicCase(dispatch, item) {
@@ -379,15 +405,23 @@ async function main() {
   }
 
   const guard = new DispatchGuard(resolve(args.stateDir));
-  const claim = guard.claim(dispatch.dispatch_key, {
+  // One matrix job executes one case, so the claim key is per case; a whole
+  // shard keeps the bare dispatch_key (backward compatible for non-matrix
+  // callers and the synthetic flow). The platform stays the idempotency
+  // authority across machines.
+  const claimKey = args.caseRunId ? `${dispatch.dispatch_key}:${args.caseRunId}` : dispatch.dispatch_key;
+  const claim = guard.claim(claimKey, {
     eval_run_id: dispatch.eval_run_id,
     shard_id: dispatch.shard_id,
     attempt: dispatch.attempt,
+    ...(args.caseRunId ? { case_run_id: args.caseRunId } : {}),
   });
   if (!claim.claimed) {
     console.log(JSON.stringify({ status: "duplicate_dispatch", dispatch_key: dispatch.dispatch_key }));
     return 0;
   }
+  releaseClaim = () => guard.release(claim.claimPath);
+  const capacityWait = capacityWaitSeconds();
 
   const store = new LocalObjectStore(resolve(args.objectRoot));
   const objects = [];
@@ -446,11 +480,21 @@ async function main() {
         ...(process.env.RUNNER_ID ? { runner_id: process.env.RUNNER_ID } : {}),
         occurred_at: new Date().toISOString(),
       });
-      const startedResult = await postCallback(
+      const startedResult = await postStartedWithCapacityWait(
         `${manifest.callback_base_url}/runner/v1/case-runs/${item.case_run_id}/started`,
         started,
-        { eventId: started.event_id, token },
+        { eventId: started.event_id, token, waitSeconds: capacityWait },
       );
+      if (startedResult.status === 429) {
+        // Capacity budget exhausted: the attempt is still `queued` on the
+        // platform. Never post a failed callback here; release the claim and
+        // let a re-run pick the case up.
+        fail(
+          `评测并发已满：started 回调在 ${capacityWait}s 内持续 429，attempt 保持 queued`,
+          "callback_retryable",
+          1,
+        );
+      }
       if (!startedResult.ok && !startedResult.stale) {
         fail(
           `started 回调失败：HTTP ${startedResult.status}`,

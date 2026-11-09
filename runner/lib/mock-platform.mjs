@@ -9,6 +9,11 @@ import { createServer } from "node:http";
  * - behavior.uploadUrls serves POST .../upload-urls with presigned-style PUT
  *   URLs (`/objects/<key>`, no bearer auth — the URL signature is the
  *   credential) and records every PUT body for assertions.
+ *
+ * M4-01 addition:
+ * - behavior.startedCapacityFailures answers POST .../started with 429
+ *   capacity_waiting that many times, so the runner's per-evaluation cap wait
+ *   is exercised without failing the attempt.
  */
 export async function startMockPlatform({
   manifestText,
@@ -21,6 +26,10 @@ export async function startMockPlatform({
   const objects = new Map();
   const state = {
     completionFailures: behavior.completionFailures ?? 0,
+    // M4-01: answers `started` with 429 capacity_waiting this many times, so
+    // tests can prove the runner waits for the per-evaluation cap instead of
+    // failing the attempt.
+    startedCapacityFailures: behavior.startedCapacityFailures ?? 0,
     failCompletionPermanently: behavior.failCompletionPermanently ?? false,
     failFailureCallback: behavior.failFailureCallback ?? false,
     staleAttempt: behavior.staleAttempt ?? false,
@@ -94,7 +103,16 @@ export async function startMockPlatform({
       send(200, { ok: true, uploads });
       return;
     }
-    if (path.endsWith("/uploads") || path.endsWith("/started") || path.endsWith("/heartbeat")) {
+    if (path.endsWith("/started")) {
+      if (state.startedCapacityFailures > 0) {
+        state.startedCapacityFailures -= 1;
+        send(429, { error: { code: "capacity_waiting" } });
+        return;
+      }
+      send(200, { ok: true });
+      return;
+    }
+    if (path.endsWith("/uploads") || path.endsWith("/heartbeat")) {
       send(200, { ok: true });
       return;
     }
