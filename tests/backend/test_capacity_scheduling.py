@@ -531,3 +531,49 @@ def test_started_gate_is_atomic_under_concurrency(engine, configure_settings) ->
             )
         ]
     assert statuses.count("running") == 1
+
+
+def test_capacity_rejection_releases_runner_binding(
+    seeded: Session, client, configure_settings
+) -> None:
+    """A 429 started must not leave the runner bound to a case it never ran."""
+
+    configure_settings(RUNNER_TASK_SECRET="", RUNNER_HEARTBEAT_TIMEOUT_SECONDS="90")
+    pool = _make_pool(seeded, runners=2, key="bind")
+    run = _create_run(seeded, pool=pool, case_count=2, requested=1, key="bind")
+    cases = list(
+        seeded.scalars(
+            select(EvalCaseRun)
+            .where(EvalCaseRun.eval_run_id == run.id)
+            .order_by(EvalCaseRun.ordinal)
+        )
+    )
+
+    def start(case_id: str, runner_id: str, event_id: str):
+        return client.post(
+            f"/runner/v1/case-runs/{case_id}/started",
+            json={
+                "schema_version": "1.0",
+                "event_id": event_id,
+                "case_run_id": case_id,
+                "attempt": 1,
+                "occurred_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            },
+            headers={"x-runner-id": runner_id},
+        )
+
+    first = start(cases[0].id, "runner-bind-0", "evt-bind-a")
+    assert first.status_code == 200, first.text
+
+    second = start(cases[1].id, "runner-bind-1", "evt-bind-b")
+    assert second.status_code == 429, second.text
+    assert second.json()["detail"]["error"]["code"] == "capacity_waiting"
+
+    seeded.expire_all()
+    runner = (
+        seeded.query(Runner)
+        .filter(Runner.provider_runner_id == "runner-bind-1")
+        .one()
+    )
+    assert runner.busy_case_attempt_id is None
+    assert runner.status == "online"
