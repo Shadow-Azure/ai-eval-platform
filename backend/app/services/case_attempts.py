@@ -37,7 +37,7 @@ from ..models import (
 )
 from ..runner_contracts import validate_payload
 from ..scoring.service import ingest_score_report, recompute_metrics
-from . import capacity, evaluations
+from . import capacity, evaluations, lifecycle
 from .evaluations import refresh_run_progress
 from .object_store import ObjectMissing, ObjectSizeMismatch, object_store_from_settings
 
@@ -168,13 +168,17 @@ def _resolve_runner_pk(session: Session, provider_runner_id: str | None) -> str 
 
 
 def _promote_running(ctx: CaseContext, *, now: datetime, runner_id: str | None = None) -> bool:
-    """Active → running transition; returns False when already running."""
+    """Active → running transition; returns False when already past running.
 
-    if ctx.attempt.status == "running":
+    ``uploading``/``scoring`` are later phases: a heartbeat or a late upload
+    manifest must not move the attempt backwards (the phase clock would lie).
+    """
+
+    if ctx.attempt.status in ("running", "scoring", "uploading"):
         return False
     if ctx.attempt.status not in ACTIVE_ATTEMPT_STATUSES:
         raise StaleAttempt(f"attempt 处于终态 {ctx.attempt.status}，拒绝推进")
-    ctx.attempt.status = "running"
+    lifecycle.mark_status(ctx.attempt, "running", now)
     if ctx.attempt.started_at is None:
         ctx.attempt.started_at = now
     if runner_id:
@@ -367,6 +371,9 @@ def handle_uploads(session: Session, *, payload: dict, now: datetime | None = No
 
     _verify_objects(ctx, payload["objects"], now=now)
     _promote_running(ctx, now=now)
+    # The upload manifest is the entry point of the upload grace period: the
+    # reaper measures eval_upload_grace_seconds from this phase change.
+    lifecycle.mark_status(ctx.attempt, "uploading", now)
     merged = dict(ctx.attempt.artifact_manifest_json or {})
     merged.setdefault("objects", [])
     known = {obj.get("object_key") for obj in merged["objects"]}
@@ -450,7 +457,7 @@ def handle_completed(
         )
 
     attempt_status = COMPLETION_TO_ATTEMPT_STATUS[payload["execution_status"]]
-    ctx.attempt.status = attempt_status
+    lifecycle.mark_status(ctx.attempt, attempt_status, now)
     ctx.attempt.ended_at = now
     manifests = {"score_manifest": payload["score_manifest"]}
     if "trace_manifest" in payload:
@@ -587,7 +594,8 @@ def handle_failed(
     settings: Settings | None = None,
     now: datetime | None = None,
 ) -> dict:
-    settings = settings or Settings()
+    # ``settings`` stays in the signature for the API edge; the settlement path
+    # itself reads the cached Settings like every other service call.
     now = now or datetime.now(UTC)
     ctx = resolve_context(session, case_run_id=payload["case_run_id"], attempt_no=payload["attempt"])
 
@@ -596,57 +604,31 @@ def handle_failed(
             return {"ok": True, "deduped": True, "status": ctx.attempt.status}
         raise StaleAttempt(f"attempt 处于终态 {ctx.attempt.status}，拒绝失败回调")
 
-    ctx.attempt.status = "failed"
-    ctx.attempt.ended_at = now
-    ctx.attempt.error_code = payload["error_code"]
-    ctx.attempt.error_summary = payload["error_summary"]
-    ctx.attempt.retry_reason = "retryable" if payload["retryable"] else "permanent"
-    _add_event(
-        ctx,
+    # A scoring-only fault must never rerun the agent (design 06 §6.3): the
+    # runner's retryable flag is ignored for that class and the case settles as
+    # a terminal failure. Everything else follows the runner's classification.
+    retryable = bool(payload["retryable"]) and (
+        lifecycle.classify_failure(payload["error_code"]) != lifecycle.SCORING_ONLY
+    )
+    retry_queued = lifecycle.settle_attempt_failure(
+        session,
+        ctx=ctx,
+        error_code=payload["error_code"],
+        error_summary=payload["error_summary"],
+        retryable=retryable,
         event_type="case.failed",
         sequence=payload["sequence"],
-        payload={
+        event_payload={
             "event_id": payload["event_id"],
             "error_code": payload["error_code"],
-            "retryable": payload["retryable"],
+            "retryable": retryable,
             "error_summary": payload["error_summary"][:200],
         },
+        now=now,
     )
-
-    new_attempt_no = ctx.attempt.attempt_no + 1
-    can_retry = (
-        payload["retryable"]
-        and new_attempt_no <= ctx.run.max_attempts
-        and ctx.run.status not in evaluations.TERMINAL_RUN_STATUSES
-    )
-    if can_retry:
-        outbox_row = build_retry_dispatch(
-            session, ctx, new_attempt_no=new_attempt_no, settings=settings, now=now
-        )
-        session.add(outbox_row)
-        ctx.case_run.execution_status = "queued"
-        ctx.case_run.error_code = payload["error_code"]
-        _add_event(
-            ctx,
-            event_type="case.retry_queued",
-            sequence=payload["sequence"] + 1,
-            payload={
-                "new_attempt_no": new_attempt_no,
-                "shard_id": outbox_row.payload_json["shard_id"],
-                "dispatch_key": outbox_row.dispatch_key,
-            },
-        )
-    else:
-        if ctx.case_run.execution_status not in evaluations.TERMINAL_CASE_STATUSES:
-            ctx.case_run.execution_status = "failed"
-        ctx.case_run.error_code = payload["error_code"]
-        ctx.case_run.error_summary = payload["error_summary"][:1000]
-
-    refresh_run_progress(session, ctx.run, now=now)
-    session.commit()
     return {
         "ok": True,
         "deduped": False,
         "status": ctx.attempt.status,
-        "retry_queued": can_retry,
+        "retry_queued": retry_queued,
     }

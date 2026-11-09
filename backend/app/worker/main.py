@@ -1,9 +1,10 @@
-"""Worker loop for M2-01/M2-04/M2-05.
+"""Worker loop for M2-01/M2-04/M2-05/M4-02.
 
 Each poll runs the shard-dispatch outbox (repository_dispatch with retry and
-reconciliation, M2-05) and the runner offline sweep (M2-04) so stale fixed
-runners flip to offline and queued shards reach GitHub even when nobody
-queries the API.
+reconciliation, M2-05), the execution lifecycle reaper (queue/agent/scoring/
+upload/heartbeat timeouts, M4-02) and the runner offline sweep (M2-04) so stale
+fixed runners flip to offline, timed-out attempts reach a diagnosable terminal
+state and queued shards reach GitHub even when nobody queries the API.
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ from sqlalchemy.orm import Session
 from ..config import get_settings
 from ..db import SessionLocal
 from ..models import Outbox
-from ..services import dispatcher
+from ..services import dispatcher, lifecycle, reaper
 from ..services.operations import record_worker_heartbeat
 from ..services.runners import sweep_stale_runners
 
@@ -37,6 +38,12 @@ def dispatch_once(session: Session, transport=None) -> dispatcher.DispatchOutcom
     """One outbox → repository_dispatch pass with configured retry policy."""
 
     return dispatcher.dispatch_pending_outbox(session, transport=transport)
+
+
+def lifecycle_once(session: Session, *, now=None) -> dict[str, int]:
+    """One execution-lifecycle sweep (five timeout classes, M4-02 A1)."""
+
+    return reaper.sweep_lifecycle(session, settings=get_settings(), now=now)
 
 
 def _handle_signal(_signum: int, _frame: FrameType | None) -> None:
@@ -84,6 +91,21 @@ def main() -> int:
                 )
         except Exception as exc:  # pragma: no cover - retried on the next loop
             print(f"worker: dispatch failed: {exc}", flush=True)
+        try:
+            with SessionLocal() as session:
+                expired = lifecycle_once(session)
+            if any(expired.values()):
+                print(
+                    "worker: lifecycle "
+                    f"queue_timeout={expired.get(lifecycle.QUEUE_TIMEOUT, 0)} "
+                    f"execution_timeout={expired.get(lifecycle.EXECUTION_TIMEOUT, 0)} "
+                    f"scoring_timeout={expired.get(lifecycle.SCORING_TIMEOUT, 0)} "
+                    f"upload_timeout={expired.get(lifecycle.UPLOAD_TIMEOUT, 0)} "
+                    f"heartbeats={expired.get(lifecycle.HEARTBEAT_TIMEOUT, 0)}",
+                    flush=True,
+                )
+        except Exception as exc:  # pragma: no cover - retried on the next loop
+            print(f"worker: lifecycle sweep failed: {exc}", flush=True)
         try:
             with SessionLocal() as session:
                 swept = sweep_once(session)

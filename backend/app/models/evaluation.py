@@ -109,6 +109,10 @@ class EvalRun(Base, TimestampMixin):
     )
     case_timeout_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=3600)
     max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=2)
+    # M4-02 cancellation/reconciliation: the dispatched GitHub workflow run and
+    # the client cancellation request are tracked on the run (A2 consumes both).
+    github_run_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    cancel_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (
         UniqueConstraint(
@@ -221,6 +225,10 @@ class EvalCaseAttempt(Base, TimestampMixin):
     error_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
     error_summary: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     retry_reason: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # M4-02: when the attempt entered its current phase. The lifecycle reaper
+    # measures scoring/upload/queue budgets from here because ``updated_at``
+    # moves on any write and therefore cannot be a phase clock.
+    phase_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (
         UniqueConstraint(

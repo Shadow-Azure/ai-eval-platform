@@ -94,6 +94,18 @@ class Settings(BaseSettings):
     # capacity instead of letting the GitHub queue be the only throttle.
     dispatch_capacity_gate: bool = True
     dispatch_capacity_retry_seconds: float = 10.0
+    # M4-02 execution lifecycle timeouts (design 06 §7). Five independent
+    # clocks instead of one total timeout: platform queue, agent execution,
+    # scoring, upload grace period and heartbeat. The agent execution timeout
+    # is per run (``run.case_timeout_seconds``); the value here is only the
+    # fallback for a run without one.
+    eval_queue_timeout_seconds: int = 3600
+    eval_execution_timeout_seconds: int = 900
+    eval_scoring_timeout_seconds: int = 900
+    eval_upload_grace_seconds: int = 300
+    eval_heartbeat_timeout_seconds: int = 300
+    # Attempts per lifecycle sweep; keeps one worker pass bounded.
+    eval_lifecycle_batch_size: int = 100
 
     # M3-02 centralized model gateway. Credentials are encrypted with a
     # host-local Fernet key (SECRET_BOX_KEY); the gateway signs short-lived
