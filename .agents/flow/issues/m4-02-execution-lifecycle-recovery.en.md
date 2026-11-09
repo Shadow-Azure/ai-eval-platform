@@ -16,6 +16,8 @@ scope:
   - .github/workflows/**
   - tests/**
   - docs/**
+  - plans/**
+  - reports/**
   - deploy/**
   - scripts/doc-budgets.manifest.json
 adr: []
