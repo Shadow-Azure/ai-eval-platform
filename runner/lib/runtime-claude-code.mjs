@@ -331,6 +331,9 @@ export async function runClaudeCode({
   if (killTimer) clearTimeout(killTimer);
   const stdout = Buffer.concat(chunks).toString("utf8");
   const stderr = Buffer.concat(errors).toString("utf8");
+  // The agent may have cleaned untracked directories while working; re-create
+  // the trace directory so a failed run still preserves its output.
+  mkdirSync(join(workspace, "trace"), { recursive: true });
   writeFileSync(stdoutPath, stdout);
   writeFileSync(stderrPath, stderr);
   const events = consumeStreamLines(stdout.split("\n"));
