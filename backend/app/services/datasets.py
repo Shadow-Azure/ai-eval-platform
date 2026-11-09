@@ -167,6 +167,7 @@ def import_dataset_version(
     version: str,
     source_uri: str,
     source_revision: str,
+    environment_image: str | None = None,
     records: list[Mapping[str, Any]],
     created_by: str = "console",
     task_family: str | None = None,
@@ -299,6 +300,7 @@ def import_dataset_version(
         adapter_version=adapter.adapter_version,
         case_count=len(records),
         status="active",
+        environment_image=environment_image,
     )
     session.add(dataset_version)
     session.flush()

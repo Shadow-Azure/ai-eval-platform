@@ -127,15 +127,15 @@ function realCase(dispatch, item, task, { modelToken, runnerRoot }) {
   try {
     if (!task.repo || !task.base_commit) throw new Error("真实用例缺少 repo/base_commit");
     if (!task.prompt) throw new Error("真实用例缺少 problem_statement");
-    if (!task.execution_image_digest) throw new Error("真实用例缺少 execution_image_digest");
-    if (!task.scoring_image_digest) throw new Error("真实用例缺少 scoring_image_digest");
+    const environmentImage = task.environment_image || task.scoring_image_digest || task.execution_image_digest;
+    if (!environmentImage) throw new Error("真实用例缺少 dataset environment image");
     if (!modelToken) throw new Error("manifest 未签发 model token");
     if (!task.model?.anthropic_base_url) throw new Error("tasks 未返回模型网关地址");
 
     // The SWE-bench scoring image already contains the repo checkout at the
     // instance base commit; copy it out instead of cloning from GitHub, which
     // is not reliably reachable from the fixed runner network.
-    const source = dockerRun(["create", task.scoring_image_digest]).stdout.trim();
+    const source = dockerRun(["create", environmentImage]).stdout.trim();
     try {
       dockerRun(["cp", `${source}:/testbed/.`, workdir], { timeout: 300_000 });
     } finally {
@@ -150,30 +150,53 @@ function realCase(dispatch, item, task, { modelToken, runnerRoot }) {
     if (checkout.status !== 0) throw new Error(`checkout 失败：${(checkout.stderr || "").slice(-500)}`);
 
     const env = {
-      WORKSPACE: "/workspace",
-      RUNTIME_HOME: "/workspace/.runtime-home",
+      WORKSPACE: "/testbed",
+      RUNTIME_HOME: "/testbed/.runtime-home",
       CLAUDE_GATEWAY_BASE_URL: task.model.anthropic_base_url,
       CLAUDE_GATEWAY_TOKEN: modelToken,
       CLAUDE_MODEL: task.model.name,
       PROMPT: task.prompt,
       MAX_TURNS: process.env.REAL_TASK_MAX_TURNS || "30",
       TIMEOUT_MS: process.env.REAL_TASK_TIMEOUT_MS || "900000",
-      EXECUTION_IMAGE_DIGEST: task.execution_image_digest,
-      // Generic source configuration: keep the execution image agent-agnostic
-      // and let the agent resolve Python/npm packages through Alibaba Cloud
-      // mirrors instead of baking dataset-specific dependencies into it.
-      PIP_INDEX_URL: process.env.PIP_INDEX_URL || "https://mirrors.aliyun.com/pypi/simple/",
-      PIP_TRUSTED_HOST: process.env.PIP_TRUSTED_HOST || "mirrors.aliyun.com",
-      UV_INDEX_URL: process.env.UV_INDEX_URL || "https://mirrors.aliyun.com/pypi/simple/",
-      npm_config_registry: process.env.npm_config_registry || "https://registry.npmmirror.com",
+      EXECUTION_IMAGE_DIGEST: environmentImage,
     };
     const agentName = `eval-agent-${item.case_run_id.slice(0, 8)}-${process.pid}`;
-    const agentArgs = ["run", "--rm", "--name", agentName, "--network", "host", "-v", `${workdir}:/workspace`, "-v", `${runnerRoot}:/runner:ro`];
-    for (const [key, value] of Object.entries(env)) agentArgs.push("-e", `${key}=${value}`);
-    agentArgs.push(task.execution_image_digest, "node", "/runner/scripts/claude-code-smoke.mjs");
     let agent;
     try {
-      agent = dockerRun(agentArgs, {
+      dockerRun([
+        "run", "-d", "--name", agentName, "--network", "host",
+        "-v", `${workdir}:/testbed`, "-v", `${runnerRoot}:/runner:ro`,
+        environmentImage, "tail", "-f", "/dev/null",
+      ]);
+      // The dataset image is fixed; the generic agent runtime is installed
+      // after start from Alibaba npm/PyPI sources. No per-agent image.
+      dockerRun([
+        "exec", agentName, "bash", "-lc",
+        [
+          "set -e",
+          "if ! command -v node >/dev/null 2>&1; then",
+          "  curl -fsSL https://registry.npmmirror.com/-/binary/node/v22.14.0/node-v22.14.0-linux-x64.tar.xz -o /tmp/node.tar.xz",
+          "  mkdir -p /opt/node",
+          "  tar -xJf /tmp/node.tar.xz -C /opt/node --strip-components=1",
+          "fi",
+          "export PATH=/opt/miniconda3/envs/testbed/bin:/opt/node/bin:$PATH",
+          "if ! command -v claude >/dev/null 2>&1; then",
+          "  npm install -g @anthropic-ai/claude-code --registry=https://registry.npmmirror.com",
+          "fi",
+          "id eval >/dev/null 2>&1 || useradd -m -s /bin/bash eval",
+          "chown -R eval:eval /testbed",
+          "mkdir -p /home/eval && chown eval /home/eval",
+        ].join("\n"),
+      ], { timeout: 600_000 });
+      const execArgs = ["exec", "-u", "eval", "-e", "HOME=/home/eval"];
+      for (const [key, value] of Object.entries(env)) execArgs.push("-e", `${key}=${value}`);
+      execArgs.push(
+        agentName,
+        "bash",
+        "-lc",
+        "export PATH=/opt/miniconda3/envs/testbed/bin:/opt/node/bin:$PATH; cd /testbed; node /runner/scripts/claude-code-smoke.mjs",
+      );
+      agent = dockerRun(execArgs, {
         allowFailure: true,
         timeout: Number(process.env.REAL_TASK_AGENT_TIMEOUT_MS || 1_000_000),
       });
@@ -234,7 +257,7 @@ function realCase(dispatch, item, task, { modelToken, runnerRoot }) {
     dockerRun(
       [
         "run", "--rm", "-v", `${workdir}:/testbed`, "-v", `${testPatchPath}:/tmp/test.patch:ro`,
-        task.scoring_image_digest, "bash", "-lc", "cd /testbed && git apply --whitespace=nowarn /tmp/test.patch",
+        environmentImage, "bash", "-lc", "cd /testbed && git apply --whitespace=nowarn /tmp/test.patch",
       ],
       { timeout: 120_000 },
     );
@@ -243,8 +266,8 @@ function realCase(dispatch, item, task, { modelToken, runnerRoot }) {
     const passToPass = expected.pass_to_pass || [];
     const testResult = dockerRun(
       [
-        "run", "--rm", "-v", `${workdir}:/testbed`, task.scoring_image_digest,
-        "/opt/miniconda3/bin/conda", "run", "-n", "testbed", "python", "-m", "pytest", "-q", "-rA",
+        "run", "--rm", "-v", `${workdir}:/testbed`, environmentImage,
+        "/opt/miniconda3/envs/testbed/bin/python", "-m", "pytest", "-q", "-rA",
         ...failToPass, ...passToPass,
       ],
       { allowFailure: true, timeout: 1_800_000 },
@@ -364,6 +387,7 @@ async function main() {
           model: taskPayload.model,
           execution_image_digest: taskPayload.execution_image_digest,
           scoring_image_digest: taskPayload.scoring_image_digest,
+          environment_image: taskPayload.environment_image,
         });
       }
     }

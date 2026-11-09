@@ -80,6 +80,7 @@ class DatasetVersion(Base, CreatedAtMixin):
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="active", server_default="active")
     task_manifest_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
     task_manifest_digest: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    environment_image: Mapped[str | None] = mapped_column(String(300), nullable=True)
 
     __table_args__ = (
         UniqueConstraint("dataset_id", "version", name="uq_dataset_version_dataset_version"),

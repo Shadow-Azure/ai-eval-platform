@@ -33,6 +33,7 @@ class DatasetImportRequest(BaseModel):
     version: str = Field(min_length=1, max_length=64)
     source_uri: str = Field(default="", max_length=500)
     source_revision: str = Field(min_length=1, max_length=128)
+    environment_image: str | None = Field(default=None, max_length=300)
     records: list[dict[str, Any]] = Field(min_length=1)
     created_by: str = Field(default="console", max_length=128)
 
@@ -59,6 +60,7 @@ def version_summary(version: DatasetVersion) -> dict:
         "source_uri": version.source_uri,
         "source_revision": version.source_revision,
         "adapter_version": version.adapter_version,
+        "environment_image": version.environment_image,
         "created_at": version.created_at.isoformat(timespec="microseconds"),
     }
 
@@ -149,6 +151,7 @@ def create_dataset_import(
             version=payload.version,
             source_uri=payload.source_uri,
             source_revision=payload.source_revision,
+            environment_image=payload.environment_image,
             records=payload.records,
             created_by=context.user.email,
         )
