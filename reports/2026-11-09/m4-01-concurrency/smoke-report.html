@@ -104,7 +104,7 @@
 
   <section>
     <div class="head"><h2>Automated Coverage Assessment</h2><small>4 areas reviewed</small></div>
-    <div class="tableWrap"><table><table><thead><tr><th>领域</th><th>覆盖</th><th>结论</th><th>建议</th></tr></thead><tbody><tr><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td></tr></tbody></table></table></div>
+    <div class="tableWrap"><table><table><thead><tr><th>领域</th><th>覆盖</th><th>结论</th><th>建议</th></tr></thead><tbody><tr><td>有效并发公式</td><td>UT</td><td>min(requested, runners, pool max) 覆盖含 stale heartbeat。</td><td>M4-03 引入 max_capacity 列后替换 labels 读取点。</td></tr><tr><td>分片与派发闸门</td><td>UT + IT</td><td>500→8 分片、无容量保持 pending、按 ceil(cap/shard) 放行。</td><td>M4-04 竞价扩容后复测真实容量变化。</td></tr><tr><td>用例级硬上限</td><td>IT</td><td>真实双 Runner + 4 并发用例峰值 2，429 等待后补位。</td><td>Postgres CI 下再跑一次并发 started 压测。</td></tr><tr><td>重复执行/重放</td><td>UT + IT</td><td>本地 claim + 平台 started/completed 幂等，attempt 不重复。</td><td>M4-02 对账覆盖跨机器重放窗口。</td></tr></tbody></table></table></div>
   </section>
 
   <section>

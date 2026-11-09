@@ -214,30 +214,30 @@
       "建议"
     ],
     "rows": [
-      {
-        "area": "有效并发公式",
-        "coverage": "UT",
-        "conclusion": "min(requested, runners, pool max) 覆盖含 stale heartbeat。",
-        "recommendation": "M4-03 引入 max_capacity 列后替换 labels 读取点。"
-      },
-      {
-        "area": "分片与派发闸门",
-        "coverage": "UT + IT",
-        "conclusion": "500→8 分片、无容量保持 pending、按 ceil(cap/shard) 放行。",
-        "recommendation": "M4-04 竞价扩容后复测真实容量变化。"
-      },
-      {
-        "area": "用例级硬上限",
-        "coverage": "IT",
-        "conclusion": "真实双 Runner + 4 并发用例峰值 2，429 等待后补位。",
-        "recommendation": "Postgres CI 下再跑一次并发 started 压测。"
-      },
-      {
-        "area": "重复执行/重放",
-        "coverage": "UT + IT",
-        "conclusion": "本地 claim + 平台 started/completed 幂等，attempt 不重复。",
-        "recommendation": "M4-02 对账覆盖跨机器重放窗口。"
-      }
+      [
+        "有效并发公式",
+        "UT",
+        "min(requested, runners, pool max) 覆盖含 stale heartbeat。",
+        "M4-03 引入 max_capacity 列后替换 labels 读取点。"
+      ],
+      [
+        "分片与派发闸门",
+        "UT + IT",
+        "500→8 分片、无容量保持 pending、按 ceil(cap/shard) 放行。",
+        "M4-04 竞价扩容后复测真实容量变化。"
+      ],
+      [
+        "用例级硬上限",
+        "IT",
+        "真实双 Runner + 4 并发用例峰值 2，429 等待后补位。",
+        "Postgres CI 下再跑一次并发 started 压测。"
+      ],
+      [
+        "重复执行/重放",
+        "UT + IT",
+        "本地 claim + 平台 started/completed 幂等，attempt 不重复。",
+        "M4-02 对账覆盖跨机器重放窗口。"
+      ]
     ]
   },
   "conclusion": {
