@@ -6,7 +6,7 @@
 kind: issue
 milestone: m4
 priority: P0
-status: ready
+status: done
 scope:
   - .agents/flow/issues/m4-01-case-matrix-concurrency.*
   - .agents/flow/milestones/m4-concurrency-and-spot-pool.*
