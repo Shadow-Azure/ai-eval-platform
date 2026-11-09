@@ -1,0 +1,6 @@
+ZTGolem GitHub permission check
+
+This file exists only to verify branch push, pull request, review and comment
+permissions on Shadow-Azure/ai-eval-platform. It is removed together with the
+temporary verification branch.
+Force-push check: this line was added by an amend + force-with-lease push.

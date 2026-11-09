@@ -1,0 +1,16 @@
+name: Permission Check (temporary)
+
+# Temporary workflow file pushed only to verify that the ZTGolem token can
+# create/update workflow files (the "workflow" OAuth scope). It is never run:
+# it has no pull_request or push trigger.
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  noop:
+    runs-on: ubuntu-latest
+    steps:
+      - name: noop
+        run: echo "permission check only"
