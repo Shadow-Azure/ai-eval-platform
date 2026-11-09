@@ -40,11 +40,13 @@ Login uses an account and password; passwords are stored as salted scrypt hashes
 
 ## Operations status
 
-An administrator can open `/operations` to see the latest liveness results for the control-plane API, PostgreSQL, Redis, object storage, the Runner plane, the dispatch worker, and the model gateway, along with resource pools and Runners, datasets, model configurations, the dispatch queue, and the database migration revision, size, key table row counts, connection usage, and storage usage, switchable across PostgreSQL, Redis, and object-storage tabs. A read-only member does not see it in navigation and the API returns 403; the page refreshes every 30 seconds and can also be refreshed manually. The worker writes a heartbeat to `service_heartbeat` on every poll.
+An administrator can open `/operations` to see liveness results for the control-plane API, PostgreSQL, Redis, object storage, the Runner plane, the dispatch worker, and the model gateway, plus resource pools, Runners, datasets, model configurations, the dispatch queue, and database status. A read-only member does not see it in navigation; the page refreshes every 30 seconds. The worker writes a heartbeat to `service_heartbeat` on every poll.
 
 ## Runner contract
 
 M2 decouples execution from datasets and agents: the platform sends eval_run, shard, attempt, manifest URL, and digest through repository_dispatch; the runner verifies them before execution, then reports heartbeats, upload manifests, and completion or failure callbacks. `runner-contract/` holds the versioned schemas, while `runner/` holds the workflow template, synthetic task, and contract tests.
+
+The platform keeps five independent timeouts (queueing, execution, scoring, upload grace, and heartbeat); cancellation stops new dispatch and requests a GitHub cancel, and the worker's reconciler backfills lost completion events.
 
 ## Extension points
 

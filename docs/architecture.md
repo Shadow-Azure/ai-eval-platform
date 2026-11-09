@@ -40,11 +40,13 @@ index -> budgets -> wrap -> pairing -> terminology
 
 ## 运营状态
 
-管理员可在 `/operations` 查看控制面 API、PostgreSQL、Redis、对象存储、Runner 平面、调度 Worker 与模型网关的最近探活结果，以及资源池与 Runner、数据集、模型配置、调度队列和数据库迁移版本、大小、关键表行数、连接数与存储容量水位，并可按 PostgreSQL、Redis 与对象存储切换查看。只读成员在导航中不可见且接口返回 403；页面每 30 秒自动刷新，也可手动刷新。Worker 每轮轮询向 `service_heartbeat` 写入心跳。
+管理员可在 `/operations` 查看控制面 API、PostgreSQL、Redis、对象存储、Runner 平面、调度 Worker 与模型网关的探活结果，以及资源池、Runner、数据集、模型配置、调度队列与数据库状态，只读成员在导航中不可见；页面每 30 秒自动刷新。Worker 每轮轮询向 `service_heartbeat` 写入心跳。
 
 ## Runner 契约
 
 M2 把执行与数据集、Agent 解耦：平台经 repository_dispatch 传 eval_run、shard、attempt、manifest 地址与 digest，Runner 校验后执行，再以心跳、上传清单与完成/失败回调回传。`runner-contract/` 保存版本化 Schema，`runner/` 保存 workflow 模板、合成任务与契约测试。
+
+平台为排队、执行、评分、上传宽限与心跳维护五类独立超时；取消停止新派发并请求 GitHub 取消，Worker 对账循环补齐丢失的完成事件。
 
 ## 扩展位置
 
