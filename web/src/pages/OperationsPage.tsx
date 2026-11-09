@@ -317,6 +317,7 @@ export function OperationsPage() {
   const queueDepth =
     data.resources.outbox.pending + data.resources.outbox.processing;
   const tables = data.database.tables;
+  const capacity = data.database.capacity;
   const databaseHealthy = data.database.status === "ok";
   const overallHealthy = data.status === "ok";
   const overallLabel = overallHealthy ? "运行正常" : "需要关注";
@@ -556,6 +557,77 @@ export function OperationsPage() {
             <div>
               <span>连接耗时</span>
               <strong>{data.database.latency_ms === null ? "—" : `${data.database.latency_ms} ms`}</strong>
+            </div>
+          </div>
+          <div className="ops-capacity-grid">
+            <div className="ops-capacity-card">
+              <div className="ops-capacity-head">
+                <span>连接数</span>
+                <strong>
+                  {formatNumber(capacity.connections)}
+                  <span className="muted"> / {formatNumber(capacity.max_connections)}</span>
+                </strong>
+              </div>
+              {capacity.connection_usage_percent === null ? (
+                <span className="tag tag-neutral">未提供上限</span>
+              ) : (
+                <div
+                  className="progress"
+                  role="progressbar"
+                  aria-label="数据库连接数水位"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={Math.min(100, Math.max(0, capacity.connection_usage_percent))}
+                  aria-valuetext={`${capacity.connection_usage_percent}%`}
+                >
+                  <span
+                    style={{
+                      width: `${Math.min(100, Math.max(0, capacity.connection_usage_percent))}%`,
+                    }}
+                  />
+                </div>
+              )}
+              <div className="ops-capacity-meta">
+                {capacity.connection_usage_percent === null
+                  ? "当前引擎不提供 max_connections"
+                  : `${capacity.connection_usage_percent}% 已使用`}
+              </div>
+            </div>
+            <div className="ops-capacity-card">
+              <div className="ops-capacity-head">
+                <span>存储容量</span>
+                <strong>
+                  {formatBytes(data.database.size_bytes)}
+                  <span className="muted">
+                    {" "}
+                    / {formatBytes(capacity.storage_limit_bytes)}
+                  </span>
+                </strong>
+              </div>
+              {capacity.storage_usage_percent === null ? (
+                <span className="tag tag-neutral">未配置上限</span>
+              ) : (
+                <div
+                  className="progress"
+                  role="progressbar"
+                  aria-label="数据库存储容量水位"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={Math.min(100, Math.max(0, capacity.storage_usage_percent))}
+                  aria-valuetext={`${capacity.storage_usage_percent}%`}
+                >
+                  <span
+                    style={{
+                      width: `${Math.min(100, Math.max(0, capacity.storage_usage_percent))}%`,
+                    }}
+                  />
+                </div>
+              )}
+              <div className="ops-capacity-meta">
+                {capacity.storage_usage_percent === null
+                  ? "设置 DATABASE_STORAGE_LIMIT_BYTES 后显示水位"
+                  : `${capacity.storage_usage_percent}% 已使用`}
+              </div>
             </div>
           </div>
           <Table<DatabaseTableStatus>

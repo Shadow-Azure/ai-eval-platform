@@ -102,6 +102,24 @@ def test_operations_status_reports_services_resources_and_database(
     assert database["dialect"] in {"sqlite", "postgresql"}
     assert database["revision"] == "0008_service_heartbeat"
     assert database["size_bytes"] > 0
+    capacity = database["capacity"]
+    assert set(capacity) == {
+        "max_connections",
+        "connections",
+        "connection_usage_percent",
+        "storage_limit_bytes",
+        "storage_usage_percent",
+    }
+    assert capacity["storage_limit_bytes"] is None
+    assert capacity["storage_usage_percent"] is None
+    if database["dialect"] == "postgresql":
+        assert capacity["max_connections"] > 0
+        assert capacity["connections"] >= 1
+        assert capacity["connection_usage_percent"] > 0
+    else:
+        assert capacity["max_connections"] is None
+        assert capacity["connections"] is None
+        assert capacity["connection_usage_percent"] is None
     tables = {table["name"]: table for table in database["tables"]}
     assert {"eval_run", "dataset", "runner", "outbox", "service_heartbeat", "deployment"} <= set(tables)
     assert tables["user"]["rows"] >= 1
@@ -246,3 +264,17 @@ def test_operations_object_storage_probe_states(
     ]
     assert failing["status"] == "error"
     assert "HTTP 403" in failing["summary"]
+
+
+def test_operations_reports_configured_database_storage_limit(
+    client: TestClient, configure_settings
+) -> None:
+    configure_settings(DATABASE_STORAGE_LIMIT_BYTES="1048576")
+
+    response = client.get("/api/v1/operations/status")
+    assert response.status_code == 200
+    database = response.json()["database"]
+    capacity = database["capacity"]
+    assert capacity["storage_limit_bytes"] == 1048576
+    assert capacity["storage_usage_percent"] is not None
+    assert capacity["storage_usage_percent"] > 0

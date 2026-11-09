@@ -69,11 +69,20 @@ export interface DatabaseTableStatus {
   rows: number | null;
 }
 
+export interface DatabaseCapacity {
+  max_connections: number | null;
+  connections: number | null;
+  connection_usage_percent: number | null;
+  storage_limit_bytes: number | null;
+  storage_usage_percent: number | null;
+}
+
 export interface DatabaseStatus {
   status: string;
   dialect: string | null;
   revision: string | null;
   size_bytes: number | null;
+  capacity: DatabaseCapacity;
   latency_ms: number | null;
   tables: DatabaseTableStatus[];
 }
@@ -185,11 +194,19 @@ function parseResources(value: unknown): ResourceStatus {
 
 function parseDatabase(value: unknown): DatabaseStatus {
   const payload = record(value, "database");
+  const capacity: Record<string, unknown> = isRecord(payload.capacity) ? payload.capacity : {};
   return {
     status: text(payload.status) || "unknown",
     dialect: typeof payload.dialect === "string" ? payload.dialect : null,
     revision: typeof payload.revision === "string" ? payload.revision : null,
     size_bytes: nullableNumber(payload.size_bytes),
+    capacity: {
+      max_connections: nullableNumber(capacity.max_connections),
+      connections: nullableNumber(capacity.connections),
+      connection_usage_percent: nullableNumber(capacity.connection_usage_percent),
+      storage_limit_bytes: nullableNumber(capacity.storage_limit_bytes),
+      storage_usage_percent: nullableNumber(capacity.storage_usage_percent),
+    },
     latency_ms: nullableNumber(payload.latency_ms),
     tables: records(payload.tables, "database.tables").map((item) => ({
       name: text(item.name),

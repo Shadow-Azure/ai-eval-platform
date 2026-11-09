@@ -145,7 +145,47 @@ def _table_rows(session: Session) -> list[dict[str, object]]:
     return rows
 
 
-def _database_status(session: Session) -> tuple[dict[str, object], bool]:
+def _percent(used: int | None, limit: int | None) -> float | None:
+    if used is None or limit is None or limit <= 0:
+        return None
+    return round(used / limit * 100, 1)
+
+
+def _database_capacity(
+    session: Session,
+    settings: Settings,
+    size_bytes: int | None,
+) -> dict[str, object]:
+    max_connections: int | None = None
+    connections: int | None = None
+    try:
+        if session.get_bind().dialect.name == "postgresql":
+            raw = session.scalar(text("SHOW max_connections"))
+            max_connections = int(raw) if raw is not None else None
+            used = session.scalar(
+                text(
+                    "SELECT count(*) FROM pg_stat_activity "
+                    "WHERE datname = current_database()"
+                )
+            )
+            connections = int(used) if used is not None else None
+    except Exception:  # pragma: no cover - engine-specific capacity probe
+        max_connections = None
+        connections = None
+    storage_limit = settings.database_storage_limit_bytes or None
+    return {
+        "max_connections": max_connections,
+        "connections": connections,
+        "connection_usage_percent": _percent(connections, max_connections),
+        "storage_limit_bytes": storage_limit,
+        "storage_usage_percent": _percent(size_bytes, storage_limit),
+    }
+
+
+def _database_status(
+    session: Session,
+    settings: Settings,
+) -> tuple[dict[str, object], bool]:
     started = perf_counter()
     try:
         session.execute(text("SELECT 1"))
@@ -156,6 +196,13 @@ def _database_status(session: Session) -> tuple[dict[str, object], bool]:
                 "dialect": None,
                 "revision": None,
                 "size_bytes": None,
+                "capacity": {
+                    "max_connections": None,
+                    "connections": None,
+                    "connection_usage_percent": None,
+                    "storage_limit_bytes": settings.database_storage_limit_bytes or None,
+                    "storage_usage_percent": None,
+                },
                 "latency_ms": _elapsed_ms(started),
                 "tables": [],
             },
@@ -166,12 +213,14 @@ def _database_status(session: Session) -> tuple[dict[str, object], bool]:
         dialect = session.get_bind().dialect.name
     except Exception:  # pragma: no cover - defensive
         dialect = None
+    size_bytes = _database_size(session)
     return (
         {
             "status": "ok",
             "dialect": dialect,
             "revision": _database_revision(session),
-            "size_bytes": _database_size(session),
+            "size_bytes": size_bytes,
+            "capacity": _database_capacity(session, settings, size_bytes),
             "latency_ms": _elapsed_ms(started),
             "tables": _table_rows(session),
         },
@@ -432,7 +481,7 @@ def operations_status(
     started = perf_counter()
     now = datetime.now(UTC)
     tenant_id = context.tenant.id
-    database, database_ok = _database_status(session)
+    database, database_ok = _database_status(session, settings)
     resources = _resource_snapshot(session, tenant_id) if database_ok else {
         "pools": [],
         "runners": [],

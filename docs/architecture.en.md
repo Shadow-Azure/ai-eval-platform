@@ -40,7 +40,7 @@ Login uses an account and password; passwords are stored as salted scrypt hashes
 
 ## Operations status
 
-An administrator can open `/operations` to see the latest liveness results for the control-plane API, PostgreSQL, Redis, object storage, the Runner plane, the dispatch worker, and the model gateway, along with resource pools and Runners, datasets, model configurations, the dispatch queue, and the database migration revision, size, and key table row counts. A read-only member does not see it in navigation and the API returns 403; the page refreshes every 30 seconds and can also be refreshed manually. The worker writes a heartbeat to `service_heartbeat` on every poll.
+An administrator can open `/operations` to see the latest liveness results for the control-plane API, PostgreSQL, Redis, object storage, the Runner plane, the dispatch worker, and the model gateway, along with resource pools and Runners, datasets, model configurations, the dispatch queue, and the database migration revision, size, key table row counts, connection usage, and storage usage. A read-only member does not see it in navigation and the API returns 403; the page refreshes every 30 seconds and can also be refreshed manually. The worker writes a heartbeat to `service_heartbeat` on every poll.
 
 ## Runner contract
 

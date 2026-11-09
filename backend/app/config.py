@@ -48,6 +48,11 @@ class Settings(BaseSettings):
     worker_poll_seconds: float = 5.0
     worker_heartbeat_path: str = "/tmp/eval-worker-heartbeat"
 
+    # M3-06 operations status: provisioned database storage capacity, used to
+    # show a usage watermark on the admin page. 0 means "not configured"; the
+    # page then reports the current size without a percentage.
+    database_storage_limit_bytes: int = 0
+
     # M2-04 fixed runner plane. The heartbeat token matches the env key the
     # deployed runner agent reads (/etc/eval-platform/runner.env); when unset
     # the runner plane accepts unauthenticated requests (development only).
