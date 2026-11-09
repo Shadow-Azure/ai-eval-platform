@@ -9,6 +9,7 @@ priority: P0
 status: ready
 scope:
   - .agents/flow/issues/m3-06-real-runner-integration.*
+  - .agents/flow/issues/m3-06-admin-operations-status.*
   - runner/**
   - .github/workflows/eval-shard.yml
   - backend/**
