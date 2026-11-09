@@ -386,3 +386,66 @@ def test_metric_config_is_versioned(seeded: Session) -> None:
     )
     resolved_versions = [r.version for r in rows if r.metric_key == "resolved_rate"]
     assert resolved_versions == [1, 2], "同 key 多版本共存且可查"
+
+
+# ---------------------------------------------------------------------------
+# Adapter genericity: duplicate detection must use the adapter's case key
+# ---------------------------------------------------------------------------
+
+
+class _SimpleKeyedAdapter:
+    """非 SWE-bench 形状的适配器：case key 来自 ``id`` 字段。"""
+
+    key = "simple-keyed"
+    adapter_version = "1"
+
+    def validate_case(self, raw):
+        from app.datasets import CaseIssue
+
+        if not isinstance(raw.get("id"), str) or not raw["id"].strip():
+            return [CaseIssue(code="missing_field", field="id", message="缺少 id")]
+        if not isinstance(raw.get("problem_statement"), str) or not raw["problem_statement"].strip():
+            return [CaseIssue(code="missing_field", field="problem_statement", message="缺少题面")]
+        return []
+
+    def normalize_case(self, raw):
+        from app.datasets import NormalizedCase
+
+        return NormalizedCase(case_key=raw["id"], problem_statement=raw["problem_statement"])
+
+    def metric_keys(self):
+        return []
+
+    def metric_configs(self):
+        return {}
+
+    def case_visibility(self):
+        return {"problem_statement": "agent"}
+
+
+def test_duplicate_detection_uses_adapter_case_key(seeded: Session) -> None:
+    from app.datasets import register_adapter, unregister_adapter
+
+    register_adapter(_SimpleKeyedAdapter())
+    try:
+        records = [
+            {"id": "task-a", "problem_statement": "alpha"},
+            {"id": "task-a", "problem_statement": "beta"},
+        ]
+        with pytest.raises(ImportValidationFailed) as excinfo:
+            dataset_service.import_dataset_version(
+                seeded,
+                dataset_slug="simple",
+                dataset_name="Simple",
+                adapter_key="simple-keyed",
+                version="v1",
+                source_uri="fixture",
+                source_revision="rev-1",
+                records=records,
+                created_by="agent",
+            )
+        codes = {issue.code for issue in excinfo.value.outcome.errors}
+        assert "duplicate_case_key" in codes
+        assert list(seeded.scalars(select(DatasetCase))) == []
+    finally:
+        unregister_adapter("simple-keyed")

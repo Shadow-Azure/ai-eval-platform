@@ -131,8 +131,14 @@ def _validate_records(adapter: DatasetAdapter, records: list[Mapping[str, Any]])
     seen_keys: dict[str, int] = {}
     for index, raw in enumerate(records):
         issues = adapter.validate_case(raw)
-        case_key = raw.get("instance_id")
-        case_key = str(case_key) if isinstance(case_key, str) and case_key.strip() else None
+        # case_key 来自适配器标准映射（不假设上游字段名，如 SWE-bench 的
+        # instance_id）。尽力提取：记录缺关键字段导致无法归一化时置空，
+        # 定位回退 case_index，不影响校验结论。
+        case_key: str | None = None
+        try:
+            case_key = adapter.normalize_case(raw).case_key
+        except (KeyError, TypeError):
+            case_key = None
         for issue in issues:
             issue.case_index = index
             issue.case_key = case_key
