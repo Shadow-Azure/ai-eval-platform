@@ -6,7 +6,7 @@ English | [中文](m3-04-eval-workbench-e2e.md)
 kind: issue
 milestone: m3
 priority: P0
-status: in-progress
+status: done
 scope:
   - .agents/flow/issues/m3-04-eval-workbench-e2e.*
   - web/**
