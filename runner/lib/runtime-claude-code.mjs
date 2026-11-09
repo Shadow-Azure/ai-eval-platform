@@ -146,6 +146,10 @@ export function buildClaudeCommand({
   if (!/^https?:\/\//.test(String(gatewayBaseUrl || ""))) {
     throw new RuntimeError("模型网关 base URL 无效", { code: "invalid_base_url" });
   }
+  // Claude Code validates the model against its own allowlist. Custom
+  // providers are selected by the gateway token/config; send a recognized
+  // alias and let the gateway rewrite it to the configured upstream model.
+  const cliModel = String(model).startsWith("claude-") ? String(model) : "claude-sonnet-4-20250514";
   return {
     command,
     args: [
@@ -155,7 +159,7 @@ export function buildClaudeCommand({
       "stream-json",
       "--verbose",
       "--model",
-      String(model),
+      cliModel,
       "--max-turns",
       String(Math.max(1, Math.trunc(maxTurns))),
       "--permission-mode",
@@ -165,7 +169,7 @@ export function buildClaudeCommand({
       "--dangerously-skip-permissions",
     ],
     cwd: workspace,
-    env: childEnv({ runtimeHome, gatewayBaseUrl, gatewayToken, model }),
+    env: childEnv({ runtimeHome, gatewayBaseUrl, gatewayToken, model: cliModel }),
     executionImageDigest,
   };
 }

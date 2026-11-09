@@ -157,9 +157,14 @@ async def _forward(
     payload: dict,
     anthropic: bool,
 ) -> Response:
-    model = payload.get("model")
-    if not isinstance(model, str) or not model:
+    requested_model = payload.get("model")
+    if not isinstance(requested_model, str) or not requested_model:
         return _error_response(400, "model_required", "请求缺少 model")
+    # The model config owns the upstream model. CLI clients sometimes send a
+    # provider-specific alias (Claude Code validates its own allowlist); map it
+    # back to the configured upstream model before validation and forwarding.
+    model = config.model_name
+    payload = {**payload, "model": model}
     try:
         service.check_model_allowed(model, claims, config)
     except service.GatewayError as error:
