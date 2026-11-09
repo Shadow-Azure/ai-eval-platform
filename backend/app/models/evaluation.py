@@ -75,6 +75,14 @@ class EvalRun(Base, TimestampMixin):
     model_config_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     model_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     model_budget_usd: Mapped[Decimal | None] = mapped_column(Numeric(12, 6), nullable=True)
+    # M3-04 real evaluation workbench: frozen dataset/runtime/assets and the
+    # preflight decision snapshot shown by the launch wizard.
+    dataset_version_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    runtime_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    runtime_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    execution_image_digest: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    asset_snapshot_json: Mapped[dict] = mapped_column(json_type(), default=dict, nullable=False)
+    consistency_json: Mapped[dict] = mapped_column(json_type(), default=dict, nullable=False)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     status: Mapped[str] = mapped_column(
         String(32), nullable=False, default="queued", server_default="queued"
@@ -147,6 +155,8 @@ class EvalCaseRun(Base, TimestampMixin):
     latest_attempt_no: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     metrics_json: Mapped[dict] = mapped_column(json_type(), default=dict, nullable=False)
+    # Frozen task view consumed by the runner (prompt/repo/base commit etc.).
+    task_json: Mapped[dict] = mapped_column(json_type(), default=dict, nullable=False)
     error_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
     error_summary: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)

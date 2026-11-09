@@ -52,12 +52,27 @@ class ObjectStore:
         access_key: str,
         secret_key: str,
         region: str = "us-east-1",
+        addressing_style: str = "auto",
     ) -> None:
+        endpoint = endpoint.strip()
+        if not endpoint.startswith(("http://", "https://")):
+            endpoint = "https://" + endpoint
         self.endpoint = endpoint.rstrip("/")
         self.bucket = bucket
         self.access_key = access_key
         self.secret_key = secret_key
         self.region = region
+        self.addressing_style = addressing_style
+
+    def _virtual_hosted(self) -> bool:
+        """Aliyun OSS requires virtual-hosted style; MinIO/local uses path."""
+
+        if self.addressing_style == "virtual":
+            return True
+        if self.addressing_style == "path":
+            return False
+        host = urlparse(self.endpoint).hostname or ""
+        return host.endswith(".aliyuncs.com")
 
     # -- SigV4 helpers ------------------------------------------------------
 
@@ -76,7 +91,11 @@ class ObjectStore:
         amz_date, date_stamp = self._amz_date(now)
         parsed = urlparse(self.endpoint)
         host = parsed.netloc
-        canonical_uri = _uri_encode_path(f"/{self.bucket}/{object_key}")
+        if self._virtual_hosted():
+            host = f"{self.bucket}.{host}"
+            canonical_uri = _uri_encode_path(f"/{object_key}")
+        else:
+            canonical_uri = _uri_encode_path(f"/{self.bucket}/{object_key}")
         scope = f"{date_stamp}/{self.region}/s3/aws4_request"
         # SigV4: the credential element in the canonical query is URL-encoded
         # including its "/" separators (raw slashes → SignatureDoesNotMatch on
@@ -105,7 +124,7 @@ class ObjectStore:
         signature = hmac.new(
             self._signing_key(date_stamp), string_to_sign.encode(), hashlib.sha256
         ).hexdigest()
-        return f"{self.endpoint}{canonical_uri}?{query}&X-Amz-Signature={signature}"
+        return f"{parsed.scheme}://{host}{canonical_uri}?{query}&X-Amz-Signature={signature}"
 
     def _presigned_head(self, object_key: str, *, expires: int, now: datetime) -> str:
         return self._presign("HEAD", object_key, expires, now)
@@ -123,6 +142,22 @@ class ObjectStore:
 
         now = now or datetime.now(UTC)
         return self._presign("PUT", object_key, expires, now)
+
+    def get_bytes(self, object_key: str, *, now: datetime | None = None) -> bytes:
+        """Download one object with a presigned GET (scoring ingestion)."""
+
+        now = now or datetime.now(UTC)
+        url = self._presign("GET", object_key, 60, now)
+        request = urllib.request.Request(url, method="GET")
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                return response.read()
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                raise ObjectMissing(object_key) from exc
+            raise ObjectStoreError(f"GET {object_key} 返回 HTTP {exc.code}") from exc
+        except urllib.error.URLError as exc:
+            raise ObjectStoreError(f"GET {object_key} 失败：{exc.reason}") from exc
 
     def head_object(self, object_key: str, *, now: datetime | None = None) -> int:
         """Return the stored object size; raise ObjectMissing when absent."""
@@ -168,4 +203,5 @@ def object_store_from_settings(settings) -> ObjectStore | None:
         access_key=settings.s3_access_key,
         secret_key=settings.s3_secret_key,
         region=settings.s3_region,
+        addressing_style=settings.s3_addressing_style,
     )

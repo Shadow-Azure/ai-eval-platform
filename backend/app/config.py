@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     s3_access_key: str | None = None
     s3_secret_key: str | None = None
     s3_region: str = "us-east-1"
+    # Aliyun OSS requires virtual-hosted style (bucket.oss-cn-*.aliyuncs.com);
+    # MinIO/local uses path style. auto picks OSS for *.aliyuncs.com.
+    s3_addressing_style: str = "auto"
 
     default_tenant_slug: str = "default"
     default_workspace_slug: str = "default"
@@ -88,6 +91,9 @@ class Settings(BaseSettings):
     # Connection-level retries for provider calls (bounded; never retries a
     # stream that has already started).
     gateway_connect_retries: int = 2
+    # M3-04 execution/scoring image digests exposed to the launch wizard.
+    default_execution_image_digest: str | None = None
+    default_scoring_image_digest: str | None = None
 
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173,http://localhost:8080"
 

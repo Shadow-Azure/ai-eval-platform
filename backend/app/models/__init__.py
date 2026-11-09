@@ -35,6 +35,13 @@ from .identity import (
 from .model import CREDENTIAL_KINDS, USAGE_STATUSES, Credential, ModelConfig, ModelUsage
 from .outbox import Outbox
 from .resources import ProvisionedInstance, ResourcePool, Runner
+from .scoring import (
+    TEST_GROUPS,
+    TEST_OUTCOMES,
+    MetricResult,
+    ScoreArtifact,
+    TestCaseResult,
+)
 
 __all__ = [
     "Base",
@@ -70,6 +77,11 @@ __all__ = [
     "ModelUsage",
     "CREDENTIAL_KINDS",
     "USAGE_STATUSES",
+    "ScoreArtifact",
+    "TestCaseResult",
+    "MetricResult",
+    "TEST_OUTCOMES",
+    "TEST_GROUPS",
     "AGGREGATOR_WHITELIST",
     "DATASET_VERSION_STATUSES",
     "DATASET_IMPORT_STATUSES",

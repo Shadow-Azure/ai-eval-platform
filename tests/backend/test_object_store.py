@@ -140,3 +140,34 @@ def test_signature_is_real_hmac_over_canonical_request(endpoint: str) -> None:
     sig_b = parse_qs(urlparse(url_b).query)["X-Amz-Signature"][0]
     assert sig_a != sig_b
     assert sha256(sig_a.encode()).hexdigest() != sha256(sig_b.encode()).hexdigest()
+
+
+def test_aliyun_oss_uses_virtual_hosted_addressing() -> None:
+    from app.services.object_store import ObjectStore
+
+    store = ObjectStore(
+        endpoint="https://oss-cn-hangzhou.aliyuncs.com",
+        bucket="eval-artifacts",
+        access_key="ak",
+        secret_key="sk",
+        region="oss-cn-hangzhou",
+    )
+    url = store.presign_put_url("evals/run/a.json")
+    assert url.startswith("https://eval-artifacts.oss-cn-hangzhou.aliyuncs.com/evals/run/a.json?")
+
+    local = ObjectStore(
+        endpoint="http://127.0.0.1:9000",
+        bucket="eval-artifacts",
+        access_key="ak",
+        secret_key="sk",
+    )
+    assert local.presign_put_url("x").startswith("http://127.0.0.1:9000/eval-artifacts/x?")
+
+    bare = ObjectStore(
+        endpoint="oss-cn-hangzhou.aliyuncs.com",
+        bucket="eval-artifacts",
+        access_key="ak",
+        secret_key="sk",
+        region="oss-cn-hangzhou",
+    )
+    assert bare.presign_put_url("x").startswith("https://eval-artifacts.oss-cn-hangzhou.aliyuncs.com/x?")

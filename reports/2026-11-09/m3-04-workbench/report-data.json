@@ -1,0 +1,193 @@
+{
+  "title": "M3-04 评测工作台 UI 与首个真实用例 · 冒烟报告",
+  "eyebrow": "PR #58 · branch agent/m3-04-eval-workbench",
+  "summary": "补齐数据集目录/导入向导、数据集详情、发起评测四步向导、评测进度与结果视图，并完成首个真实 SWE-bench 用例端到端：astropy__astropy-12907 经 Claude Code（MiniMax 网关）产出补丁，官方 SWE-bench harness 评分 resolved=1/1，平台 completion 后结果 API 返回 resolved_rate=100%、测试级 2 F2P + 13 P2P 全通过。Before 取自已部署 main（#46/#47 之后、#48 之前）的占位页。",
+  "meta": "2026-11-09 · macOS · Chrome headless 1440×900 · 中文浅色主题 · 本地 Vite + uvicorn/SQLite",
+  "metrics": [
+    {
+      "value": "1/1",
+      "label": "官方 resolved"
+    },
+    {
+      "value": "100%",
+      "label": "resolved_rate"
+    },
+    {
+      "value": "15",
+      "label": "F2P+P2P 测试"
+    },
+    {
+      "value": "9",
+      "label": "Before/After 截图"
+    }
+  ],
+  "facts": [
+    {
+      "label": "基线",
+      "value": "origin/main c6121fa（#46/#47 已合入，#48 之前）"
+    },
+    {
+      "label": "变更",
+      "value": "agent/m3-04-eval-workbench/complete-remaining-m3-f6e3eff5fe50"
+    },
+    {
+      "label": "视口",
+      "value": "1440×900，Chrome headless"
+    },
+    {
+      "label": "数据",
+      "value": "SWE-bench Verified astropy__astropy-12907；MiniMax-M2.7-highspeed；fixed-linux-eval"
+    },
+    {
+      "label": "真实用例",
+      "value": "astropy__astropy-12907（SWE-bench Verified）"
+    },
+    {
+      "label": "执行镜像",
+      "value": "ai-eval-claude-code:m303 · sha256:9f7709b6…c7e7"
+    },
+    {
+      "label": "官方评分",
+      "value": "SWE-bench harness m304official2 · resolved_instances=1/1"
+    },
+    {
+      "label": "平台终态",
+      "value": "run 3a0e6ec3… · completed · case resolved · 2 F2P + 13 P2P passed"
+    },
+    {
+      "label": "OSS",
+      "value": "真实 OSS presigned PUT 200 / HEAD 20 / GET 一致；平台 completion 使用 S3 兼容 stub 验证上传链路"
+    }
+  ],
+  "matrix": {
+    "columns": [
+      "#",
+      "页面",
+      "Before",
+      "After",
+      "结论"
+    ],
+    "rows": [
+      {
+        "id": "01",
+        "name": "数据集目录",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "before": "before-datasets.png",
+        "after": "after-datasets.png",
+        "detail": "占位页替换为真实数据集列表，含导入入口。"
+      },
+      {
+        "id": "02",
+        "name": "数据集详情",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "before": "—",
+        "after": "after-dataset-detail.png",
+        "detail": "版本、指标口径、用例与 base_commit 可见。"
+      },
+      {
+        "id": "03",
+        "name": "数据集导入向导",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "before": "—",
+        "after": "after-dataset-import.png",
+        "detail": "三步：来源/版本 → JSONL 记录校验 → 完成。"
+      },
+      {
+        "id": "04",
+        "name": "发起评测向导",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "before": "before-eval-wizard.png",
+        "after": "after-eval-wizard.png",
+        "detail": "占位页替换为四步向导；数据集/版本/模型/Runtime/资源池与预检阻塞项。"
+      },
+      {
+        "id": "05",
+        "name": "评测进度与结果",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "before": "before-evals.png",
+        "after": "after-eval-detail.png",
+        "detail": "状态、进度、官方口径结果卡、用例表、测试级详情与事件时间线。"
+      },
+      {
+        "id": "06",
+        "name": "评测列表",
+        "status": {
+          "kind": "info",
+          "label": "BASELINE"
+        },
+        "before": "before-evals.png",
+        "after": "after-evals.png",
+        "detail": "列表沿用既有页面，仅数据从合成变为真实评测。"
+      },
+      {
+        "id": "07",
+        "name": "首個真实用例端到端",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "before": "—",
+        "after": "after-eval-results.png",
+        "detail": "Claude Code 产出补丁 → 官方 harness resolved=1/1 → 平台 result API 返回 100% resolved 与 15 条测试明细。"
+      }
+    ]
+  },
+  "screenshots": [
+    {
+      "src": "screenshots/before-datasets.png",
+      "label": "Before · 数据集占位页"
+    },
+    {
+      "src": "screenshots/after-datasets.png",
+      "label": "After · 数据集目录"
+    },
+    {
+      "src": "screenshots/after-dataset-detail.png",
+      "label": "After · 数据集详情"
+    },
+    {
+      "src": "screenshots/after-dataset-import.png",
+      "label": "After · 数据集导入向导"
+    },
+    {
+      "src": "screenshots/before-eval-wizard.png",
+      "label": "Before · 发起评测占位页"
+    },
+    {
+      "src": "screenshots/after-eval-wizard.png",
+      "label": "After · 发起评测向导"
+    },
+    {
+      "src": "screenshots/before-evals.png",
+      "label": "Before · 评测列表"
+    },
+    {
+      "src": "screenshots/after-evals.png",
+      "label": "After · 评测列表"
+    },
+    {
+      "src": "screenshots/after-eval-detail.png",
+      "label": "After · 评测进度与结果"
+    },
+    {
+      "src": "screenshots/after-eval-results.png",
+      "label": "After · 真实用例结果（resolved 100%）"
+    }
+  ],
+  "gaps": "平台 completion 的对象存储使用 S3 兼容 stub 验证上传/校验/解析闭环；真实 Aliyun OSS 的 presigned PUT/HEAD/GET 已单独通过。官方 harness 使用已推送到 ACR 的预构建镜像。"
+}

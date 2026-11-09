@@ -6,11 +6,15 @@ cancel. All errors use the shared {"error": {code, ...}} envelope.
 
 from __future__ import annotations
 
+import json
+import time
+from collections.abc import Iterator
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from ..config import get_settings
 from ..db import get_session
@@ -37,8 +41,8 @@ class PrepareRequest(BaseModel):
 
 
 class CreateEvaluationRequest(BaseModel):
-    name: str = Field(default="合成评测", max_length=200)
-    case_keys: list[str] = Field(min_length=1)
+    name: str | None = Field(default=None, max_length=200)
+    case_keys: list[str] | None = None
     shard_size: int | None = Field(default=None, ge=1, le=256)
     idempotency_key: str | None = Field(default=None, max_length=128)
     # M3-02: optional model binding so the runner can obtain a short-lived
@@ -46,6 +50,14 @@ class CreateEvaluationRequest(BaseModel):
     model_config_id: str | None = Field(default=None, max_length=36)
     model_name: str | None = Field(default=None, max_length=200)
     model_budget_usd: float | None = Field(default=None, ge=0)
+    # M3-04: real evaluation from an immutable dataset version.
+    dataset_version_id: str | None = Field(default=None, max_length=36)
+    runtime_key: str | None = Field(default=None, max_length=64)
+    runtime_version: str | None = Field(default=None, max_length=64)
+    resource_pool_id: str | None = Field(default=None, max_length=36)
+    scoring_image_digest: str | None = Field(default=None, max_length=128)
+    execution_image_digest: str | None = Field(default=None, max_length=128)
+    assets_resolved: bool = True
 
 
 @router.post("/api/v1/evaluations/prepare")
@@ -79,17 +91,62 @@ def create_evaluation(
     context: identity.AuthContext = Depends(require_admin),
 ) -> dict:
     settings = get_settings()
+    if payload.dataset_version_id:
+        if not (payload.model_config_id and payload.resource_pool_id):
+            raise HTTPException(
+                status_code=422,
+                detail=error_detail(
+                    "evaluation_invalid",
+                    "真实评测必须指定模型配置与资源池",
+                    details={"fields": {"model_config_id": "required", "resource_pool_id": "required"}},
+                ),
+            )
+        check = preflight_service.check_preparation(
+            session,
+            dataset_version_id=payload.dataset_version_id,
+            model_config_id=payload.model_config_id,
+            model_name=payload.model_name,
+            runtime_key=payload.runtime_key or "claude-code",
+            runtime_version=payload.runtime_version,
+            resource_pool_id=payload.resource_pool_id,
+            requested_concurrency=1,
+            scoring_image_digest=payload.scoring_image_digest,
+            execution_image_digest=payload.execution_image_digest,
+            assets_resolved=payload.assets_resolved,
+        )
+        if check.blockers:
+            raise HTTPException(
+                status_code=422,
+                detail=error_detail(
+                    "preparation_blocked",
+                    "启动前一致性检查未通过",
+                    details={"blockers": check.payload()["blockers"], "warnings": check.payload()["warnings"]},
+                ),
+            )
+    else:
+        if not payload.case_keys:
+            raise HTTPException(
+                status_code=422,
+                detail=error_detail("evaluation_invalid", "合成评测必须提供 case_keys"),
+            )
     try:
         run, created = evaluation_service.create_synthetic_evaluation(
             session,
-            name=payload.name,
-            case_keys=payload.case_keys,
+            name=payload.name or ("合成评测" if not payload.dataset_version_id else ""),
+            case_keys=payload.case_keys or [],
             shard_size=payload.shard_size,
             idempotency_key=payload.idempotency_key,
             created_by=context.user.email,
             model_config_id=payload.model_config_id,
             model_name=payload.model_name,
             model_budget_usd=payload.model_budget_usd,
+            dataset_version_id=payload.dataset_version_id,
+            runtime_key=payload.runtime_key,
+            runtime_version=payload.runtime_version,
+            resource_pool_id=payload.resource_pool_id,
+            scoring_image_digest=payload.scoring_image_digest,
+            execution_image_digest=payload.execution_image_digest,
+            consistency_json=check.payload() if payload.dataset_version_id else {},
             settings=settings,
         )
     except evaluation_service.EvaluationInvalid as exc:
@@ -147,6 +204,67 @@ def list_evaluation_events(
         ) from exc
     items, next_cursor = evaluation_service.list_events(session, run_id, after_id=after_id, limit=limit)
     return {"status": "ok", "items": items, "next_cursor": next_cursor}
+
+
+@router.get("/api/v1/evaluations/{run_id}/events/stream")
+def stream_evaluation_events(
+    run_id: str,
+    request: Request,
+    after_id: Annotated[int | None, Query(ge=0)] = None,
+    session: Session = Depends(get_session),
+):
+    """SSE change feed (M3-04, design 04 §6).
+
+    The browser first fetches the DB snapshot + cursor via ``/events`` and then
+    connects here with ``Last-Event-ID`` (or ``after_id``). The server replays
+    from the DB; a terminal run ends the stream after its final event.
+    """
+
+    try:
+        evaluation_service.get_evaluation(session, run_id)
+    except evaluation_service.EvaluationNotFound as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=error_detail("evaluation_not_found", "评测不存在"),
+        ) from exc
+    header_cursor = request.headers.get("last-event-id")
+    try:
+        cursor = after_id if after_id is not None else int(header_cursor or 0)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=error_detail("invalid_cursor", "Last-Event-ID 不是有效游标"),
+        ) from exc
+
+    stream_factory = sessionmaker(
+        bind=session.get_bind(), autoflush=False, expire_on_commit=False, class_=Session
+    )
+
+    def generate() -> Iterator[str]:
+        position = cursor
+        for _ in range(3600):
+            with stream_factory() as stream_session:
+                items, _next = evaluation_service.list_events(
+                    stream_session, run_id, after_id=position, limit=100
+                )
+                run = evaluation_service.get_evaluation(stream_session, run_id)
+                terminal = run.status in evaluation_service.TERMINAL_RUN_STATUSES
+            for item in items:
+                position = item["id"]
+                yield (
+                    f"id: {item['id']}\n"
+                    f"event: {item['event_type']}\n"
+                    f"data: {json.dumps(item, ensure_ascii=False, default=str)}\n\n"
+                )
+            if terminal and not items:
+                return
+            time.sleep(1)
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.post("/api/v1/evaluations/{run_id}/cancel")

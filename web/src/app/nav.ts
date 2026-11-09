@@ -41,6 +41,9 @@ export const navGroups: NavGroup[] = [
 const breadcrumbs: Array<{ test: (path: string) => boolean; crumbs: [string, string] }> = [
   { test: (path) => path === "/overview", crumbs: ["工作台", "总览"] },
   { test: (path) => path === "/datasets", crumbs: ["配置", "数据集"] },
+  { test: (path) => path === "/datasets/import", crumbs: ["配置", "导入数据集"] },
+  { test: (path) => path.startsWith("/datasets/"), crumbs: ["配置", "数据集详情"] },
+  { test: (path) => path.startsWith("/evals/") && path !== "/evals/new", crumbs: ["评测", "评测详情"] },
   { test: (path) => path === "/assets", crumbs: ["配置", "Agent 资产"] },
   { test: (path) => path === "/models", crumbs: ["配置", "模型凭据"] },
   { test: (path) => path === "/resources", crumbs: ["配置", "资源池"] },
