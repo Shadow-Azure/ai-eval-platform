@@ -1,5 +1,5 @@
 # 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
 # git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
 #   pnpm run record:i18n -- .agents/flow/issues/m3-03-claude-code-runtime-adapter.md
-m3-03-claude-code-runtime-adapter.md: c577481bc4e35015b1490a6c959a019cbf0e25f2
-m3-03-claude-code-runtime-adapter.en.md: 6c52e20f54575125ae465694517a3ddd0dd3d418
+m3-03-claude-code-runtime-adapter.md: 84e83076bbb5f416d2a41df8e2ef43f1d1789e60
+m3-03-claude-code-runtime-adapter.en.md: fa46b29c05be7541f8238b8d8b13183aae33e9a6
