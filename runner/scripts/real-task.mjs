@@ -156,8 +156,8 @@ function realCase(dispatch, item, task, { modelToken, runnerRoot }) {
       CLAUDE_GATEWAY_TOKEN: modelToken,
       CLAUDE_MODEL: task.model.name,
       PROMPT: task.prompt,
-      MAX_TURNS: "30",
-      TIMEOUT_MS: "900000",
+      MAX_TURNS: process.env.REAL_TASK_MAX_TURNS || "30",
+      TIMEOUT_MS: process.env.REAL_TASK_TIMEOUT_MS || "900000",
       EXECUTION_IMAGE_DIGEST: task.execution_image_digest,
     };
     const agentArgs = ["run", "--rm", "--network", "host", "-v", `${workdir}:/workspace`, "-v", `${runnerRoot}:/runner:ro`];
