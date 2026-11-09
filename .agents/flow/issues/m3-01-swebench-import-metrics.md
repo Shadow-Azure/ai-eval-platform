@@ -6,7 +6,7 @@
 kind: issue
 milestone: m3
 priority: P0
-status: ready
+status: in-progress
 scope:
   - .agents/flow/issues/m3-01-swebench-import-metrics.*
   - backend/**

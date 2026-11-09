@@ -27,6 +27,7 @@ def run_alembic(url: str, *args: str, check: bool = True) -> subprocess.Complete
         raise AssertionError(f"alembic {' '.join(args)} failed: {result.stderr}")
     return result
 
+
 EXPECTED_TABLES = {
     "tenant",
     "workspace",
@@ -39,6 +40,13 @@ EXPECTED_TABLES = {
     "eval_case_attempt",
     "eval_event",
     "outbox",
+    # M3-01 数据集切片与指标注册（design 05 §4）
+    "dataset",
+    "dataset_version",
+    "dataset_case",
+    "dataset_import",
+    "metric_definition",
+    "dataset_version_metric",
 }
 
 
