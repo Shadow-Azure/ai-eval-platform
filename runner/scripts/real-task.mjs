@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -141,6 +141,8 @@ function realCase(dispatch, item, task, { modelToken, runnerRoot }) {
     } finally {
       dockerRun(["rm", "-f", source], { allowFailure: true });
     }
+    spawnSync("chmod", ["-R", "a+rwX", workdir], { encoding: "utf8", timeout: 120_000 });
+    mkdirSync(join(workdir, ".runtime-home"), { recursive: true, mode: 0o777 });
     const checkout = spawnSync("git", ["-C", workdir, "checkout", task.base_commit], {
       encoding: "utf8",
       timeout: 120_000,
