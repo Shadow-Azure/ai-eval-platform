@@ -1,0 +1,186 @@
+{
+  "title": "M3-05 账号密码登录与会话鉴权 · 浏览器 Smoke",
+  "eyebrow": "Computer Use Smoke · M3-05",
+  "summary": "在真实 uvicorn + SQLite（迁移到 0005_identity）与 Vite 开发服务器上完成登录前后对照：基线的演示登录与匿名总览可复现；实现后未登录深链跳转登录、错误密码明确失败、正确登录回到原目标页、退出后旧 Cookie 失效，控制面 API 与角色边界均按预期工作。",
+  "meta": "2026-11-09 · macOS · Chrome headless 1440×900 · 中文/浅色主题",
+  "metrics": [
+    { "value": "11/11", "label": "场景通过" },
+    { "value": "2", "label": "角色验证" },
+    { "value": "0", "label": "明文凭据" },
+    { "value": "1440×900", "label": "统一视口" }
+  ],
+  "facts": [
+    { "label": "Branch", "value": "agent/implement-m3-auth-81d2cbabf1aa" },
+    { "label": "Web", "value": "http://127.0.0.1:5174 (vite dev)" },
+    { "label": "API", "value": "http://127.0.0.1:8000 (uvicorn)" },
+    { "label": "Database", "value": "SQLite + Alembic 0005_identity" },
+    { "label": "Baseline", "value": "0adde90 (main merge PR #50)" }
+  ],
+  "matrix": {
+    "columns": ["#", "场景", "结果", "细节", "证据"],
+    "rows": [
+      {
+        "id": "01",
+        "name": "基线演示登录页",
+        "status": { "kind": "info", "label": "BASELINE" },
+        "detail": "改动前登录页预填 admin@acme.local / eval-demo，仅前端跳转，不发请求。",
+        "evidence": ["before-login.png"]
+      },
+      {
+        "id": "02",
+        "name": "基线匿名访问总览",
+        "status": { "kind": "warn", "label": "DEFECT" },
+        "detail": "改动前直接打开 /overview 可匿名查看真实数据，/api/v1/overview 返回 200。",
+        "evidence": ["before-overview-anonymous.png", "evidence/01-anonymous-overview.status"]
+      },
+      {
+        "id": "03",
+        "name": "登录页去除演示凭据",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "登录页不再预填或展示演示账号，文案说明使用管理员分配账号。",
+        "evidence": ["after-login.png"]
+      },
+      {
+        "id": "04",
+        "name": "未登录深链跳转",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "未登录打开 /overview 跳到 /login?next=%2Foverview，登录后回到 /overview。",
+        "evidence": ["after-deep-link.png"]
+      },
+      {
+        "id": "05",
+        "name": "错误密码失败态",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "错误密码返回 401 invalid_credentials，页面显示“账号或密码不正确，请检查后重试。”。",
+        "evidence": ["after-login-error.png"]
+      },
+      {
+        "id": "06",
+        "name": "正确登录与身份展示",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "登录返回 200，顶栏显示 admin@acme.local / 平台管理员，/api/v1/overview 返回 200。",
+        "evidence": ["after-overview-authenticated.png"]
+      },
+      {
+        "id": "07",
+        "name": "退出登录与旧会话失效",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "退出后回到 /login；把旧 Cookie 写回浏览器再请求 overview 返回 401。",
+        "evidence": ["after-logged-out.png", "evidence/06-revoked-session.status"]
+      },
+      {
+        "id": "08",
+        "name": "匿名控制面 API",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "未登录 GET /api/v1/overview 返回 401 unauthenticated 错误封套。",
+        "evidence": ["evidence/01-anonymous-overview.json", "evidence/01-anonymous-overview.status"]
+      },
+      {
+        "id": "09",
+        "name": "管理员与只读角色边界",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "viewer 可读总览（200）但创建评测返回 403；admin 创建评测返回 201。",
+        "evidence": ["evidence/10-viewer-write-forbidden.json", "evidence/04-admin-create-eval.status"]
+      },
+      {
+        "id": "10",
+        "name": "Runner 平面不受控制面会话影响",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "不带控制面 Cookie 的 Runner 心跳仍返回 200，继续使用自身令牌体系。",
+        "evidence": ["evidence/07-runner-heartbeat.status"]
+      },
+      {
+        "id": "11",
+        "name": "落库凭据形态",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "密码为 scrypt 哈希，会话只存 64 位 token hash；登录/退出写入 audit_log。",
+        "evidence": ["evidence/11-storage-inspection.txt"]
+      }
+    ]
+  },
+  "screenshots": [
+    {
+      "src": "screenshots/before-login.png",
+      "alt": "改动前演示登录页",
+      "label": "01 · Before login",
+      "caption": "基线登录页预填演示账号，提交只做前端跳转。",
+      "variant": "wide"
+    },
+    {
+      "src": "screenshots/before-overview-anonymous.png",
+      "alt": "改动前匿名访问总览",
+      "label": "02 · Before anonymous overview",
+      "caption": "基线直接访问 /overview 可匿名查看真实数据，顶栏仍是静态用户“张宁”。",
+      "variant": "wide"
+    },
+    {
+      "src": "screenshots/after-login.png",
+      "alt": "改动后真实登录页",
+      "label": "03 · After login",
+      "caption": "登录页接入真实 API，移除演示凭据并说明账号来源。",
+      "variant": "wide"
+    },
+    {
+      "src": "screenshots/after-deep-link.png",
+      "alt": "未登录深链跳转登录页",
+      "label": "04 · After deep link",
+      "caption": "未登录打开 /overview 后落在 /login?next=%2Foverview。",
+      "variant": "wide"
+    },
+    {
+      "src": "screenshots/after-login-error.png",
+      "alt": "错误密码失败态",
+      "label": "05 · After login error",
+      "caption": "错误密码显示统一失败态，不暴露账号是否存在。",
+      "variant": "wide"
+    },
+    {
+      "src": "screenshots/after-overview-authenticated.png",
+      "alt": "登录后总览与顶栏身份",
+      "label": "06 · After authenticated overview",
+      "caption": "登录后回到原目标页，顶栏显示真实账号与角色。",
+      "variant": "wide"
+    },
+    {
+      "src": "screenshots/after-logged-out.png",
+      "alt": "退出登录后的登录页",
+      "label": "07 · After logout",
+      "caption": "退出登录清除会话并回到登录页；旧 Cookie 重放仍返回 401。",
+      "variant": "wide"
+    }
+  ],
+  "coverage": {
+    "columns": ["区域", "覆盖", "结论", "建议"],
+    "rows": [
+      {
+        "area": "密码哈希、登录成败、会话过期/撤销",
+        "coverage": "pytest",
+        "conclusion": "tests/backend/test_auth.py 覆盖并通过。",
+        "recommendation": "保留为 CI 回归。"
+      },
+      {
+        "area": "角色门禁与匿名 API",
+        "coverage": "pytest + API curl",
+        "conclusion": "viewer 403、admin 201、匿名 401 均验证。",
+        "recommendation": "后续写接口新增时复用 require_admin。"
+      },
+      {
+        "area": "前端登录/守卫/退出",
+        "coverage": "typecheck + build + 浏览器",
+        "conclusion": "tsc、vite build 与 1440×900 真实浏览器路径通过。",
+        "recommendation": "后续页面接入时保持 AuthProvider 与 401 事件处理。"
+      }
+    ]
+  },
+  "conclusion": {
+    "kind": "pass",
+    "label": "Ready with deployment follow-up",
+    "summary": "登录、会话与控制面访问控制已在真实浏览器与 API 上验证；生产部署仍需配置初始管理员密码，并在启用 TLS 后打开 Secure Cookie。",
+    "points": [
+      "生产首次部署需要 GitHub Secret AUTH_BOOTSTRAP_ADMIN_PASSWORD（可选 AUTH_BOOTSTRAP_ADMIN_EMAIL），否则控制面没有可登录账号。",
+      "当前部署入口是 HTTP，AUTH_COOKIE_SECURE 保持 false；接入 TLS 后必须改为 true。",
+      "密码重置暂由 python -m app.manage set-password 执行，尚无独立重置页面。"
+    ]
+  },
+  "footer": "M3-05 · 账号密码登录与会话鉴权 · 证据来自本地真实 uvicorn + Vite + Chrome headless"
+}

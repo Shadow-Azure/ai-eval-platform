@@ -18,7 +18,9 @@ from ..datasets import get_adapter
 from ..db import get_session
 from ..models import DatasetCase, DatasetImport, DatasetVersion, MetricDefinition
 from ..services import datasets as dataset_service
+from ..services import identity
 from ..services import metrics as metric_service
+from .dependencies import require_admin
 from .errors import error_detail
 
 router = APIRouter(tags=["datasets"])
@@ -136,6 +138,7 @@ def create_dataset_import(
     payload: DatasetImportRequest,
     response: Response,
     session: Session = Depends(get_session),
+    context: identity.AuthContext = Depends(require_admin),
 ) -> dict:
     try:
         outcome = dataset_service.import_dataset_version(
@@ -147,7 +150,7 @@ def create_dataset_import(
             source_uri=payload.source_uri,
             source_revision=payload.source_revision,
             records=payload.records,
-            created_by=payload.created_by,
+            created_by=context.user.email,
         )
     except dataset_service.ImportValidationFailed as exc:
         failed = exc.outcome

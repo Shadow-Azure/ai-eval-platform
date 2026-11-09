@@ -17,7 +17,8 @@ from .defaults import (
     DEFAULT_WORKSPACE_ID,
     DEFAULT_WORKSPACE_NAME,
 )
-from .models import Project, Tenant, Workspace
+from .models import Project, Tenant, User, Workspace
+from .services import identity
 
 
 def ensure_default_scope(session: Session) -> tuple[Tenant, Workspace, Project]:
@@ -76,14 +77,54 @@ def ensure_default_scope(session: Session) -> tuple[Tenant, Workspace, Project]:
     return tenant, workspace, project
 
 
+def ensure_bootstrap_admin(
+    session: Session,
+    tenant: Tenant,
+    workspace: Workspace,
+    settings=None,
+) -> User | None:
+    """Create the first administrator when bootstrap credentials are configured.
+
+    This is intentionally bootstrap-only: an existing account keeps its
+    password. Use ``python -m app.manage set-password`` to reset it later.
+    """
+
+    settings = settings or get_settings()
+    password = (settings.auth_bootstrap_admin_password or "").strip()
+    if not password:
+        return None
+    user = identity.upsert_member(
+        session,
+        email=settings.auth_bootstrap_admin_email,
+        password=password,
+        tenant=tenant,
+        workspace=workspace,
+        role=identity.ROLE_ADMIN,
+        is_default=True,
+    )
+    session.commit()
+    return user
+
+
 def main() -> int:
     with SessionLocal() as session:
         tenant, workspace, project = ensure_default_scope(session)
+        admin = ensure_bootstrap_admin(session, tenant, workspace)
     print(
         f"default scope ready: tenant={tenant.slug} workspace={workspace.slug} "
         f"project={project.slug}",
         file=sys.stdout,
     )
+    if admin is None:
+        print(
+            "auth: no bootstrap administrator configured; set "
+            "AUTH_BOOTSTRAP_ADMIN_PASSWORD (and optionally "
+            "AUTH_BOOTSTRAP_ADMIN_EMAIL) or run "
+            "`python -m app.manage set-password --email <email>`",
+            file=sys.stderr,
+        )
+    else:
+        print(f"auth: bootstrap administrator ready: {admin.email}", file=sys.stdout)
     return 0
 
 

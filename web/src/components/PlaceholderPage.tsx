@@ -18,7 +18,7 @@ export function PlaceholderPage({ eyebrow, title, description }: PlaceholderPage
         eyebrow={eyebrow}
         title={title}
         description={description}
-        actions={<span className="tag tag-neutral">M2 建设中</span>}
+        actions={<span className="tag tag-neutral">后续里程碑</span>}
       />
       <section className="card placeholder-card">
         <EmptyState

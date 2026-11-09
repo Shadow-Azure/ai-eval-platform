@@ -15,6 +15,8 @@ from sqlalchemy.orm import Session
 from ..config import get_settings
 from ..db import get_session
 from ..services import evaluations as evaluation_service
+from ..services import identity
+from .dependencies import require_admin
 from .errors import error_detail
 
 router = APIRouter(tags=["evaluations"])
@@ -32,6 +34,7 @@ def create_evaluation(
     payload: CreateEvaluationRequest,
     response: Response,
     session: Session = Depends(get_session),
+    context: identity.AuthContext = Depends(require_admin),
 ) -> dict:
     settings = get_settings()
     try:
@@ -41,7 +44,7 @@ def create_evaluation(
             case_keys=payload.case_keys,
             shard_size=payload.shard_size,
             idempotency_key=payload.idempotency_key,
-            created_by="console",
+            created_by=context.user.email,
             settings=settings,
         )
     except evaluation_service.EvaluationInvalid as exc:
@@ -102,7 +105,11 @@ def list_evaluation_events(
 
 
 @router.post("/api/v1/evaluations/{run_id}/cancel")
-def cancel_evaluation(run_id: str, session: Session = Depends(get_session)) -> dict:
+def cancel_evaluation(
+    run_id: str,
+    session: Session = Depends(get_session),
+    _context: identity.AuthContext = Depends(require_admin),
+) -> dict:
     try:
         run, replayed = evaluation_service.cancel_evaluation(session, run_id=run_id)
     except evaluation_service.EvaluationNotFound as exc:

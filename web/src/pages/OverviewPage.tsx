@@ -216,8 +216,8 @@ export function OverviewPage() {
       <div className="banner info overview-note">
         <Icon name="sparkles" size={15} />
         <div>
-          <strong>M2 建设中。</strong>
-          控制面与数据库底座正在接入，本轮开放登录与总览；其余导航页面将在后续里程碑补齐。
+          <strong>M3 建设中。</strong>
+          账号登录、总览与评测页面已接入；数据集、模型网关与执行运行时正在按里程碑补齐。
         </div>
       </div>
 
@@ -380,7 +380,7 @@ export function OverviewPage() {
                 <p className="card-subtitle">结果指标由数据集版本定义，不在界面侧写死</p>
               </div>
               <div className="card-actions">
-                <span className="tag tag-neutral">M2 建设中</span>
+                <span className="tag tag-neutral">M3 建设中</span>
               </div>
             </div>
             <Table<RecentEvalRow>

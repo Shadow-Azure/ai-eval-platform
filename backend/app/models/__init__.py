@@ -23,7 +23,15 @@ from .evaluation import (
     EvalEvent,
     EvalRun,
 )
-from .identity import Project, Tenant, Workspace
+from .identity import (
+    AuditLog,
+    AuthSession,
+    Membership,
+    Project,
+    Tenant,
+    User,
+    Workspace,
+)
 from .outbox import Outbox
 from .resources import ProvisionedInstance, ResourcePool, Runner
 
@@ -38,6 +46,10 @@ __all__ = [
     "Project",
     "Tenant",
     "Workspace",
+    "User",
+    "Membership",
+    "AuthSession",
+    "AuditLog",
     "Outbox",
     "ProvisionedInstance",
     "ResourcePool",

@@ -1,0 +1,15 @@
+user=admin@acme.local hash_scheme=scrypt hash_length=86
+user=viewer@acme.local hash_scheme=scrypt hash_length=86
+auth_session=ace48b39-a47d-4299-b28f-f8fbfba267d3 token_hash_length=64 revoked=False
+auth_session=0a7ce69e-5554-49e5-b1df-0a90d268e250 token_hash_length=64 revoked=True
+auth_session=7e743515-139a-451f-b29e-fbc5f85835d1 token_hash_length=64 revoked=True
+auth_session=a560b446-d8b8-422d-b337-67c065d46d3e token_hash_length=64 revoked=True
+auth_session=69d0dd38-07c7-433a-b490-a06f353b6fe8 token_hash_length=64 revoked=False
+audit=auth.login actor=249dc487-a091-46c4-9b9b-7d47f6b5c83e
+audit=auth.login actor=249dc487-a091-46c4-9b9b-7d47f6b5c83e
+audit=auth.logout actor=249dc487-a091-46c4-9b9b-7d47f6b5c83e
+audit=auth.login actor=249dc487-a091-46c4-9b9b-7d47f6b5c83e
+audit=auth.logout actor=249dc487-a091-46c4-9b9b-7d47f6b5c83e
+audit=auth.login actor=249dc487-a091-46c4-9b9b-7d47f6b5c83e
+audit=auth.logout actor=249dc487-a091-46c4-9b9b-7d47f6b5c83e
+audit=auth.login actor=33386cf3-2beb-47fd-b071-113581380ac6

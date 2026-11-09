@@ -26,6 +26,7 @@ from ..services.case_attempts import CaseCallbackError
 from ..services.evaluations import SHARD_DISPATCH_TOPIC
 from ..services.object_store import object_store_from_settings
 from ..services.short_token import ShortTokenInvalid, issue_short_token, verify_short_token
+from .dependencies import require_session
 from .errors import error_detail
 
 
@@ -101,7 +102,7 @@ def runner_heartbeat(
     }
 
 
-@router.get("/api/v1/runners")
+@router.get("/api/v1/runners", dependencies=[Depends(require_session)])
 def list_runners(
     session: Session = Depends(get_session),
     settings: Settings = Depends(get_settings),
@@ -116,7 +117,7 @@ def list_runners(
     return {"status": "ok", "runners": runners}
 
 
-@router.get("/api/v1/runners/{provider_runner_id}")
+@router.get("/api/v1/runners/{provider_runner_id}", dependencies=[Depends(require_session)])
 def get_runner(
     provider_runner_id: str,
     session: Session = Depends(get_session),

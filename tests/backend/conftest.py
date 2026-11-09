@@ -13,6 +13,12 @@ from sqlalchemy.orm import Session, sessionmaker
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BACKEND = REPO_ROOT / "backend"
 
+TEST_AUTH_SECRET = "test-auth-session-secret"
+TEST_ADMIN_EMAIL = "admin@test.local"
+TEST_ADMIN_PASSWORD = "test-admin-password"
+TEST_VIEWER_EMAIL = "viewer@test.local"
+TEST_VIEWER_PASSWORD = "test-viewer-password"
+
 # Settings are cached on import, so point the default app at a harmless local
 # SQLite file before importing app modules. Every test overrides the session
 # dependency with its own migrated database.
@@ -107,7 +113,19 @@ def configure_settings(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.fixture
-def client(engine) -> TestClient:
+def client(engine, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    """Authenticated console client.
+
+    Console APIs now require a session (M3-05); seed the default scope plus an
+    administrator and log in so existing API tests keep exercising their own
+    concerns. Tests that need the unauthenticated path clear ``client.cookies``.
+    """
+
+    monkeypatch.setenv("AUTH_SESSION_SECRET", TEST_AUTH_SECRET)
+    monkeypatch.setenv("AUTH_BOOTSTRAP_ADMIN_EMAIL", TEST_ADMIN_EMAIL)
+    monkeypatch.setenv("AUTH_BOOTSTRAP_ADMIN_PASSWORD", TEST_ADMIN_PASSWORD)
+    get_settings.cache_clear()
+
     testing_session = sessionmaker(
         bind=engine, autoflush=False, expire_on_commit=False, class_=Session
     )
@@ -116,10 +134,30 @@ def client(engine) -> TestClient:
         with testing_session() as db_session:
             yield db_session
 
+    from app.seed import ensure_bootstrap_admin, ensure_default_scope
+
+    with testing_session() as seed_session:
+        tenant, workspace, _project = ensure_default_scope(seed_session)
+        ensure_bootstrap_admin(seed_session, tenant, workspace)
+
     app.dependency_overrides[get_session] = override_get_session
     with TestClient(app) as test_client:
+        login = test_client.post(
+            "/api/v1/auth/login",
+            json={"email": TEST_ADMIN_EMAIL, "password": TEST_ADMIN_PASSWORD},
+        )
+        assert login.status_code == 200, login.text
         yield test_client
     app.dependency_overrides.clear()
+    get_settings.cache_clear()
+
+
+@pytest.fixture
+def anonymous_client(client: TestClient) -> TestClient:
+    """The shared client with its session cookie removed."""
+
+    client.cookies.clear()
+    return client
 
 
 EVAL_ENV_SECRET = "platform-task-secret"

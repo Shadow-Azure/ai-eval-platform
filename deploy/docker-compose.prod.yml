@@ -44,6 +44,17 @@ services:
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
       GITHUB_REPO: ${GITHUB_REPO:-Shadow-Azure/ai-eval-platform}
       DEPLOY_ENVIRONMENT: ${DEPLOY_ENVIRONMENT:-production}
+      # M3-05 console identity. The deploy script generates and persists
+      # AUTH_SESSION_SECRET on first rollout. The bootstrap password is written
+      # from GitHub Secrets by the deploy workflow; seed only creates the
+      # initial administrator and never overwrites an existing password.
+      ENVIRONMENT: ${DEPLOY_ENVIRONMENT:-production}
+      AUTH_SESSION_SECRET: ${AUTH_SESSION_SECRET:-}
+      AUTH_SESSION_TTL_HOURS: ${AUTH_SESSION_TTL_HOURS:-12}
+      AUTH_SESSION_REMEMBER_DAYS: ${AUTH_SESSION_REMEMBER_DAYS:-30}
+      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-false}
+      AUTH_BOOTSTRAP_ADMIN_EMAIL: ${AUTH_BOOTSTRAP_ADMIN_EMAIL:-admin@acme.local}
+      AUTH_BOOTSTRAP_ADMIN_PASSWORD: ${AUTH_BOOTSTRAP_ADMIN_PASSWORD:-}
     # Fixed runners and the heartbeat agent run on the API host and reach the
     # platform via loopback (PLATFORM_BASE_URL=http://127.0.0.1:8000).
     ports:

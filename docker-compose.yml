@@ -70,6 +70,12 @@ services:
       S3_BUCKET: ${S3_BUCKET:-eval-artifacts}
       S3_ACCESS_KEY: ${MINIO_ROOT_USER:-eval}
       S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-eval-minio}
+      # Local development identity; production supplies these from the host
+      # .env and GitHub Secrets instead of the compose defaults.
+      ENVIRONMENT: development
+      AUTH_SESSION_SECRET: ${AUTH_SESSION_SECRET:-local-development-auth-secret}
+      AUTH_BOOTSTRAP_ADMIN_EMAIL: ${AUTH_BOOTSTRAP_ADMIN_EMAIL:-admin@acme.local}
+      AUTH_BOOTSTRAP_ADMIN_PASSWORD: ${AUTH_BOOTSTRAP_ADMIN_PASSWORD:-eval-demo}
     ports:
       - "8000:8000"
     depends_on:

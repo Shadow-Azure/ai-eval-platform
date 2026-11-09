@@ -2,13 +2,18 @@
 
 [English](development.en.md) | 中文
 
-本仓当前只依赖 Node.js，用于运行文档与流程门禁。项目首次安装没有第三方 npm 依赖，因此不需要先执行依赖安装。
+本仓的常驻门禁依赖 Node.js，控制面与后端测试依赖 Python 3.12；首次安装分别执行 `npm install` 与 `uv pip install --python .venv/bin/python -e ".[dev]"`。
 
 ## 环境
 
 - Node.js 22 或更新版本。
+- Python 3.12 或更新版本，用于控制面、迁移与 pytest。
 - Git 用于配对 blob hash、流程 diff 与提交钩子。
 - 在线流程校验额外需要已认证的 GitHub CLI 和 `FLOW_TOKEN`。
+
+## 身份配置
+
+控制面登录需要会话签名密钥 `AUTH_SESSION_SECRET`，生产环境必填且由部署脚本在主机 `.env` 生成并持久化；本地开发可省略。默认管理员由 `AUTH_BOOTSTRAP_ADMIN_EMAIL` 与 `AUTH_BOOTSTRAP_ADMIN_PASSWORD` 在 `python -m app.seed` 时幂等创建，生产部署从 GitHub Secrets 调用 `python -m app.manage create-admin --password-stdin` 完成同一操作。重置口令使用 `python -m app.manage set-password --email <email> --password-stdin`，该命令会同时撤销该账号的活跃会话。
 
 ## 常用命令
 

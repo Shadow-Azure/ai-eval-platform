@@ -20,6 +20,21 @@ if [ -f "$ENV_FILE" ]; then
 fi
 
 login_acr_if_configured
+
+ensure_secret() {
+  local key="$1"
+  if ! grep -q "^${key}=..*" "$ENV_FILE" 2>/dev/null; then
+    set_env "$key" "$(openssl rand -hex 32)"
+    echo "deploy: generated ${key}" >&2
+  fi
+}
+
+# Session signing secret is server-local and stable across rollouts.
+ensure_secret AUTH_SESSION_SECRET
+if ! grep -q '^AUTH_BOOTSTRAP_ADMIN_PASSWORD=.' "$ENV_FILE" 2>/dev/null; then
+  echo "deploy: WARNING AUTH_BOOTSTRAP_ADMIN_PASSWORD is not set; the console will have no login account until it is provisioned" >&2
+fi
+
 set_env API_IMAGE "$API_IMAGE"
 set_env WEB_IMAGE "$WEB_IMAGE"
 set_env GIT_COMMIT "$GIT_COMMIT"
