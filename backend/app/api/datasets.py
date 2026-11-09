@@ -1,0 +1,308 @@
+"""Dataset console API（M3-01，design 04 §2 Dataset/Import/Metrics 行）。
+
+- ``POST /api/v1/dataset-imports``：导入→校验→入库（幂等重放 200/新建 201）。
+- ``GET`` 目录/版本/用例/指标定义查询，全部服务端分页（items + page_info）。
+- 错误统一 ``{"error": {code, message, ...}}`` 封套；导入校验失败 422 携带
+  可诊断错误分类清单。
+"""
+
+from __future__ import annotations
+
+from typing import Annotated, Any
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
+
+from ..datasets import get_adapter
+from ..db import get_session
+from ..models import DatasetCase, DatasetImport, DatasetVersion, MetricDefinition
+from ..services import datasets as dataset_service
+from ..services import metrics as metric_service
+from .errors import error_detail
+
+router = APIRouter(tags=["datasets"])
+
+
+class DatasetImportRequest(BaseModel):
+    dataset_slug: str = Field(min_length=1, max_length=128)
+    dataset_name: str = Field(min_length=1, max_length=200)
+    adapter_key: str = Field(min_length=1, max_length=64)
+    version: str = Field(min_length=1, max_length=64)
+    source_uri: str = Field(default="", max_length=500)
+    source_revision: str = Field(min_length=1, max_length=128)
+    records: list[dict[str, Any]] = Field(min_length=1)
+    created_by: str = Field(default="console", max_length=128)
+
+
+def dataset_summary(dataset) -> dict:
+    return {
+        "id": dataset.id,
+        "slug": dataset.slug,
+        "name": dataset.name,
+        "adapter_key": dataset.adapter_key,
+        "task_family": dataset.task_family,
+        "environment_kind": dataset.environment_kind,
+        "created_at": dataset.created_at.isoformat(timespec="microseconds"),
+    }
+
+
+def version_summary(version: DatasetVersion) -> dict:
+    return {
+        "id": version.id,
+        "dataset_id": version.dataset_id,
+        "version": version.version,
+        "status": version.status,
+        "case_count": version.case_count,
+        "source_uri": version.source_uri,
+        "source_revision": version.source_revision,
+        "adapter_version": version.adapter_version,
+        "created_at": version.created_at.isoformat(timespec="microseconds"),
+    }
+
+
+def case_summary(case: DatasetCase) -> dict:
+    return {
+        "id": case.id,
+        "dataset_version_id": case.dataset_version_id,
+        "case_key": case.case_key,
+        "ordinal": case.ordinal,
+        "repo": case.repo,
+        "base_commit": case.base_commit,
+        "created_at": case.created_at.isoformat(timespec="microseconds"),
+    }
+
+
+def case_detail(case: DatasetCase, visibility: dict[str, str]) -> dict:
+    return {
+        **case_summary(case),
+        "problem_statement": case.problem_statement,
+        "reference_patch": case.reference_patch,
+        "test_patch": case.test_patch,
+        "expected_metrics": case.expected_metrics_json,
+        "extra": case.extra_json,
+        "visibility": visibility,
+    }
+
+
+def metric_summary(definition: MetricDefinition) -> dict:
+    return {
+        "id": definition.id,
+        "dataset_id": definition.dataset_id,
+        "metric_key": definition.metric_key,
+        "version": definition.version,
+        "display_name": definition.display_name,
+        "description": definition.description,
+        "aggregator_key": definition.aggregator_key,
+        "formula_text": definition.formula_text,
+        "display_kind": definition.display_kind,
+        "unit": definition.unit,
+        "direction": definition.direction,
+        "denominator_policy": definition.denominator_policy,
+        "config": definition.config_json,
+        "created_at": definition.created_at.isoformat(timespec="microseconds"),
+    }
+
+
+def import_summary(record: DatasetImport) -> dict:
+    return {
+        "id": record.id,
+        "dataset_id": record.dataset_id,
+        "dataset_slug": record.dataset_slug,
+        "adapter_key": record.adapter_key,
+        "version": record.version,
+        "source_uri": record.source_uri,
+        "source_revision": record.source_revision,
+        "status": record.status,
+        "total_count": record.total_count,
+        "valid_count": record.valid_count,
+        "invalid_count": record.invalid_count,
+        "created_by": record.created_by,
+        "created_at": record.created_at.isoformat(timespec="microseconds"),
+    }
+
+
+def _not_found(code: str, message: str) -> HTTPException:
+    return HTTPException(status_code=404, detail=error_detail(code, message))
+
+
+# ---------------------------------------------------------------------------
+# Import
+# ---------------------------------------------------------------------------
+
+
+@router.post("/api/v1/dataset-imports")
+def create_dataset_import(
+    payload: DatasetImportRequest,
+    response: Response,
+    session: Session = Depends(get_session),
+) -> dict:
+    try:
+        outcome = dataset_service.import_dataset_version(
+            session,
+            dataset_slug=payload.dataset_slug,
+            dataset_name=payload.dataset_name,
+            adapter_key=payload.adapter_key,
+            version=payload.version,
+            source_uri=payload.source_uri,
+            source_revision=payload.source_revision,
+            records=payload.records,
+            created_by=payload.created_by,
+        )
+    except dataset_service.ImportValidationFailed as exc:
+        failed = exc.outcome
+        raise HTTPException(
+            status_code=422,
+            detail=error_detail(
+                "dataset_import_validation_failed",
+                str(exc),
+                details={
+                    "import_id": failed.import_record.id,
+                    "errors": [issue.as_dict() for issue in failed.errors],
+                },
+            ),
+        ) from exc
+    except dataset_service.DatasetVersionConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=error_detail("dataset_version_conflict", str(exc)),
+        ) from exc
+    # 幂等重放答 200，新建 201（与 evaluations 路由一致）。
+    response.status_code = 201 if outcome.created else 200
+    return {
+        "created": outcome.created,
+        "status": outcome.status,
+        "import": import_summary(outcome.import_record),
+        "dataset": dataset_summary(outcome.dataset) if outcome.dataset else None,
+        "version": version_summary(outcome.version) if outcome.version else None,
+    }
+    return response
+
+
+@router.get("/api/v1/dataset-imports/{import_id}")
+def get_dataset_import(import_id: str, session: Session = Depends(get_session)) -> dict:
+    try:
+        record = dataset_service.get_import(session, import_id)
+    except dataset_service.DatasetImportNotFound as exc:
+        raise _not_found("dataset_import_not_found", "导入记录不存在") from exc
+    summary = import_summary(record)
+    if record.status == "failed":
+        summary["error_report"] = record.error_report_json
+    return summary
+
+
+# ---------------------------------------------------------------------------
+# Catalog + versions + cases + metrics（服务端分页）
+# ---------------------------------------------------------------------------
+
+
+@router.get("/api/v1/datasets")
+def list_datasets(
+    limit: Annotated[int, Query(ge=1, le=200)] = 20,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    session: Session = Depends(get_session),
+) -> dict:
+    items, total = dataset_service.list_datasets(session, limit=limit, offset=offset)
+    return {
+        "items": [dataset_summary(dataset) for dataset in items],
+        "page_info": dataset_service.page_info(limit=limit, offset=offset, total=total),
+    }
+
+
+@router.get("/api/v1/datasets/{dataset_id}")
+def get_dataset(dataset_id: str, session: Session = Depends(get_session)) -> dict:
+    try:
+        dataset = dataset_service.get_dataset(session, dataset_id)
+    except dataset_service.DatasetNotFound as exc:
+        raise _not_found("dataset_not_found", "数据集不存在") from exc
+    _, version_total = dataset_service.list_dataset_versions(session, dataset.id, limit=1, offset=0)
+    return {**dataset_summary(dataset), "version_count": version_total}
+
+
+@router.get("/api/v1/datasets/{dataset_id}/versions")
+def list_dataset_versions(
+    dataset_id: str,
+    limit: Annotated[int, Query(ge=1, le=200)] = 20,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    session: Session = Depends(get_session),
+) -> dict:
+    try:
+        dataset_service.get_dataset(session, dataset_id)
+    except dataset_service.DatasetNotFound as exc:
+        raise _not_found("dataset_not_found", "数据集不存在") from exc
+    items, total = dataset_service.list_dataset_versions(
+        session, dataset_id, limit=limit, offset=offset
+    )
+    return {
+        "items": [version_summary(version) for version in items],
+        "page_info": dataset_service.page_info(limit=limit, offset=offset, total=total),
+    }
+
+
+@router.get("/api/v1/dataset-versions/{version_id}")
+def get_dataset_version(version_id: str, session: Session = Depends(get_session)) -> dict:
+    try:
+        version = dataset_service.get_dataset_version(session, version_id)
+    except dataset_service.DatasetVersionNotFound as exc:
+        raise _not_found("dataset_version_not_found", "数据集版本不存在") from exc
+    metrics = dataset_service.list_version_metrics(session, version.id)
+    return {
+        **version_summary(version),
+        "metrics": [metric_summary(definition) for definition in metrics],
+    }
+
+
+@router.get("/api/v1/dataset-versions/{version_id}/cases")
+def list_version_cases(
+    version_id: str,
+    limit: Annotated[int, Query(ge=1, le=200)] = 20,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    session: Session = Depends(get_session),
+) -> dict:
+    try:
+        dataset_service.get_dataset_version(session, version_id)
+    except dataset_service.DatasetVersionNotFound as exc:
+        raise _not_found("dataset_version_not_found", "数据集版本不存在") from exc
+    items, total = dataset_service.list_version_cases(
+        session, version_id, limit=limit, offset=offset
+    )
+    return {
+        "items": [case_summary(case) for case in items],
+        "page_info": dataset_service.page_info(limit=limit, offset=offset, total=total),
+    }
+
+
+@router.get("/api/v1/dataset-versions/{version_id}/metrics")
+def list_version_metrics(version_id: str, session: Session = Depends(get_session)) -> dict:
+    try:
+        dataset_service.get_dataset_version(session, version_id)
+    except dataset_service.DatasetVersionNotFound as exc:
+        raise _not_found("dataset_version_not_found", "数据集版本不存在") from exc
+    metrics = dataset_service.list_version_metrics(session, version_id)
+    return {"items": [metric_summary(definition) for definition in metrics]}
+
+
+@router.get("/api/v1/dataset-cases/{case_id}")
+def get_dataset_case(case_id: str, session: Session = Depends(get_session)) -> dict:
+    try:
+        case = dataset_service.get_dataset_case(session, case_id)
+    except dataset_service.DatasetCaseNotFound as exc:
+        raise _not_found("dataset_case_not_found", "用例不存在") from exc
+    version = dataset_service.get_dataset_version(session, case.dataset_version_id)
+    visibility = get_adapter(version_dataset_adapter_key(session, version)).case_visibility()
+    return case_detail(case, visibility)
+
+
+def version_dataset_adapter_key(session: Session, version: DatasetVersion) -> str:
+    dataset = dataset_service.get_dataset(session, version.dataset_id)
+    return dataset.adapter_key
+
+
+# 注册时校验用的白名单查询（供前端/调用方展示，D10）。
+@router.get("/api/v1/metric-aggregators")
+def list_metric_aggregators() -> dict:
+    return {
+        "aggregator_keys": list(metric_service.AGGREGATOR_WHITELIST),
+        "case_result_keys": list(metric_service.CASE_RESULT_KEYS),
+        "case_set_keys": list(metric_service.CASE_SET_KEYS),
+    }
