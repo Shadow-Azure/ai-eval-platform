@@ -58,3 +58,14 @@ export function parseReport(task, output) {
     resultStatus: resolved ? "resolved" : "unresolved",
   };
 }
+
+export function workspacePath() {
+  return "/testbed";
+}
+
+export function constraints() {
+  return [
+    "Do not modify test files; the official test patch is applied after you finish.",
+    "Keep the change minimal and limited to production code.",
+  ];
+}
