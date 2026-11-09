@@ -106,6 +106,10 @@ class Settings(BaseSettings):
     eval_heartbeat_timeout_seconds: int = 300
     # Attempts per lifecycle sweep; keeps one worker pass bounded.
     eval_lifecycle_batch_size: int = 100
+    # Cancellation grace period (M4-02 A2). Running/scoring/uploading attempts
+    # stay alive so their artifacts can settle; after this window the reconciler
+    # force-cancels whatever is left so a cancelled run can never hang forever.
+    eval_cancel_grace_seconds: int = 600
 
     # M3-02 centralized model gateway. Credentials are encrypted with a
     # host-local Fernet key (SECRET_BOX_KEY); the gateway signs short-lived

@@ -1,10 +1,11 @@
 """Worker loop for M2-01/M2-04/M2-05/M4-02.
 
 Each poll runs the shard-dispatch outbox (repository_dispatch with retry and
-reconciliation, M2-05), the execution lifecycle reaper (queue/agent/scoring/
-upload/heartbeat timeouts, M4-02) and the runner offline sweep (M2-04) so stale
-fixed runners flip to offline, timed-out attempts reach a diagnosable terminal
-state and queued shards reach GitHub even when nobody queries the API.
+reconciliation, M2-05), the execution-lifecycle reconciler (five timeouts,
+cancellation finalization and lost-callback backfill, M4-02) and the runner
+offline sweep (M2-04) so stale fixed runners flip to offline, timed-out or
+cancelled attempts reach a diagnosable terminal state and queued shards reach
+GitHub even when nobody queries the API.
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ from sqlalchemy.orm import Session
 from ..config import get_settings
 from ..db import SessionLocal
 from ..models import Outbox
-from ..services import dispatcher, lifecycle, reaper
+from ..services import dispatcher, lifecycle, reaper, reconciler
 from ..services.operations import record_worker_heartbeat
 from ..services.runners import sweep_stale_runners
 
@@ -44,6 +45,14 @@ def lifecycle_once(session: Session, *, now=None) -> dict[str, int]:
     """One execution-lifecycle sweep (five timeout classes, M4-02 A1)."""
 
     return reaper.sweep_lifecycle(session, settings=get_settings(), now=now)
+
+
+def reconcile_once(session: Session, transport=None, *, now=None) -> dict[str, int]:
+    """One reconcile pass: timeouts + cancellation + completion backfill (A2)."""
+
+    return reconciler.reconcile(
+        session, settings=get_settings(), now=now, transport=transport
+    )
 
 
 def _handle_signal(_signum: int, _frame: FrameType | None) -> None:
@@ -93,19 +102,28 @@ def main() -> int:
             print(f"worker: dispatch failed: {exc}", flush=True)
         try:
             with SessionLocal() as session:
-                expired = lifecycle_once(session)
-            if any(expired.values()):
+                reconciled = reconcile_once(session)
+            if any(reconciled.values()):
+                # The reconciler merges the lifecycle sweep; keep the A1 log
+                # line and add the cancellation/backfill counters.
                 print(
                     "worker: lifecycle "
-                    f"queue_timeout={expired.get(lifecycle.QUEUE_TIMEOUT, 0)} "
-                    f"execution_timeout={expired.get(lifecycle.EXECUTION_TIMEOUT, 0)} "
-                    f"scoring_timeout={expired.get(lifecycle.SCORING_TIMEOUT, 0)} "
-                    f"upload_timeout={expired.get(lifecycle.UPLOAD_TIMEOUT, 0)} "
-                    f"heartbeats={expired.get(lifecycle.HEARTBEAT_TIMEOUT, 0)}",
+                    f"queue_timeout={reconciled.get(lifecycle.QUEUE_TIMEOUT, 0)} "
+                    f"execution_timeout={reconciled.get(lifecycle.EXECUTION_TIMEOUT, 0)} "
+                    f"scoring_timeout={reconciled.get(lifecycle.SCORING_TIMEOUT, 0)} "
+                    f"upload_timeout={reconciled.get(lifecycle.UPLOAD_TIMEOUT, 0)} "
+                    f"heartbeats={reconciled.get(lifecycle.HEARTBEAT_TIMEOUT, 0)}",
+                    flush=True,
+                )
+                print(
+                    "worker: reconcile "
+                    f"cancelled={reconciled.get('cancelled', 0)} "
+                    f"reconciled={reconciled.get('reconciled', 0)} "
+                    f"heartbeat_timeout={reconciled.get(lifecycle.HEARTBEAT_TIMEOUT, 0)}",
                     flush=True,
                 )
         except Exception as exc:  # pragma: no cover - retried on the next loop
-            print(f"worker: lifecycle sweep failed: {exc}", flush=True)
+            print(f"worker: reconcile failed: {exc}", flush=True)
         try:
             with SessionLocal() as session:
                 swept = sweep_once(session)

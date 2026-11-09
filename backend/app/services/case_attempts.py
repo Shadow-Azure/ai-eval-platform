@@ -12,7 +12,13 @@ Rules pinned by tests/backend/test_case_callbacks.py:
 - Out-of-order / late callbacks answer 409 stale_* and never regress state —
   including after cancellation or a terminal attempt (迟到回调保留审计不覆盖).
 - Completion verifies score/trace objects in the object store; missing or
-  size-mismatched objects → artifact_missing, never a full success.
+  size-mismatched objects → artifact_missing, never a full success. The
+  post-verification body lives in ``finalize_completion`` so the reconciler's
+  lost-callback backfill reuses it instead of duplicating the state machine.
+- Cancellation (M4-02 A2): a ``cancelling``/``cancelled`` run refuses new
+  ``started`` callbacks with 409 ``run_cancelled`` (audited) while late
+  uploads/completions from already-started attempts are still accepted and
+  settle the run as cancelled.
 - Retryable failures below max_attempts create exactly ONE new attempt and
   one retry dispatch; the failed attempt is preserved for diagnosis.
 """
@@ -41,15 +47,7 @@ from . import capacity, evaluations, lifecycle
 from .evaluations import refresh_run_progress
 from .object_store import ObjectMissing, ObjectSizeMismatch, object_store_from_settings
 
-ACTIVE_ATTEMPT_STATUSES = (
-    "pending",
-    "dispatching",
-    "queued",
-    "leased",
-    "running",
-    "scoring",
-    "uploading",
-)
+ACTIVE_ATTEMPT_STATUSES = evaluations.ACTIVE_ATTEMPT_STATUSES
 
 COMPLETION_TO_ATTEMPT_STATUS = {
     "succeeded": "succeeded",
@@ -153,6 +151,44 @@ def _add_event(ctx: CaseContext, *, event_type: str, sequence: int, payload: dic
     )
 
 
+def next_free_sequence(session: Session, case_run: EvalCaseRun, attempt: EvalCaseAttempt) -> int:
+    """First sequence number free for this (case, attempt) row.
+
+    Reused by the reconciler's backfilled completion: its event must not collide
+    with the started (0), the last heartbeat sequence or a late callback.
+    """
+
+    highest = int(
+        session.scalar(
+            select(func.max(EvalEvent.sequence)).where(
+                EvalEvent.eval_case_run_id == case_run.id,
+                EvalEvent.attempt_no == attempt.attempt_no,
+            )
+        )
+        or 0
+    )
+    return max(highest, int(attempt.sequence or 0)) + 1
+
+
+def attempt_event_exists(
+    session: Session, *, case_run_id: str, attempt_no: int, event_type: str
+) -> bool:
+    """Whether this attempt already has an event of ``event_type`` (dedupe)."""
+
+    return (
+        session.scalar(
+            select(EvalEvent.id)
+            .where(
+                EvalEvent.eval_case_run_id == case_run_id,
+                EvalEvent.attempt_no == attempt_no,
+                EvalEvent.event_type == event_type,
+            )
+            .limit(1)
+        )
+        is not None
+    )
+
+
 def _resolve_runner_pk(session: Session, provider_runner_id: str | None) -> str | None:
     """Map the payload's provider runner id to the runner table PK (the
     attempt.runner_id column carries a real FK to runner.id)."""
@@ -246,9 +282,46 @@ def _enforce_capacity_gate(ctx: CaseContext, *, now: datetime) -> None:
     run.queue_reason = None
 
 
+def _reject_started_after_cancel(ctx: CaseContext, *, payload: dict) -> None:
+    """A cancelled run must never let an agent start (M4-02 A2).
+
+    The attempt is left untouched (it may already be ``cancelled`` or still be
+    settling); the rejection is recorded as ``case.started_rejected`` so the
+    runner's retry loop is auditable. Deduped on the callback event id so a
+    retried started does not spam the event stream.
+    """
+
+    event_id = payload.get("event_id")
+    stored = ctx.session.scalars(
+        select(EvalEvent).where(
+            EvalEvent.eval_case_run_id == ctx.case_run.id,
+            EvalEvent.attempt_no == ctx.attempt.attempt_no,
+            EvalEvent.event_type == "case.started_rejected",
+        )
+    ).all()
+    if not any((event.payload_json or {}).get("event_id") == event_id for event in stored):
+        _add_event(
+            ctx,
+            event_type="case.started_rejected",
+            sequence=next_free_sequence(ctx.session, ctx.case_run, ctx.attempt),
+            payload={
+                "event_id": event_id,
+                "reason": "run_cancelled",
+                "run_status": ctx.run.status,
+                "runner_id": payload.get("runner_id"),
+            },
+        )
+        ctx.session.commit()
+    raise CaseCallbackError("评测已取消，拒绝启动", code="run_cancelled", status_code=409)
+
+
 def handle_started(session: Session, *, payload: dict, now: datetime | None = None) -> dict:
     now = now or datetime.now(UTC)
     ctx = resolve_context(session, case_run_id=payload["case_run_id"], attempt_no=payload["attempt"])
+    if ctx.run.status in ("cancelling", "cancelled"):
+        # Cancellation revocation point: the token may still be valid for the
+        # TTL, so the run status is checked before any state mutation.
+        _reject_started_after_cancel(ctx, payload=payload)
     if ctx.attempt.status == "running" and _event_exists(ctx, sequence=0, event_id=payload["event_id"]):
         # Same event id from a different Runner means a duplicate Job on another
         # machine. Only the runner that owns the attempt may continue; the other
@@ -391,16 +464,21 @@ def handle_uploads(session: Session, *, payload: dict, now: datetime | None = No
 
 
 def _ingest_report_and_metrics(
-    session: Session, ctx: CaseContext, payload: dict, settings: Settings | None
+    session: Session,
+    *,
+    run: EvalRun,
+    case_run: EvalCaseRun,
+    attempt: EvalCaseAttempt,
+    score_manifest: dict,
+    settings: Settings | None,
 ) -> None:
     if settings is None:
         return
     store = object_store_from_settings(settings)
     if store is None:
         return
-    manifest = payload["score_manifest"]
     try:
-        raw = store.get_bytes(manifest["object_key"])
+        raw = store.get_bytes(score_manifest["object_key"])
         report = json.loads(raw)
     except Exception:  # noqa: BLE001 - scoring must not fail the callback
         # The object was already HEAD-verified; a transport/parse hiccup here
@@ -409,16 +487,16 @@ def _ingest_report_and_metrics(
     try:
         ingest_score_report(
             session,
-            case_run=ctx.case_run,
-            attempt=ctx.attempt,
+            case_run=case_run,
+            attempt=attempt,
             report=report,
-            object_key=manifest["object_key"],
+            object_key=score_manifest["object_key"],
         )
     except Exception as exc:  # noqa: BLE001 - keep the completion auditable
-        ctx.case_run.result_status = "not_scored"
-        ctx.case_run.error_summary = f"评分报告解析失败：{type(exc).__name__}"[:1000]
+        case_run.result_status = "not_scored"
+        case_run.error_summary = f"评分报告解析失败：{type(exc).__name__}"[:1000]
         return
-    if ctx.run.dataset_version_id:
+    if run.dataset_version_id:
         definitions = list(
             session.scalars(
                 select(MetricDefinition)
@@ -427,12 +505,86 @@ def _ingest_report_and_metrics(
                     DatasetVersionMetric.metric_definition_id == MetricDefinition.id,
                 )
                 .where(
-                    DatasetVersionMetric.dataset_version_id == ctx.run.dataset_version_id
+                    DatasetVersionMetric.dataset_version_id == run.dataset_version_id
                 )
             )
         )
-        terminal = ctx.run.status in ("completed", "partial", "failed", "cancelled")
-        recompute_metrics(session, run=ctx.run, definitions=definitions, is_final=terminal)
+        terminal = run.status in ("completed", "partial", "failed", "cancelled")
+        recompute_metrics(session, run=run, definitions=definitions, is_final=terminal)
+
+
+def finalize_completion(
+    session: Session,
+    *,
+    case_run: EvalCaseRun,
+    attempt: EvalCaseAttempt,
+    execution_status: str,
+    result_status: str,
+    score_manifest: dict,
+    trace_manifest: dict | None,
+    summary: dict,
+    now: datetime,
+    settings: Settings | None = None,
+    event_type: str = "case.completed",
+    event_payload: dict | None = None,
+    sequence: int | None = None,
+) -> None:
+    """Apply one verified completion to attempt/case/run and commit (M4-02 A2).
+
+    The runner callback and the reconciler's lost-callback backfill share this
+    core so the two paths cannot drift. The caller owns object verification and
+    event naming: a backfilled completion writes ``case.reconciled_completed``
+    so it stays distinguishable from a runner-reported ``case.completed``.
+    A ``sequence`` must be supplied for callback semantics; the reconciler lets
+    it pick the first free slot.
+    """
+
+    run = session.get(EvalRun, case_run.eval_run_id)
+    if run is None:  # pragma: no cover - FK guarantees the parent run
+        raise CaseNotFound(f"评测不存在：{case_run.eval_run_id}")
+
+    attempt_status = COMPLETION_TO_ATTEMPT_STATUS[execution_status]
+    lifecycle.mark_status(attempt, attempt_status, now)
+    attempt.ended_at = now
+    manifests = {"score_manifest": score_manifest}
+    if trace_manifest is not None:
+        manifests["trace_manifest"] = trace_manifest
+    merged = dict(attempt.artifact_manifest_json or {})
+    merged.update(manifests)
+    attempt.artifact_manifest_json = merged
+    case_run.execution_status = execution_status
+    case_run.result_status = result_status
+    case_run.duration_ms = summary.get("duration_ms")
+    if attempt_status != "succeeded":
+        case_run.error_code = f"runner_{execution_status}"
+    else:
+        # 成功完成清掉旧失败 attempt 遗留在 case 行上的诊断字段。
+        case_run.error_code = None
+        case_run.error_summary = None
+    case_run.trace_status = "ready" if trace_manifest is not None else "unlinked"
+
+    payload = dict(event_payload or {})
+    payload.setdefault("execution_status", execution_status)
+    payload.setdefault("result_status", result_status)
+    payload.setdefault("score_manifest", score_manifest)
+    if sequence is None:
+        sequence = next_free_sequence(session, case_run, attempt)
+    _add_event(
+        CaseContext(session, case_run, run, attempt),
+        event_type=event_type,
+        sequence=sequence,
+        payload=payload,
+    )
+    refresh_run_progress(session, run, now=now)
+    _ingest_report_and_metrics(
+        session,
+        run=run,
+        case_run=case_run,
+        attempt=attempt,
+        score_manifest=score_manifest,
+        settings=settings,
+    )
+    session.commit()
 
 
 def handle_completed(
@@ -456,40 +608,21 @@ def handle_completed(
             ctx, [payload["trace_manifest"]], now=now, sequence=payload["sequence"]
         )
 
-    attempt_status = COMPLETION_TO_ATTEMPT_STATUS[payload["execution_status"]]
-    lifecycle.mark_status(ctx.attempt, attempt_status, now)
-    ctx.attempt.ended_at = now
-    manifests = {"score_manifest": payload["score_manifest"]}
-    if "trace_manifest" in payload:
-        manifests["trace_manifest"] = payload["trace_manifest"]
-    merged = dict(ctx.attempt.artifact_manifest_json or {})
-    merged.update(manifests)
-    ctx.attempt.artifact_manifest_json = merged
-    ctx.case_run.execution_status = payload["execution_status"]
-    ctx.case_run.result_status = payload["result_status"]
-    ctx.case_run.duration_ms = payload["summary"].get("duration_ms")
-    if attempt_status != "succeeded":
-        ctx.case_run.error_code = f"runner_{payload['execution_status']}"
-    else:
-        # 成功完成清掉旧失败 attempt 遗留在 case 行上的诊断字段。
-        ctx.case_run.error_code = None
-        ctx.case_run.error_summary = None
-    trace_status = "ready" if "trace_manifest" in payload else "unlinked"
-    ctx.case_run.trace_status = trace_status
-    _add_event(
-        ctx,
+    finalize_completion(
+        session,
+        case_run=ctx.case_run,
+        attempt=ctx.attempt,
+        execution_status=payload["execution_status"],
+        result_status=payload["result_status"],
+        score_manifest=payload["score_manifest"],
+        trace_manifest=payload.get("trace_manifest"),
+        summary=payload["summary"],
+        now=now,
+        settings=settings,
         event_type="case.completed",
+        event_payload={"event_id": payload["event_id"]},
         sequence=payload["sequence"],
-        payload={
-            "event_id": payload["event_id"],
-            "execution_status": payload["execution_status"],
-            "result_status": payload["result_status"],
-            "score_manifest": payload["score_manifest"],
-        },
     )
-    refresh_run_progress(session, ctx.run, now=now)
-    _ingest_report_and_metrics(session, ctx, payload, settings)
-    session.commit()
     return {"ok": True, "deduped": False, "status": ctx.attempt.status}
 
 
