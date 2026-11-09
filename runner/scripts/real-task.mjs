@@ -13,6 +13,7 @@ import { ContractError } from "../lib/errors.mjs";
 import { fetchManifest, sha256 } from "../lib/manifest-source.mjs";
 import { LocalObjectStore } from "../lib/object-store.mjs";
 import { getDatasetAdapter, getRuntimeAdapter } from "../lib/adapters.mjs";
+import { startHeartbeatSidecar, stopHeartbeatSidecar } from "./heartbeat-agent.mjs";
 
 function parseArgs(argv) {
   const args = { dispatch: null, stateDir: ".runner-state", objectRoot: ".runner-objects", token: null, caseRunId: null };
@@ -539,9 +540,34 @@ async function main() {
       });
 
       const task = taskByCase.get(item.case_run_id);
-      const caseResult = task?.repo
-        ? realCase(dispatch, item, task, { modelToken, runnerRoot })
-        : { ...deterministicCase(dispatch, item), executionStatus: "succeeded", resultStatus: "resolved", durationMs: 0 };
+      // M4-02: `realCase` blocks this process inside spawnSync("docker", …) for
+      // the whole agent execution, so keep proving liveness from a sidecar
+      // process. Only the real-repo path needs it; the deterministic synthetic
+      // path stays exactly as before. The token travels via env only and a
+      // sidecar failure must never change the case result.
+      const heartbeatSidecar = task?.repo
+        ? startHeartbeatSidecar({
+            callbackBaseUrl: manifest.callback_base_url,
+            token,
+            caseRunId: item.case_run_id,
+            attempt: dispatch.attempt,
+            shardId: dispatch.shard_id,
+            runnerRoot,
+          })
+        : null;
+      let caseResult;
+      try {
+        caseResult = task?.repo
+          ? realCase(dispatch, item, task, { modelToken, runnerRoot })
+          : { ...deterministicCase(dispatch, item), executionStatus: "succeeded", resultStatus: "resolved", durationMs: 0 };
+      } finally {
+        // Stopped on both success and exception: SIGTERM, up to 5s, then SIGKILL.
+        try {
+          await stopHeartbeatSidecar(heartbeatSidecar);
+        } catch {
+          // Best-effort liveness only.
+        }
+      }
       const { score, trace } = caseResult;
       const scoreObject = store.putJson(score);
       const traceObject = store.putBytes(Buffer.from(trace, "utf8"), { contentType: "application/x-ndjson" });

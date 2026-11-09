@@ -56,6 +56,10 @@ export async function startMockPlatform({
     if (request.method === "GET" && request.url === "/manifest") {
       const headers = { "content-type": manifestContentType };
       if (expectedToken) headers["x-runner-task-token"] = expectedToken;
+      // M4-02: an opt-in tasks endpoint lets a test drive the real-repo path
+      // (real-task only runs the agent when /tasks returns a task with repo).
+      if (behavior.tasks) headers["x-runner-tasks-url"] = `${state.baseUrl}/tasks`;
+      if (behavior.modelToken) headers["x-runner-model-token"] = behavior.modelToken;
       response.writeHead(200, headers);
       response.end(getManifest());
       return;
@@ -73,6 +77,13 @@ export async function startMockPlatform({
 
     if (expectedToken && request.headers.authorization !== `Bearer ${expectedToken}`) {
       send(401, { error: { code: "token_invalid" } });
+      return;
+    }
+
+    // M4-02: tasks payload for the real-repo (agent) path.
+    if (request.method === "GET" && request.url === "/tasks" && behavior.tasks) {
+      const payload = typeof behavior.tasks === "function" ? behavior.tasks() : behavior.tasks;
+      send(200, payload);
       return;
     }
 

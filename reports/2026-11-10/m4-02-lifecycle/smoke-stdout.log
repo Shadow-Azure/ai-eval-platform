@@ -1,0 +1,53 @@
+{
+  "cancel": {
+    "run_status": "cancelling",
+    "attempt_a": "running",
+    "attempt_b": "cancelled",
+    "started_after_cancel_status": 409,
+    "completed_status": 200,
+    "run_after_reconcile": "cancelled"
+  },
+  "timeout": {
+    "counts": {
+      "queue_timeout": 0,
+      "execution_timeout": 1,
+      "scoring_timeout": 0,
+      "upload_timeout": 0,
+      "heartbeat_timeout": 0
+    },
+    "attempt_status": "timeout",
+    "error_code": "execution_timeout"
+  },
+  "reconcile": {
+    "first": {
+      "queue_timeout": 0,
+      "execution_timeout": 0,
+      "scoring_timeout": 0,
+      "upload_timeout": 0,
+      "heartbeat_timeout": 0,
+      "cancelled": 0,
+      "reconciled": 0
+    },
+    "second": {
+      "queue_timeout": 0,
+      "execution_timeout": 0,
+      "scoring_timeout": 0,
+      "upload_timeout": 0,
+      "heartbeat_timeout": 0,
+      "cancelled": 0,
+      "reconciled": 0
+    },
+    "github_run_id": "4242",
+    "cancel_calls": [
+      {
+        "url": "https://api.github.com/repos/Shadow-Azure/ai-eval-platform/actions/runs/4242/cancel",
+        "method": "POST"
+      }
+    ],
+    "events": [
+      "eval.cancel_requested",
+      "eval.cancelling",
+      "eval.created"
+    ]
+  }
+}

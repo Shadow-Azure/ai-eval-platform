@@ -1,7 +1,9 @@
-"""Shared local S3-ish stub for callback tests (M2-05).
+"""Shared local S3-ish stub for callback tests (M2-05, extended by M4-02 A2).
 
 Exercises the real HTTP verification path (presigned HEAD) without network
 access to OSS/MinIO. The production round-trip is proven on the host smoke.
+M4-02 A2's completion backfill also reads the score report, so objects
+registered with ``add_bytes`` are served on GET.
 """
 
 from __future__ import annotations
@@ -25,11 +27,25 @@ class StubObjectHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(size))
         self.end_headers()
 
+    def do_GET(self) -> None:  # noqa: N802
+        path = self.path.split("?", 1)[0]
+        body = getattr(self.server, "object_bodies", {}).get(path)
+        if body is None:
+            self.send_response(404)
+            self.end_headers()
+            return
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_PUT(self) -> None:  # noqa: N802
         path = self.path.split("?", 1)[0]
         length = int(self.headers.get("Content-Length") or 0)
-        self.rfile.read(length)
+        body = self.rfile.read(length)
         getattr(self.server, "known_objects", {})[path] = length
+        getattr(self.server, "object_bodies", {})[path] = body
         self.send_response(200)
         self.end_headers()
 
@@ -43,8 +59,10 @@ class StubObjectStore:
     def __init__(self, bucket: str = "eval-artifacts") -> None:
         self.bucket = bucket
         self.known: dict[str, int] = {}
+        self.bodies: dict[str, bytes] = {}
         self._server = ThreadingHTTPServer(("127.0.0.1", 0), StubObjectHandler)
         self._server.known_objects = self.known
+        self._server.object_bodies = self.bodies
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
 
     def __enter__(self) -> StubObjectStore:
@@ -59,6 +77,14 @@ class StubObjectStore:
 
     def add(self, object_key: str, size: int) -> str:
         self.known[f"/{self.bucket}/{object_key}"] = size
+        return object_key
+
+    def add_bytes(self, object_key: str, content: bytes) -> str:
+        """Register a readable object (HEAD size and GET body agree)."""
+
+        path = f"/{self.bucket}/{object_key}"
+        self.known[path] = len(content)
+        self.bodies[path] = content
         return object_key
 
     def has(self, object_key: str) -> bool:

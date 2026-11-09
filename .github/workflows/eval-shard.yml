@@ -17,6 +17,13 @@
 # repository_dispatch run (this also re-verifies the GitHub queue pickup hop).
 name: eval-shard
 
+# M4-02: the display title embeds the dispatch key, which starts with the
+# evaluation run id, so the platform worker can find the dispatched run and
+# cancel it (a repository_dispatch's run title carries no other eval id).
+# workflow_dispatch falls back to the GitHub run id. dispatch_key is also the
+# only client_payload field this workflow is allowed to interpolate.
+run-name: "eval-shard ${{ github.event.client_payload.dispatch_key || github.run_id }}"
+
 on:
   workflow_dispatch:
     inputs:

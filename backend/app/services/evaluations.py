@@ -47,6 +47,23 @@ TERMINAL_ATTEMPT_STATUSES = (
     "artifact_missing",
     "dispatch_failed",
 )
+# Attempt phases that still own work. ``cancelling`` keeps the started ones
+# (running/scoring/uploading) alive so their artifacts settle; only the ones
+# that never started an agent are cancelled outright.
+ACTIVE_ATTEMPT_STATUSES = (
+    "pending",
+    "dispatching",
+    "queued",
+    "leased",
+    "running",
+    "scoring",
+    "uploading",
+)
+NOT_STARTED_ATTEMPT_STATUSES = ("pending", "dispatching", "queued")
+
+# Stable cancellation error codes (diagnosable on attempt/case rows).
+RUN_CANCELLED = "run_cancelled"
+CANCEL_GRACE_EXCEEDED = "cancel_grace_exceeded"
 
 
 class EvaluationNotFound(Exception):
@@ -529,7 +546,20 @@ def list_events(
 
 
 def cancel_evaluation(session: Session, *, run_id: str, now: datetime | None = None) -> tuple[EvalRun, bool]:
-    """Cancel a non-terminal evaluation; replaying on cancelled is a no-op."""
+    """Request cancellation of a non-terminal evaluation.
+
+    State machine (M4-02 A2):
+
+    - replay on ``cancelled`` is a no-op; any other terminal state means the
+      client was too late (``EvaluationAlreadyFinal``);
+    - ``queued``/``dispatching``/``pending`` attempts never started an agent and
+      are cancelled immediately together with their cases and pending shard
+      dispatches; ``running``/``scoring``/``uploading`` attempts stay alive and
+      settle through their callbacks (their artifacts are already paid for);
+    - no active attempt left → the run is finalized here, otherwise it stays
+      ``cancelling`` and ``reconciler.reconcile`` finalizes it (also after
+      ``eval_cancel_grace_seconds``).
+    """
 
     now = _now(now)
     run = get_evaluation(session, run_id)
@@ -538,32 +568,30 @@ def cancel_evaluation(session: Session, *, run_id: str, now: datetime | None = N
     if run.status in TERMINAL_RUN_STATUSES:
         raise EvaluationAlreadyFinal(run.status)
 
+    # Local import: ``lifecycle`` imports this module at import time (its retry
+    # guard needs TERMINAL_RUN_STATUSES), so the back-edge must stay lazy.
+    from . import lifecycle
+
     run.status = "cancelling"
+    if run.cancel_requested_at is None:
+        run.cancel_requested_at = now
+
     attempts = session.scalars(
-        select(EvalCaseAttempt).where(
-            EvalCaseAttempt.eval_case_run_id.in_(
-                select(EvalCaseRun.id).where(EvalCaseRun.eval_run_id == run.id)
-            ),
-            EvalCaseAttempt.status.not_in(TERMINAL_ATTEMPT_STATUSES),
+        select(EvalCaseAttempt)
+        .join(EvalCaseRun, EvalCaseRun.id == EvalCaseAttempt.eval_case_run_id)
+        .where(
+            EvalCaseRun.eval_run_id == run.id,
+            EvalCaseAttempt.status.in_(NOT_STARTED_ATTEMPT_STATUSES),
         )
     ).all()
     for attempt in attempts:
-        attempt.status = "cancelled"
+        lifecycle.mark_status(attempt, "cancelled", now)
         attempt.ended_at = now
-        attempt.error_code = "run_cancelled"
-
-    cancelled_case_ids = session.scalars(
-        select(EvalCaseAttempt.eval_case_run_id).where(
-            EvalCaseAttempt.status == "cancelled",
-            EvalCaseAttempt.eval_case_run_id.in_(
-                select(EvalCaseRun.id).where(EvalCaseRun.eval_run_id == run.id)
-            ),
-        )
-    ).all()
-    if cancelled_case_ids:
-        session.query(EvalCaseRun).filter(EvalCaseRun.id.in_(cancelled_case_ids)).update(
-            {"execution_status": "cancelled"}, synchronize_session=False
-        )
+        attempt.error_code = RUN_CANCELLED
+        case = session.get(EvalCaseRun, attempt.eval_case_run_id)
+        if case is not None and case.execution_status not in TERMINAL_CASE_STATUSES:
+            case.execution_status = "cancelled"
+            case.error_code = RUN_CANCELLED
 
     outbox_rows = session.scalars(
         select(Outbox).where(
@@ -574,32 +602,78 @@ def cancel_evaluation(session: Session, *, run_id: str, now: datetime | None = N
     ).all()
     for row in outbox_rows:
         # Keep client_payload/manifest for reconciliation; only annotate.
-        row.payload_json = {**row.payload_json, "last_error": "run_cancelled"}
+        row.payload_json = {**row.payload_json, "last_error": RUN_CANCELLED}
         row.status = "cancelled"
 
-    run.queued_count = 0
-    run.running_count = 0
+    append_run_event(session, run, "eval.cancelling", {"reason": "client_requested"})
+    session.flush()
+    if _active_attempts(session, run):
+        # In-flight attempts keep the run in ``cancelling``; still refresh the
+        # counters so the console never shows the pre-cancel queue size.
+        refresh_run_progress(session, run, now=now)
+        session.commit()
+        return run, True
+
+    finalize_cancelled(session, run, now=now)
+    return run, True
+
+
+def _active_attempts(session: Session, run: EvalRun) -> list[EvalCaseAttempt]:
+    return list(
+        session.scalars(
+            select(EvalCaseAttempt)
+            .join(EvalCaseRun, EvalCaseRun.id == EvalCaseAttempt.eval_case_run_id)
+            .where(
+                EvalCaseRun.eval_run_id == run.id,
+                EvalCaseAttempt.status.in_(ACTIVE_ATTEMPT_STATUSES),
+            )
+        )
+    )
+
+
+def finalize_cancelled(session: Session, run: EvalRun, *, now: datetime) -> bool:
+    """Move a ``cancelling`` run to ``cancelled`` exactly once.
+
+    Idempotent entry point shared by ``cancel_evaluation`` and the reconciler:
+    counters are refreshed from the case rows (never accumulated), the terminal
+    status is only written for a run that is still ``cancelling`` and the
+    ``eval.cancelled`` event is deduped per run/event type.
+    """
+
+    if run.status != "cancelling":
+        return False
     run.status = "cancelled"
-    run.finished_at = now
+    if run.finished_at is None:
+        run.finished_at = now
+    session.flush()
+    refresh_run_progress(session, run, now=now)
     append_run_event(session, run, "eval.cancelled", {"reason": "client_requested"})
     session.commit()
-    return run, True
+    return True
+
+
+def run_event_exists(session: Session, run: EvalRun, event_type: str) -> bool:
+    """Whether a run-level event of ``event_type`` was already recorded."""
+
+    return (
+        session.scalar(
+            select(EvalEvent.id)
+            .where(
+                EvalEvent.eval_run_id == run.id,
+                EvalEvent.event_type == event_type,
+                EvalEvent.eval_case_run_id.is_(None),
+            )
+            .limit(1)
+        )
+        is not None
+    )
 
 
 def append_run_event(session: Session, run: EvalRun, event_type: str, payload: dict) -> None:
     """Run-level event; deduped per (run, event_type) since the natural unique
     key only covers case-level (case_run, attempt, sequence) rows."""
 
-    exists = session.scalar(
-        select(EvalEvent.id)
-        .where(
-            EvalEvent.eval_run_id == run.id,
-            EvalEvent.event_type == event_type,
-            EvalEvent.eval_case_run_id.is_(None),
-        )
-        .limit(1)
-    )
-    if exists is not None:
+    if run_event_exists(session, run, event_type):
         return
     session.add(
         EvalEvent(
@@ -637,6 +711,17 @@ def refresh_run_progress(session: Session, run: EvalRun, *, now: datetime | None
     )
 
     if run.status in TERMINAL_RUN_STATUSES:
+        return run
+
+    if run.status == "cancelling":
+        # A cancelling run must never be reclassified as completed/partial/
+        # failed; it becomes cancelled once no case is still queued/running
+        # (running includes scoring/uploading attempts, which keep the case open).
+        if run.queued_count == 0 and run.running_count == 0:
+            run.status = "cancelled"
+            if run.finished_at is None:
+                run.finished_at = now
+            append_run_event(session, run, "eval.cancelled", {"reason": "client_requested"})
         return run
 
     if run.queued_count == 0 and run.running_count == 0:

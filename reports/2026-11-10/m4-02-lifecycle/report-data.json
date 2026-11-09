@@ -1,0 +1,273 @@
+{
+  "title": "M4-02 执行超时、取消与对账恢复 · 集成冒烟",
+  "eyebrow": "Smoke Report · issue #79",
+  "summary": "真实控制面 HTTP 路径：取消只收口未启动用例、运行中 attempt 继续完成并最终落 cancelled；执行超时按 case_timeout 被对账收口为 execution_timeout；取消中的评测通过 GitHub Actions API 找到 workflow run 并只发出一次 cancel 请求，第二次对账不再重复。",
+  "meta": "2026-11-10 · macOS 26 · Python 3.14.4 · SQLite 一次性库 · 无真实 GitHub 调用",
+  "metrics": [
+    {
+      "value": "5",
+      "label": "超时类别"
+    },
+    {
+      "value": "1",
+      "label": "cancel 请求"
+    },
+    {
+      "value": "409",
+      "label": "取消后 started"
+    },
+    {
+      "value": "200",
+      "label": "运行中完成回调"
+    },
+    {
+      "value": "314",
+      "label": "backend tests"
+    }
+  ],
+  "facts": [
+    {
+      "label": "Issue",
+      "value": "#79 补齐执行超时、取消与对账恢复"
+    },
+    {
+      "label": "分支",
+      "value": "agent/m4-02-execution-lifecycle-recovery"
+    },
+    {
+      "label": "控制面",
+      "value": "uvicorn + SQLite（alembic 0011）"
+    },
+    {
+      "label": "回调",
+      "value": "manifest 下发短期 token；started/completed 真实 HTTP"
+    },
+    {
+      "label": "GitHub",
+      "value": "FakeTransport 记录 find + cancel，不触网"
+    },
+    {
+      "label": "其他自动化",
+      "value": "62 runner tests、67 node tests、test_reconciler 6 项"
+    }
+  ],
+  "matrix": {
+    "columns": [
+      "#",
+      "场景",
+      "结果",
+      "说明",
+      "证据"
+    ],
+    "rows": [
+      {
+        "id": "01",
+        "name": "迁移 + 控制面启动",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "alembic upgrade head（0011）+ seed + healthz 就绪。",
+        "evidence": [
+          "evidence.json"
+        ]
+      },
+      {
+        "id": "02",
+        "name": "取消只收口未启动用例",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "cancel 后 run=cancelling；运行中 A 保持 running，未启动 B 置 cancelled。",
+        "evidence": [
+          "evidence.json"
+        ]
+      },
+      {
+        "id": "03",
+        "name": "取消后拒绝新 started",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "B 的 started 返回 409（run_cancelled/stale），不产生新执行。",
+        "evidence": [
+          "evidence.json"
+        ]
+      },
+      {
+        "id": "04",
+        "name": "运行中 attempt 完成并收口",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "A 的 completed 200，随后对账把 run 落 cancelled。",
+        "evidence": [
+          "evidence.json"
+        ]
+      },
+      {
+        "id": "05",
+        "name": "执行超时",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "started_at 早于 case_timeout → reaper 落 execution_timeout/timeout。",
+        "evidence": [
+          "evidence.json"
+        ]
+      },
+      {
+        "id": "06",
+        "name": "五类超时边界",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "queue/execution/scoring/upload/heartbeat 均有边界与终态测试。",
+        "evidence": [
+          "tests/backend/test_lifecycle_timeouts.py"
+        ]
+      },
+      {
+        "id": "07",
+        "name": "GitHub 取消定位",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "按 display_title 中的 dispatch_key（含 eval id）找到 run 4242 并 POST cancel。",
+        "evidence": [
+          "evidence.json"
+        ]
+      },
+      {
+        "id": "08",
+        "name": "对账幂等",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "第二轮 reconcile 不再重复 find/cancel，也不重复事件。",
+        "evidence": [
+          "evidence.json"
+        ]
+      },
+      {
+        "id": "09",
+        "name": "完成回调丢失回填",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "uploading + score 对象存在时复用 finalize_completion，不新建 attempt。",
+        "evidence": [
+          "tests/backend/test_reconciler.py"
+        ]
+      },
+      {
+        "id": "10",
+        "name": "长任务心跳 sidecar",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "Agent 执行期间独立进程每 30s 心跳；成功/异常都先 SIGTERM 再 SIGKILL。",
+        "evidence": [
+          "tests/runner/heartbeat-agent.test.mjs",
+          "tests/runner/heartbeat-integration.test.mjs"
+        ]
+      }
+    ]
+  },
+  "issues": [
+    {
+      "severity": "Info",
+      "title": "本轮没有 GUI 场景",
+      "facts": [
+        {
+          "label": "原因",
+          "value": "M4-02 的 scope 是后端生命周期；取消/重试按钮属 M5-05 结果工作台。本环境无 Computer Use 工具。"
+        },
+        {
+          "label": "替代证据",
+          "value": "真实 HTTP 控制面 + reaper/reconciler + FakeTransport GitHub（evidence.json）。"
+        }
+      ],
+      "state": {
+        "kind": "info",
+        "label": "Not applicable"
+      }
+    },
+    {
+      "severity": "P2",
+      "title": "取消是异步收口，接口先返回 cancelling",
+      "facts": [
+        {
+          "label": "现象",
+          "value": "运行中用例存在时，cancel 响应与详情页短时间显示 cancelling。"
+        },
+        {
+          "label": "预期",
+          "value": "设计 06 §7：先置 cancelling、撤销令牌并请求远程取消，活跃 attempt 上传后收口。"
+        },
+        {
+          "label": "处置",
+          "value": "M5-05 展示 cancelling 并在 SSE/刷新后落 cancelled。"
+        }
+      ],
+      "state": {
+        "kind": "manual",
+        "label": "UI follow-up (M5-05)"
+      }
+    }
+  ],
+  "coverage": {
+    "columns": [
+      "领域",
+      "覆盖",
+      "结论",
+      "建议"
+    ],
+    "rows": [
+      [
+        "五类超时",
+        "UT + IT",
+        "边界、错误码、终态与幂等均有断言。",
+        "Postgres 下复测时钟边界。"
+      ],
+      [
+        "取消语义",
+        "UT + IT",
+        "未启动取消、运行中收口、409 拒绝、grace 强收。",
+        "M5-05 提供取消确认与状态展示。"
+      ],
+      [
+        "对账/GitHub",
+        "UT + IT",
+        "find/cancel 一次、失败重试、事件幂等。",
+        "真实仓库跑一次取消演练。"
+      ],
+      [
+        "完成回填",
+        "UT",
+        "对象校验 + score 解析 + finalize_completion。",
+        "接入真实 OSS 后再演练。"
+      ]
+    ]
+  },
+  "conclusion": {
+    "kind": "pass",
+    "label": "通过",
+    "summary": "取消、五类超时与对账在真实 HTTP 路径和确定性 fake GitHub 上验证通过；运行中用例不会因取消被截断，迟到结果不覆盖取消事实。",
+    "points": [
+      "取消后的 started 返回 409，模型调用由网关 409 阻断（无状态 token 撤销点）。",
+      "对账第二轮完全幂等。",
+      "GUI 展示留待 M5-05。"
+    ]
+  },
+  "footer": "M4-02 · issue #79 · evidence.json 为原始采样"
+}

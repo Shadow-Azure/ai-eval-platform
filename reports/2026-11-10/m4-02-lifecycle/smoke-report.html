@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>M4-02 执行超时、取消与对账恢复 · 集成冒烟</title>
+  <style>
+    :root{
+      color-scheme:light;
+      --bg:#f4f7fb;--card:#fff;--ink:#16202f;--ink2:#55637a;--ink3:#7b869b;
+      --line:#dde4ee;--accent:#2563eb;--accent-wash:#e8efff;--good:#157347;
+      --good-wash:#e7f6ee;--warn:#b45309;--warn-wash:#fff2dd;--bad:#c9282e;
+      --bad-wash:#ffeded;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:radial-gradient(circle at 8% 0,#dbe9ff 0,transparent 32rem),radial-gradient(circle at 92% 4%,#e7f1ff 0,transparent 28rem),var(--bg);color:var(--ink);font:14px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Noto Sans CJK SC",sans-serif}
+    main{max-width:1220px;margin:auto;padding:36px 28px 72px}
+    .hero{padding:30px 34px;border:1px solid #dbe3ee;border-radius:24px;background:rgba(255,255,255,.92);box-shadow:0 18px 44px #17202f12}
+    .eyebrow{margin:0;color:var(--accent);font-size:12px;font-weight:800;letter-spacing:.16em;text-transform:uppercase}
+    h1{margin:10px 0 8px;font-size:clamp(28px,4vw,44px);letter-spacing:-.04em}
+    .summary{margin:0;max-width:850px;color:var(--ink2);font-size:15px}
+    .meta{display:block;margin-top:8px;color:var(--ink3);font-size:12px}
+    .metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-top:26px}
+    .metric{padding:16px 18px;border:1px solid var(--line);border-radius:16px;background:#fafbfd}
+    .metric b{display:block;font-size:30px;letter-spacing:-.04em}
+    .metric span{display:block;margin-top:2px;color:var(--ink3);font-size:12px}
+    section{margin-top:28px}
+    .head{display:flex;align-items:baseline;justify-content:space-between;gap:16px;margin:0 4px 14px}
+    h2{margin:0;font-size:21px;letter-spacing:-.03em}
+    .head small{color:var(--ink3);white-space:nowrap}
+    .card{padding:22px;border:1px solid var(--line);border-radius:20px;background:var(--card);box-shadow:0 5px 22px #17202f08}
+    .facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin:0}
+    .fact{padding:13px 16px;border:1px solid #eceff5;border-radius:12px;background:#fafbfd}
+    .fact dt{color:var(--ink3);font-size:11px;font-weight:700}
+    .fact dd{margin:3px 0 0;overflow-wrap:anywhere}
+    code{font-family:var(--mono);font-size:.9em;color:#29456d;overflow-wrap:anywhere}
+    .status{display:inline-flex;padding:3px 8px;border-radius:999px;font-size:11px;font-weight:800;white-space:nowrap;background:#eef1f6;color:var(--ink2)}
+    .status.pass,.status.fixed{background:var(--good-wash);color:var(--good)}
+    .status.warn,.status.manual{background:var(--warn-wash);color:var(--warn)}
+    .status.fail{background:var(--bad-wash);color:var(--bad)}
+    .tableWrap{overflow:auto;border:1px solid var(--line);border-radius:18px;background:var(--card);box-shadow:0 5px 22px #17202f08}
+    table{width:100%;min-width:920px;border-collapse:collapse}
+    th,td{padding:12px 15px;border-bottom:1px solid #edf0f5;text-align:left;vertical-align:top}
+    th{position:sticky;top:0;background:#fafbfe;color:var(--ink2);font-size:12px}
+    tr:last-child td{border-bottom:0}
+    tr:hover{background:#fcfdff}
+    .num{color:var(--ink3);font-family:var(--mono);font-size:12px}
+    .evidence{color:var(--ink3);font-size:12px}
+    .issues{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px}
+    .issueCard{padding:18px 21px;border:1px solid #ffcece;border-left:5px solid var(--bad);border-radius:16px;background:#fffbfb}
+    .issueCard h3{margin:0;color:#b91c1c;font-size:16px}
+    .issueCard p{margin:8px 0;color:var(--ink2)}
+    .issueCard dt{color:var(--ink3);font-size:11px;font-weight:700}
+    .issueCard dd{margin:2px 0 0;color:var(--ink2)}
+    .tag{float:right;padding:3px 8px;border-radius:999px;background:#fee4e4;color:#9a1b21;font-size:11px;font-weight:800}
+    .fixed{display:inline-flex;gap:5px;align-items:center;margin-top:11px;padding:6px 10px;border-radius:999px;background:var(--good-wash);color:var(--good);font-size:12px;font-weight:800}
+    .shots{display:grid;grid-template-columns:repeat(auto-fit,minmax(430px,1fr));gap:16px}
+    figure{margin:0;overflow:hidden;border:1px solid var(--line);border-radius:18px;background:#fff;box-shadow:0 6px 22px #17202f08}
+    figure.wide{grid-column:1/-1}
+    img{display:block;width:100%;max-height:500px;object-fit:contain;background:#eef2f7}
+    figcaption{display:flex;gap:9px;align-items:flex-start;padding:11px 14px;border-top:1px solid #edf0f5;background:#fafbfd;color:var(--ink2);font-size:12.5px}
+    figcaption b{flex:none;color:var(--ink)}
+    .issue-shot{border-color:#ffcece}
+    .conclusion{border:1px solid #c8e5d2;border-radius:20px;background:linear-gradient(135deg,#f2fbf6,white 54%)}
+    .conclusion.warn{border-color:#f1d9a4;background:linear-gradient(135deg,#fff8e8,white 54%)}
+    .conclusion.fail{border-color:#ffc9c9;background:linear-gradient(135deg,#fff5f5,white 54%)}
+    .conclusion ul{margin:12px 0 0;padding-left:20px;color:#344155}
+    .conclusion li+li{margin-top:7px}
+    .empty{padding:20px;text-align:center;color:var(--ink3);background:#fafbfd;border:1px dashed var(--line);border-radius:12px}
+    .foot{margin-top:24px;color:var(--ink3);font-size:12px;text-align:center}
+    @media(max-width:860px){main{padding:22px 14px 52px}.hero{padding:23px}.shots{grid-template-columns:1fr}.head{align-items:flex-start;flex-direction:column;gap:4px}}
+    @media print{body{background:white}main{max-width:none;padding:0}.card,.issueCard,figure,.tableWrap{box-shadow:none;break-inside:avoid}img{max-height:420px}}
+  </style>
+</head>
+<body>
+<main>
+  <header class="hero">
+    <p class="eyebrow">Smoke Report · issue #79</p>
+    <h1>M4-02 执行超时、取消与对账恢复 · 集成冒烟</h1>
+    <p class="summary">真实控制面 HTTP 路径：取消只收口未启动用例、运行中 attempt 继续完成并最终落 cancelled；执行超时按 case_timeout 被对账收口为 execution_timeout；取消中的评测通过 GitHub Actions API 找到 workflow run 并只发出一次 cancel 请求，第二次对账不再重复。</p>
+    <span class="meta">2026-11-10 · macOS 26 · Python 3.14.4 · SQLite 一次性库 · 无真实 GitHub 调用</span>
+    <div class="metrics"><div class="metric"><b>5</b><span>超时类别</span></div><div class="metric"><b>1</b><span>cancel 请求</span></div><div class="metric"><b>409</b><span>取消后 started</span></div><div class="metric"><b>200</b><span>运行中完成回调</span></div><div class="metric"><b>314</b><span>backend tests</span></div></div>
+  </header>
+
+  <section>
+    <div class="head"><h2>Environment and Artifact</h2><small>2026-11-10 · macOS 26 · Python 3.14.4 · SQLite 一次性库 · 无真实 GitHub 调用</small></div>
+    <article class="card"><dl class="facts"><div class="fact"><dt>Issue</dt><dd>#79 补齐执行超时、取消与对账恢复</dd></div><div class="fact"><dt>分支</dt><dd>agent/m4-02-execution-lifecycle-recovery</dd></div><div class="fact"><dt>控制面</dt><dd>uvicorn + SQLite（alembic 0011）</dd></div><div class="fact"><dt>回调</dt><dd>manifest 下发短期 token；started/completed 真实 HTTP</dd></div><div class="fact"><dt>GitHub</dt><dd>FakeTransport 记录 find + cancel，不触网</dd></div><div class="fact"><dt>其他自动化</dt><dd>62 runner tests、67 node tests、test_reconciler 6 项</dd></div></dl></article>
+  </section>
+
+  <section>
+    <div class="head"><h2>Scenario Matrix</h2><small>10 pass</small></div>
+    <div class="tableWrap"><table><table><thead><tr><th>#</th><th>场景</th><th>结果</th><th>说明</th><th>证据</th></tr></thead><tbody><tr><td class="num">01</td><td>迁移 + 控制面启动</td><td><span class="status pass">PASS</span></td><td>alembic upgrade head（0011）+ seed + healthz 就绪。</td><td class="evidence">evidence.json</td></tr><tr><td class="num">02</td><td>取消只收口未启动用例</td><td><span class="status pass">PASS</span></td><td>cancel 后 run=cancelling；运行中 A 保持 running，未启动 B 置 cancelled。</td><td class="evidence">evidence.json</td></tr><tr><td class="num">03</td><td>取消后拒绝新 started</td><td><span class="status pass">PASS</span></td><td>B 的 started 返回 409（run_cancelled/stale），不产生新执行。</td><td class="evidence">evidence.json</td></tr><tr><td class="num">04</td><td>运行中 attempt 完成并收口</td><td><span class="status pass">PASS</span></td><td>A 的 completed 200，随后对账把 run 落 cancelled。</td><td class="evidence">evidence.json</td></tr><tr><td class="num">05</td><td>执行超时</td><td><span class="status pass">PASS</span></td><td>started_at 早于 case_timeout → reaper 落 execution_timeout/timeout。</td><td class="evidence">evidence.json</td></tr><tr><td class="num">06</td><td>五类超时边界</td><td><span class="status pass">PASS</span></td><td>queue/execution/scoring/upload/heartbeat 均有边界与终态测试。</td><td class="evidence">tests/backend/test_lifecycle_timeouts.py</td></tr><tr><td class="num">07</td><td>GitHub 取消定位</td><td><span class="status pass">PASS</span></td><td>按 display_title 中的 dispatch_key（含 eval id）找到 run 4242 并 POST cancel。</td><td class="evidence">evidence.json</td></tr><tr><td class="num">08</td><td>对账幂等</td><td><span class="status pass">PASS</span></td><td>第二轮 reconcile 不再重复 find/cancel，也不重复事件。</td><td class="evidence">evidence.json</td></tr><tr><td class="num">09</td><td>完成回调丢失回填</td><td><span class="status pass">PASS</span></td><td>uploading + score 对象存在时复用 finalize_completion，不新建 attempt。</td><td class="evidence">tests/backend/test_reconciler.py</td></tr><tr><td class="num">10</td><td>长任务心跳 sidecar</td><td><span class="status pass">PASS</span></td><td>Agent 执行期间独立进程每 30s 心跳；成功/异常都先 SIGTERM 再 SIGKILL。</td><td class="evidence">tests/runner/heartbeat-agent.test.mjs<br>tests/runner/heartbeat-integration.test.mjs</td></tr></tbody></table></table></div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Issues and Observations</h2><small>Info 本轮没有 GUI 场景<br>P2 取消是异步收口，接口先返回 cancelling</small></div>
+    <div class="issues"><article class="issueCard"><span class="tag">Info</span><h3>本轮没有 GUI 场景</h3><dl><div><dt>原因</dt><dd>M4-02 的 scope 是后端生命周期；取消/重试按钮属 M5-05 结果工作台。本环境无 Computer Use 工具。</dd></div><div><dt>替代证据</dt><dd>真实 HTTP 控制面 + reaper/reconciler + FakeTransport GitHub（evidence.json）。</dd></div></dl><div class="fixed">Not applicable</div></article><article class="issueCard"><span class="tag">P2</span><h3>取消是异步收口，接口先返回 cancelling</h3><dl><div><dt>现象</dt><dd>运行中用例存在时，cancel 响应与详情页短时间显示 cancelling。</dd></div><div><dt>预期</dt><dd>设计 06 §7：先置 cancelling、撤销令牌并请求远程取消，活跃 attempt 上传后收口。</dd></div><div><dt>处置</dt><dd>M5-05 展示 cancelling 并在 SSE/刷新后落 cancelled。</dd></div></dl><div class="fixed">UI follow-up (M5-05)</div></article></div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Evidence</h2><small>no screenshots</small></div>
+    <div class="shots"><div class="empty">No screenshots were attached.</div></div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Automated Coverage Assessment</h2><small>4 areas reviewed</small></div>
+    <div class="tableWrap"><table><table><thead><tr><th>领域</th><th>覆盖</th><th>结论</th><th>建议</th></tr></thead><tbody><tr><td>五类超时</td><td>UT + IT</td><td>边界、错误码、终态与幂等均有断言。</td><td>Postgres 下复测时钟边界。</td></tr><tr><td>取消语义</td><td>UT + IT</td><td>未启动取消、运行中收口、409 拒绝、grace 强收。</td><td>M5-05 提供取消确认与状态展示。</td></tr><tr><td>对账/GitHub</td><td>UT + IT</td><td>find/cancel 一次、失败重试、事件幂等。</td><td>真实仓库跑一次取消演练。</td></tr><tr><td>完成回填</td><td>UT</td><td>对象校验 + score 解析 + finalize_completion。</td><td>接入真实 OSS 后再演练。</td></tr></tbody></table></table></div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Conclusion</h2><small>通过</small></div>
+    <article class="card conclusion pass"><p><strong>取消、五类超时与对账在真实 HTTP 路径和确定性 fake GitHub 上验证通过；运行中用例不会因取消被截断，迟到结果不覆盖取消事实。</strong></p><ul><li>取消后的 started 返回 409，模型调用由网关 409 阻断（无状态 token 撤销点）。</li><li>对账第二轮完全幂等。</li><li>GUI 展示留待 M5-05。</li></ul></article>
+  </section>
+
+  <p class="foot">M4-02 · issue #79 · evidence.json 为原始采样</p>
+</main>
+</body>
+</html>

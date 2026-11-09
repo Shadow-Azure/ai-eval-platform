@@ -14,12 +14,12 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from app.config import get_settings
 from app.models import EvalCaseAttempt, EvalCaseRun, EvalEvent, EvalRun, Outbox
 from app.seed import ensure_default_scope
-from app.services import evaluations
+from app.services import evaluations, reconciler
 from app.services.short_token import issue_short_token
 from case_helpers import (
     SECRET,
@@ -218,10 +218,42 @@ def test_completion_with_missing_object_marks_artifact_missing(eval_env, client:
     assert attempt_rows(env, case_run_id)[0].status == "artifact_missing"
 
 
-def test_completed_after_cancel_does_not_regress(eval_env, client: TestClient) -> None:
+def test_completed_after_cancel_does_not_regress(
+    eval_env, client: TestClient, configure_settings
+) -> None:
+    """M4-02 A2: a started attempt is force-cancelled after the cancel grace
+    period; a late completion from that terminal attempt is stale, keeps the
+    audit trail and never regresses the cancelled run."""
+
     env = eval_env
+    configure_settings(GITHUB_TOKEN="gh-token")
     case_run_id = env["cases"]["case-a"]
-    evaluations.cancel_evaluation(env["session"], run_id=env["run_id"])
+    started = client.post(
+        case_url(env, case_run_id, "started"),
+        json=started_body(env, case_run_id),
+        headers=auth(env),
+    )
+    assert started.status_code == 200, started.text
+
+    session = env["session"]
+    session.expire_all()
+    run = session.get(EvalRun, env["run_id"])
+    run.github_run_id = "4242"  # avoid a workflow-run lookup in this test
+    session.commit()
+    now = datetime.now(UTC)
+    evaluations.cancel_evaluation(session, run_id=env["run_id"], now=now)
+    assert session.get(EvalRun, env["run_id"]).status == "cancelling"
+    assert attempt_rows(env, case_run_id)[0].status == "running"
+
+    counts = reconciler.reconcile(
+        session,
+        settings=get_settings(),
+        now=now + timedelta(seconds=get_settings().eval_cancel_grace_seconds + 1),
+        transport=lambda _url, **_kwargs: (202, ""),
+    )
+    assert counts["cancelled"] == 1
+    assert attempt_rows(env, case_run_id)[0].status == "cancelled"
+    assert run_row(env).status == "cancelled"
 
     response = client.post(
         case_url(env, case_run_id, "completed"), json=completion_body(env, case_run_id), headers=auth(env)
@@ -230,6 +262,16 @@ def test_completed_after_cancel_does_not_regress(eval_env, client: TestClient) -
     assert response.json()["detail"]["error"]["code"] == "stale_attempt"
     assert run_row(env).status == "cancelled"
     assert attempt_rows(env, case_run_id)[0].status == "cancelled"
+
+    # Audit: the original started event survives, no completion is recorded.
+    session.expire_all()
+    events = (
+        session.query(EvalEvent)
+        .filter(EvalEvent.eval_case_run_id == case_run_id)
+        .all()
+    )
+    assert any(event.event_type == "case.started" for event in events)
+    assert not any(event.event_type == "case.completed" for event in events)
 
 
 # ---------------------------------------------------------------------------

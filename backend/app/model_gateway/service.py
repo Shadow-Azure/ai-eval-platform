@@ -17,6 +17,7 @@ from ..models import (
     Credential,
     EvalCaseAttempt,
     EvalCaseRun,
+    EvalRun,
     ModelConfig,
     ModelUsage,
 )
@@ -76,24 +77,32 @@ def validate_claims_binding(session: Session, claims: GatewayClaims) -> None:
     A token minted at manifest time always carries ``eval_run_id`` +
     ``shard_id`` + ``attempt``; the gateway re-checks the trio against the
     persisted attempt so a token cannot be replayed for a different shard.
+
+    This is also the stateless-token revocation point (M4-02 A2): tokens are
+    signed with an expiry and cannot be revoked individually, so a cancelling/
+    cancelled run is refused here — no extra token store is needed.
     """
 
     if claims.eval_run_id is None:
         return
     if claims.shard_id is None or claims.attempt is None:
         raise GatewayError(403, "token_binding_mismatch", "token 缺少分片或 attempt 绑定")
-    attempt = session.scalar(
-        select(EvalCaseAttempt)
+    row = session.execute(
+        select(EvalCaseAttempt, EvalRun)
         .join(EvalCaseRun, EvalCaseRun.id == EvalCaseAttempt.eval_case_run_id)
+        .join(EvalRun, EvalRun.id == EvalCaseRun.eval_run_id)
         .where(
             EvalCaseRun.tenant_id == claims.tenant_id,
             EvalCaseRun.eval_run_id == claims.eval_run_id,
             EvalCaseAttempt.shard_id == claims.shard_id,
             EvalCaseAttempt.attempt_no == claims.attempt,
         )
-    )
-    if attempt is None:
+    ).first()
+    if row is None:
         raise GatewayError(403, "token_binding_mismatch", "token 与评测/分片/attempt 不一致")
+    _attempt, run = row
+    if run.status in ("cancelling", "cancelled"):
+        raise GatewayError(409, "run_cancelled", "评测已取消，拒绝模型调用")
 
 
 def check_model_allowed(model: str, claims: GatewayClaims, config: ModelConfig) -> None:

@@ -38,6 +38,14 @@ node runner/scripts/real-task.mjs \
 - 本地 claim 以 `dispatch_key:case_run_id` 为键，同一用例的重放会在启动 Agent 前以 `duplicate_dispatch` 退出；跨机器去重仍由平台 `started`/`completed` 幂等兜底。
 - `started` 返回 429（评测并发已达上限）时，Runner 用同一 `event_id` 退避重试，最长 `RUNNER_CAPACITY_WAIT_SECONDS`（默认 1800 秒）；超时后释放 claim 并以 `callback_retryable` 退出，attempt 保持 `queued`，不会误标失败。
 
+## 长任务心跳（M4-02）
+
+`real-task.mjs` 在 `spawnSync("docker", …)` 中执行 Agent 时会阻塞事件循环，单次 `started` 心跳不足以覆盖长用例。真实仓库路径会在 Agent 启动前拉起 `scripts/heartbeat-agent.mjs` 子进程，按 `RUNNER_HEARTBEAT_INTERVAL_MS`（默认 30s）持续发送心跳；用例结束或异常时先 SIGTERM、最多等 5s 再 SIGKILL。
+
+- 心跳 payload 不含 `runner_id`（`heartbeat` 契约是 `additionalProperties: false`，Runner 绑定由 `started` 与 `X-Runner-Id` 证明）。
+- 子进程只从环境读取短期 token，不进入 argv 或日志；`RUNNER_HEARTBEAT_DISABLE=1` 可关闭。
+- 平台侧五类超时（排队、执行、评分、上传宽限、心跳）由对账 worker 收口；心跳只证明控制脚本存活，Agent stdout 静默不等于死亡。
+
 ## 目录
 
 - `lib/contracts.mjs`：加载 `runner-contract/schemas/v1` 并校验 payload。
@@ -49,4 +57,5 @@ node runner/scripts/real-task.mjs \
 - `lib/callback-client.mjs`：带 `Idempotency-Key` 的有界重试回调。
 - `lib/mock-platform.mjs`：契约测试用的平台 stub。
 - `scripts/plan-cases.mjs`：把分片清单展开为用例级 matrix 的 prepare 入口。
+- `scripts/heartbeat-agent.mjs`：长任务心跳 sidecar。
 - `workflows/eval-shard.yml`：私有 Runner 仓 workflow 模板；M2-05 激活，M4-01 起为 prepare + 每用例 matrix。
