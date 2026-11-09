@@ -298,8 +298,16 @@ function realCase(dispatch, item, task, { modelToken, runnerRoot }) {
       durationMs: Date.now() - startedAt,
     };
   } finally {
-    rmSync(workdir, { recursive: true, force: true });
-    rmSync(testPatchPath, { force: true });
+    try {
+      rmSync(workdir, { recursive: true, force: true });
+    } catch (error) {
+      console.error(`workdir cleanup failed: ${error.message}`);
+    }
+    try {
+      rmSync(testPatchPath, { force: true });
+    } catch (error) {
+      console.error(`test patch cleanup failed: ${error.message}`);
+    }
   }
 }
 
