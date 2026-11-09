@@ -54,6 +54,9 @@ class ObjectStore:
         region: str = "us-east-1",
         addressing_style: str = "auto",
     ) -> None:
+        endpoint = endpoint.strip()
+        if not endpoint.startswith(("http://", "https://")):
+            endpoint = "https://" + endpoint
         self.endpoint = endpoint.rstrip("/")
         self.bucket = bucket
         self.access_key = access_key

@@ -162,3 +162,12 @@ def test_aliyun_oss_uses_virtual_hosted_addressing() -> None:
         secret_key="sk",
     )
     assert local.presign_put_url("x").startswith("http://127.0.0.1:9000/eval-artifacts/x?")
+
+    bare = ObjectStore(
+        endpoint="oss-cn-hangzhou.aliyuncs.com",
+        bucket="eval-artifacts",
+        access_key="ak",
+        secret_key="sk",
+        region="oss-cn-hangzhou",
+    )
+    assert bare.presign_put_url("x").startswith("https://eval-artifacts.oss-cn-hangzhou.aliyuncs.com/x?")
