@@ -274,12 +274,15 @@ def test_run_without_pool_is_never_gated(seeded: Session, configure_settings) ->
 # ---------------------------------------------------------------------------
 
 
-def _started_payload(case_run_id: str, event_id: str) -> dict:
-    return {
+def _started_payload(case_run_id: str, event_id: str, runner_id: str | None = None) -> dict:
+    payload = {
         "case_run_id": case_run_id,
         "attempt": 1,
         "event_id": event_id,
     }
+    if runner_id:
+        payload["runner_id"] = runner_id
+    return payload
 
 
 def test_started_rejects_over_cap_and_succeeds_after_capacity_frees(
@@ -329,3 +332,54 @@ def test_started_rejects_over_cap_and_succeeds_after_capacity_frees(
     assert result["deduped"] is False
     assert seeded.get(EvalCaseRun, cases[1].id).execution_status == "running"
     assert seeded.get(EvalRun, run.id).queue_reason is None
+
+
+def test_two_runners_reach_cap_and_hold_excess(
+    seeded: Session, configure_settings
+) -> None:
+    """M4-01 multi-runner evidence: two runners fill the cap, the rest wait."""
+
+    configure_settings(RUNNER_HEARTBEAT_TIMEOUT_SECONDS="90")
+    pool = _make_pool(seeded, runners=2, key="two")
+    run = _create_run(seeded, pool=pool, case_count=4, requested=2, key="two")
+    cases = list(
+        seeded.scalars(
+            select(EvalCaseRun)
+            .where(EvalCaseRun.eval_run_id == run.id)
+            .order_by(EvalCaseRun.ordinal)
+        )
+    )
+
+    for case, runner in ((cases[0], "runner-two-0"), (cases[1], "runner-two-1")):
+        case_attempts.handle_started(
+            seeded,
+            payload=_started_payload(case.id, f"evt-{case.id}", runner_id=runner),
+        )
+
+    attempts = {
+        attempt.eval_case_run_id: attempt
+        for attempt in seeded.query(EvalCaseAttempt).all()
+    }
+    assert {attempts[case.id].runner_id for case in cases[:2]} != {None}
+    assert len({attempts[case.id].runner_id for case in cases[:2]}) == 2
+    assert seeded.get(EvalRun, run.id).effective_concurrency == 2
+
+    for case in cases[2:]:
+        with pytest.raises(case_attempts.CaseCallbackError) as rejected:
+            case_attempts.handle_started(
+                seeded,
+                payload=_started_payload(case.id, f"evt-{case.id}", runner_id="runner-two-0"),
+            )
+        assert rejected.value.status_code == 429
+        assert seeded.get(EvalCaseRun, case.id).execution_status == "queued"
+
+    # One runner frees up → exactly one queued case may start.
+    completed = seeded.get(EvalCaseRun, cases[0].id)
+    completed.execution_status = "succeeded"
+    attempts[cases[0].id].status = "succeeded"
+    seeded.commit()
+    case_attempts.handle_started(
+        seeded, payload=_started_payload(cases[2].id, "evt-late", runner_id="runner-two-0")
+    )
+    assert seeded.get(EvalCaseRun, cases[2].id).execution_status == "running"
+    assert seeded.get(EvalCaseRun, cases[3].id).execution_status == "queued"
