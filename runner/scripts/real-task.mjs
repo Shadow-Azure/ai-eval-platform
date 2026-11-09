@@ -11,6 +11,7 @@ import { requireValid, validateDispatch, validateManifest, validateStarted } fro
 import { DispatchGuard } from "../lib/dispatch-guard.mjs";
 import { ContractError } from "../lib/errors.mjs";
 import { LocalObjectStore } from "../lib/object-store.mjs";
+import { getDatasetAdapter, getRuntimeAdapter } from "../lib/adapters.mjs";
 
 function parseArgs(argv) {
   const args = { dispatch: null, stateDir: ".runner-state", objectRoot: ".runner-objects", token: null, caseRunId: null };
@@ -103,16 +104,6 @@ function dockerRun(args, { allowFailure = false, timeout = 1_200_000 } = {}) {
   return { status: result.status, stdout: result.stdout || "", stderr: result.stderr || "" };
 }
 
-function parsePytest(output) {
-  const passed = new Set();
-  const failed = new Set();
-  for (const line of output.split("\n")) {
-    const match = /^(PASSED|FAILED) (\S+)/.exec(line.trim());
-    if (!match) continue;
-    (match[1] === "PASSED" ? passed : failed).add(match[2]);
-  }
-  return { passed, failed };
-}
 
 /**
  * Execute one SWE-bench-style case: clone the repo, run Claude Code through
@@ -121,13 +112,15 @@ function parsePytest(output) {
  * plus the trace bytes and terminal statuses.
  */
 function realCase(dispatch, item, task, { modelToken, runnerRoot }) {
+  const datasetAdapter = getDatasetAdapter(task.adapter_key);
+  const runtimeAdapter = getRuntimeAdapter(task.runtime_key);
   const startedAt = Date.now();
   const workdir = mkdtempSync(join(tmpdir(), "eval-case-"));
   const testPatchPath = join(tmpdir(), `eval-test-${item.case_run_id}.patch`);
   try {
     if (!task.repo || !task.base_commit) throw new Error("真实用例缺少 repo/base_commit");
     if (!task.prompt) throw new Error("真实用例缺少 problem_statement");
-    const environmentImage = task.environment_image || task.scoring_image_digest || task.execution_image_digest;
+    const environmentImage = datasetAdapter.environmentImage(task);
     if (!environmentImage) throw new Error("真实用例缺少 dataset environment image");
     if (!modelToken) throw new Error("manifest 未签发 model token");
     if (!task.model?.anthropic_base_url) throw new Error("tasks 未返回模型网关地址");
@@ -170,31 +163,14 @@ function realCase(dispatch, item, task, { modelToken, runnerRoot }) {
       ]);
       // The dataset image is fixed; the generic agent runtime is installed
       // after start from Alibaba npm/PyPI sources. No per-agent image.
-      dockerRun([
-        "exec", agentName, "bash", "-lc",
-        [
-          "set -e",
-          "if ! command -v node >/dev/null 2>&1; then",
-          "  curl -fsSL https://registry.npmmirror.com/-/binary/node/v22.14.0/node-v22.14.0-linux-x64.tar.xz -o /tmp/node.tar.xz",
-          "  mkdir -p /opt/node",
-          "  tar -xJf /tmp/node.tar.xz -C /opt/node --strip-components=1",
-          "fi",
-          "export PATH=/opt/miniconda3/envs/testbed/bin:/opt/node/bin:$PATH",
-          "if ! command -v claude >/dev/null 2>&1; then",
-          "  npm install -g @anthropic-ai/claude-code --registry=https://registry.npmmirror.com",
-          "fi",
-          "id eval >/dev/null 2>&1 || useradd -m -s /bin/bash eval",
-          "chown -R eval:eval /testbed",
-          "mkdir -p /home/eval && chown eval /home/eval",
-        ].join("\n"),
-      ], { timeout: 600_000 });
+      dockerRun(["exec", agentName, "bash", "-lc", runtimeAdapter.installScript()], { timeout: 600_000 });
       const execArgs = ["exec", "-u", "eval", "-e", "HOME=/home/eval"];
       for (const [key, value] of Object.entries(env)) execArgs.push("-e", `${key}=${value}`);
       execArgs.push(
         agentName,
         "bash",
         "-lc",
-        "export PATH=/opt/miniconda3/envs/testbed/bin:/opt/node/bin:$PATH; cd /testbed; node /runner/scripts/claude-code-smoke.mjs",
+        runtimeAdapter.agentScript(),
       );
       agent = dockerRun(execArgs, {
         allowFailure: true,
@@ -254,47 +230,17 @@ function realCase(dispatch, item, task, { modelToken, runnerRoot }) {
     }
 
     writeFileSync(testPatchPath, task.test_patch || "");
-    dockerRun(
-      [
-        "run", "--rm", "-v", `${workdir}:/testbed`, "-v", `${testPatchPath}:/tmp/test.patch:ro`,
-        environmentImage, "bash", "-lc", "cd /testbed && git apply --whitespace=nowarn /tmp/test.patch",
-      ],
-      { timeout: 120_000 },
-    );
-    const expected = task.expected_metrics || {};
-    const failToPass = expected.fail_to_pass || [];
-    const passToPass = expected.pass_to_pass || [];
+    dockerRun(datasetAdapter.applyTestPatchArgs(environmentImage, workdir, testPatchPath), { timeout: 120_000 });
     const testResult = dockerRun(
-      [
-        "run", "--rm", "-v", `${workdir}:/testbed`, environmentImage,
-        "/opt/miniconda3/envs/testbed/bin/python", "-m", "pytest", "-q", "-rA",
-        ...failToPass, ...passToPass,
-      ],
+      datasetAdapter.testArgs(environmentImage, workdir, datasetAdapter.testIds(task)),
       { allowFailure: true, timeout: 1_800_000 },
     );
-    const { passed, failed } = parsePytest(`${testResult.stdout}\n${testResult.stderr}`);
-    const success = (ids) => ids.filter((id) => passed.has(id) && !failed.has(id));
-    const failure = (ids) => ids.filter((id) => !passed.has(id) || failed.has(id));
-    const resolved =
-      failToPass.length > 0 &&
-      failToPass.every((id) => passed.has(id) && !failed.has(id)) &&
-      passToPass.every((id) => passed.has(id) && !failed.has(id));
-    const score = {
-      [task.case_key]: {
-        resolved,
-        tests_status: {
-          FAIL_TO_PASS: { success: success(failToPass), failure: failure(failToPass) },
-          PASS_TO_PASS: { success: success(passToPass), failure: failure(passToPass) },
-          FAIL_TO_FAIL: { success: [], failure: [] },
-          PASS_TO_FAIL: { success: [], failure: [] },
-        },
-      },
-    };
+    const report = datasetAdapter.parseReport(task, `${testResult.stdout}\n${testResult.stderr}`);
     return {
-      score,
+      score: report.score,
       trace,
       executionStatus: "succeeded",
-      resultStatus: resolved ? "resolved" : "unresolved",
+      resultStatus: report.resultStatus,
       durationMs: Date.now() - startedAt,
     };
   } finally {
@@ -396,6 +342,8 @@ async function main() {
           execution_image_digest: taskPayload.execution_image_digest,
           scoring_image_digest: taskPayload.scoring_image_digest,
           environment_image: taskPayload.environment_image,
+          adapter_key: taskPayload.adapter_key || "swebench",
+          runtime_key: taskPayload.runtime?.key || "claude-code",
         });
       }
     }

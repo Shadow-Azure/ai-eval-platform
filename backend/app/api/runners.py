@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from ..config import Settings, get_settings
 from ..db import get_session
 from ..model_gateway.tokens import GatewayClaims, issue_gateway_token
-from ..models import DatasetVersion, EvalCaseAttempt, EvalCaseRun, EvalRun, ModelConfig, Outbox
+from ..models import Dataset, DatasetVersion, EvalCaseAttempt, EvalCaseRun, EvalRun, ModelConfig, Outbox
 from ..runner_contracts import ContractInvalid, validate_payload
 from ..services import case_attempts
 from ..services import runners as runner_service
@@ -583,6 +583,7 @@ def shard_tasks(
     _check_token_bindings(token_claims, case_run=shard_cases[0], attempt=first_attempt)
     gateway_base = settings.runner_callback_base_url.rstrip("/")
     dataset_version = session.get(DatasetVersion, run.dataset_version_id) if run.dataset_version_id else None
+    dataset = session.get(Dataset, dataset_version.dataset_id) if dataset_version else None
     return {
         "ok": True,
         "eval_run_id": run.id,
@@ -600,6 +601,7 @@ def shard_tasks(
         "execution_image_digest": run.execution_image_digest,
         "scoring_image_digest": run.scoring_image_digest,
         "environment_image": dataset_version.environment_image if dataset_version else None,
+        "adapter_key": dataset.adapter_key if dataset else "swebench",
         "asset_snapshot": run.asset_snapshot_json or {},
         "cases": [
             {

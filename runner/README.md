@@ -1,6 +1,6 @@
 # Runner 参考实现（M2-03）
 
-零依赖 Node.js 参考实现，用于验证 `runner-contract/` 的协议。`real-task.mjs` 在 dataset 任务上调用 Claude Code 与官方 F2P/P2P 评分；没有 repo 的合成任务仍走确定性 synthetic 分支。
+零依赖 Node.js 参考实现，用于验证 `runner-contract/` 的协议。`lib/adapters.mjs` 提供通用 registry：core 只调度 manifest/token/workspace/上传/回调，dataset adapter（`adapters/datasets/*`）负责环境镜像、test patch 与 report 解析，runtime adapter（`adapters/runtimes/*`）负责安装/启动 Agent；SWE-bench 与 Claude Code 是内置插件。`real-task.mjs` 在 dataset 任务上调用 Claude Code 与官方 F2P/P2P 评分；没有 repo 的合成任务仍走确定性 synthetic 分支。
 
 ## 测试
 
