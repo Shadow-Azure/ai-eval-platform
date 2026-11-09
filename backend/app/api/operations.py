@@ -15,6 +15,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from time import perf_counter
 from typing import Annotated, Any
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import and_, func, select, text
@@ -228,9 +229,45 @@ def _database_status(
     )
 
 
-def _redis_service(settings: Settings) -> dict[str, object]:
+def _optional_int(value: object) -> int | None:
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _human_bytes(value: int | None) -> str:
+    if value is None:
+        return "—"
+    units = ("B", "KB", "MB", "GB", "TB")
+    size = float(value)
+    index = 0
+    while size >= 1024 and index < len(units) - 1:
+        size /= 1024
+        index += 1
+    return f"{size:.0f} {units[index]}" if index == 0 else f"{size:.1f} {units[index]}"
+
+
+def _redis_snapshot(settings: Settings) -> tuple[dict[str, object], dict[str, object]]:
+    detail: dict[str, object] = {
+        "configured": False,
+        "status": "disabled",
+        "latency_ms": None,
+        "version": None,
+        "used_memory_bytes": None,
+        "maxmemory_bytes": None,
+        "maxmemory_policy": None,
+        "connected_clients": None,
+        "maxclients": None,
+        "summary": "未配置 Redis；当前使用数据库队列",
+    }
     if not settings.redis_url:
-        return _service("redis", "Redis", "disabled", "未配置 Redis；当前使用数据库队列")
+        return (
+            _service("redis", "Redis", "disabled", "未配置 Redis；当前使用数据库队列"),
+            detail,
+        )
+
+    detail["configured"] = True
     started = perf_counter()
     try:
         import redis
@@ -241,51 +278,122 @@ def _redis_service(settings: Settings) -> dict[str, object]:
             socket_timeout=2,
         )
         client.ping()
-    except Exception as exc:
-        return _service(
-            "redis",
-            "Redis",
-            "error",
-            f"连接失败（{type(exc).__name__}）",
-            _elapsed_ms(started),
+        info = client.info()
+        used_memory = _optional_int(info.get("used_memory"))
+        maxmemory = _optional_int(info.get("maxmemory"))
+        connected_clients = _optional_int(info.get("connected_clients"))
+        maxclients = _optional_int(info.get("maxclients"))
+        detail.update(
+            status="ok",
+            latency_ms=_elapsed_ms(started),
+            version=str(info["redis_version"]) if info.get("redis_version") else None,
+            used_memory_bytes=used_memory,
+            maxmemory_bytes=maxmemory,
+            maxmemory_policy=(
+                str(info["maxmemory_policy"]) if info.get("maxmemory_policy") else None
+            ),
+            connected_clients=connected_clients,
+            maxclients=maxclients,
         )
-    return _service("redis", "Redis", "ok", "PING 正常", _elapsed_ms(started))
+        memory = _human_bytes(used_memory)
+        limit = f" / {_human_bytes(maxmemory)}" if maxmemory else "（未设置上限）"
+        summary = f"内存 {memory}{limit}"
+        detail["summary"] = summary
+        return (
+            _service(
+                "redis",
+                "Redis",
+                "ok",
+                summary,
+                _elapsed_ms(started),
+            ),
+            detail,
+        )
+    except Exception as exc:
+        summary = f"连接失败（{type(exc).__name__}）"
+        detail.update(
+            status="error", latency_ms=_elapsed_ms(started), summary=summary
+        )
+        return (
+            _service(
+                "redis",
+                "Redis",
+                "error",
+                summary,
+                _elapsed_ms(started),
+            ),
+            detail,
+        )
 
 
-def _object_storage_service(settings: Settings) -> dict[str, object]:
+def _object_storage_snapshot(
+    settings: Settings,
+) -> tuple[dict[str, object], dict[str, object]]:
+    detail: dict[str, object] = {
+        "configured": False,
+        "status": "disabled",
+        "latency_ms": None,
+        "bucket": None,
+        "endpoint_host": None,
+        "summary": "未配置对象存储端点或访问凭据",
+    }
     store = object_store_from_settings(settings)
     if store is None:
-        return _service(
-            "object_storage",
-            "对象存储",
-            "disabled",
-            "未配置对象存储端点或访问凭据",
+        return (
+            _service(
+                "object_storage",
+                "对象存储",
+                "disabled",
+                "未配置对象存储端点或访问凭据",
+            ),
+            detail,
         )
+
+    detail.update(
+        configured=True,
+        bucket=store.bucket,
+        endpoint_host=urlparse(store.endpoint).hostname or store.endpoint,
+    )
     started = perf_counter()
     try:
         store.head_bucket(timeout=3.0)
     except ObjectStoreError as exc:
-        return _service(
-            "object_storage",
-            "对象存储",
-            "error",
-            f"bucket {store.bucket} 探活失败：{exc}",
-            _elapsed_ms(started),
+        summary = f"bucket {store.bucket} 探活失败：{exc}"
+        detail.update(status="error", latency_ms=_elapsed_ms(started), summary=summary)
+        return (
+            _service(
+                "object_storage",
+                "对象存储",
+                "error",
+                summary,
+                _elapsed_ms(started),
+            ),
+            detail,
         )
     except Exception as exc:  # pragma: no cover - unexpected transport failure
-        return _service(
+        summary = f"bucket {store.bucket} 探活失败（{type(exc).__name__}）"
+        detail.update(status="error", latency_ms=_elapsed_ms(started), summary=summary)
+        return (
+            _service(
+                "object_storage",
+                "对象存储",
+                "error",
+                summary,
+                _elapsed_ms(started),
+            ),
+            detail,
+        )
+    summary = f"bucket {store.bucket} 可访问"
+    detail.update(status="ok", latency_ms=_elapsed_ms(started), summary=summary)
+    return (
+        _service(
             "object_storage",
             "对象存储",
-            "error",
-            f"bucket {store.bucket} 探活失败（{type(exc).__name__}）",
+            "ok",
+            summary,
             _elapsed_ms(started),
-        )
-    return _service(
-        "object_storage",
-        "对象存储",
-        "ok",
-        f"bucket {store.bucket} 可访问",
-        _elapsed_ms(started),
+        ),
+        detail,
     )
 
 
@@ -491,6 +599,9 @@ def operations_status(
         "outbox": {"pending": 0, "processing": 0, "failed": 0},
     }
 
+    redis_service, redis_detail = _redis_snapshot(settings)
+    object_service, object_detail = _object_storage_snapshot(settings)
+
     services = [
         _service("api", "控制面 API", "ok", "请求处理正常", _elapsed_ms(started)),
         _service(
@@ -500,8 +611,8 @@ def operations_status(
             "连接正常" if database_ok else "数据库查询失败",
             int(database["latency_ms"]),
         ),
-        _redis_service(settings),
-        _object_storage_service(settings),
+        redis_service,
+        object_service,
         _runner_service(resources),
         _worker_service(session, settings, now) if database_ok else _service(
             "worker", "调度 Worker", "unknown", "数据库不可用，无法读取心跳"
@@ -524,4 +635,6 @@ def operations_status(
         "services": services,
         "resources": resources,
         "database": database,
+        "redis": redis_detail,
+        "object_storage": object_detail,
     }

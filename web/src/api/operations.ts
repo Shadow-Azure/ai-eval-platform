@@ -87,6 +87,28 @@ export interface DatabaseStatus {
   tables: DatabaseTableStatus[];
 }
 
+export interface RedisStatus {
+  configured: boolean;
+  status: string;
+  latency_ms: number | null;
+  version: string | null;
+  used_memory_bytes: number | null;
+  maxmemory_bytes: number | null;
+  maxmemory_policy: string | null;
+  connected_clients: number | null;
+  maxclients: number | null;
+  summary: string;
+}
+
+export interface ObjectStorageStatus {
+  configured: boolean;
+  status: string;
+  latency_ms: number | null;
+  bucket: string | null;
+  endpoint_host: string | null;
+  summary: string;
+}
+
 export interface OperationsStatus {
   generated_at: string;
   environment: string;
@@ -94,6 +116,8 @@ export interface OperationsStatus {
   services: ServiceStatusItem[];
   resources: ResourceStatus;
   database: DatabaseStatus;
+  redis: RedisStatus;
+  object_storage: ObjectStorageStatus;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -216,6 +240,35 @@ function parseDatabase(value: unknown): DatabaseStatus {
   };
 }
 
+function parseRedis(value: unknown): RedisStatus {
+  const payload = record(value, "redis");
+  return {
+    configured: payload.configured === true,
+    status: text(payload.status) || "unknown",
+    latency_ms: nullableNumber(payload.latency_ms),
+    version: typeof payload.version === "string" ? payload.version : null,
+    used_memory_bytes: nullableNumber(payload.used_memory_bytes),
+    maxmemory_bytes: nullableNumber(payload.maxmemory_bytes),
+    maxmemory_policy:
+      typeof payload.maxmemory_policy === "string" ? payload.maxmemory_policy : null,
+    connected_clients: nullableNumber(payload.connected_clients),
+    maxclients: nullableNumber(payload.maxclients),
+    summary: text(payload.summary),
+  };
+}
+
+function parseObjectStorage(value: unknown): ObjectStorageStatus {
+  const payload = record(value, "object_storage");
+  return {
+    configured: payload.configured === true,
+    status: text(payload.status) || "unknown",
+    latency_ms: nullableNumber(payload.latency_ms),
+    bucket: typeof payload.bucket === "string" ? payload.bucket : null,
+    endpoint_host: typeof payload.endpoint_host === "string" ? payload.endpoint_host : null,
+    summary: text(payload.summary),
+  };
+}
+
 export async function fetchOperationsStatus(signal?: AbortSignal): Promise<OperationsStatus> {
   const payload = await request("/api/v1/operations/status", { signal });
   const data = record(payload, "运营状态");
@@ -226,6 +279,8 @@ export async function fetchOperationsStatus(signal?: AbortSignal): Promise<Opera
     services: records(data.services, "services").map(parseService),
     resources: parseResources(data.resources),
     database: parseDatabase(data.database),
+    redis: parseRedis(data.redis),
+    object_storage: parseObjectStorage(data.object_storage),
   };
 }
 

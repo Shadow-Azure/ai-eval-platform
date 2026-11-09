@@ -132,6 +132,14 @@ def test_operations_status_reports_services_resources_and_database(
     assert resources["datasets"] == {"total": 0, "versions": 0, "cases": 0}
     assert resources["model_configs"] == {"total": 0, "credentials": 0, "usable": 0}
     assert resources["outbox"] == {"pending": 0, "processing": 0, "failed": 0}
+    redis_detail = payload["redis"]
+    assert redis_detail["configured"] is False
+    assert redis_detail["status"] == "disabled"
+    assert redis_detail["summary"]
+    storage_detail = payload["object_storage"]
+    assert storage_detail["configured"] is False
+    assert storage_detail["status"] == "disabled"
+    assert storage_detail["bucket"] is None
     assert "password" not in response.text.lower()
 
 
@@ -237,6 +245,7 @@ def test_operations_object_storage_probe_states(
 ) -> None:
     class HealthyStore:
         bucket = "ops-bucket"
+        endpoint = "https://oss.example.test"
 
         def head_bucket(self, *, timeout: float) -> None:
             assert timeout > 0
@@ -245,11 +254,14 @@ def test_operations_object_storage_probe_states(
         "app.api.operations.object_store_from_settings",
         lambda _settings: HealthyStore(),
     )
-    healthy = service_map(client.get("/api/v1/operations/status").json())[
-        "object_storage"
-    ]
+    payload = client.get("/api/v1/operations/status").json()
+    healthy = service_map(payload)["object_storage"]
     assert healthy["status"] == "ok"
     assert "ops-bucket" in healthy["summary"]
+    detail = payload["object_storage"]
+    assert detail["status"] == "ok"
+    assert detail["bucket"] == "ops-bucket"
+    assert detail["endpoint_host"] == "oss.example.test"
 
     class FailingStore(HealthyStore):
         def head_bucket(self, *, timeout: float) -> None:
@@ -259,11 +271,51 @@ def test_operations_object_storage_probe_states(
         "app.api.operations.object_store_from_settings",
         lambda _settings: FailingStore(),
     )
-    failing = service_map(client.get("/api/v1/operations/status").json())[
-        "object_storage"
-    ]
+    failing_payload = client.get("/api/v1/operations/status").json()
+    failing = service_map(failing_payload)["object_storage"]
     assert failing["status"] == "error"
     assert "HTTP 403" in failing["summary"]
+    assert failing_payload["object_storage"]["status"] == "error"
+
+
+def test_operations_reports_redis_capacity(
+    client: TestClient, configure_settings, monkeypatch
+) -> None:
+    import redis
+
+    class FakeRedis:
+        def ping(self) -> bool:
+            return True
+
+        def info(self) -> dict[str, object]:
+            return {
+                "redis_version": "7.2.4",
+                "used_memory": 1048576,
+                "maxmemory": 20971520,
+                "maxmemory_policy": "noeviction",
+                "connected_clients": 3,
+                "maxclients": 10000,
+            }
+
+    monkeypatch.setattr(
+        redis.Redis,
+        "from_url",
+        classmethod(lambda cls, *args, **kwargs: FakeRedis()),
+    )
+    configure_settings(REDIS_URL="redis://redis.example.test:6379/0")
+
+    payload = client.get("/api/v1/operations/status").json()
+    assert service_map(payload)["redis"]["status"] == "ok"
+    detail = payload["redis"]
+    assert detail["configured"] is True
+    assert detail["status"] == "ok"
+    assert detail["version"] == "7.2.4"
+    assert detail["used_memory_bytes"] == 1048576
+    assert detail["maxmemory_bytes"] == 20971520
+    assert detail["maxmemory_policy"] == "noeviction"
+    assert detail["connected_clients"] == 3
+    assert detail["maxclients"] == 10000
+    assert "1.0 MB" in detail["summary"]
 
 
 def test_operations_reports_configured_database_storage_limit(
