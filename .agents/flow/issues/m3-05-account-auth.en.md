@@ -6,7 +6,7 @@ English | [中文](m3-05-account-auth.md)
 kind: issue
 milestone: m3
 priority: P0
-status: in-progress
+status: done
 scope:
   - .agents/flow/issues/m3-05-account-auth.*
   - .agents/flow/milestones/m3-first-real-evaluation.*
