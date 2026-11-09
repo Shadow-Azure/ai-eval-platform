@@ -159,6 +159,7 @@ function realCase(dispatch, item, task, { modelToken, runnerRoot }) {
     };
     const agentName = `eval-agent-${item.case_run_id.slice(0, 8)}-${process.pid}`;
     let agent;
+    let containerPatch = "";
     try {
       dockerRun([
         "run", "-d", "--name", agentName, "--network", "host",
@@ -180,6 +181,14 @@ function realCase(dispatch, item, task, { modelToken, runnerRoot }) {
         allowFailure: true,
         timeout: Number(process.env.REAL_TASK_AGENT_TIMEOUT_MS || 1_000_000),
       });
+      dockerRun(
+        ["exec", "-u", "eval", agentName, "git", "-C", "/testbed", "add", "-A", "--", ".", ":(exclude).runtime-home", ":(exclude)trace"],
+        { allowFailure: true, timeout: 60_000 },
+      );
+      containerPatch = dockerRun(
+        ["exec", "-u", "eval", agentName, "git", "-C", "/testbed", "diff", "--cached", "--", ".", ":(exclude).runtime-home", ":(exclude)trace"],
+        { allowFailure: true, timeout: 60_000 },
+      ).stdout || "";
     } catch (error) {
       agent = { status: 1, stdout: "", stderr: error.message };
     } finally {
@@ -191,17 +200,22 @@ function realCase(dispatch, item, task, { modelToken, runnerRoot }) {
     // The workspace is chowned to the non-root agent user; host-side git
     // commands run as root and otherwise fail with "dubious ownership",
     // which silently produced empty patches even though the agent edited code.
-    const safe = ["-c", `safe.directory=${workdir}`];
-    spawnSync("git", [...safe, "-C", workdir, "add", "-A", "--", ".", ":(exclude).runtime-home", ":(exclude)trace"], {
-      encoding: "utf8",
-      timeout: 60_000,
-    });
-    const diff = spawnSync(
-      "git",
-      [...safe, "-C", workdir, "diff", "--cached", "--", ".", ":(exclude).runtime-home", ":(exclude)trace"],
-      { encoding: "utf8", timeout: 60_000 },
-    );
-    const patch = (diff.stdout || "").trim();
+    // Prefer the container-side capture: it runs as the workspace owner and
+    // cannot hit host "dubious ownership" or index-permission failures.
+    let patch = containerPatch.trim();
+    if (!patch) {
+      const safe = ["-c", `safe.directory=${workdir}`];
+      spawnSync("git", [...safe, "-C", workdir, "add", "-A", "--", ".", ":(exclude).runtime-home", ":(exclude)trace"], {
+        encoding: "utf8",
+        timeout: 60_000,
+      });
+      const diff = spawnSync(
+        "git",
+        [...safe, "-C", workdir, "diff", "--cached", "--", ".", ":(exclude).runtime-home", ":(exclude)trace"],
+        { encoding: "utf8", timeout: 60_000 },
+      );
+      patch = (diff.stdout || "").trim();
+    }
     if (agent.status !== 0) {
       const claudeStderrPath = join(workdir, "trace", "claude-stderr.log");
       const claudeStderr = existsSync(claudeStderrPath) ? readFileSync(claudeStderrPath, "utf8") : "";
