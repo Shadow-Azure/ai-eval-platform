@@ -1,5 +1,5 @@
 # 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
 # git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
 #   pnpm run record:i18n -- .agents/flow/issues/m4-02-execution-lifecycle-recovery.md
-m4-02-execution-lifecycle-recovery.md: b038a676285f9288473e328ae8276b60b44c78cf
-m4-02-execution-lifecycle-recovery.en.md: bd636d2714615712496335258d40a46bd96dd93f
+m4-02-execution-lifecycle-recovery.md: 164d17327f75e8c55b3fb962a8a8bcc7fbcf0d0a
+m4-02-execution-lifecycle-recovery.en.md: bdd0675229230b0bab9a6df6ccb0246485f15579
