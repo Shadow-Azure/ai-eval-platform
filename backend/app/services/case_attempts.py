@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..config import Settings, get_settings
@@ -37,7 +37,7 @@ from ..models import (
 )
 from ..runner_contracts import validate_payload
 from ..scoring.service import ingest_score_report, recompute_metrics
-from . import evaluations
+from . import capacity, evaluations
 from .evaluations import refresh_run_progress
 from .object_store import ObjectMissing, ObjectSizeMismatch, object_store_from_settings
 
@@ -193,6 +193,50 @@ def _promote_running(ctx: CaseContext, *, now: datetime, runner_id: str | None =
 # ---------------------------------------------------------------------------
 
 
+def _enforce_capacity_gate(ctx: CaseContext, *, now: datetime) -> None:
+    """Hard per-evaluation concurrency cap before an attempt starts (M4-01).
+
+    ``started`` is the one-and-only transition per case and happens before the
+    agent starts, so rejecting here never leaves a half-run case. The attempt
+    stays ``queued``: no event, no attempt mutation, and the runner retries the
+    same event id until capacity frees or its wait budget expires.
+
+    When capacity metadata is unavailable (cap == 0) an already-dispatched job
+    is allowed through; the dispatcher gate still blocks new shards, and
+    rejecting here could deadlock a live job while the runner table is stale.
+    """
+
+    run = ctx.run
+    if not run.resource_pool_id or run.status not in ("queued", "running"):
+        return
+    cap = capacity.effective_concurrency(ctx.session, run, settings=get_settings(), now=now)
+    run.effective_concurrency = cap
+    if cap <= 0:
+        run.queue_reason = capacity.QUEUE_REASON_CAPACITY_WAITING
+        return
+    running = int(
+        ctx.session.scalar(
+            select(func.count())
+            .select_from(EvalCaseRun)
+            .where(
+                EvalCaseRun.eval_run_id == run.id,
+                EvalCaseRun.execution_status == "running",
+                EvalCaseRun.id != ctx.case_run.id,
+            )
+        )
+        or 0
+    )
+    if running >= cap:
+        run.queue_reason = capacity.QUEUE_REASON_CONCURRENCY_CAP
+        ctx.session.commit()
+        raise CaseCallbackError(
+            "评测并发已达上限，请稍后重试",
+            code="capacity_waiting",
+            status_code=429,
+        )
+    run.queue_reason = None
+
+
 def handle_started(session: Session, *, payload: dict, now: datetime | None = None) -> dict:
     now = now or datetime.now(UTC)
     ctx = resolve_context(session, case_run_id=payload["case_run_id"], attempt_no=payload["attempt"])
@@ -206,6 +250,8 @@ def handle_started(session: Session, *, payload: dict, now: datetime | None = No
         _add_event(ctx, event_type="case.started_late", sequence=0, payload={"event_id": payload["event_id"]})
         session.commit()
         raise StaleAttempt(f"attempt 处于终态 {ctx.attempt.status}，拒绝 started")
+
+    _enforce_capacity_gate(ctx, now=now)
 
     _promote_running(
         ctx, now=now, runner_id=_resolve_runner_pk(ctx.session, payload.get("runner_id"))

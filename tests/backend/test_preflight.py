@@ -255,3 +255,17 @@ def test_prepare_api_requires_session(anonymous_client, session: Session) -> Non
         },
     )
     assert response.status_code == 401
+
+
+def test_preflight_reports_effective_concurrency(session: Session) -> None:
+    ids = _seed(session, runner_count=2)
+    result = _check(session, ids, requested_concurrency=8)
+    assert result.effective_concurrency == 2
+    assert result.payload()["effective_concurrency"] == 2
+
+
+def test_preflight_effective_concurrency_is_zero_without_runners(session: Session) -> None:
+    ids = _seed(session, runner_count=0)
+    result = _check(session, ids)
+    assert result.effective_concurrency == 0
+    assert result.payload()["effective_concurrency"] == 0

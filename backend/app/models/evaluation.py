@@ -89,6 +89,8 @@ class EvalRun(Base, TimestampMixin):
     )
     requested_concurrency: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     effective_concurrency: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # M4-01: why the evaluation is waiting for capacity (NULL when moving).
+    queue_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
     shard_size: Mapped[int] = mapped_column(Integer, nullable=False, default=64)
     total_cases: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     queued_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
