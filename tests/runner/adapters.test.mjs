@@ -38,3 +38,23 @@ test("Claude Code runtime installs from npm mirror and launches smoke", () => {
   assert.match(adapter.installScript(), /registry\.npmmirror\.com/);
   assert.match(adapter.agentScript(), /claude-code-smoke\.mjs/);
 });
+
+test("Claude Code task template is dataset-agnostic and injects constraints", () => {
+  const runtime = getRuntimeAdapter("claude-code");
+  const prompt = runtime.buildPrompt({
+    problem: "fix the separator",
+    workspace: "/testbed",
+    constraints: ["do not edit tests"],
+  });
+  assert.match(prompt, /autonomous software engineer/);
+  assert.match(prompt, /\/testbed/);
+  assert.match(prompt, /fix the separator/);
+  assert.match(prompt, /do not edit tests/);
+  assert.doesNotMatch(prompt, /astropy/);
+});
+
+test("SWE-bench adapter supplies workspace and constraints", () => {
+  const dataset = getDatasetAdapter("swebench");
+  assert.equal(dataset.workspacePath(), "/testbed");
+  assert.ok(dataset.constraints().some((item) => item.includes("test files")));
+});

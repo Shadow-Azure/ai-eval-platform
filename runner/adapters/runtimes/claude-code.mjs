@@ -27,3 +27,17 @@ export function agentScript() {
     "node /runner/scripts/claude-code-smoke.mjs",
   ].join("; ");
 }
+
+// Generic coding-agent task template. It contains no dataset names; the
+// dataset adapter supplies the problem statement and constraints.
+export function buildPrompt({ problem, workspace, constraints = [] }) {
+  return [
+    `You are an autonomous software engineer working in the repository at ${workspace}.`,
+    "Solve the issue by editing the repository; do not only explain or propose a fix.",
+    "Follow the dataset constraints below. When the fix is complete, stop and summarize it.",
+    ...constraints.map((constraint) => `- ${constraint}`),
+    "",
+    "Issue:",
+    problem,
+  ].join("\n");
+}

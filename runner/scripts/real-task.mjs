@@ -148,7 +148,11 @@ function realCase(dispatch, item, task, { modelToken, runnerRoot }) {
       CLAUDE_GATEWAY_BASE_URL: task.model.anthropic_base_url,
       CLAUDE_GATEWAY_TOKEN: modelToken,
       CLAUDE_MODEL: task.model.name,
-      PROMPT: task.prompt,
+      PROMPT: runtimeAdapter.buildPrompt({
+        problem: task.prompt,
+        workspace: datasetAdapter.workspacePath(),
+        constraints: datasetAdapter.constraints(task),
+      }),
       MAX_TURNS: process.env.REAL_TASK_MAX_TURNS || "30",
       TIMEOUT_MS: process.env.REAL_TASK_TIMEOUT_MS || "900000",
       EXECUTION_IMAGE_DIGEST: environmentImage,
