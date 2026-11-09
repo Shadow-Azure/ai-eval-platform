@@ -40,7 +40,7 @@ index -> budgets -> wrap -> pairing -> terminology
 
 ## 运营状态
 
-管理员可在 `/operations` 查看控制面 API、PostgreSQL、Redis、对象存储、Runner 平面、调度 Worker 与模型网关的最近探活结果，以及资源池与 Runner、数据集、模型配置、调度队列和数据库迁移版本、大小、关键表行数、连接数与存储容量水位。只读成员在导航中不可见且接口返回 403；页面每 30 秒自动刷新，也可手动刷新。Worker 每轮轮询向 `service_heartbeat` 写入心跳。
+管理员可在 `/operations` 查看控制面 API、PostgreSQL、Redis、对象存储、Runner 平面、调度 Worker 与模型网关的最近探活结果，以及资源池与 Runner、数据集、模型配置、调度队列和数据库迁移版本、大小、关键表行数、连接数与存储容量水位，并可按 PostgreSQL、Redis 与对象存储切换查看。只读成员在导航中不可见且接口返回 403；页面每 30 秒自动刷新，也可手动刷新。Worker 每轮轮询向 `service_heartbeat` 写入心跳。
 
 ## Runner 契约
 

@@ -1,8 +1,11 @@
-import { Button, Skeleton, Table } from "antd";
+import { Button, Skeleton, Table, Tabs } from "antd";
 import type { TableColumnsType } from "antd";
 import { useOperationsQuery } from "../api/operations";
 import type {
+  DatabaseStatus,
   DatabaseTableStatus,
+  ObjectStorageStatus,
+  RedisStatus,
   RunnerStatus,
   ServiceStatusItem,
 } from "../api/operations";
@@ -267,6 +270,274 @@ function OperationsSkeleton() {
   );
 }
 
+
+function PostgresPanel({ data }: { data: DatabaseStatus }) {
+  const capacity = data.capacity;
+  return (
+    <div className="ops-tab-panel">
+      <div className="ops-db-meta">
+        <div>
+          <span>引擎</span>
+          <strong>{data.dialect ?? "—"}</strong>
+        </div>
+        <div>
+          <span>迁移版本</span>
+          <strong className="mono">{data.revision ?? "—"}</strong>
+        </div>
+        <div>
+          <span>数据库大小</span>
+          <strong>{formatBytes(data.size_bytes)}</strong>
+        </div>
+        <div>
+          <span>连接耗时</span>
+          <strong>{data.latency_ms === null ? "—" : `${data.latency_ms} ms`}</strong>
+        </div>
+        <div>
+          <span>状态</span>
+          <strong>{statusTag(data.status, {
+            ok: { label: "连接正常", tone: "success" },
+            error: { label: "连接异常", tone: "danger" },
+          })}</strong>
+        </div>
+      </div>
+      <div className="ops-capacity-grid">
+        <div className="ops-capacity-card">
+          <div className="ops-capacity-head">
+            <span>连接数</span>
+            <strong>
+              {formatNumber(capacity.connections)}
+              <span className="muted"> / {formatNumber(capacity.max_connections)}</span>
+            </strong>
+          </div>
+          {capacity.connection_usage_percent === null ? (
+            <span className="tag tag-neutral">未提供上限</span>
+          ) : (
+            <div
+              className="progress"
+              role="progressbar"
+              aria-label="数据库连接数水位"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.min(100, Math.max(0, capacity.connection_usage_percent))}
+              aria-valuetext={`${capacity.connection_usage_percent}%`}
+            >
+              <span
+                style={{
+                  width: `${Math.min(100, Math.max(0, capacity.connection_usage_percent))}%`,
+                }}
+              />
+            </div>
+          )}
+          <div className="ops-capacity-meta">
+            {capacity.connection_usage_percent === null
+              ? "当前引擎不提供 max_connections"
+              : `${capacity.connection_usage_percent}% 已使用`}
+          </div>
+        </div>
+        <div className="ops-capacity-card">
+          <div className="ops-capacity-head">
+            <span>存储容量</span>
+            <strong>
+              {formatBytes(data.size_bytes)}
+              <span className="muted"> / {formatBytes(capacity.storage_limit_bytes)}</span>
+            </strong>
+          </div>
+          {capacity.storage_usage_percent === null ? (
+            <span className="tag tag-neutral">未配置上限</span>
+          ) : (
+            <div
+              className="progress"
+              role="progressbar"
+              aria-label="数据库存储容量水位"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.min(100, Math.max(0, capacity.storage_usage_percent))}
+              aria-valuetext={`${capacity.storage_usage_percent}%`}
+            >
+              <span
+                style={{
+                  width: `${Math.min(100, Math.max(0, capacity.storage_usage_percent))}%`,
+                }}
+              />
+            </div>
+          )}
+          <div className="ops-capacity-meta">
+            {capacity.storage_usage_percent === null
+              ? "设置 DATABASE_STORAGE_LIMIT_BYTES 后显示水位"
+              : `${capacity.storage_usage_percent}% 已使用`}
+          </div>
+        </div>
+      </div>
+      <Table<DatabaseTableStatus>
+        className="recent-table ops-table ops-db-table"
+        columns={databaseColumns}
+        dataSource={data.tables}
+        rowKey="name"
+        pagination={false}
+        locale={{
+          emptyText: (
+            <EmptyState
+              compact
+              inline
+              icon="database"
+              title="暂无数据库表信息"
+              description="数据库不可用时不会返回表行数。"
+            />
+          ),
+        }}
+      />
+    </div>
+  );
+}
+
+function RedisPanel({ redis }: { redis: RedisStatus }) {
+  if (redis.status !== "ok") {
+    return (
+      <div className="ops-tab-panel">
+        <EmptyState
+          compact
+          inline
+          icon="cpu"
+          title={redis.status === "disabled" ? "Redis 未启用" : "Redis 探活失败"}
+          description={redis.summary || "Redis 当前不可用。"}
+        />
+      </div>
+    );
+  }
+  const maxmemory = redis.maxmemory_bytes;
+  const memoryPercent =
+    maxmemory !== null && maxmemory > 0 && redis.used_memory_bytes !== null
+      ? Math.min(100, Math.max(0, (redis.used_memory_bytes / maxmemory) * 100))
+      : null;
+  const maxclients = redis.maxclients;
+  const clientPercent =
+    maxclients !== null && maxclients > 0 && redis.connected_clients !== null
+      ? Math.min(100, Math.max(0, (redis.connected_clients / maxclients) * 100))
+      : null;
+  return (
+    <div className="ops-tab-panel">
+      <div className="ops-db-meta">
+        <div>
+          <span>版本</span>
+          <strong>{redis.version ?? "—"}</strong>
+        </div>
+        <div>
+          <span>状态</span>
+          <strong>{statusTag(redis.status, serviceStatusMeta)}</strong>
+        </div>
+        <div>
+          <span>内存策略</span>
+          <strong className="mono">{redis.maxmemory_policy ?? "—"}</strong>
+        </div>
+        <div>
+          <span>连接耗时</span>
+          <strong>{redis.latency_ms === null ? "—" : `${redis.latency_ms} ms`}</strong>
+        </div>
+      </div>
+      <div className="ops-capacity-grid">
+        <div className="ops-capacity-card">
+          <div className="ops-capacity-head">
+            <span>内存使用</span>
+            <strong>
+              {formatBytes(redis.used_memory_bytes)}
+              <span className="muted"> / {formatBytes(maxmemory)}</span>
+            </strong>
+          </div>
+          {memoryPercent === null ? (
+            <span className="tag tag-neutral">未设置上限</span>
+          ) : (
+            <div
+              className="progress"
+              role="progressbar"
+              aria-label="Redis 内存水位"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={memoryPercent}
+              aria-valuetext={`${memoryPercent.toFixed(1)}%`}
+            >
+              <span style={{ width: `${memoryPercent}%` }} />
+            </div>
+          )}
+          <div className="ops-capacity-meta">
+            {memoryPercent === null
+              ? "maxmemory=0，Redis 不限制内存"
+              : `${memoryPercent.toFixed(1)}% 已使用`}
+          </div>
+        </div>
+        <div className="ops-capacity-card">
+          <div className="ops-capacity-head">
+            <span>客户端</span>
+            <strong>
+              {formatNumber(redis.connected_clients)}
+              <span className="muted"> / {formatNumber(maxclients)}</span>
+            </strong>
+          </div>
+          {clientPercent === null ? (
+            <span className="tag tag-neutral">未提供上限</span>
+          ) : (
+            <div
+              className="progress"
+              role="progressbar"
+              aria-label="Redis 客户端水位"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={clientPercent}
+              aria-valuetext={`${clientPercent.toFixed(1)}%`}
+            >
+              <span style={{ width: `${clientPercent}%` }} />
+            </div>
+          )}
+          <div className="ops-capacity-meta">
+            {clientPercent === null ? "未提供客户端上限" : `${clientPercent.toFixed(1)}% 已使用`}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ObjectStoragePanel({ storage }: { storage: ObjectStorageStatus }) {
+  if (storage.status !== "ok") {
+    return (
+      <div className="ops-tab-panel">
+        <EmptyState
+          compact
+          inline
+          icon="boxes"
+          title={storage.status === "disabled" ? "对象存储未启用" : "对象存储探活失败"}
+          description={storage.summary || "对象存储当前不可用。"}
+        />
+      </div>
+    );
+  }
+  return (
+    <div className="ops-tab-panel">
+      <div className="ops-db-meta">
+        <div>
+          <span>Bucket</span>
+          <strong className="mono">{storage.bucket ?? "—"}</strong>
+        </div>
+        <div>
+          <span>Endpoint</span>
+          <strong className="mono">{storage.endpoint_host ?? "—"}</strong>
+        </div>
+        <div>
+          <span>探活耗时</span>
+          <strong>{storage.latency_ms === null ? "—" : `${storage.latency_ms} ms`}</strong>
+        </div>
+        <div>
+          <span>状态</span>
+          <strong>{statusTag(storage.status, serviceStatusMeta)}</strong>
+        </div>
+      </div>
+      <div className="ops-storage-note">
+        <Icon name="cloud" size={15} />
+        <span>{storage.summary}</span>
+      </div>
+    </div>
+  );
+}
+
 export function OperationsPage() {
   const { data, error, isError, isFetching, isLoading, refetch } = useOperationsQuery();
 
@@ -317,7 +588,6 @@ export function OperationsPage() {
   const queueDepth =
     data.resources.outbox.pending + data.resources.outbox.processing;
   const tables = data.database.tables;
-  const capacity = data.database.capacity;
   const databaseHealthy = data.database.status === "ok";
   const overallHealthy = data.status === "ok";
   const overallLabel = overallHealthy ? "运行正常" : "需要关注";
@@ -528,125 +798,32 @@ export function OperationsPage() {
       <section className="card section-gap">
         <div className="card-header">
           <div>
-            <h2 className="card-title">数据库</h2>
+            <h2 className="card-title">数据库与存储</h2>
             <p className="card-subtitle">
-              连通性、迁移版本与关键表行数；只读展示，不包含连接凭据
+              切换查看 PostgreSQL、Redis 与对象存储的状态和容量；只读展示，不包含连接凭据
             </p>
-          </div>
-          <div className="card-actions">
-            {statusTag(data.database.status, {
-              ok: { label: "连接正常", tone: "success" },
-              error: { label: "连接异常", tone: "danger" },
-            })}
           </div>
         </div>
         <div className="card-body">
-          <div className="ops-db-meta">
-            <div>
-              <span>引擎</span>
-              <strong>{data.database.dialect ?? "—"}</strong>
-            </div>
-            <div>
-              <span>迁移版本</span>
-              <strong className="mono">{data.database.revision ?? "—"}</strong>
-            </div>
-            <div>
-              <span>数据库大小</span>
-              <strong>{formatBytes(data.database.size_bytes)}</strong>
-            </div>
-            <div>
-              <span>连接耗时</span>
-              <strong>{data.database.latency_ms === null ? "—" : `${data.database.latency_ms} ms`}</strong>
-            </div>
-          </div>
-          <div className="ops-capacity-grid">
-            <div className="ops-capacity-card">
-              <div className="ops-capacity-head">
-                <span>连接数</span>
-                <strong>
-                  {formatNumber(capacity.connections)}
-                  <span className="muted"> / {formatNumber(capacity.max_connections)}</span>
-                </strong>
-              </div>
-              {capacity.connection_usage_percent === null ? (
-                <span className="tag tag-neutral">未提供上限</span>
-              ) : (
-                <div
-                  className="progress"
-                  role="progressbar"
-                  aria-label="数据库连接数水位"
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                  aria-valuenow={Math.min(100, Math.max(0, capacity.connection_usage_percent))}
-                  aria-valuetext={`${capacity.connection_usage_percent}%`}
-                >
-                  <span
-                    style={{
-                      width: `${Math.min(100, Math.max(0, capacity.connection_usage_percent))}%`,
-                    }}
-                  />
-                </div>
-              )}
-              <div className="ops-capacity-meta">
-                {capacity.connection_usage_percent === null
-                  ? "当前引擎不提供 max_connections"
-                  : `${capacity.connection_usage_percent}% 已使用`}
-              </div>
-            </div>
-            <div className="ops-capacity-card">
-              <div className="ops-capacity-head">
-                <span>存储容量</span>
-                <strong>
-                  {formatBytes(data.database.size_bytes)}
-                  <span className="muted">
-                    {" "}
-                    / {formatBytes(capacity.storage_limit_bytes)}
-                  </span>
-                </strong>
-              </div>
-              {capacity.storage_usage_percent === null ? (
-                <span className="tag tag-neutral">未配置上限</span>
-              ) : (
-                <div
-                  className="progress"
-                  role="progressbar"
-                  aria-label="数据库存储容量水位"
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                  aria-valuenow={Math.min(100, Math.max(0, capacity.storage_usage_percent))}
-                  aria-valuetext={`${capacity.storage_usage_percent}%`}
-                >
-                  <span
-                    style={{
-                      width: `${Math.min(100, Math.max(0, capacity.storage_usage_percent))}%`,
-                    }}
-                  />
-                </div>
-              )}
-              <div className="ops-capacity-meta">
-                {capacity.storage_usage_percent === null
-                  ? "设置 DATABASE_STORAGE_LIMIT_BYTES 后显示水位"
-                  : `${capacity.storage_usage_percent}% 已使用`}
-              </div>
-            </div>
-          </div>
-          <Table<DatabaseTableStatus>
-            className="recent-table ops-table ops-db-table"
-            columns={databaseColumns}
-            dataSource={tables}
-            rowKey="name"
-            pagination={false}
-            locale={{
-              emptyText: (
-                <EmptyState
-                  compact
-                  inline
-                  icon="database"
-                  title="暂无数据库表信息"
-                  description="数据库不可用时不会返回表行数。"
-                />
-              ),
-            }}
+          <Tabs
+            className="ops-tabs"
+            items={[
+              {
+                key: "postgresql",
+                label: "PostgreSQL",
+                children: <PostgresPanel data={data.database} />,
+              },
+              {
+                key: "redis",
+                label: "Redis",
+                children: <RedisPanel redis={data.redis} />,
+              },
+              {
+                key: "object_storage",
+                label: "对象存储",
+                children: <ObjectStoragePanel storage={data.object_storage} />,
+              },
+            ]}
           />
         </div>
       </section>
