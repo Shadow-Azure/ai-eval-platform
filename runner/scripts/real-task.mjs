@@ -176,6 +176,8 @@ function realCase(dispatch, item, task, { modelToken, runnerRoot }) {
     );
     const patch = (diff.stdout || "").trim();
     if (agent.status !== 0) {
+      const failureDetail = `agent exit ${agent.status}\n${(agent.stderr || "").slice(-4000)}\n${(agent.stdout || "").slice(-2000)}`;
+      console.error(failureDetail);
       return {
         score: {
           [task.case_key]: {
@@ -184,7 +186,7 @@ function realCase(dispatch, item, task, { modelToken, runnerRoot }) {
             tests_status: { FAIL_TO_PASS: { success: [], failure: [] }, PASS_TO_PASS: { success: [], failure: [] } },
           },
         },
-        trace,
+        trace: trace.length ? trace : Buffer.from(failureDetail, "utf8"),
         executionStatus: "failed",
         resultStatus: "not_scored",
         durationMs: Date.now() - startedAt,
