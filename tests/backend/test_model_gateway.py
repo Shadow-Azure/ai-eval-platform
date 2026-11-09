@@ -599,3 +599,20 @@ def test_manifest_issues_model_token_bound_to_shard(
     assert attempt is not None
     assert attempt.attempt_no == 1
     assert claims.attempt == 1
+
+
+def test_anthropic_alias_is_rewritten_to_configured_model(client, provider, bound_eval) -> None:
+    token = _mint(bound_eval["config"]["id"])
+    response = _gateway(
+        client,
+        token,
+        path="/model-gateway/anthropic/v1/messages",
+        body={
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 8,
+            "messages": [{"role": "user", "content": "pong"}],
+        },
+    )
+    assert response.status_code == 200, response.text
+    forwarded = json.loads(provider.calls[-1].content)
+    assert forwarded["model"] == "gpt-test"
