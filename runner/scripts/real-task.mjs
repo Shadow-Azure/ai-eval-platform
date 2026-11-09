@@ -159,6 +159,13 @@ function realCase(dispatch, item, task, { modelToken, runnerRoot }) {
       MAX_TURNS: process.env.REAL_TASK_MAX_TURNS || "30",
       TIMEOUT_MS: process.env.REAL_TASK_TIMEOUT_MS || "900000",
       EXECUTION_IMAGE_DIGEST: task.execution_image_digest,
+      // Generic source configuration: keep the execution image agent-agnostic
+      // and let the agent resolve Python/npm packages through Alibaba Cloud
+      // mirrors instead of baking dataset-specific dependencies into it.
+      PIP_INDEX_URL: process.env.PIP_INDEX_URL || "https://mirrors.aliyun.com/pypi/simple/",
+      PIP_TRUSTED_HOST: process.env.PIP_TRUSTED_HOST || "mirrors.aliyun.com",
+      UV_INDEX_URL: process.env.UV_INDEX_URL || "https://mirrors.aliyun.com/pypi/simple/",
+      npm_config_registry: process.env.npm_config_registry || "https://registry.npmmirror.com",
     };
     const agentName = `eval-agent-${item.case_run_id.slice(0, 8)}-${process.pid}`;
     const agentArgs = ["run", "--rm", "--name", agentName, "--network", "host", "-v", `${workdir}:/workspace`, "-v", `${runnerRoot}:/runner:ro`];
