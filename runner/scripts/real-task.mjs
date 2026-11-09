@@ -246,7 +246,7 @@ function realCase(dispatch, item, task, { modelToken, runnerRoot }) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.help || !args.dispatch) {
-    console.log("用法：node runner/scripts/synthetic-task.mjs --dispatch <file> [--state-dir dir] [--object-store-root dir] [--token token] [--case caseRunId]");
+    console.log("用法：node runner/scripts/real-task.mjs --dispatch <file> [--state-dir dir] [--object-store-root dir] [--token token] [--case caseRunId]");
     return 0;
   }
 
