@@ -16,10 +16,24 @@ from ..config import get_settings
 from ..db import get_session
 from ..services import evaluations as evaluation_service
 from ..services import identity
+from ..services import preflight as preflight_service
 from .dependencies import require_admin
 from .errors import error_detail
 
 router = APIRouter(tags=["evaluations"])
+
+
+class PrepareRequest(BaseModel):
+    dataset_version_id: str = Field(min_length=1, max_length=36)
+    model_config_id: str = Field(min_length=1, max_length=36)
+    model_name: str | None = Field(default=None, max_length=200)
+    runtime_key: str = Field(default="claude-code", max_length=64)
+    runtime_version: str | None = Field(default=None, max_length=64)
+    resource_pool_id: str = Field(min_length=1, max_length=36)
+    requested_concurrency: int = Field(default=1, ge=1, le=256)
+    scoring_image_digest: str | None = Field(default=None, max_length=128)
+    execution_image_digest: str | None = Field(default=None, max_length=128)
+    assets_resolved: bool = True
 
 
 class CreateEvaluationRequest(BaseModel):
@@ -32,6 +46,29 @@ class CreateEvaluationRequest(BaseModel):
     model_config_id: str | None = Field(default=None, max_length=36)
     model_name: str | None = Field(default=None, max_length=200)
     model_budget_usd: float | None = Field(default=None, ge=0)
+
+
+@router.post("/api/v1/evaluations/prepare")
+def prepare_evaluation(
+    payload: PrepareRequest,
+    session: Session = Depends(get_session),
+) -> dict:
+    """Run the M3-03 blocking/warning consistency checks without creating a run."""
+
+    result = preflight_service.check_preparation(
+        session,
+        dataset_version_id=payload.dataset_version_id,
+        model_config_id=payload.model_config_id,
+        model_name=payload.model_name,
+        runtime_key=payload.runtime_key,
+        runtime_version=payload.runtime_version,
+        resource_pool_id=payload.resource_pool_id,
+        requested_concurrency=payload.requested_concurrency,
+        scoring_image_digest=payload.scoring_image_digest,
+        execution_image_digest=payload.execution_image_digest,
+        assets_resolved=payload.assets_resolved,
+    )
+    return {"status": "ok", **result.payload()}
 
 
 @router.post("/api/v1/evaluations")
