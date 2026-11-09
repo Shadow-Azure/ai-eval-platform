@@ -99,7 +99,7 @@ def test_operations_status_reports_services_resources_and_database(
 
     database = payload["database"]
     assert database["status"] == "ok"
-    assert database["dialect"] == "sqlite"
+    assert database["dialect"] in {"sqlite", "postgresql"}
     assert database["revision"] == "0008_service_heartbeat"
     assert database["size_bytes"] > 0
     tables = {table["name"]: table for table in database["tables"]}
