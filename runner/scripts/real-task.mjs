@@ -160,10 +160,21 @@ function realCase(dispatch, item, task, { modelToken, runnerRoot }) {
       TIMEOUT_MS: process.env.REAL_TASK_TIMEOUT_MS || "900000",
       EXECUTION_IMAGE_DIGEST: task.execution_image_digest,
     };
-    const agentArgs = ["run", "--rm", "--network", "host", "-v", `${workdir}:/workspace`, "-v", `${runnerRoot}:/runner:ro`];
+    const agentName = `eval-agent-${item.case_run_id.slice(0, 8)}-${process.pid}`;
+    const agentArgs = ["run", "--rm", "--name", agentName, "--network", "host", "-v", `${workdir}:/workspace`, "-v", `${runnerRoot}:/runner:ro`];
     for (const [key, value] of Object.entries(env)) agentArgs.push("-e", `${key}=${value}`);
     agentArgs.push(task.execution_image_digest, "node", "/runner/scripts/claude-code-smoke.mjs");
-    const agent = dockerRun(agentArgs, { allowFailure: true, timeout: 1_000_000 });
+    let agent;
+    try {
+      agent = dockerRun(agentArgs, {
+        allowFailure: true,
+        timeout: Number(process.env.REAL_TASK_AGENT_TIMEOUT_MS || 1_000_000),
+      });
+    } catch (error) {
+      agent = { status: 1, stdout: "", stderr: error.message };
+    } finally {
+      dockerRun(["rm", "-f", agentName], { allowFailure: true });
+    }
 
     const tracePath = join(workdir, "trace", "claude-stream.jsonl");
     const trace = existsSync(tracePath) ? readFileSync(tracePath) : Buffer.from("");
