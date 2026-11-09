@@ -371,35 +371,45 @@ async function main() {
   const objects = [];
 
   const requestUploadUrls = async (item, pendingObjects) => {
-    const response = await fetch(
-      `${manifest.callback_base_url}/runner/v1/case-runs/${item.case_run_id}/upload-urls`,
-      {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          authorization: `Bearer ${token}`,
-          "idempotency-key": `evt_${item.case_run_id}_upload_urls_${dispatch.attempt}`,
-        },
-        body: JSON.stringify({
-          attempt: dispatch.attempt,
-          objects: pendingObjects.map(({ artifact_kind, sha256: digest, size, content_type }) => ({
-            artifact_kind,
-            sha256: digest,
-            size,
-            content_type,
-          })),
-        }),
-        signal: AbortSignal.timeout(10000),
-      },
-    );
-    const payload = await response.json().catch(() => null);
-    if (!response.ok || !payload?.uploads?.length) {
-      throw Object.assign(new Error(`upload-urls 换取失败：HTTP ${response.status}`), {
-        code: "upload_failed",
-        httpStatus: response.status,
-      });
+    let lastError = null;
+    for (let attempt = 1; attempt <= 5; attempt += 1) {
+      try {
+        const response = await fetch(
+          `${manifest.callback_base_url}/runner/v1/case-runs/${item.case_run_id}/upload-urls`,
+          {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              authorization: `Bearer ${token}`,
+              "idempotency-key": `evt_${item.case_run_id}_upload_urls_${dispatch.attempt}`,
+            },
+            body: JSON.stringify({
+              attempt: dispatch.attempt,
+              objects: pendingObjects.map(({ artifact_kind, sha256: digest, size, content_type }) => ({
+                artifact_kind,
+                sha256: digest,
+                size,
+                content_type,
+              })),
+            }),
+            signal: AbortSignal.timeout(10000),
+          },
+        );
+        const payload = await response.json().catch(() => null);
+        if (!response.ok || !payload?.uploads?.length) {
+          lastError = Object.assign(new Error(`upload-urls 换取失败：HTTP ${response.status}`), {
+            code: "upload_failed",
+            httpStatus: response.status,
+          });
+        } else {
+          return payload.uploads;
+        }
+      } catch (error) {
+        lastError = error;
+      }
+      if (attempt < 5) await new Promise((resolve) => setTimeout(resolve, 1000 * attempt));
     }
-    return payload.uploads;
+    throw lastError ?? new Error("upload-urls 换取失败");
   };
 
   try {
@@ -467,17 +477,28 @@ async function main() {
             });
           }
           const bytes = store.get(pending.object_key);
-          const putResponse = await fetch(upload.upload_url, {
-            method: "PUT",
-            headers: upload.headers ?? {},
-            body: bytes,
-            signal: AbortSignal.timeout(30000),
-          });
-          if (!putResponse.ok) {
-            throw Object.assign(new Error(`对象上传失败：HTTP ${putResponse.status}`), {
-              code: "upload_failed",
-            });
+          let putError = null;
+          for (let attempt = 1; attempt <= 5; attempt += 1) {
+            try {
+              const putResponse = await fetch(upload.upload_url, {
+                method: "PUT",
+                headers: upload.headers ?? {},
+                body: bytes,
+                signal: AbortSignal.timeout(30000),
+              });
+              if (putResponse.ok) {
+                putError = null;
+                break;
+              }
+              putError = Object.assign(new Error(`对象上传失败：HTTP ${putResponse.status}`), {
+                code: "upload_failed",
+              });
+            } catch (error) {
+              putError = error;
+            }
+            if (attempt < 5) await new Promise((resolve) => setTimeout(resolve, 1000 * attempt));
           }
+          if (putError) throw putError;
         }
         reportedObjects = uploads.map((upload) => ({
           artifact_kind: upload.artifact_kind,
