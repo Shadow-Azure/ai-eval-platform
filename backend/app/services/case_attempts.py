@@ -246,6 +246,12 @@ def handle_started(session: Session, *, payload: dict, now: datetime | None = No
     now = now or datetime.now(UTC)
     ctx = resolve_context(session, case_run_id=payload["case_run_id"], attempt_no=payload["attempt"])
     if ctx.attempt.status == "running" and _event_exists(ctx, sequence=0, event_id=payload["event_id"]):
+        # Same event id from a different Runner means a duplicate Job on another
+        # machine. Only the runner that owns the attempt may continue; the other
+        # must stop before starting an agent (cross-machine duplicate guard).
+        incoming = _resolve_runner_pk(session, payload.get("runner_id"))
+        if incoming and ctx.attempt.runner_id and incoming != ctx.attempt.runner_id:
+            raise StaleAttempt("该用例已由其他 Runner 执行，拒绝重复启动")
         return {"ok": True, "deduped": True, "status": "running"}
     if _event_exists(ctx, sequence=0, event_id=payload["event_id"]):
         return {"ok": True, "deduped": True, "status": ctx.attempt.status}

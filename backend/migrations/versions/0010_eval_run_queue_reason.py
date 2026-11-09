@@ -15,7 +15,7 @@ depends_on = None
 
 def upgrade() -> None:
     # Expand-only: the column is nullable so a rollback to the previous image
-    # keeps reading the old schema (design 05 §3).
+    # keeps reading the old schema (design 05 §9).
     op.add_column("eval_run", sa.Column("queue_reason", sa.String(length=64), nullable=True))
 
 

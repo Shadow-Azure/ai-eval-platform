@@ -13,6 +13,8 @@ Loop rules (design 06 §5):
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -143,9 +145,74 @@ def recover_stuck_leases(session: Session, *, lease_seconds: float, now: datetim
     for row in stuck:
         row.status = "pending"
         row.payload_json = {**row.payload_json, "last_error": "lease_recovered"}
+        # The previous dispatcher may have flipped attempts to ``dispatching``
+        # before dying. Those rows would otherwise count as "released" forever
+        # and the capacity gate would never release the shard again.
+        _reset_dispatching_attempts(session, row)
     if stuck:
         session.commit()
     return len(stuck)
+
+
+def _reset_dispatching_attempts(session: Session, row: Outbox) -> int:
+    shard_id = row.payload_json.get("shard_id")
+    attempt_no = int(row.payload_json.get("attempt", 1))
+    if not shard_id:
+        return 0
+    attempts = list(
+        session.scalars(
+            select(EvalCaseAttempt)
+            .join(EvalCaseRun, EvalCaseRun.id == EvalCaseAttempt.eval_case_run_id)
+            .where(
+                EvalCaseRun.eval_run_id == row.aggregate_id,
+                EvalCaseAttempt.shard_id == shard_id,
+                EvalCaseAttempt.attempt_no == attempt_no,
+                EvalCaseAttempt.status == "dispatching",
+            )
+        )
+    )
+    for attempt in attempts:
+        attempt.status = "pending"
+        attempt.dispatch_status = "pending"
+    return len(attempts)
+
+
+def _refresh_dispatch_window(
+    row: Outbox, run: EvalRun, *, settings: Settings, now: datetime
+) -> None:
+    """Stamp expiry/deadline relative to the actual release time (M4-01).
+
+    The manifest is built at creation, but the capacity gate releases shards
+    later, one shard at a time. A creation-time deadline would expire before
+    the later shards are ever dispatched (500 cases / 8 shards easily run for
+    hours). Regenerate the deadline from ``now`` with enough waves for the
+    shard at the current effective concurrency; the case list itself is frozen.
+    """
+
+    payload = row.payload_json
+    manifest_text = payload.get("manifest_text")
+    client_payload = payload.get("client_payload")
+    if not manifest_text or not client_payload:
+        return
+    manifest = json.loads(manifest_text)
+    cases = manifest.get("cases") or []
+    cap = run.effective_concurrency or run.requested_concurrency or 1
+    waves = max(1, math.ceil(len(cases) / max(1, int(cap))))
+    deadline = now + timedelta(seconds=run.case_timeout_seconds * waves + 300)
+    manifest["deadline"] = deadline.isoformat(timespec="microseconds").replace("+00:00", "Z")
+    text = json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True)
+    digest = "sha256:" + hashlib.sha256(text.encode()).hexdigest()
+    expires_at = now + timedelta(seconds=settings.eval_shard_ttl_seconds)
+    row.payload_json = {
+        **payload,
+        "manifest_text": text,
+        "manifest_digest": digest,
+        "client_payload": {
+            **client_payload,
+            "manifest_digest": digest,
+            "expires_at": expires_at.isoformat(timespec="microseconds").replace("+00:00", "Z"),
+        },
+    }
 
 
 def _shard_attempts(session: Session, run: EvalRun, shard_id: str, attempt_no: int) -> list[EvalCaseAttempt]:
@@ -210,6 +277,9 @@ def _dispatch_row(
     session.refresh(row)
     for attempt in attempts:
         attempt.dispatch_status = "dispatching"
+    session.commit()
+
+    _refresh_dispatch_window(row, run, settings=settings, now=now)
     session.commit()
 
     try:

@@ -57,9 +57,9 @@ const CAPACITY_WAIT_MAX_MS = 60_000;
 const CAPACITY_WAIT_DEFAULT_SECONDS = 1_800;
 
 /** Hard per-evaluation cap wait budget; 0 disables waiting (tests/fast fail). */
-function capacityWaitSeconds() {
-  const raw = Number(process.env.RUNNER_CAPACITY_WAIT_SECONDS ?? CAPACITY_WAIT_DEFAULT_SECONDS);
-  return Number.isFinite(raw) && raw >= 0 ? raw : CAPACITY_WAIT_DEFAULT_SECONDS;
+function capacityWaitSeconds(defaultSeconds = CAPACITY_WAIT_DEFAULT_SECONDS) {
+  const raw = Number(process.env.RUNNER_CAPACITY_WAIT_SECONDS ?? defaultSeconds);
+  return Number.isFinite(raw) && raw >= 0 ? raw : defaultSeconds;
 }
 
 /**
@@ -421,7 +421,9 @@ async function main() {
     return 0;
   }
   releaseClaim = () => guard.release(claim.claimPath);
-  const capacityWait = capacityWaitSeconds();
+  // Wait at least one full case timeout (+5 min) so a case queued behind the
+  // hard cap is not abandoned while the running cases are still legitimate.
+  const capacityWait = capacityWaitSeconds((Number(manifest.case_timeout_seconds) || 3600) + 300);
 
   const store = new LocalObjectStore(resolve(args.objectRoot));
   const objects = [];
@@ -494,6 +496,22 @@ async function main() {
           "callback_retryable",
           1,
         );
+      }
+      if (startedResult.stale) {
+        // Another Runner owns this attempt (cross-machine duplicate Job), or
+        // the attempt is already terminal. Never start the agent.
+        console.log(
+          JSON.stringify({
+            status: "stale_attempt",
+            case_run_id: item.case_run_id,
+            attempt: dispatch.attempt,
+          }),
+        );
+        if (releaseClaim) {
+          releaseClaim();
+          releaseClaim = null;
+        }
+        return 0;
       }
       if (!startedResult.ok && !startedResult.stale) {
         fail(

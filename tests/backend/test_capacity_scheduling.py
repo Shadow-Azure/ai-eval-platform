@@ -4,7 +4,10 @@ and the started-callback hard cap.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -383,3 +386,148 @@ def test_two_runners_reach_cap_and_hold_excess(
     )
     assert seeded.get(EvalCaseRun, cases[2].id).execution_status == "running"
     assert seeded.get(EvalCaseRun, cases[3].id).execution_status == "queued"
+
+
+def test_stuck_lease_requeues_dispatching_attempts(
+    seeded: Session, configure_settings
+) -> None:
+    """A dispatcher crash must not park the shard forever as 'in flight'."""
+
+    configure_settings(GITHUB_TOKEN="gh-token")
+    pool = _make_pool(seeded, runners=8, key="lease")
+    _create_run(seeded, pool=pool, case_count=2, requested=8, key="lease")
+    row = seeded.query(Outbox).one()
+    row.status = "processing"
+    row.updated_at = datetime.now(UTC) - timedelta(seconds=9999)
+    for attempt in seeded.query(EvalCaseAttempt).all():
+        attempt.status = "dispatching"
+        attempt.dispatch_status = "dispatching"
+    seeded.commit()
+
+    outcome = dispatcher.dispatch_pending_outbox(
+        seeded, settings=get_settings(), transport=FakeTransport()
+    )
+
+    assert outcome.recovered == 1
+    assert outcome.dispatched == 1
+    seeded.expire_all()
+    assert {attempt.status for attempt in seeded.query(EvalCaseAttempt).all()} == {"queued"}
+
+
+def test_duplicate_started_from_another_runner_is_stale(
+    seeded: Session, configure_settings
+) -> None:
+    configure_settings(RUNNER_HEARTBEAT_TIMEOUT_SECONDS="90")
+    pool = _make_pool(seeded, runners=2, key="dupstart")
+    run = _create_run(seeded, pool=pool, case_count=1, requested=1, key="dupstart")
+    case = seeded.scalars(
+        select(EvalCaseRun).where(EvalCaseRun.eval_run_id == run.id)
+    ).one()
+    payload = _started_payload(case.id, "evt-dup", runner_id="runner-dupstart-0")
+    case_attempts.handle_started(seeded, payload=payload)
+
+    with pytest.raises(case_attempts.StaleAttempt):
+        case_attempts.handle_started(
+            seeded, payload={**payload, "runner_id": "runner-dupstart-1"}
+        )
+
+    assert seeded.get(EvalCaseRun, case.id).execution_status == "running"
+
+
+def test_late_shard_gets_a_fresh_dispatch_window(
+    seeded: Session, configure_settings
+) -> None:
+    """Creation-time deadlines must not expire before a gated shard is sent."""
+
+    configure_settings(GITHUB_TOKEN="gh-token")
+    pool = _make_pool(seeded, runners=8, key="window")
+    _create_run(seeded, pool=pool, case_count=500, requested=8, key="window")
+    transport = FakeTransport()
+    dispatcher.dispatch_pending_outbox(
+        seeded, settings=get_settings(), transport=transport
+    )
+    first = seeded.query(Outbox).filter(Outbox.status == "sent").one()
+    first_id = first.id
+    first_shard = first.payload_json["shard_id"]
+    for attempt in (
+        seeded.query(EvalCaseAttempt).filter(EvalCaseAttempt.shard_id == first_shard).all()
+    ):
+        attempt.status = "succeeded"
+    seeded.commit()
+
+    later = datetime.now(UTC) + timedelta(hours=2)
+    dispatcher.dispatch_pending_outbox(
+        seeded, settings=get_settings(), transport=transport, now=later
+    )
+    sent = [row for row in seeded.query(Outbox).all() if row.status == "sent"]
+    second = next(row for row in sent if row.id != first_id)
+
+    text = second.payload_json["manifest_text"]
+    manifest = json.loads(text)
+    deadline = datetime.fromisoformat(manifest["deadline"].replace("Z", "+00:00"))
+    expires_at = datetime.fromisoformat(
+        second.payload_json["client_payload"]["expires_at"].replace("Z", "+00:00")
+    )
+    assert deadline > later + timedelta(hours=1)
+    assert expires_at > later
+    assert second.payload_json["manifest_digest"] == (
+        "sha256:" + hashlib.sha256(text.encode()).hexdigest()
+    )
+    assert second.payload_json["client_payload"]["manifest_digest"] == (
+        second.payload_json["manifest_digest"]
+    )
+
+
+def test_started_gate_is_atomic_under_concurrency(engine, configure_settings) -> None:
+    """Two concurrent started callbacks must never exceed the cap (regression)."""
+
+    configure_settings(RUNNER_HEARTBEAT_TIMEOUT_SECONDS="90")
+    with Session(engine) as setup:
+        ensure_default_scope(setup)
+        pool = _make_pool(setup, runners=1, key="atomic")
+        run = _create_run(setup, pool=pool, case_count=2, requested=1, key="atomic")
+        run_id = run.id
+        case_ids = [
+            case.id
+            for case in setup.scalars(
+                select(EvalCaseRun)
+                .where(EvalCaseRun.eval_run_id == run_id)
+                .order_by(EvalCaseRun.ordinal)
+            )
+        ]
+
+    barrier = threading.Barrier(2)
+
+    def start(case_id: str, event_id: str) -> str | int:
+        with Session(engine) as thread_session:
+            barrier.wait(timeout=10)
+            try:
+                case_attempts.handle_started(
+                    thread_session,
+                    payload=_started_payload(
+                        case_id, event_id, runner_id="runner-atomic-0"
+                    ),
+                )
+                return "ok"
+            except case_attempts.CaseCallbackError as exc:
+                return exc.status_code
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = [
+            future.result()
+            for future in (
+                executor.submit(start, case_ids[0], "evt-atomic-0"),
+                executor.submit(start, case_ids[1], "evt-atomic-1"),
+            )
+        ]
+
+    assert results.count("ok") == 1
+    assert 429 in results
+    with Session(engine) as check:
+        statuses = [
+            case.execution_status
+            for case in check.scalars(
+                select(EvalCaseRun).where(EvalCaseRun.eval_run_id == run_id)
+            )
+        ]
+    assert statuses.count("running") == 1

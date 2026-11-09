@@ -102,7 +102,7 @@ def main() -> int:
     os.environ.update({key: env[key] for key in env if key not in os.environ or key.startswith(("RUNNER_", "DATABASE_URL", "S3_", "AUTH_", "EVAL_", "REDIS_", "GITHUB_"))})
     sys.path.insert(0, str(BACKEND))
     from app.db import SessionLocal  # noqa: PLC0415
-    from app.models import EvalCaseRun, Outbox, ResourcePool, Runner  # noqa: PLC0415
+    from app.models import EvalCaseAttempt, EvalCaseRun, Outbox, ResourcePool, Runner  # noqa: PLC0415
     from app.seed import ensure_default_scope  # noqa: PLC0415
     from app.services import evaluations  # noqa: PLC0415
 
@@ -245,7 +245,10 @@ def main() -> int:
                 .order_by(EvalCaseRun.ordinal)
             ]
             attempt_count = int(
-                session.query(EvalCaseRun).filter(EvalCaseRun.eval_run_id == run.id).count()
+                session.query(EvalCaseAttempt)
+                .join(EvalCaseRun, EvalCaseRun.id == EvalCaseAttempt.eval_case_run_id)
+                .filter(EvalCaseRun.eval_run_id == run.id)
+                .count()
             )
             packed = {
                 "eval_run_id": run.id,

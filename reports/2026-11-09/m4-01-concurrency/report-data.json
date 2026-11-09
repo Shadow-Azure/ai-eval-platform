@@ -21,7 +21,7 @@
       "label": "attempt 数"
     },
     {
-      "value": "5.72s",
+      "value": "5.42s",
       "label": "容量等待耗时"
     }
   ],
@@ -104,7 +104,7 @@
           "kind": "pass",
           "label": "PASS"
         },
-        "detail": "采样峰值 running=2；超额 Job 429 等待 5.72s 后补位成功，从未超过 cap。",
+        "detail": "采样峰值 running=2；超额 Job 429 等待 5.42s 后补位成功，从未超过 cap。",
         "evidence": [
           "evidence.json"
         ]
