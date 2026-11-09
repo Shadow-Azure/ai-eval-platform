@@ -160,7 +160,15 @@ function realCase(dispatch, item, task, { modelToken, runnerRoot }) {
 
     const tracePath = join(workdir, "trace", "claude-stream.jsonl");
     const trace = existsSync(tracePath) ? readFileSync(tracePath) : Buffer.from("");
-    const diff = spawnSync("git", ["-C", workdir, "diff"], { encoding: "utf8", timeout: 60_000 });
+    spawnSync("git", ["-C", workdir, "add", "-A", "--", ".", ":(exclude).runtime-home", ":(exclude)trace"], {
+      encoding: "utf8",
+      timeout: 60_000,
+    });
+    const diff = spawnSync(
+      "git",
+      ["-C", workdir, "diff", "--cached", "--", ".", ":(exclude).runtime-home", ":(exclude)trace"],
+      { encoding: "utf8", timeout: 60_000 },
+    );
     const patch = (diff.stdout || "").trim();
     if (agent.status !== 0) {
       return {
