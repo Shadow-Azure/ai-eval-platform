@@ -1,6 +1,10 @@
 # Web 控制面壳
 
-M2-01 的 React 前端：登录、应用壳与总览。其余导航路由为后续里程碑的占位页。
+M3 的 React 前端：真实账号密码登录、应用壳与总览。其余导航路由为后续里程碑的占位页。
+
+## 登录与会话
+
+登录页调用 `POST /api/v1/auth/login`，服务端通过同源 HttpOnly Cookie 维持会话；前端启动时读取 `GET /api/v1/auth/me`。未登录访问受保护路由会跳转 `/login?next=<原路径>`，登录后回到原目标；任意 API 返回 401 时清空查询缓存并回到登录页。顶栏展示当前账号与角色，退出登录调用 `POST /api/v1/auth/logout`。
 
 ## 开发
 
@@ -9,7 +13,7 @@ npm install
 npm run dev
 ```
 
-Vite 开发服务器把 `/api`、`/healthz`、`/readyz` 代理到 `http://127.0.0.1:8000`。
+Vite 开发服务器把 `/api`、`/healthz`、`/readyz` 代理到 `http://127.0.0.1:8000`。本地管理员由后端 `AUTH_BOOTSTRAP_ADMIN_*` 或根目录 Compose 默认值提供。
 
 ## 构建与预览
 

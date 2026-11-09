@@ -1,4 +1,9 @@
-import { ApiError, type OverviewResponse, parseOverview } from "./types";
+import {
+  ApiError,
+  notifyUnauthorized,
+  parseOverview,
+  type OverviewResponse,
+} from "./types";
 
 async function readPayload(response: Response): Promise<unknown> {
   const contentType = response.headers.get("content-type") ?? "";
@@ -68,6 +73,7 @@ async function requestJson(path: string, signal?: AbortSignal): Promise<unknown>
 
   const payload = await readPayload(response);
   if (!response.ok) {
+    notifyUnauthorized(response.status);
     throw new ApiError(
       errorMessage(payload, `控制面请求失败（HTTP ${response.status}）`),
       {

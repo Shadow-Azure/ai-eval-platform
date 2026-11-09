@@ -1,4 +1,4 @@
-import { ApiError } from "./types";
+import { ApiError, notifyUnauthorized } from "./types";
 
 export type EvaluationStatus =
   | "preparing"
@@ -128,6 +128,7 @@ async function request(path: string, init?: RequestInit): Promise<unknown> {
   }
   const payload: unknown = await response.json().catch(() => null);
   if (!response.ok) {
+    notifyUnauthorized(response.status);
     const info = errorInfo(payload);
     throw new ApiError(info.message ?? `控制面请求失败（HTTP ${response.status}）`, {
       status: response.status,

@@ -3,6 +3,15 @@ export interface EntityRef {
   name: string;
 }
 
+export const AUTH_UNAUTHORIZED_EVENT = "auth:unauthorized";
+
+/** Let the auth provider react to an expired/revoked session from any request. */
+export function notifyUnauthorized(status: number): void {
+  if (status === 401 && typeof window !== "undefined") {
+    window.dispatchEvent(new Event(AUTH_UNAUTHORIZED_EVENT));
+  }
+}
+
 export interface OverviewCounts {
   eval_runs: number;
   running: number;

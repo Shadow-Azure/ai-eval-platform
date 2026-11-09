@@ -1,5 +1,6 @@
 import { Dropdown, type MenuProps } from "antd";
 import { useLocation, useNavigate } from "react-router-dom";
+import { useAuth } from "../app/auth";
 import { breadcrumbFor } from "../app/nav";
 import type { EntityRef } from "../api/types";
 import { Icon } from "./Icon";
@@ -21,6 +22,7 @@ const notificationItems: MenuProps["items"] = [
 export function Header({ tenant, project, connectionState }: HeaderProps) {
   const location = useLocation();
   const navigate = useNavigate();
+  const { session, logout } = useAuth();
   const [group, page] = breadcrumbFor(location.pathname);
 
   const tenantName = tenant?.name ?? "默认组织";
@@ -32,6 +34,8 @@ export function Header({ tenant, project, connectionState }: HeaderProps) {
     { type: "divider" },
     { key: "logout", label: "退出登录" },
   ];
+  const userEmail = session?.user.email ?? "";
+  const avatar = (userEmail.split("@")[0]?.slice(0, 2) || "EP").toUpperCase();
 
   const connectionCopy = {
     loading: "控制面连接中",
@@ -85,7 +89,10 @@ export function Header({ tenant, project, connectionState }: HeaderProps) {
           items: userItems,
           onClick: ({ key }) => {
             if (key === "logout") {
-              navigate("/login", { replace: true });
+              void (async () => {
+                await logout();
+                navigate("/login", { replace: true });
+              })();
             }
           },
         }}
@@ -94,11 +101,13 @@ export function Header({ tenant, project, connectionState }: HeaderProps) {
       >
         <button type="button" className="user-button" aria-label="用户菜单" aria-haspopup="menu">
           <span className="avatar" aria-hidden="true">
-            ZN
+            {avatar}
           </span>
           <span className="user-copy">
-            <span className="user-name">张宁</span>
-            <span className="user-role">平台管理员</span>
+            <span className="user-name" title={userEmail}>
+              {userEmail || "未登录"}
+            </span>
+            <span className="user-role">{session?.roleLabel ?? "未登录"}</span>
           </span>
           <Icon name="chevronDown" size={13} />
         </button>

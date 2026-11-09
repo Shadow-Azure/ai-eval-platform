@@ -1,16 +1,28 @@
 import { useState, type FormEvent } from "react";
 import { Button, Checkbox, Input } from "antd";
-import { useNavigate } from "react-router-dom";
+import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
+import { ApiError } from "../api/types";
+import { safeNext, useAuth } from "../app/auth";
 import { Icon } from "../components/Icon";
 
 export function LoginPage() {
   const navigate = useNavigate();
-  const [email, setEmail] = useState("admin@acme.local");
-  const [password, setPassword] = useState("eval-demo");
+  const [searchParams] = useSearchParams();
+  const { status, login } = useAuth();
+  const next = safeNext(searchParams.get("next"));
+
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [remember, setRemember] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  if (status === "authenticated") {
+    return <Navigate to={next} replace />;
+  }
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setNotice(null);
 
@@ -19,9 +31,26 @@ export function LoginPage() {
       return;
     }
 
-    // Demo shell only: credentials are never sent or persisted.
     setError(null);
-    navigate("/overview", { replace: true });
+    setSubmitting(true);
+    try {
+      await login(email.trim(), password, remember);
+      navigate(next, { replace: true });
+    } catch (caught) {
+      if (caught instanceof ApiError) {
+        if (caught.code === "invalid_credentials" || caught.status === 401) {
+          setError("账号或密码不正确，请检查后重试。");
+        } else if (caught.code === "network_error") {
+          setError(caught.message);
+        } else {
+          setError(caught.message || "登录失败，请稍后重试。");
+        }
+      } else {
+        setError("登录失败，请稍后重试。");
+      }
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return (
@@ -56,14 +85,14 @@ export function LoginPage() {
           </div>
         </div>
 
-        <div className="login-footnote">M2 · Control plane foundation · 2026.11</div>
+        <div className="login-footnote">M3 · Authenticated control plane · 2026.11</div>
       </section>
 
       <section className="login-panel">
         <form className="login-form" onSubmit={handleSubmit} noValidate>
           <div className="eyebrow">Welcome back</div>
           <h2>登录评测平台</h2>
-          <p>使用组织账号访问工作区。</p>
+          <p>使用组织管理员分配的账号访问工作区。</p>
 
           {error ? (
             <div className="login-error banner danger" role="alert">
@@ -88,6 +117,7 @@ export function LoginPage() {
               name="email"
               type="email"
               autoComplete="username"
+              autoFocus
               value={email}
               status={error && !email.trim() ? "error" : undefined}
               onChange={(event) => {
@@ -112,36 +142,39 @@ export function LoginPage() {
                 if (error) setError(null);
               }}
             />
-            <span className="hint">演示原型：保留默认值直接登录，或清空密码查看错误态。</span>
           </div>
 
           <div className="row-between small login-options">
-            <Checkbox defaultChecked>保持登录</Checkbox>
+            <Checkbox
+              checked={remember}
+              onChange={(event) => setRemember(event.target.checked)}
+            >
+              保持登录
+            </Checkbox>
             <Button
               type="link"
               size="small"
               className="link-button"
               onClick={() => {
                 setError(null);
-                setNotice("演示环境不支持找回密码，请使用下方演示账号登录。");
+                setNotice("如需重置密码，请联系平台管理员。");
               }}
             >
               忘记密码
             </Button>
           </div>
 
-          <Button type="primary" htmlType="submit" size="large" block className="login-submit">
-            <span>进入工作台</span>
+          <Button
+            type="primary"
+            htmlType="submit"
+            size="large"
+            block
+            className="login-submit"
+            loading={submitting}
+          >
+            <span>{submitting ? "登录中…" : "进入工作台"}</span>
             <Icon name="arrowRight" size={15} />
           </Button>
-
-          <div className="demo-account">
-            <strong>演示账号</strong>
-            <br />
-            admin@acme.local · eval-demo
-            <br />
-            <span className="muted">仅用于演示，凭据不会发送到网络或本地持久化。</span>
-          </div>
         </form>
       </section>
     </main>

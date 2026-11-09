@@ -1,4 +1,5 @@
 import { Navigate, Route, Routes } from "react-router-dom";
+import { RequireAuth } from "./auth";
 import { AppShell } from "../components/AppShell";
 import { PlaceholderPage } from "../components/PlaceholderPage";
 import { EvalsPage } from "../pages/EvalsPage";
@@ -49,25 +50,27 @@ export function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
-      <Route element={<AppShell />}>
-        <Route index element={<Navigate to="/overview" replace />} />
-        <Route path="/overview" element={<OverviewPage />} />
-        <Route path="/evals" element={<EvalsPage />} />
-        {placeholders.map((page) => (
-          <Route
-            key={page.path}
-            path={`/${page.path}`}
-            element={
-              <PlaceholderPage
-                eyebrow={page.eyebrow}
-                title={page.title}
-                description={page.description}
-              />
-            }
-          />
-        ))}
-        <Route path="/deployment" element={<Navigate to="/deployments" replace />} />
-        <Route path="*" element={<NotFoundPage />} />
+      <Route element={<RequireAuth />}>
+        <Route element={<AppShell />}>
+          <Route index element={<Navigate to="/overview" replace />} />
+          <Route path="/overview" element={<OverviewPage />} />
+          <Route path="/evals" element={<EvalsPage />} />
+          {placeholders.map((page) => (
+            <Route
+              key={page.path}
+              path={`/${page.path}`}
+              element={
+                <PlaceholderPage
+                  eyebrow={page.eyebrow}
+                  title={page.title}
+                  description={page.description}
+                />
+              }
+            />
+          ))}
+          <Route path="/deployment" element={<Navigate to="/deployments" replace />} />
+          <Route path="*" element={<NotFoundPage />} />
+        </Route>
       </Route>
     </Routes>
   );
