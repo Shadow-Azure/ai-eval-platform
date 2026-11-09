@@ -146,6 +146,10 @@ export function buildClaudeCommand({
   if (!/^https?:\/\//.test(String(gatewayBaseUrl || ""))) {
     throw new RuntimeError("模型网关 base URL 无效", { code: "invalid_base_url" });
   }
+  // Claude Code validates the model against its own allowlist. Custom
+  // providers are selected by the gateway token/config; send a recognized
+  // alias and let the gateway rewrite it to the configured upstream model.
+  const cliModel = String(model).startsWith("claude-") ? String(model) : "claude-sonnet-4-20250514";
   return {
     command,
     args: [
@@ -155,7 +159,7 @@ export function buildClaudeCommand({
       "stream-json",
       "--verbose",
       "--model",
-      String(model),
+      cliModel,
       "--max-turns",
       String(Math.max(1, Math.trunc(maxTurns))),
       "--permission-mode",
@@ -165,7 +169,7 @@ export function buildClaudeCommand({
       "--dangerously-skip-permissions",
     ],
     cwd: workspace,
-    env: childEnv({ runtimeHome, gatewayBaseUrl, gatewayToken, model }),
+    env: childEnv({ runtimeHome, gatewayBaseUrl, gatewayToken, model: cliModel }),
     executionImageDigest,
   };
 }
@@ -302,18 +306,29 @@ export async function runClaudeCode({
   });
   child.stdout.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
   child.stderr.on("data", (chunk) => errors.push(Buffer.from(chunk)));
+  let killTimer = null;
   const timer = setTimeout(() => {
     try {
       child.kill("SIGTERM");
     } catch {
       // process already exited
     }
+    // Claude Code can ignore SIGTERM while a gateway stream is open; make the
+    // timeout terminal so the enclosing container exits instead of hanging.
+    killTimer = setTimeout(() => {
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // process already exited
+      }
+    }, 5_000);
   }, timeoutMs);
   const exitCode = await new Promise((resolvePromise, reject) => {
     child.on("error", reject);
     child.on("close", (code) => resolvePromise(code ?? 1));
   });
   clearTimeout(timer);
+  if (killTimer) clearTimeout(killTimer);
   const stdout = Buffer.concat(chunks).toString("utf8");
   const stderr = Buffer.concat(errors).toString("utf8");
   writeFileSync(stdoutPath, stdout);

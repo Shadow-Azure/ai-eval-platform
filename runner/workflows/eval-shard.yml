@@ -1,7 +1,7 @@
 # Reference template for the private runner repository.
 # M2-05: the platform owns dispatch/token/OSS — the workflow only validates
 # the dispatch payload and executes the synthetic task. The short-lived task
-# token arrives with the manifest (X-Runner-Task-Token) and never enters the
+# token arrives with the manifest (X-Runner-TaskToken) and never enters the
 # workflow env; presigned PUTs carry the object-store credential in the URL.
 # Do not commit real values here.
 name: eval-shard
@@ -39,7 +39,7 @@ jobs:
           mkdir -p "$RUNNER_STATE_DIR" "$RUNNER_OBJECT_ROOT"
           printf '%s' "$DISPATCH_PAYLOAD" > "$RUNNER_TEMP/dispatch.json"
           node runner/lib/contracts.mjs dispatch "$RUNNER_TEMP/dispatch.json"
-          node runner/scripts/synthetic-task.mjs \
+          node runner/scripts/real-task.mjs \
             --dispatch "$RUNNER_TEMP/dispatch.json" \
             --state-dir "$RUNNER_STATE_DIR" \
             --object-store-root "$RUNNER_OBJECT_ROOT"

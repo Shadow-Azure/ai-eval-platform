@@ -4,7 +4,7 @@
 # loop. The platform worker POSTs a repository_dispatch whose client_payload
 # satisfies runner-contract/schemas/v1/dispatch.schema.json; the job validates
 # it, fetches the shard manifest from the platform (which also issues the
-# attempt-scoped short-term token via X-Runner-Task-Token) and executes the
+# attempt-scoped short-term token via X-Runner-TaskToken) and executes the
 # deterministic synthetic task. Result objects are uploaded through platform
 # presigned URLs (RUNNER_PRESIGN_UPLOADS=1) and the terminal callbacks persist
 # run/case/attempt state.
@@ -92,7 +92,7 @@ jobs:
           RUNNER_OBJECT_ROOT: ${{ runner.temp }}/eval-objects
         run: |
           set -euo pipefail
-          node runner/scripts/synthetic-task.mjs \
+          node runner/scripts/real-task.mjs \
             --dispatch "$RUNNER_TEMP/eval-dispatch/dispatch.json" \
             --state-dir "$RUNNER_STATE_DIR" \
             --object-store-root "$RUNNER_OBJECT_ROOT"
