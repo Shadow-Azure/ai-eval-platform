@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Literal
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Response
 from pydantic import BaseModel, Field, model_validator
@@ -376,7 +377,7 @@ def case_callback(
         "failed": case_attempts.handle_failed,
     }[action]
     kwargs: dict[str, Any] = {"payload": payload}
-    if action == "failed":
+    if action in ("failed", "completed"):
         kwargs["settings"] = settings
     try:
         result = handler(session, **kwargs)
@@ -494,13 +495,120 @@ def shard_manifest(
             "X-Runner-Model-Anthropic-Base-Url": f"{gateway_base}/model-gateway/anthropic",
         }
     manifest_text = row.payload_json["manifest_text"]
+    tasks_query = urlencode(
+        {"eval_run_id": eval_run_id, "attempt": attempt, "dispatch_key": dispatch_key}
+    )
+    tasks_url = (
+        f"{settings.runner_callback_base_url.rstrip('/')}"
+        f"/runner/v1/shards/{shard_id}/tasks?{tasks_query}"
+    )
     return Response(
         content=manifest_text,
         media_type="application/json",
         headers={
             "X-Runner-Task-Token": token,
+            "X-Runner-Tasks-Url": tasks_url,
             "Cache-Control": "no-store",
             "X-Shard-Dispatch-Key": dispatch_key,
             **model_headers,
         },
     )
+
+
+@router.get("/runner/v1/shards/{shard_id}/tasks")
+def shard_tasks(
+    shard_id: str,
+    eval_run_id: Annotated[str, Query()],
+    attempt: Annotated[int, Query(ge=1)],
+    dispatch_key: Annotated[str, Query()],
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+    token_claims: dict | None = Depends(require_case_token),
+) -> dict:
+    """Frozen per-case task view for the runner (M3-04).
+
+    The task manifest stays contract v1 (opaque case IDs); this companion reads
+    the problem statement, repo/base commit and scoring materials under the
+    same attempt-bound short-term token.
+    """
+
+    row = session.scalar(
+        select(Outbox).where(
+            Outbox.topic == SHARD_DISPATCH_TOPIC,
+            Outbox.dispatch_key == dispatch_key,
+        )
+    )
+    expected_key = f"{eval_run_id}:{shard_id}:{attempt}"
+    if (
+        row is None
+        or row.dispatch_key != expected_key
+        or row.payload_json.get("shard_id") != shard_id
+        or int(row.payload_json.get("attempt", -1)) != attempt
+    ):
+        raise HTTPException(
+            status_code=404,
+            detail=error_detail("shard_dispatch_not_found", "分片派发记录不存在"),
+        )
+    run = session.get(EvalRun, row.aggregate_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=error_detail("evaluation_not_found", "评测不存在"))
+    cases = list(
+        session.scalars(
+            select(EvalCaseRun)
+            .where(EvalCaseRun.eval_run_id == run.id)
+            .order_by(EvalCaseRun.ordinal)
+        )
+    )
+    shard_cases = [
+        case
+        for case in cases
+        if session.scalar(
+            select(EvalCaseAttempt.id).where(
+                EvalCaseAttempt.eval_case_run_id == case.id,
+                EvalCaseAttempt.shard_id == shard_id,
+                EvalCaseAttempt.attempt_no == attempt,
+            )
+        )
+        is not None
+    ]
+    if not shard_cases:
+        raise HTTPException(status_code=404, detail=error_detail("shard_cases_not_found", "分片没有用例"))
+    first_attempt = session.scalar(
+        select(EvalCaseAttempt).where(
+            EvalCaseAttempt.eval_case_run_id == shard_cases[0].id,
+            EvalCaseAttempt.shard_id == shard_id,
+            EvalCaseAttempt.attempt_no == attempt,
+        )
+    )
+    _check_token_bindings(token_claims, case_run=shard_cases[0], attempt=first_attempt)
+    gateway_base = settings.runner_callback_base_url.rstrip("/")
+    return {
+        "ok": True,
+        "eval_run_id": run.id,
+        "shard_id": shard_id,
+        "attempt": attempt,
+        "runtime": {
+            "key": run.runtime_key or "claude-code",
+            "version": run.runtime_version,
+        },
+        "model": {
+            "name": run.model_name,
+            "openai_base_url": f"{gateway_base}/model-gateway/v1",
+            "anthropic_base_url": f"{gateway_base}/model-gateway/anthropic",
+        },
+        "execution_image_digest": run.execution_image_digest,
+        "scoring_image_digest": run.scoring_image_digest,
+        "asset_snapshot": run.asset_snapshot_json or {},
+        "cases": [
+            {
+                "case_run_id": case.id,
+                "case_key": case.case_key,
+                "prompt": (case.task_json or {}).get("problem_statement", ""),
+                "repo": (case.task_json or {}).get("repo"),
+                "base_commit": (case.task_json or {}).get("base_commit"),
+                "test_patch": (case.task_json or {}).get("test_patch"),
+                "expected_metrics": (case.task_json or {}).get("expected_metrics", {}),
+            }
+            for case in shard_cases
+        ],
+    }

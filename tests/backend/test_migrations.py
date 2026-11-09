@@ -56,6 +56,10 @@ EXPECTED_TABLES = {
     "credential",
     "model_config",
     "model_usage",
+    # M3-04 真实评测结果与测试级打点
+    "score_artifact",
+    "test_case_result",
+    "metric_result",
 }
 
 

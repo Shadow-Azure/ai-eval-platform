@@ -22,6 +22,9 @@ from sqlalchemy.orm import Session
 from ..config import Settings
 from ..defaults import DEFAULT_PROJECT_ID, DEFAULT_TENANT_ID
 from ..models import (
+    Dataset,
+    DatasetCase,
+    DatasetVersion,
     EvalCaseAttempt,
     EvalCaseRun,
     EvalEvent,
@@ -96,6 +99,14 @@ def create_synthetic_evaluation(
     model_config_id: str | None = None,
     model_name: str | None = None,
     model_budget_usd: Decimal | float | str | None = None,
+    dataset_version_id: str | None = None,
+    runtime_key: str | None = None,
+    runtime_version: str | None = None,
+    resource_pool_id: str | None = None,
+    scoring_image_digest: str | None = None,
+    execution_image_digest: str | None = None,
+    asset_snapshot_json: dict | None = None,
+    consistency_json: dict | None = None,
     settings: Settings | None = None,
     now: datetime | None = None,
 ) -> tuple[EvalRun, bool]:
@@ -107,7 +118,6 @@ def create_synthetic_evaluation(
 
     settings = settings or Settings()
     now = _now(now)
-    cleaned = _clean_case_keys(case_keys, settings)
     shard_size = shard_size if shard_size is not None else 64
     if not isinstance(shard_size, int) or not 1 <= shard_size <= 256:
         raise EvaluationInvalid("shard_size 必须在 1..256 之间", field="shard_size")
@@ -141,6 +151,51 @@ def create_synthetic_evaluation(
     if existing is not None:
         return existing, False
 
+    case_specs: list[dict] = []
+    if dataset_version_id:
+        version = session.get(DatasetVersion, dataset_version_id)
+        if version is None or version.tenant_id != tenant_id:
+            raise EvaluationInvalid("数据集版本不存在", field="dataset_version_id")
+        dataset = session.get(Dataset, version.dataset_id)
+        if dataset is None or dataset.tenant_id != tenant_id:
+            raise EvaluationInvalid("数据集不存在", field="dataset_version_id")
+        if version.status != "active" or version.case_count <= 0:
+            raise EvaluationInvalid("数据集版本不可用", field="dataset_version_id")
+        cases = list(
+            session.scalars(
+                select(DatasetCase)
+                .where(DatasetCase.dataset_version_id == version.id)
+                .order_by(DatasetCase.ordinal)
+                .limit(settings.eval_max_cases)
+            )
+        )
+        if not cases:
+            raise EvaluationInvalid("数据集版本没有用例", field="dataset_version_id")
+        case_specs = [
+            {
+                "case_key": case.case_key,
+                "dataset_case_id": case.id,
+                "ordinal": case.ordinal or index + 1,
+                "task_json": {
+                    "case_key": case.case_key,
+                    "problem_statement": case.problem_statement,
+                    "repo": case.repo,
+                    "base_commit": case.base_commit,
+                    "test_patch": case.test_patch,
+                    "expected_metrics": case.expected_metrics_json,
+                },
+            }
+            for index, case in enumerate(cases)
+        ]
+        name = name or dataset.name
+    else:
+        cleaned = _clean_case_keys(case_keys, settings)
+        case_specs = [
+            {"case_key": key, "dataset_case_id": key, "ordinal": index + 1, "task_json": {}}
+            for index, key in enumerate(cleaned)
+        ]
+    total_cases = len(case_specs)
+
     run = EvalRun(
         tenant_id=tenant_id,
         project_id=project_id,
@@ -148,11 +203,19 @@ def create_synthetic_evaluation(
         status="queued",
         requested_concurrency=1,
         shard_size=shard_size,
-        total_cases=len(cleaned),
-        queued_count=len(cleaned),
+        total_cases=total_cases,
+        queued_count=total_cases,
         model_config_id=model_config_id,
         model_name=model_name,
         model_budget_usd=budget,
+        dataset_version_id=dataset_version_id,
+        runtime_key=runtime_key,
+        runtime_version=runtime_version,
+        resource_pool_id=resource_pool_id,
+        scoring_image_digest=scoring_image_digest,
+        execution_image_digest=execution_image_digest,
+        asset_snapshot_json=asset_snapshot_json or {},
+        consistency_json=consistency_json or {},
         idempotency_key=idempotency_key[:128],
         created_by=created_by[:128],
         max_attempts=2,
@@ -163,7 +226,7 @@ def create_synthetic_evaluation(
     shard_payloads = build_shard_dispatches(
         session,
         run=run,
-        case_keys=cleaned,
+        case_specs=case_specs,
         shard_size=shard_size,
         settings=settings,
         now=now,
@@ -181,6 +244,7 @@ def create_synthetic_evaluation(
                 "case_count": run.total_cases,
                 "shard_count": len(shard_payloads.outbox_rows),
                 "shard_size": shard_size,
+                "dataset_version_id": dataset_version_id,
             },
         )
     )
@@ -198,7 +262,7 @@ def build_shard_dispatches(
     session: Session,
     *,
     run: EvalRun,
-    case_keys: list[str],
+    case_specs: list[dict],
     shard_size: int,
     settings: Settings,
     now: datetime,
@@ -213,19 +277,20 @@ def build_shard_dispatches(
     deadline = now + timedelta(minutes=settings.eval_shard_deadline_minutes)
     expires_at = now + timedelta(seconds=settings.eval_shard_ttl_seconds)
 
-    for shard_index, start in enumerate(range(0, len(case_keys), shard_size)):
-        chunk = case_keys[start : start + shard_size]
+    for shard_index, start in enumerate(range(0, len(case_specs), shard_size)):
+        chunk = case_specs[start : start + shard_size]
         shard_id = f"shard_{shard_index:03d}"
         dispatch_key = f"{run.id}:{shard_id}:1"
 
         case_runs: list[EvalCaseRun] = []
-        for offset, case_key in enumerate(chunk):
+        for offset, spec in enumerate(chunk):
             case_run = EvalCaseRun(
                 tenant_id=tenant_id,
                 eval_run_id=run.id,
-                dataset_case_id=case_key[:128],
-                case_key=case_key[:200],
-                ordinal=start + offset + 1,
+                dataset_case_id=str(spec.get("dataset_case_id") or spec["case_key"])[:128],
+                case_key=str(spec["case_key"])[:200],
+                ordinal=int(spec.get("ordinal") or start + offset + 1),
+                task_json=spec.get("task_json") or {},
             )
             session.add(case_run)
             case_runs.append(case_run)
@@ -353,6 +418,11 @@ def evaluation_summary(run: EvalRun) -> dict:
         "model_config_id": run.model_config_id,
         "model_name": run.model_name,
         "model_budget_usd": str(run.model_budget_usd) if run.model_budget_usd is not None else None,
+        "dataset_version_id": run.dataset_version_id,
+        "runtime_key": run.runtime_key,
+        "runtime_version": run.runtime_version,
+        "execution_image_digest": run.execution_image_digest,
+        "scoring_image_digest": run.scoring_image_digest,
         "created_at": _iso(run.created_at),
         "started_at": _iso(run.started_at),
         "finished_at": _iso(run.finished_at),

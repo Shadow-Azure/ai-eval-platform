@@ -35,6 +35,10 @@ export interface EvaluationSummary {
   finished_at: string | null;
   idempotency_key: string;
   created_by: string;
+  dataset_version_id?: string | null;
+  runtime_key?: string | null;
+  model_name?: string | null;
+  execution_image_digest?: string | null;
 }
 
 export interface EvaluationCase {
@@ -85,9 +89,76 @@ export interface EvaluationListResponse {
 
 export interface CreateEvaluationRequest {
   name?: string;
-  case_keys: string[];
+  case_keys?: string[];
   shard_size?: number;
   idempotency_key?: string;
+  dataset_version_id?: string;
+  model_config_id?: string;
+  model_name?: string;
+  runtime_key?: string;
+  runtime_version?: string;
+  resource_pool_id?: string;
+  scoring_image_digest?: string;
+  execution_image_digest?: string;
+  assets_resolved?: boolean;
+}
+
+export interface PreflightIssue {
+  code: string;
+  message: string;
+  field?: string;
+  details?: Record<string, unknown>;
+}
+
+export interface PrepareResponse {
+  ready: boolean;
+  blockers: PreflightIssue[];
+  warnings: PreflightIssue[];
+}
+
+export interface PrepareRequest {
+  dataset_version_id: string;
+  model_config_id: string;
+  model_name?: string;
+  runtime_key?: string;
+  runtime_version?: string;
+  resource_pool_id: string;
+  requested_concurrency?: number;
+  scoring_image_digest?: string;
+  execution_image_digest?: string;
+  assets_resolved?: boolean;
+}
+
+export interface MetricResult {
+  metric_key: string;
+  metric_version: number;
+  display_name: string;
+  description: string | null;
+  formula_text: string | null;
+  display_kind: string;
+  unit: string | null;
+  direction: string;
+  denominator_policy: string | null;
+  value: unknown;
+  numerator: string | null;
+  denominator: string | null;
+  is_final: boolean;
+  generated_at: string | null;
+}
+
+export interface CaseTestResult {
+  id: string;
+  suite_name: string;
+  test_name: string;
+  outcome: string;
+  native_status: string;
+  test_group: string;
+  expected: boolean;
+  duration_ms: number | null;
+  file_path: string | null;
+  line_no: number | null;
+  failure_message: string | null;
+  log_object_key: string | null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -112,7 +183,7 @@ function errorInfo(payload: unknown): { code: string | null; message: string | n
   };
 }
 
-async function request(path: string, init?: RequestInit): Promise<unknown> {
+export async function request(path: string, init?: RequestInit): Promise<unknown> {
   let response: Response;
   try {
     response = await fetch(path, {
@@ -172,6 +243,10 @@ export function parseEvaluationSummary(payload: unknown): EvaluationSummary {
     finished_at: readOptionalString(payload.finished_at),
     idempotency_key: readString(payload.idempotency_key),
     created_by: readString(payload.created_by),
+    dataset_version_id: readOptionalString(payload.dataset_version_id),
+    runtime_key: readOptionalString(payload.runtime_key),
+    model_name: readOptionalString(payload.model_name),
+    execution_image_digest: readOptionalString(payload.execution_image_digest),
   };
 }
 
@@ -277,4 +352,159 @@ export async function cancelEvaluation(runId: string): Promise<EvaluationSummary
   return parseEvaluationSummary(
     await request(`/api/v1/evaluations/${runId}/cancel`, { method: "POST" }),
   );
+}
+
+
+export function parsePrepare(payload: unknown): PrepareResponse {
+  if (!isRecord(payload) || typeof payload.ready !== "boolean") {
+    throw new ApiError("控制面返回了无法识别的预检结果", { code: "invalid_response" });
+  }
+  const issues = (value: unknown): PreflightIssue[] =>
+    Array.isArray(value)
+      ? value.map((entry) => {
+          const item = (entry ?? {}) as Record<string, unknown>;
+          return {
+            code: readString(item.code),
+            message: readString(item.message),
+            field: readOptionalString(item.field) ?? undefined,
+            details: isRecord(item.details) ? item.details : undefined,
+          };
+        })
+      : [];
+  return {
+    ready: payload.ready,
+    blockers: issues(payload.blockers),
+    warnings: issues(payload.warnings),
+  };
+}
+
+export async function prepareEvaluation(body: PrepareRequest): Promise<PrepareResponse> {
+  return parsePrepare(
+    await request(`/api/v1/evaluations/prepare`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  );
+}
+
+export async function fetchEvaluationResults(
+  runId: string,
+  signal?: AbortSignal,
+): Promise<{ is_final: boolean; items: MetricResult[] }> {
+  const payload = await request(`/api/v1/eval-runs/${runId}/results`, { signal });
+  if (!isRecord(payload) || !Array.isArray(payload.items)) {
+    throw new ApiError("控制面返回了无法识别的结果数据", { code: "invalid_response" });
+  }
+  return {
+    is_final: Boolean(payload.is_final),
+    items: payload.items.map((entry) => {
+      const item = (entry ?? {}) as Record<string, unknown>;
+      return {
+        metric_key: readString(item.metric_key),
+        metric_version: readCount(item.metric_version, "metric_version"),
+        display_name: readString(item.display_name),
+        description: readOptionalString(item.description),
+        formula_text: readOptionalString(item.formula_text),
+        display_kind: readString(item.display_kind),
+        unit: readOptionalString(item.unit),
+        direction: readString(item.direction),
+        denominator_policy: readOptionalString(item.denominator_policy),
+        value: item.value,
+        numerator: readOptionalString(item.numerator),
+        denominator: readOptionalString(item.denominator),
+        is_final: Boolean(item.is_final),
+        generated_at: readOptionalString(item.generated_at),
+      };
+    }),
+  };
+}
+
+export async function fetchCaseTests(
+  caseRunId: string,
+  signal?: AbortSignal,
+): Promise<{ attempt: number | null; items: CaseTestResult[]; summary: Record<string, number> }> {
+  const payload = await request(`/api/v1/eval-case-runs/${caseRunId}/tests`, { signal });
+  if (!isRecord(payload) || !Array.isArray(payload.items)) {
+    throw new ApiError("控制面返回了无法识别的测试结果", { code: "invalid_response" });
+  }
+  return {
+    attempt: typeof payload.attempt === "number" ? payload.attempt : null,
+    summary: isRecord(payload.summary)
+      ? Object.fromEntries(
+          Object.entries(payload.summary).filter((entry): entry is [string, number] => typeof entry[1] === "number"),
+        )
+      : {},
+    items: payload.items.map((entry) => {
+      const item = (entry ?? {}) as Record<string, unknown>;
+      return {
+        id: readString(item.id),
+        suite_name: readString(item.suite_name),
+        test_name: readString(item.test_name),
+        outcome: readString(item.outcome),
+        native_status: readString(item.native_status),
+        test_group: readString(item.test_group),
+        expected: Boolean(item.expected),
+        duration_ms: typeof item.duration_ms === "number" ? item.duration_ms : null,
+        file_path: readOptionalString(item.file_path),
+        line_no: typeof item.line_no === "number" ? item.line_no : null,
+        failure_message: readOptionalString(item.failure_message),
+        log_object_key: readOptionalString(item.log_object_key),
+      };
+    }),
+  };
+}
+
+/** Stream SSE events; replays from the DB using the snapshot cursor. */
+export async function streamEvaluationEvents(
+  runId: string,
+  afterId: number,
+  onEvent: (event: EvaluationEvent) => void,
+  signal: AbortSignal,
+): Promise<void> {
+  const response = await fetch(
+    `/api/v1/evaluations/${runId}/events/stream?after_id=${encodeURIComponent(String(afterId))}`,
+    { signal, credentials: "same-origin", headers: { Accept: "text/event-stream" } },
+  );
+  if (!response.ok || !response.body) {
+    throw new ApiError(`事件流连接失败（HTTP ${response.status}）`, {
+      status: response.status,
+      code: "stream_failed",
+    });
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let boundary = buffer.indexOf("\n\n");
+    while (boundary >= 0) {
+      const block = buffer.slice(0, boundary);
+      buffer = buffer.slice(boundary + 2);
+      boundary = buffer.indexOf("\n\n");
+      const dataLines: string[] = [];
+      let type = "message";
+      for (const line of block.split("\n")) {
+        if (line.startsWith("event:")) type = line.slice(6).trim();
+        if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+      }
+      if (dataLines.length === 0) continue;
+      try {
+        const item = JSON.parse(dataLines.join("\n")) as Record<string, unknown>;
+        onEvent({
+          id: readCount(item.id, "id"),
+          event_type: readString(item.event_type) || type,
+          case_run_id: readOptionalString(item.case_run_id),
+          attempt_no: typeof item.attempt_no === "number" ? item.attempt_no : null,
+          sequence: readCount(item.sequence, "sequence"),
+          payload: isRecord(item.payload) ? item.payload : {},
+          occurred_at: readOptionalString(item.occurred_at),
+        });
+      } catch {
+        // Ignore a partial/malformed event; the snapshot remains authoritative.
+      }
+    }
+  }
 }

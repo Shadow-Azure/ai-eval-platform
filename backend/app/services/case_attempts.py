@@ -19,14 +19,24 @@ Rules pinned by tests/backend/test_case_callbacks.py:
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..config import Settings, get_settings
-from ..models import EvalCaseAttempt, EvalCaseRun, EvalEvent, EvalRun, Outbox
+from ..models import (
+    DatasetVersionMetric,
+    EvalCaseAttempt,
+    EvalCaseRun,
+    EvalEvent,
+    EvalRun,
+    MetricDefinition,
+    Outbox,
+)
 from ..runner_contracts import validate_payload
+from ..scoring.service import ingest_score_report, recompute_metrics
 from . import evaluations
 from .evaluations import refresh_run_progress
 from .object_store import ObjectMissing, ObjectSizeMismatch, object_store_from_settings
@@ -316,7 +326,58 @@ def handle_uploads(session: Session, *, payload: dict, now: datetime | None = No
 # ---------------------------------------------------------------------------
 
 
-def handle_completed(session: Session, *, payload: dict, now: datetime | None = None) -> dict:
+def _ingest_report_and_metrics(
+    session: Session, ctx: CaseContext, payload: dict, settings: Settings | None
+) -> None:
+    if settings is None:
+        return
+    store = object_store_from_settings(settings)
+    if store is None:
+        return
+    manifest = payload["score_manifest"]
+    try:
+        raw = store.get_bytes(manifest["object_key"])
+        report = json.loads(raw)
+    except Exception:  # noqa: BLE001 - scoring must not fail the callback
+        # The object was already HEAD-verified; a transport/parse hiccup here
+        # must not rewrite the runner's completion status.
+        return
+    try:
+        ingest_score_report(
+            session,
+            case_run=ctx.case_run,
+            attempt=ctx.attempt,
+            report=report,
+            object_key=manifest["object_key"],
+        )
+    except Exception as exc:  # noqa: BLE001 - keep the completion auditable
+        ctx.case_run.result_status = "not_scored"
+        ctx.case_run.error_summary = f"评分报告解析失败：{type(exc).__name__}"[:1000]
+        return
+    if ctx.run.dataset_version_id:
+        definitions = list(
+            session.scalars(
+                select(MetricDefinition)
+                .join(
+                    DatasetVersionMetric,
+                    DatasetVersionMetric.metric_definition_id == MetricDefinition.id,
+                )
+                .where(
+                    DatasetVersionMetric.dataset_version_id == ctx.run.dataset_version_id
+                )
+            )
+        )
+        terminal = ctx.run.status in ("completed", "partial", "failed", "cancelled")
+        recompute_metrics(session, run=ctx.run, definitions=definitions, is_final=terminal)
+
+
+def handle_completed(
+    session: Session,
+    *,
+    payload: dict,
+    now: datetime | None = None,
+    settings: Settings | None = None,
+) -> dict:
     now = now or datetime.now(UTC)
     ctx = resolve_context(session, case_run_id=payload["case_run_id"], attempt_no=payload["attempt"])
 
@@ -363,6 +424,7 @@ def handle_completed(session: Session, *, payload: dict, now: datetime | None = 
         },
     )
     refresh_run_progress(session, ctx.run, now=now)
+    _ingest_report_and_metrics(session, ctx, payload, settings)
     session.commit()
     return {"ok": True, "deduped": False, "status": ctx.attempt.status}
 

@@ -2,18 +2,17 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import { RequireAuth } from "./auth";
 import { AppShell } from "../components/AppShell";
 import { PlaceholderPage } from "../components/PlaceholderPage";
+import { DatasetDetailPage } from "../pages/DatasetDetailPage";
+import { DatasetImportPage } from "../pages/DatasetImportPage";
+import { DatasetsPage } from "../pages/DatasetsPage";
+import { EvalDetailPage } from "../pages/EvalDetailPage";
+import { EvalWizardPage } from "../pages/EvalWizardPage";
 import { EvalsPage } from "../pages/EvalsPage";
 import { LoginPage } from "../pages/LoginPage";
 import { NotFoundPage } from "../pages/NotFoundPage";
 import { OverviewPage } from "../pages/OverviewPage";
 
 const placeholders = [
-  {
-    path: "datasets",
-    eyebrow: "Configuration · Datasets",
-    title: "数据集",
-    description: "管理数据集来源、版本与用例，冻结每次评测使用的输入快照。",
-  },
   {
     path: "assets",
     eyebrow: "Configuration · Agent assets",
@@ -33,12 +32,6 @@ const placeholders = [
     description: "管理资源连接、供给模式与 Runner 在线容量。",
   },
   {
-    path: "evals/new",
-    eyebrow: "Evaluation · Launch",
-    title: "发起评测",
-    description: "组合数据集、Agent 资产、模型与资源池，冻结输入后创建评测。",
-  },
-  {
     path: "deployments",
     eyebrow: "Delivery · Deployments",
     title: "交付流水线",
@@ -55,6 +48,11 @@ export function AppRoutes() {
           <Route index element={<Navigate to="/overview" replace />} />
           <Route path="/overview" element={<OverviewPage />} />
           <Route path="/evals" element={<EvalsPage />} />
+          <Route path="/evals/new" element={<EvalWizardPage />} />
+          <Route path="/evals/:runId" element={<EvalDetailPage />} />
+          <Route path="/datasets" element={<DatasetsPage />} />
+          <Route path="/datasets/import" element={<DatasetImportPage />} />
+          <Route path="/datasets/:datasetId" element={<DatasetDetailPage />} />
           {placeholders.map((page) => (
             <Route
               key={page.path}

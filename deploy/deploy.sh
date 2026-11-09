@@ -44,6 +44,8 @@ ensure_secret AUTH_SESSION_SECRET
 # the gateway signs runner tokens with its own secret.
 ensure_fernet_secret SECRET_BOX_KEY
 ensure_secret GATEWAY_TOKEN_SECRET
+# Runner-plane case/attempt tokens (M2-05/M3-04).
+ensure_secret RUNNER_TASK_SECRET
 if ! grep -q '^AUTH_BOOTSTRAP_ADMIN_PASSWORD=.' "$ENV_FILE" 2>/dev/null; then
   echo "deploy: WARNING AUTH_BOOTSTRAP_ADMIN_PASSWORD is not set; the console will have no login account until it is provisioned" >&2
 fi

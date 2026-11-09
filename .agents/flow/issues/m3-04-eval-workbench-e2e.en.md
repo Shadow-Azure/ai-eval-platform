@@ -6,7 +6,7 @@ English | [中文](m3-04-eval-workbench-e2e.md)
 kind: issue
 milestone: m3
 priority: P0
-status: ready
+status: in-progress
 scope:
   - .agents/flow/issues/m3-04-eval-workbench-e2e.*
   - web/**
@@ -14,6 +14,10 @@ scope:
   - deploy/**
   - tests/**
   - reports/**
+  - runner/**
+  - runner-contract/**
+  - .github/workflows/eval-shard.yml
+  - .github/workflows/deploy.yml
 adr: []
 github:
   number: 48
