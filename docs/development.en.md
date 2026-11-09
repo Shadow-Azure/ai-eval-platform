@@ -2,13 +2,18 @@
 
 English | [中文](development.md)
 
-This repository currently depends only on Node.js for documentation and workflow gates. The initial project has no third-party npm dependencies, so no package installation step is required.
+The standing gates depend on Node.js, while the control plane and backend tests depend on Python 3.12; install with `npm install` and `uv pip install --python .venv/bin/python -e ".[dev]"` respectively.
 
 ## Environment
 
 - Node.js 22 or newer.
+- Python 3.12 or newer for the control plane, migrations, and pytest.
 - Git for pairing blob hashes, workflow diffs, and commit hooks.
 - Online workflow verification additionally needs an authenticated GitHub CLI and `FLOW_TOKEN`.
+
+## Identity configuration
+
+Console login needs the session signing secret `AUTH_SESSION_SECRET`, which is required in production and generated once into the host `.env` by the deploy script; local development may omit it. The default administrator is created idempotently by `python -m app.seed` from `AUTH_BOOTSTRAP_ADMIN_EMAIL` and `AUTH_BOOTSTRAP_ADMIN_PASSWORD`, while production deployment runs `python -m app.manage create-admin --password-stdin` from GitHub Secrets. `python -m app.manage set-password --email <email> --password-stdin` resets a password while revoking that account's active sessions.
 
 ## Common commands
 

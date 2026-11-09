@@ -67,6 +67,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: production
+    env:
+      AUTH_BOOTSTRAP_ADMIN_EMAIL: ${{ secrets.AUTH_BOOTSTRAP_ADMIN_EMAIL }}
+      AUTH_BOOTSTRAP_ADMIN_PASSWORD: ${{ secrets.AUTH_BOOTSTRAP_ADMIN_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
       - name: Install SSH key
@@ -99,5 +102,11 @@ jobs:
         run: |
           ssh "root@${{ secrets.ECS_HOST }}" \
             "cd /opt/ai-eval-platform && API_IMAGE='$API_IMAGE' WEB_IMAGE='$WEB_IMAGE' GIT_COMMIT='$GIT_COMMIT' DEPLOY_TRIGGERED_BY='$DEPLOY_TRIGGERED_BY' bash deploy/deploy.sh"
+      - name: Provision initial administrator
+        if: env.AUTH_BOOTSTRAP_ADMIN_PASSWORD != ''
+        run: |
+          printf '%s' "$AUTH_BOOTSTRAP_ADMIN_PASSWORD" \
+            | ssh "root@${{ secrets.ECS_HOST }}" \
+              "cd /opt/ai-eval-platform && docker compose --env-file .env -f deploy/docker-compose.prod.yml exec -T api python -m app.manage create-admin --email '${AUTH_BOOTSTRAP_ADMIN_EMAIL:-admin@acme.local}' --password-stdin"
       - name: Verify public health
         run: curl -fsS "http://${{ secrets.ECS_HOST }}:8080/readyz"

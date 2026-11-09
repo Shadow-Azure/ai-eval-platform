@@ -28,6 +28,20 @@ class Settings(BaseSettings):
     default_workspace_slug: str = "default"
     default_project_slug: str = "default"
 
+    # M3-05 console identity. The session cookie carries an HMAC-signed opaque
+    # token; only its SHA-256 hash is stored. Production must configure
+    # AUTH_SESSION_SECRET (the deploy script generates one on first rollout).
+    auth_session_secret: str | None = None
+    auth_session_ttl_hours: int = 12
+    auth_session_remember_days: int = 30
+    auth_cookie_name: str = "eval_session"
+    # Plain-HTTP deployments must keep this false; set true behind TLS.
+    auth_cookie_secure: bool = False
+    # First administrator bootstrap. The password is required for initial
+    # provisioning; seed never overwrites an existing account's password.
+    auth_bootstrap_admin_email: str = "admin@acme.local"
+    auth_bootstrap_admin_password: str | None = None
+
     worker_poll_seconds: float = 5.0
     worker_heartbeat_path: str = "/tmp/eval-worker-heartbeat"
 
@@ -68,6 +82,24 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
+    def session_secret(self) -> str:
+        """Signing secret for session cookies.
+
+        Production deployments must provide AUTH_SESSION_SECRET; the deploy
+        script generates and persists one on first rollout. Local development
+        and tests fall back to a fixed non-secret value.
+        """
+
+        if self.auth_session_secret:
+            return self.auth_session_secret
+        if self.environment.lower() in {"production", "prod"}:
+            raise RuntimeError(
+                "AUTH_SESSION_SECRET is required in production; refusing to start with "
+                "the development fallback"
+            )
+        return "development-only-auth-session-secret"
 
 
 @lru_cache

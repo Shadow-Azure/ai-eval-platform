@@ -47,6 +47,11 @@ EXPECTED_TABLES = {
     "dataset_import",
     "metric_definition",
     "dataset_version_metric",
+    # M3-05 账号与会话（design 05 §3）
+    "user",
+    "membership",
+    "auth_session",
+    "audit_log",
 }
 
 

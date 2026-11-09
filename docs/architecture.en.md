@@ -2,19 +2,20 @@
 
 English | [中文](architecture.md)
 
-The repository is in the initialization stage of an AI evaluation platform. M2 starts the execution foundation: `runner-contract/` and `runner/` freeze the Runner task protocol first, while the control plane, database, and delivery pipeline are added milestone by milestone.
+The repository is in M3: the execution foundation is in place, the control plane is starting to carry real datasets, the model gateway, and the execution runtime, and account-password login first narrows access.
 
 ## Components
 
 | Area | Responsibility | Boundary |
 |---|---|---|
 | `docs/` | Current facts, development method, and bilingual contract | No roadmaps or decision debates |
-| `.agents/flow/` | roadmap, milestone, issue state machine, and acceptance boundaries | Stores flow state only, not implementation details |
-| `.agents/skills/` | Task skills and templates synchronized from StudyWiki | Outside bilingual pairing |
+| `.agents/flow/` | roadmap, milestone, issue state machine | Flow state only |
 | `scripts/` | Mechanical documentation and workflow gates | Not product runtime |
-| `.github/workflows/` | CI decisions for docs and flow | No external publishing |
-| `runner-contract/` | Versioned Runner dispatch, manifest, heartbeat, and callback schemas | Contract only, not platform runtime |
-| `runner/` | Reusable workflow template, synthetic task, and local contract tests | No dataset- or agent-specific branches |
+| `.github/workflows/` | CI decisions for docs, flow, tests, and deployment | Not a local debugging substitute |
+| `backend/` | FastAPI control plane, worker, migrations, and identity/dataset/evaluation services | No agent execution and no plaintext secrets |
+| `web/` | React console: login, app shell, and evaluation pages | Reaches the control plane only through same-origin `/api` |
+| `runner-contract/` | Runner dispatch, manifest, heartbeat, and callback schemas | Contract only |
+| `runner/` | Reusable workflow, synthetic task, and contract tests | No dataset- or agent-specific branches |
 
 ## Documentation pipeline
 
@@ -33,13 +34,17 @@ index -> budgets -> wrap -> pairing -> terminology
 
 The Chinese file is `foo.md`, the English side is `foo.en.md`, and the record is `foo.i18n.yaml`. The record stores both blob hashes from the last confirmed state, so drift on either side fails the pairing gate.
 
+## Identity and sessions
+
+Login uses an account and password; passwords are stored as salted scrypt hashes, the session cookie carries an HMAC-signed token with HttpOnly and SameSite=Lax, and the database stores only the token hash and revocation state. `/api/v1/auth/*` manages sessions, `/api/v1/*` business routes require a session, and the Runner plane keeps its own short-lived tokens. Seed creates the default administrator idempotently from `AUTH_BOOTSTRAP_ADMIN_*`, and writes are administrator-only.
+
 ## Runner contract
 
-M2 decouples evaluation execution from datasets and agents: the platform sends only eval_run, shard, attempt, manifest URL, and digest through repository_dispatch; the runner verifies the token, manifest, and digest before execution, then reports heartbeats, upload manifests, and completion or failure callbacks. `runner-contract/` holds the versioned schemas, while `runner/` holds the reusable workflow template, deterministic synthetic task, and local contract tests; real OSS, OIDC, and platform callbacks arrive with later issues.
+M2 decouples execution from datasets and agents: the platform sends eval_run, shard, attempt, manifest URL, and digest through repository_dispatch; the runner verifies them before execution, then reports heartbeats, upload manifests, and completion or failure callbacks. `runner-contract/` holds the versioned schemas, while `runner/` holds the workflow template, synthetic task, and contract tests.
 
 ## Extension points
 
-- When the product runtime and evaluation executor exist, add their components, data flows, and external dependencies here instead of debating design in README.
-- Development tasks proceed through the roadmap, milestones, and issues under `.agents/flow/`; that directory is authoritative for flow state and change scopes.
-- Add platform-specific checks as independent leaves under `scripts/`, combine them in `run-gates`, and wire them explicitly into CI.
-- If documentation volume grows, reorganize layers and budgets before considering a site projection; this repository currently has no VitePress or other generated site.
+- After the product runtime lands, add its components, data flows, and external dependencies here.
+- Development tasks proceed through `.agents/flow/`; that directory is authoritative for flow state and change scopes.
+- Add platform-specific checks as leaves under `scripts/`, combine them in `run-gates`, and wire them into CI.
+- If documentation volume grows, reorganize layers and budgets before considering a site projection.
