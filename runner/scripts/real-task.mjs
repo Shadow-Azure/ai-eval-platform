@@ -132,10 +132,15 @@ function realCase(dispatch, item, task, { modelToken, runnerRoot }) {
     if (!modelToken) throw new Error("manifest 未签发 model token");
     if (!task.model?.anthropic_base_url) throw new Error("tasks 未返回模型网关地址");
 
-    spawnSync("git", ["clone", "--filter=blob:none", `https://github.com/${task.repo}.git`, workdir], {
-      encoding: "utf8",
-      timeout: 600_000,
-    });
+    // The SWE-bench scoring image already contains the repo checkout at the
+    // instance base commit; copy it out instead of cloning from GitHub, which
+    // is not reliably reachable from the fixed runner network.
+    const source = dockerRun(["create", task.scoring_image_digest]).stdout.trim();
+    try {
+      dockerRun(["cp", `${source}:/testbed/.`, workdir], { timeout: 300_000 });
+    } finally {
+      dockerRun(["rm", "-f", source], { allowFailure: true });
+    }
     const checkout = spawnSync("git", ["-C", workdir, "checkout", task.base_commit], {
       encoding: "utf8",
       timeout: 120_000,
