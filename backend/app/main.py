@@ -13,6 +13,7 @@ from .api.model_gateway import router as model_gateway_router
 from .api.operations import router as operations_router
 from .api.overview import router as overview_router
 from .api.results import router as results_router
+from .api.resources import router as resources_router
 from .api.runners import router as runners_router
 from .api.runtimes import router as runtimes_router
 from .config import get_settings
@@ -50,6 +51,9 @@ def create_app() -> FastAPI:
     app.include_router(results_router, dependencies=[Depends(require_session)])
     app.include_router(runtimes_router, dependencies=[Depends(require_session)])
     app.include_router(model_configs_router, dependencies=[Depends(require_session)])
+    # Resource connections/pools: authenticated members may read, administrators
+    # own the writes (enforced per route in the router, M4-03).
+    app.include_router(resources_router, dependencies=[Depends(require_session)])
     # The operations status endpoint also requires the administrator role
     # (enforced in the router); the session dependency is kept for consistency
     # with the other console APIs.

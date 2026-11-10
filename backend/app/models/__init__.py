@@ -35,7 +35,15 @@ from .identity import (
 from .model import CREDENTIAL_KINDS, USAGE_STATUSES, Credential, ModelConfig, ModelUsage
 from .operations import ServiceHeartbeat
 from .outbox import Outbox
-from .resources import ProvisionedInstance, ResourcePool, Runner
+from .resources import (
+    CONNECTION_STATUSES,
+    PROVISIONING_MODES,
+    Connection,
+    ProvisionedInstance,
+    ResourceEvent,
+    ResourcePool,
+    Runner,
+)
 from .scoring import (
     TEST_GROUPS,
     TEST_OUTCOMES,
@@ -61,7 +69,11 @@ __all__ = [
     "AuditLog",
     "Outbox",
     "ServiceHeartbeat",
+    "Connection",
+    "CONNECTION_STATUSES",
+    "PROVISIONING_MODES",
     "ProvisionedInstance",
+    "ResourceEvent",
     "ResourcePool",
     "Runner",
     "EvalRun",

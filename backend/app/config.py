@@ -94,6 +94,11 @@ class Settings(BaseSettings):
     # capacity instead of letting the GitHub queue be the only throttle.
     dispatch_capacity_gate: bool = True
     dispatch_capacity_retry_seconds: float = 10.0
+    # M4-03 spot capacity controller: how often a pool is re-evaluated and how
+    # many instances one tick may create (a bounded batch keeps one worker pass
+    # cheap even when a large queue arrives at once).
+    eval_capacity_check_seconds: int = 300
+    eval_capacity_batch_size: int = 5
     # M4-02 execution lifecycle timeouts (design 06 §7). Five independent
     # clocks instead of one total timeout: platform queue, agent execution,
     # scoring, upload grace period and heartbeat. The agent execution timeout

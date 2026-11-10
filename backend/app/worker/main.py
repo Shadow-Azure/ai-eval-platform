@@ -1,11 +1,12 @@
-"""Worker loop for M2-01/M2-04/M2-05/M4-02.
+"""Worker loop for M2-01/M2-04/M2-05/M4-02/M4-03.
 
 Each poll runs the shard-dispatch outbox (repository_dispatch with retry and
 reconciliation, M2-05), the execution-lifecycle reconciler (five timeouts,
-cancellation finalization and lost-callback backfill, M4-02) and the runner
-offline sweep (M2-04) so stale fixed runners flip to offline, timed-out or
-cancelled attempts reach a diagnosable terminal state and queued shards reach
-GitHub even when nobody queries the API.
+cancellation finalization and lost-callback backfill, M4-02), the spot
+capacity controller (M4-03) and the runner offline sweep (M2-04) so stale
+fixed runners flip to offline, timed-out or cancelled attempts reach a
+diagnosable terminal state and queued shards reach GitHub even when nobody
+queries the API.
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ from sqlalchemy.orm import Session
 from ..config import get_settings
 from ..db import SessionLocal
 from ..models import Outbox
-from ..services import dispatcher, lifecycle, reaper, reconciler
+from ..services import capacity_control, dispatcher, lifecycle, reaper, reconciler
 from ..services.operations import record_worker_heartbeat
 from ..services.runners import sweep_stale_runners
 
@@ -53,6 +54,29 @@ def reconcile_once(session: Session, transport=None, *, now=None) -> dict[str, i
     return reconciler.reconcile(
         session, settings=get_settings(), now=now, transport=transport
     )
+
+
+def capacity_once(session: Session, *, now=None) -> dict[str, int]:
+    """One spot capacity pass over active pools (M4-03 B).
+
+    Never raises for a provider failure: the controller records the reason and
+    the next tick retries. The worker logs only a non-empty pass.
+    """
+
+    counts = capacity_control.reconcile_pools(
+        session, settings=get_settings(), now=now
+    )
+    if any(counts.values()):
+        print(
+            "worker: capacity "
+            f"scanned={counts['scanned']} "
+            f"scaled_up={counts['scaled_up']} "
+            f"scaled_down={counts['scaled_down']} "
+            f"waiting_price={counts['waiting_price']} "
+            f"errors={counts['errors']}",
+            flush=True,
+        )
+    return counts
 
 
 def _handle_signal(_signum: int, _frame: FrameType | None) -> None:
@@ -124,6 +148,11 @@ def main() -> int:
                 )
         except Exception as exc:  # pragma: no cover - retried on the next loop
             print(f"worker: reconcile failed: {exc}", flush=True)
+        try:
+            with SessionLocal() as session:
+                capacity_once(session)
+        except Exception as exc:  # pragma: no cover - retried on the next loop
+            print(f"worker: capacity control failed: {exc}", flush=True)
         try:
             with SessionLocal() as session:
                 swept = sweep_once(session)

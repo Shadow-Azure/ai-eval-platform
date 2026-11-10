@@ -33,8 +33,11 @@ EXPECTED_TABLES = {
     "workspace",
     "project",
     "resource_pool",
+    "connection",
     "runner",
     "provisioned_instance",
+    # M4-03 资源连接与竞价资源池容量事件
+    "resource_event",
     "eval_run",
     "eval_case_run",
     "eval_case_attempt",
