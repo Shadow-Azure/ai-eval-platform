@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Alert, Button, Card, Descriptions, Drawer, Progress, Space, Statistic, Table, Tag, Timeline, message } from "antd";
+import { Alert, Button, Card, Descriptions, Drawer, InputNumber, Modal, Progress, Space, Statistic, Table, Tag, Timeline, message } from "antd";
 import type { TableColumnsType } from "antd";
 import { useNavigate, useParams } from "react-router-dom";
 import {
@@ -10,6 +10,7 @@ import {
   fetchEvaluationDetail,
   fetchEvaluationEvents,
   fetchEvaluationResults,
+  resumeEvaluationBudget,
   streamEvaluationEvents,
   type CaseTestResult,
   type EvaluationCase,
@@ -33,8 +34,16 @@ function statusColor(status: string): string {
   if (status === "completed") return "success";
   if (status === "partial" || status === "paused_budget") return "warning";
   if (status === "failed") return "error";
-  if (status === "running") return "processing";
+  if (status === "running" || status === "pausing_budget") return "processing";
   return "default";
+}
+
+function formatUsd(value: string | null | undefined): string {
+  if (value === null || value === undefined) return "—";
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return value;
+  if (parsed === 0) return "$0.00";
+  return `$${parsed.toFixed(parsed < 1 ? 4 : 2)}`;
 }
 
 function formatMetric(value: unknown, kind: string): string {
@@ -67,6 +76,8 @@ export function EvalDetailPage() {
   const queryClient = useQueryClient();
   const [events, setEvents] = useState<EvaluationEvent[]>([]);
   const [selectedCase, setSelectedCase] = useState<EvaluationCase | null>(null);
+  const [resumeOpen, setResumeOpen] = useState(false);
+  const [additionalBudget, setAdditionalBudget] = useState<number>(10);
   const cursor = useRef(0);
 
   const detail = useQuery({
@@ -97,8 +108,37 @@ export function EvalDetailPage() {
     },
     onError: (error) => message.error(error instanceof Error ? error.message : "取消失败"),
   });
+  const resumeBudget = useMutation({
+    mutationFn: () =>
+      resumeEvaluationBudget(runId, {
+        additional_budget_usd: additionalBudget,
+        budget_version: detail.data?.budget_version ?? 1,
+      }),
+    onSuccess: (result) => {
+      setResumeOpen(false);
+      message.success(`已增加预算，重新调度 ${result.attempts_created} 个未完成用例`);
+      queryClient.invalidateQueries({ queryKey: ["evaluation", runId] });
+    },
+    onError: (error) => {
+      message.error(error instanceof Error ? error.message : "恢复失败");
+      // A stale budget version is the expected parallel/double-click race;
+      // refresh the dialog so the next confirmation uses the current version.
+      queryClient.invalidateQueries({ queryKey: ["evaluation", runId] });
+    },
+  });
 
   const terminal = terminalStatus(detail.data?.status);
+  const budgetUsd = detail.data?.model_budget_usd;
+  const hasBudget = budgetUsd !== null && budgetUsd !== undefined;
+  const pausedBudget = detail.data?.status === "paused_budget";
+  const pausingBudget = detail.data?.status === "pausing_budget";
+  const nextBudgetUsd =
+    budgetUsd !== null && budgetUsd !== undefined
+      ? (Number(budgetUsd) + additionalBudget).toFixed(2)
+      : "—";
+  const unfinishedCount =
+    detail.data?.unfinished_count ??
+    (detail.data?.queued_count ?? 0) + (detail.data?.running_count ?? 0);
 
   useEffect(() => {
     if (!snapshot.data) return;
@@ -144,6 +184,11 @@ export function EvalDetailPage() {
         actions={
           <Space>
             <Button onClick={() => navigate("/evals")}>返回列表</Button>
+            {pausedBudget ? (
+              <Button type="primary" onClick={() => setResumeOpen(true)}>
+                增加预算并恢复
+              </Button>
+            ) : null}
             {!terminal ? (
               <Button danger loading={cancel.isPending} onClick={() => cancel.mutate()}>取消评测</Button>
             ) : null}
@@ -160,6 +205,43 @@ export function EvalDetailPage() {
           <Statistic title="运行中" value={detail.data?.running_count ?? 0} />
         </Space>
       </Card>
+
+      {hasBudget ? (
+        <Card title="模型预算" style={{ marginBottom: 16 }}>
+          {pausingBudget ? (
+            <Alert
+              type="info"
+              showIcon
+              style={{ marginBottom: 16 }}
+              message="预算暂停中"
+              description={`调度器已停止派发新分片，正在等待运行中的 ${detail.data?.running_count ?? 0} 个用例上传已有产物并安全退出；收口后即可增加预算恢复。`}
+            />
+          ) : null}
+          {pausedBudget ? (
+            <Alert
+              type="warning"
+              showIcon
+              style={{ marginBottom: 16 }}
+              message="预算已暂停，评测尚未结束"
+              description={`已花费 ${formatUsd(detail.data?.budget_spent_usd)} / 预算 ${formatUsd(budgetUsd)}，${unfinishedCount} 个用例未完成。增加预算后只会重新调度未完成用例；已完成用例的结果与成本保持不变。`}
+              action={
+                <Button type="primary" size="small" onClick={() => setResumeOpen(true)}>
+                  增加预算并恢复
+                </Button>
+              }
+            />
+          ) : null}
+          <Descriptions size="small" column={4}>
+            <Descriptions.Item label="模型预算">{formatUsd(budgetUsd)}</Descriptions.Item>
+            <Descriptions.Item label="已花费">{formatUsd(detail.data?.budget_spent_usd)}</Descriptions.Item>
+            <Descriptions.Item label="剩余">{formatUsd(detail.data?.budget_remaining_usd)}</Descriptions.Item>
+            <Descriptions.Item label="预算版本">v{detail.data?.budget_version ?? 1}</Descriptions.Item>
+            <Descriptions.Item label="已完成">{detail.data?.finished_count ?? 0}</Descriptions.Item>
+            <Descriptions.Item label="未完成">{unfinishedCount}</Descriptions.Item>
+            {pausedBudget ? <Descriptions.Item label="暂停原因">模型预算用尽</Descriptions.Item> : null}
+          </Descriptions>
+        </Card>
+      ) : null}
 
       <Card title="官方口径结果" style={{ marginBottom: 16 }}>
         {results.error ? <QueryError error={results.error} onRetry={() => results.refetch()} /> : null}
@@ -205,6 +287,43 @@ export function EvalDetailPage() {
           }))}
         />
       </Card>
+
+      <Modal
+        open={resumeOpen}
+        title="增加模型预算并恢复"
+        okText="确认增加并恢复"
+        cancelText="取消"
+        confirmLoading={resumeBudget.isPending}
+        okButtonProps={{ disabled: !(additionalBudget > 0) }}
+        onOk={() => resumeBudget.mutate()}
+        onCancel={() => setResumeOpen(false)}
+      >
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginTop: 8, marginBottom: 16 }}
+          message="只重新调度未完成用例"
+          description="已完成用例不会重跑，被预算打断的用例会创建新 attempt；暂停期间不会切换模型或资源池。"
+        />
+        <Descriptions size="small" column={2} style={{ marginBottom: 16 }}>
+          <Descriptions.Item label="当前预算">{formatUsd(budgetUsd)}</Descriptions.Item>
+          <Descriptions.Item label="已花费">{formatUsd(detail.data?.budget_spent_usd)}</Descriptions.Item>
+          <Descriptions.Item label="未完成用例">{unfinishedCount}</Descriptions.Item>
+          <Descriptions.Item label="预算版本">v{detail.data?.budget_version ?? 1}</Descriptions.Item>
+        </Descriptions>
+        <div style={{ marginBottom: 6 }}>新增预算（USD）</div>
+        <InputNumber
+          min={0.01}
+          step={1}
+          precision={2}
+          value={additionalBudget}
+          onChange={(value) => setAdditionalBudget(typeof value === "number" ? value : 0)}
+          style={{ width: "100%" }}
+        />
+        <div className="muted small" style={{ marginTop: 8 }}>
+          恢复后总预算约 {nextBudgetUsd} USD；实际费用仍以模型网关记录为准。
+        </div>
+      </Modal>
 
       <Drawer
         open={Boolean(selectedCase)}

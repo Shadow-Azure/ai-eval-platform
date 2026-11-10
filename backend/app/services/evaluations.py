@@ -30,6 +30,7 @@ from ..models import (
     EvalEvent,
     EvalRun,
     ModelConfig,
+    ModelUsage,
     Outbox,
 )
 from ..runner_contracts import ContractInvalid, validate_payload
@@ -38,6 +39,12 @@ SHARD_DISPATCH_TOPIC = "eval.shard.dispatch"
 MANIFEST_PATH_TEMPLATE = "/runner/v1/shards/{shard_id}/manifest"
 
 TERMINAL_RUN_STATUSES = ("completed", "partial", "failed", "cancelled")
+# M4-05: a budget pause is deliberately non-terminal. While either status is
+# set the scheduler/mutators must not create new work and the run must not be
+# reclassified as completed/partial/failed.
+PAUSED_RUN_STATUSES = ("pausing_budget", "paused_budget")
+BUDGET_PAUSED = "budget_paused"
+BUDGET_EXCEEDED = "budget_exceeded"
 TERMINAL_CASE_STATUSES = ("succeeded", "failed", "timeout", "cancelled")
 TERMINAL_ATTEMPT_STATUSES = (
     "succeeded",
@@ -301,35 +308,72 @@ def build_shard_dispatches(
     All rows stay uncommitted; the caller owns the transaction.
     """
 
+    for start in range(0, len(case_specs), shard_size):
+        for offset, spec in enumerate(case_specs[start : start + shard_size]):
+            session.add(
+                EvalCaseRun(
+                    tenant_id=str(DEFAULT_TENANT_ID),
+                    eval_run_id=run.id,
+                    dataset_case_id=str(spec.get("dataset_case_id") or spec["case_key"])[:128],
+                    case_key=str(spec["case_key"])[:200],
+                    ordinal=int(spec.get("ordinal") or start + offset + 1),
+                    task_json=spec.get("task_json") or {},
+                )
+            )
+        session.flush()
+
+    case_runs = list(
+        session.scalars(
+            select(EvalCaseRun)
+            .where(EvalCaseRun.eval_run_id == run.id)
+            .order_by(EvalCaseRun.ordinal)
+        )
+    )
+    return build_case_dispatches(
+        session,
+        run=run,
+        case_runs=case_runs,
+        attempt_no=1,
+        shard_size=shard_size,
+        shard_prefix="shard",
+        settings=settings,
+        now=now,
+    )
+
+
+def build_case_dispatches(
+    session: Session,
+    *,
+    run: EvalRun,
+    case_runs: list[EvalCaseRun],
+    attempt_no: int,
+    shard_size: int,
+    shard_prefix: str,
+    settings: Settings,
+    now: datetime,
+) -> ShardDispatchBundle:
+    """Build dispatch outbox rows + attempts for EXISTING case rows.
+
+    Used by creation (attempt 1) and by ``resume-budget`` (a new attempt for
+    every unfinished case). The caller owns the transaction; case rows are
+    only mutated through ``latest_attempt_no``.
+    """
+
     bundle = ShardDispatchBundle()
     tenant_id = str(DEFAULT_TENANT_ID)
     deadline = now + timedelta(minutes=settings.eval_shard_deadline_minutes)
     expires_at = now + timedelta(seconds=settings.eval_shard_ttl_seconds)
 
-    for shard_index, start in enumerate(range(0, len(case_specs), shard_size)):
-        chunk = case_specs[start : start + shard_size]
-        shard_id = f"shard_{shard_index:03d}"
-        dispatch_key = f"{run.id}:{shard_id}:1"
-
-        case_runs: list[EvalCaseRun] = []
-        for offset, spec in enumerate(chunk):
-            case_run = EvalCaseRun(
-                tenant_id=tenant_id,
-                eval_run_id=run.id,
-                dataset_case_id=str(spec.get("dataset_case_id") or spec["case_key"])[:128],
-                case_key=str(spec["case_key"])[:200],
-                ordinal=int(spec.get("ordinal") or start + offset + 1),
-                task_json=spec.get("task_json") or {},
-            )
-            session.add(case_run)
-            case_runs.append(case_run)
-        session.flush()
+    for shard_index, start in enumerate(range(0, len(case_runs), shard_size)):
+        chunk = case_runs[start : start + shard_size]
+        shard_id = f"{shard_prefix}_{shard_index:03d}"[:64]
+        dispatch_key = f"{run.id}:{shard_id}:{attempt_no}"
 
         manifest = {
             "schema_version": "1.0",
             "eval_run_id": run.id,
             "shard_id": shard_id,
-            "attempt": 1,
+            "attempt": attempt_no,
             "dispatch_key": dispatch_key,
             "callback_base_url": settings.runner_callback_base_url,
             "deadline": deadline.isoformat(timespec="microseconds").replace("+00:00", "Z"),
@@ -341,7 +385,7 @@ def build_shard_dispatches(
                     "case_key": case_run.case_key,
                     "dataset_case_id": case_run.dataset_case_id,
                 }
-                for case_run in case_runs
+                for case_run in chunk
             ],
         }
         manifest_text = json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True)
@@ -349,7 +393,7 @@ def build_shard_dispatches(
         query = urlencode(
             {
                 "eval_run_id": run.id,
-                "attempt": 1,
+                "attempt": attempt_no,
                 "dispatch_key": dispatch_key,
             }
         )
@@ -361,7 +405,7 @@ def build_shard_dispatches(
             "schema_version": "1.0",
             "eval_run_id": run.id,
             "shard_id": shard_id,
-            "attempt": 1,
+            "attempt": attempt_no,
             "dispatch_key": dispatch_key,
             "manifest_url": manifest_url,
             "manifest_digest": manifest_digest,
@@ -385,19 +429,19 @@ def build_shard_dispatches(
                     "client_payload": client_payload,
                     "manifest_text": manifest_text,
                     "manifest_digest": manifest_digest,
-                    "attempt": 1,
+                    "attempt": attempt_no,
                     "shard_id": shard_id,
                 },
                 status="pending",
             )
         )
-        for case_run in case_runs:
-            case_run.latest_attempt_no = 1
+        for case_run in chunk:
+            case_run.latest_attempt_no = attempt_no
             bundle.attempts.append(
                 EvalCaseAttempt(
                     tenant_id=tenant_id,
                     eval_case_run_id=case_run.id,
-                    attempt_no=1,
+                    attempt_no=attempt_no,
                     status="pending",
                     dispatch_status="pending",
                     shard_id=shard_id,
@@ -411,6 +455,24 @@ def build_shard_dispatches(
 # ---------------------------------------------------------------------------
 # Queries
 # ---------------------------------------------------------------------------
+
+
+def spent_usd(session: Session, run_id: str) -> Decimal:
+    """Authoritative model spend for one run (design 06 §8: ModelUsage is the
+    source of truth; ``eval_run.budget_spent_usd`` is a reconciled snapshot)."""
+
+    value = session.scalar(
+        select(func.coalesce(func.sum(ModelUsage.cost_usd), 0)).where(
+            ModelUsage.eval_run_id == run_id
+        )
+    )
+    return Decimal(str(value or 0))
+
+
+def budget_remaining_usd(run: EvalRun, spent: Decimal | None = None) -> Decimal | None:
+    if run.model_budget_usd is None:
+        return None
+    return max(Decimal("0"), Decimal(str(run.model_budget_usd)) - (spent or Decimal("0")))
 
 
 def get_evaluation(session: Session, run_id: str) -> EvalRun:
@@ -433,7 +495,9 @@ def list_evaluations(session: Session, *, limit: int = 50) -> tuple[list[EvalRun
     return items, total
 
 
-def evaluation_summary(run: EvalRun) -> dict:
+def evaluation_summary(run: EvalRun, *, spent_usd: Decimal | None = None) -> dict:
+    spent = spent_usd if spent_usd is not None else run.budget_spent_usd
+    unfinished = int(run.queued_count or 0) + int(run.running_count or 0)
     return {
         "id": run.id,
         "name": run.name,
@@ -443,6 +507,8 @@ def evaluation_summary(run: EvalRun) -> dict:
         "running_count": run.running_count,
         "succeeded_count": run.succeeded_count,
         "failed_count": run.failed_count,
+        "finished_count": max(0, int(run.total_cases or 0) - unfinished),
+        "unfinished_count": unfinished,
         "shard_size": run.shard_size,
         "requested_concurrency": run.requested_concurrency,
         "effective_concurrency": run.effective_concurrency,
@@ -450,6 +516,14 @@ def evaluation_summary(run: EvalRun) -> dict:
         "model_config_id": run.model_config_id,
         "model_name": run.model_name,
         "model_budget_usd": str(run.model_budget_usd) if run.model_budget_usd is not None else None,
+        "budget_spent_usd": str(spent) if spent is not None else None,
+        "budget_remaining_usd": (
+            str(budget_remaining_usd(run, spent if spent is not None else Decimal("0")))
+            if run.model_budget_usd is not None
+            else None
+        ),
+        "budget_version": run.budget_version,
+        "pause_reason": run.pause_reason,
         "dataset_version_id": run.dataset_version_id,
         "runtime_key": run.runtime_key,
         "runtime_version": run.runtime_version,
@@ -471,6 +545,9 @@ def evaluation_detail(session: Session, run: EvalRun) -> dict:
             .order_by(EvalCaseRun.ordinal)
         )
     )
+    # The detail view reconciles the spend snapshot against the gateway usage
+    # rows so the pause dialog always shows the authoritative figure.
+    live_spent = spent_usd(session, run.id) if run.model_budget_usd is not None else None
     shards = [
         {
             "shard_id": row.payload_json.get("shard_id"),
@@ -490,7 +567,7 @@ def evaluation_detail(session: Session, run: EvalRun) -> dict:
         )
     ]
     return {
-        **evaluation_summary(run),
+        **evaluation_summary(run, spent_usd=live_spent),
         "cases": [
             {
                 "id": case.id,
@@ -572,6 +649,7 @@ def cancel_evaluation(session: Session, *, run_id: str, now: datetime | None = N
     # guard needs TERMINAL_RUN_STATUSES), so the back-edge must stay lazy.
     from . import lifecycle
 
+    was_paused = run.status in PAUSED_RUN_STATUSES
     run.status = "cancelling"
     if run.cancel_requested_at is None:
         run.cancel_requested_at = now
@@ -605,9 +683,26 @@ def cancel_evaluation(session: Session, *, run_id: str, now: datetime | None = N
         row.payload_json = {**row.payload_json, "last_error": RUN_CANCELLED}
         row.status = "cancelled"
 
+    if was_paused:
+        # A paused run has no active attempt left to settle, so the queued
+        # unfinished cases would otherwise keep the run in ``cancelling``
+        # forever. Cases with a still-active attempt are left for that attempt.
+        active_cases = {attempt.eval_case_run_id for attempt in active_attempts(session, run)}
+        for case in session.scalars(
+            select(EvalCaseRun).where(
+                EvalCaseRun.eval_run_id == run.id,
+                EvalCaseRun.execution_status.in_(("queued", "running")),
+            )
+        ):
+            if case.id in active_cases:
+                continue
+            case.execution_status = "cancelled"
+            case.error_code = RUN_CANCELLED
+        run.pause_reason = None
+
     append_run_event(session, run, "eval.cancelling", {"reason": "client_requested"})
     session.flush()
-    if _active_attempts(session, run):
+    if active_attempts(session, run):
         # In-flight attempts keep the run in ``cancelling``; still refresh the
         # counters so the console never shows the pre-cancel queue size.
         refresh_run_progress(session, run, now=now)
@@ -618,7 +713,7 @@ def cancel_evaluation(session: Session, *, run_id: str, now: datetime | None = N
     return run, True
 
 
-def _active_attempts(session: Session, run: EvalRun) -> list[EvalCaseAttempt]:
+def active_attempts(session: Session, run: EvalRun) -> list[EvalCaseAttempt]:
     return list(
         session.scalars(
             select(EvalCaseAttempt)
@@ -629,6 +724,10 @@ def _active_attempts(session: Session, run: EvalRun) -> list[EvalCaseAttempt]:
             )
         )
     )
+
+
+def _active_attempts(session: Session, run: EvalRun) -> list[EvalCaseAttempt]:
+    return active_attempts(session, run)
 
 
 def finalize_cancelled(session: Session, run: EvalRun, *, now: datetime) -> bool:
@@ -711,6 +810,11 @@ def refresh_run_progress(session: Session, run: EvalRun, *, now: datetime | None
     )
 
     if run.status in TERMINAL_RUN_STATUSES:
+        return run
+
+    if run.status in PAUSED_RUN_STATUSES:
+        # A budget pause is non-terminal: counters stay authoritative but the
+        # run must never be reclassified while waiting for the operator.
         return run
 
     if run.status == "cancelling":

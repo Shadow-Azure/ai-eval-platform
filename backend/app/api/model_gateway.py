@@ -34,8 +34,9 @@ from ..model_gateway.tokens import (
     GatewayTokenError,
     verify_gateway_token,
 )
-from ..models import ModelConfig
+from ..models import EvalRun, ModelConfig
 from ..secrets import get_secret_box
+from ..services import budget as budget_service
 
 router = APIRouter(tags=["model-gateway"])
 
@@ -81,6 +82,18 @@ def _authorize(
         if error.code == "budget_paused":
             try:
                 service.record_usage(session, claims, config, status="budget_paused")
+            except Exception:
+                session.rollback()
+            try:
+                # M4-05: the gateway is the authority on spend, so the refusal
+                # is also the platform-level pause trigger. Persisting it here
+                # keeps the run from being marked failed by the interrupted
+                # attempts and makes the operator's resume possible.
+                run = session.get(EvalRun, claims.eval_run_id) if claims.eval_run_id else None
+                if run is not None:
+                    budget_service.pause_for_budget(
+                        session, run, source="model_gateway"
+                    )
             except Exception:
                 session.rollback()
         raise

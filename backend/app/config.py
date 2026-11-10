@@ -115,6 +115,10 @@ class Settings(BaseSettings):
     # stay alive so their artifacts can settle; after this window the reconciler
     # force-cancels whatever is left so a cancelled run can never hang forever.
     eval_cancel_grace_seconds: int = 600
+    # Budget pause grace period (M4-05, design 06 §8). Interrupted attempts may
+    # upload their existing artifacts; after this window the reconciler settles
+    # whatever is left as ``budget_paused`` so the run can reach paused_budget.
+    eval_budget_pause_grace_seconds: int = 600
 
     # M3-02 centralized model gateway. Credentials are encrypted with a
     # host-local Fernet key (SECRET_BOX_KEY); the gateway signs short-lived

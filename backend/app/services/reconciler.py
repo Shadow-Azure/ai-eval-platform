@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 
 from ..config import Settings
 from ..models import EvalCaseAttempt, EvalCaseRun, EvalRun
-from . import case_attempts, evaluations, lifecycle, reaper
+from . import budget, case_attempts, evaluations, lifecycle, reaper
 from .github_dispatch import GitHubDispatchError, cancel_workflow_run, find_workflow_run
 from .object_store import object_store_from_settings
 
@@ -37,7 +37,7 @@ CANCEL_FAILED_EVENT = "eval.cancel_failed"
 CANCEL_LOOKUP_FAILED_EVENT = "eval.cancel_lookup_failed"
 RECONCILED_COMPLETION_EVENT = "case.reconciled_completed"
 
-COUNT_KEYS = (*lifecycle.TIMEOUT_CODES, "cancelled", "reconciled")
+COUNT_KEYS = (*lifecycle.TIMEOUT_CODES, "cancelled", "reconciled", "budget_paused", "budget_settled")
 
 
 def _aware(value: datetime | None) -> datetime | None:
@@ -78,6 +78,11 @@ def reconcile(
     )
     counts = dict(
         reaper.sweep_lifecycle(session, settings=settings, now=now, batch_size=batch_size)
+    )
+    counts.update(
+        budget.reconcile_budget_pauses(
+            session, settings=settings, now=now, batch_size=limit
+        )
     )
     counts["cancelled"] = 0
     counts["reconciled"] = 0

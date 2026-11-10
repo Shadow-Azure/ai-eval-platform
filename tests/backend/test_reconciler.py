@@ -33,6 +33,8 @@ COUNT_KEYS = {
     "heartbeat_timeout",
     "cancelled",
     "reconciled",
+    "budget_paused",
+    "budget_settled",
 }
 
 

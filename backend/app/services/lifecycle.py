@@ -100,8 +100,13 @@ RETRYABLE = "retryable"
 PERMANENT = "permanent"
 SCORING_ONLY = "scoring_only"
 
-# Run states that must never spawn a new attempt (A2 sets ``cancelling``).
-_RUN_RETRY_BLOCKING_STATUSES = (*evaluations.TERMINAL_RUN_STATUSES, "cancelling")
+# Run states that must never spawn a new attempt (A2 sets ``cancelling``;
+# M4-05 parks new work while a budget pause is settling).
+_RUN_RETRY_BLOCKING_STATUSES = (
+    *evaluations.TERMINAL_RUN_STATUSES,
+    "cancelling",
+    *evaluations.PAUSED_RUN_STATUSES,
+)
 
 
 def classify_failure(error_code: str | None) -> str:
@@ -251,6 +256,13 @@ def settle_attempt_failure(
     attempt = ctx.attempt
     if attempt.status in evaluations.TERMINAL_ATTEMPT_STATUSES:
         return False
+    # M4-05: a budget pause settles the attempt but explicitly leaves the case
+    # unfinished (``queued``) so resume can create a new attempt for it. The
+    # attempt is recorded as cancelled, not failed, because the interruption is
+    # a platform decision rather than an agent/test outcome.
+    paused_run = ctx.run.status in evaluations.PAUSED_RUN_STATUSES
+    if paused_run:
+        terminal_status = "cancelled"
 
     payload = dict(event_payload or {})
     event_id = payload.get("event_id")
@@ -265,6 +277,8 @@ def settle_attempt_failure(
             "error_summary": error_summary[:200],
         }
     )
+    if paused_run:
+        payload["paused"] = True
     if event_id is None:
         payload.pop("event_id", None)
 
@@ -304,8 +318,13 @@ def settle_attempt_failure(
         )
         retried = True
     else:
-        if ctx.case_run.execution_status not in evaluations.TERMINAL_CASE_STATUSES:
-            ctx.case_run.execution_status = terminal_case_status(error_code)
+        if paused_run:
+            # Keep the case resumable: resume-budget only skips finished cases.
+            if ctx.case_run.execution_status not in evaluations.TERMINAL_CASE_STATUSES:
+                ctx.case_run.execution_status = "queued"
+        else:
+            if ctx.case_run.execution_status not in evaluations.TERMINAL_CASE_STATUSES:
+                ctx.case_run.execution_status = terminal_case_status(error_code)
         ctx.case_run.error_code = error_code
         ctx.case_run.error_summary = error_summary[:1000]
 

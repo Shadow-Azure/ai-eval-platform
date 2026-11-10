@@ -243,6 +243,14 @@ def _dispatch_row(
         _fail_row_permanently(session, row, reason="run_missing", now=now)
         outcome.failed += 1
         return
+    if run.status in evaluations.PAUSED_RUN_STATUSES:
+        # A budget pause is expected to last until an operator resumes the run;
+        # the row must stay dispatchable instead of becoming a permanent failure.
+        row.payload_json = {**row.payload_json, "last_error": "run_budget_paused"}
+        row.available_at = now + timedelta(seconds=settings.dispatch_capacity_retry_seconds)
+        session.commit()
+        outcome.queued += 1
+        return
     if run.status not in ("queued", "running"):
         row.payload_json = {**row.payload_json, "last_error": f"run_not_dispatchable:{run.status}"}
         row.status = "failed"

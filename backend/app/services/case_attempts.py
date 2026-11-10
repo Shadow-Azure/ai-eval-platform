@@ -315,6 +315,42 @@ def _reject_started_after_cancel(ctx: CaseContext, *, payload: dict) -> None:
     raise CaseCallbackError("评测已取消，拒绝启动", code="run_cancelled", status_code=409)
 
 
+def _reject_started_for_pause(ctx: CaseContext, *, payload: dict) -> None:
+    """A budget-paused run must not let a queued Job start an agent (M4-05).
+
+    The attempt is left to the pause reconciler (which settles not-started
+    attempts); the rejection is recorded as ``case.started_rejected`` so the
+    runner's retry loop stays auditable.
+    """
+
+    event_id = payload.get("event_id")
+    stored = ctx.session.scalars(
+        select(EvalEvent).where(
+            EvalEvent.eval_case_run_id == ctx.case_run.id,
+            EvalEvent.attempt_no == ctx.attempt.attempt_no,
+            EvalEvent.event_type == "case.started_rejected",
+        )
+    ).all()
+    if not any((event.payload_json or {}).get("event_id") == event_id for event in stored):
+        _add_event(
+            ctx,
+            event_type="case.started_rejected",
+            sequence=next_free_sequence(ctx.session, ctx.case_run, ctx.attempt),
+            payload={
+                "event_id": event_id,
+                "reason": evaluations.BUDGET_PAUSED,
+                "run_status": ctx.run.status,
+                "runner_id": payload.get("runner_id"),
+            },
+        )
+        ctx.session.commit()
+    raise CaseCallbackError(
+        "模型预算已暂停，拒绝启动新 Agent",
+        code=evaluations.BUDGET_PAUSED,
+        status_code=409,
+    )
+
+
 def handle_started(session: Session, *, payload: dict, now: datetime | None = None) -> dict:
     now = now or datetime.now(UTC)
     ctx = resolve_context(session, case_run_id=payload["case_run_id"], attempt_no=payload["attempt"])
@@ -322,6 +358,10 @@ def handle_started(session: Session, *, payload: dict, now: datetime | None = No
         # Cancellation revocation point: the token may still be valid for the
         # TTL, so the run status is checked before any state mutation.
         _reject_started_after_cancel(ctx, payload=payload)
+    if ctx.run.status in evaluations.PAUSED_RUN_STATUSES:
+        # Budget revocation point: no new agent may start while the platform is
+        # pausing or waiting for the operator to raise the budget.
+        _reject_started_for_pause(ctx, payload=payload)
     if ctx.attempt.status == "running" and _event_exists(ctx, sequence=0, event_id=payload["event_id"]):
         # Same event id from a different Runner means a duplicate Job on another
         # machine. Only the runner that owns the attempt may continue; the other

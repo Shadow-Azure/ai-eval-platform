@@ -103,6 +103,10 @@ def validate_claims_binding(session: Session, claims: GatewayClaims) -> None:
     _attempt, run = row
     if run.status in ("cancelling", "cancelled"):
         raise GatewayError(409, "run_cancelled", "评测已取消，拒绝模型调用")
+    if run.status in ("pausing_budget", "paused_budget"):
+        # M4-05: a budget pause is the platform-level revocation point. Tokens
+        # cannot be revoked individually, so reject by run state.
+        raise GatewayError(409, "budget_paused", "模型预算已暂停，拒绝模型调用")
 
 
 def check_model_allowed(model: str, claims: GatewayClaims, config: ModelConfig) -> None:
@@ -121,10 +125,28 @@ def spent_usd(session: Session, claims: GatewayClaims) -> Decimal:
     return Decimal(str(value or 0))
 
 
-def ensure_budget(session: Session, claims: GatewayClaims) -> None:
+def budget_limit_usd(session: Session, claims: GatewayClaims) -> Decimal | None:
+    """Current authoritative budget for the token's run.
+
+    The token carries the budget snapshot from manifest time, but a resume can
+    raise it while an old token is still in use. Reading the run row keeps the
+    enforcement (and the budget pause) authoritative without reissuing tokens.
+    """
+
+    if claims.eval_run_id:
+        run = session.get(EvalRun, claims.eval_run_id)
+        if run is not None and run.model_budget_usd is not None:
+            return Decimal(str(run.model_budget_usd))
     if claims.budget_usd is None:
+        return None
+    return Decimal(str(claims.budget_usd))
+
+
+def ensure_budget(session: Session, claims: GatewayClaims) -> None:
+    limit = budget_limit_usd(session, claims)
+    if limit is None:
         return
-    if spent_usd(session, claims) >= Decimal(str(claims.budget_usd)):
+    if spent_usd(session, claims) >= limit:
         raise GatewayError(402, "budget_paused", "模型预算已用尽，评测暂停")
 
 

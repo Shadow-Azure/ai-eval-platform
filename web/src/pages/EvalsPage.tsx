@@ -31,6 +31,8 @@ const statusMeta: Record<string, { label: string; color: string }> = {
   partial: { label: "部分成功", color: "warning" },
   failed: { label: "失败", color: "error" },
   cancelled: { label: "已取消", color: "default" },
+  pausing_budget: { label: "预算暂停中", color: "warning" },
+  paused_budget: { label: "预算已暂停", color: "warning" },
 };
 
 const caseStatusLabels: Record<string, string> = {
@@ -47,6 +49,9 @@ const eventTypeLabels: Record<string, string> = {
   "eval.dispatched": "分片已派发 GitHub",
   "eval.dispatch_failed": "分片派发失败",
   "eval.cancelled": "评测已取消",
+  "eval.budget_pausing": "预算用尽，暂停收口",
+  "eval.budget_paused": "评测进入预算暂停",
+  "eval.budget_resumed": "增加预算并恢复调度",
   "case.started": "用例开始执行",
   "case.heartbeat": "用例心跳",
   "case.uploaded": "对象上传清单",
@@ -55,6 +60,7 @@ const eventTypeLabels: Record<string, string> = {
   "case.retry_queued": "重试已排队",
   "case.artifact_missing": "结果对象缺失",
   "case.started_late": "迟到 started（保留审计）",
+  "case.started_rejected": "启动被拒绝（预算暂停 / 已取消）",
 };
 
 function StatusTag({ status }: { status: string }) {
