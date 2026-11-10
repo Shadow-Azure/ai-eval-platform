@@ -501,7 +501,7 @@ def test_test_provisioning_creates_one_instance_and_audit_event(
 
     assert response.status_code == 200, response.text
     payload = response.json()
-    assert payload["instance"]["status"] == "requested"
+    assert payload["instance"]["status"] == "released"
     assert payload["instance"]["resource_pool_id"] == pool["id"]
     assert payload["price_usd"] == "0.1000"
     assert payload["price_threshold_usd"] == "0.5000"
@@ -511,6 +511,8 @@ def test_test_provisioning_creates_one_instance_and_audit_event(
     instances = list(session.scalars(select(ProvisionedInstance)))
     assert len(instances) == 1
     assert instances[0].id == payload["instance"]["id"]
+    assert instances[0].status == "released"
+    assert instances[0].released_at is not None
 
     events = list(
         session.scalars(

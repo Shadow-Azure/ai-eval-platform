@@ -66,6 +66,8 @@ def _pool_columns() -> list[sa.Column]:
             nullable=False,
         ),
         sa.Column("min_capacity", sa.Integer(), server_default="0", nullable=False),
+        # 50 is the design's example bound and keeps pre-M4-03 pools usable;
+        # _backfill_legacy_max_capacity() restores a legacy labels override.
         sa.Column("max_capacity", sa.Integer(), server_default="50", nullable=False),
         sa.Column(
             "instance_config_json",
@@ -79,6 +81,25 @@ def _pool_columns() -> list[sa.Column]:
         sa.Column("last_checked_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("next_check_at", sa.DateTime(timezone=True), nullable=True),
     ]
+
+
+def _backfill_legacy_max_capacity() -> None:
+    """Move a legacy ``labels_json.max_capacity`` into the real column (05 §5)."""
+
+    if _is_sqlite():
+        op.execute(
+            "UPDATE resource_pool SET max_capacity = "
+            "CAST(json_extract(labels_json, '$.max_capacity') AS INTEGER) "
+            "WHERE json_extract(labels_json, '$.max_capacity') IS NOT NULL "
+            "AND CAST(json_extract(labels_json, '$.max_capacity') AS INTEGER) > 0"
+        )
+    else:
+        op.execute(
+            "UPDATE resource_pool SET max_capacity = "
+            "(labels_json ->> 'max_capacity')::int "
+            "WHERE (labels_json ->> 'max_capacity') ~ '^[0-9]+$' "
+            "AND (labels_json ->> 'max_capacity')::int > 0"
+        )
 
 
 def upgrade() -> None:
@@ -177,6 +198,7 @@ def upgrade() -> None:
             "resource_pool",
             "max_capacity >= 1 AND min_capacity >= 0 AND min_capacity <= max_capacity",
         )
+    _backfill_legacy_max_capacity()
 
 
 def downgrade() -> None:

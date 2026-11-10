@@ -566,6 +566,30 @@ def test_provisioning(
 
     price_usd = _price_str(quote.price_usd)
     threshold = _price_str(pool.price_threshold_usd)
+    # A provisioning test must not leave a billable instance behind: create,
+    # then release immediately. A failed release is parked as ``draining`` and
+    # the capacity controller retries it every tick (M4-03).
+    released = False
+    try:
+        provisioner.release(session=session, instance=instance, now=now)
+        instance.status = "released"
+        instance.released_at = now
+        released = True
+    except ProvisionerError as exc:
+        instance.status = "draining"
+        capacity_control.append_resource_event(
+            session,
+            pool,
+            capacity_control.EVENT_RELEASE_FAILED,
+            {
+                "instance_id": instance.id,
+                "provider_instance_id": instance.provider_instance_id,
+                "code": exc.code,
+                "message": exc.message,
+                "source": "test_provisioning",
+            },
+            dedupe_key=f"{pool.id}:release_failed:{instance.id}:{exc.code}",
+        )
     capacity_control.append_resource_event(
         session,
         pool,
@@ -575,6 +599,7 @@ def test_provisioning(
             "provider_instance_id": instance.provider_instance_id,
             "price_usd": price_usd,
             "threshold": threshold,
+            "released": released,
         },
     )
     identity.record_audit(
@@ -588,6 +613,7 @@ def test_provisioning(
             "instance_id": instance.id,
             "price_usd": price_usd,
             "price_threshold_usd": threshold,
+            "released": released,
         },
     )
     session.commit()

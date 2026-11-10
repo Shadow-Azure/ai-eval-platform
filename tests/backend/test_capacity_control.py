@@ -607,16 +607,30 @@ def test_release_failure_keeps_instance_and_continues(
         session, pool, settings=settings, now=now, provisioner=fake
     )
 
-    assert state["scaled_down"] == 1
+    # A failed release must not count as a scale-down: the instance still costs.
+    assert state["scaled_down"] == 0
     assert runner.status == "offline"
     assert runner.deregistered_at == now
-    assert instance.status == "online"  # release failed: provider state kept
+    assert instance.status == "draining"  # parked for the retry pass
     assert instance.released_at is None
     failures = _events(session, capacity_control.EVENT_RELEASE_FAILED)
     assert len(failures) == 1
     assert failures[0].payload_json["instance_id"] == instance.id
     assert failures[0].payload_json["runner_id"] == runner.id
     assert failures[0].payload_json["code"] == "release_denied"
+
+    # The next tick (release now succeeds) drains the pending instance exactly
+    # once; the runner already being offline no longer hides it.
+    fake.release_error = None
+    later = now + timedelta(seconds=1)
+    state = capacity_control.reconcile_pool(
+        session, pool, settings=settings, now=later, provisioner=fake
+    )
+    assert state["scaled_down"] == 0
+    assert instance.status == "released"
+    assert _utc(instance.released_at) == later
+    released = _events(session, capacity_control.EVENT_CAPACITY_RELEASED)
+    assert len(released) == 1
 
 
 # ---------------------------------------------------------------------------

@@ -25,9 +25,10 @@ pool add no rows.
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Any, Mapping
+from typing import Any
 
 from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
@@ -61,6 +62,7 @@ REASON_PROVISIONING_FAILED = "resource_provisioning_failed"
 
 EVENT_CAPACITY_UPDATED = "resource.capacity.updated"
 EVENT_CAPACITY_SCALED_DOWN = "resource.capacity.scaled_down"
+EVENT_CAPACITY_RELEASED = "resource.capacity.released"
 EVENT_PROVISIONING_FAILED = "resource.provisioning_failed"
 EVENT_RELEASE_FAILED = "resource.release_failed"
 EVENT_PROVISIONING_TESTED = "resource.provisioning_tested"
@@ -247,8 +249,11 @@ def _capacity_reason(
 
     if gap > 0:
         threshold = pool.price_threshold_usd
-        if quote is not None and threshold is not None and quote.price_usd > threshold:
-            return REASON_PRICE_ABOVE_THRESHOLD
+        if quote is not None and threshold is not None:
+            # Provisioners must quote Decimals, but coerce defensively so a
+            # provider returning a str/float cannot turn into a swallowed error.
+            if Decimal(str(quote.price_usd)) > Decimal(str(threshold)):
+                return REASON_PRICE_ABOVE_THRESHOLD
         if quote is not None and not quote.available:
             return REASON_INVENTORY_INSUFFICIENT
         if pool.provisioning_mode == PROVISIONING_MODE_SPOT and (
@@ -507,6 +512,64 @@ def _idle_runners_for_release(
     return list(session.scalars(statement))
 
 
+def _retry_pending_releases(
+    session: Session,
+    pool: ResourcePool,
+    *,
+    provisioner: Provisioner,
+    now: datetime,
+) -> int:
+    """Retry instances whose release failed in an earlier tick (M4-03).
+
+    The runner is already deregistered at that point, so it is no longer in
+    ``_idle_runners_for_release``; without this pass a failed release would
+    keep paying for the instance forever.
+    """
+
+    released = 0
+    pending = list(
+        session.scalars(
+            select(ProvisionedInstance).where(
+                ProvisionedInstance.resource_pool_id == pool.id,
+                ProvisionedInstance.status == "draining",
+            )
+        )
+    )
+    for instance in pending:
+        try:
+            provisioner.release(session=session, instance=instance, now=now)
+        except ProvisionerError as exc:
+            append_resource_event(
+                session,
+                pool,
+                EVENT_RELEASE_FAILED,
+                {
+                    "instance_id": instance.id,
+                    "provider_instance_id": instance.provider_instance_id,
+                    "code": exc.code,
+                    "message": exc.message,
+                    "retried": True,
+                },
+                dedupe_key=f"{pool.id}:release_failed:{instance.id}:{exc.code}",
+            )
+            continue
+        instance.status = "released"
+        instance.released_at = now
+        append_resource_event(
+            session,
+            pool,
+            EVENT_CAPACITY_RELEASED,
+            {
+                "instance_id": instance.id,
+                "provider_instance_id": instance.provider_instance_id,
+                "retried": True,
+            },
+            dedupe_key=f"{pool.id}:released:{instance.id}",
+        )
+        released += 1
+    return released
+
+
 def _scale_down(
     session: Session,
     pool: ResourcePool,
@@ -536,14 +599,15 @@ def _scale_down(
         session.flush()
 
         instance = _runner_instance(session, pool, runner)
-        released = False
         if instance is not None:
             try:
                 provisioner.release(session=session, instance=instance, now=now)
-                released = True
             except ProvisionerError as exc:
-                # Keep the instance for the next attempt; the runner is already
-                # deregistered so it cannot accept new work.
+                # Keep the instance for the next tick's retry pass; the runner is
+                # already deregistered so it cannot accept new work. Do not count
+                # this as a successful scale-down (the instance still costs).
+                instance.status = "draining"
+                session.flush()
                 append_resource_event(
                     session,
                     pool,
@@ -558,6 +622,9 @@ def _scale_down(
                     },
                     dedupe_key=f"{pool.id}:release_failed:{instance.id}:{exc.code}",
                 )
+                continue
+            instance.status = "released"
+            instance.released_at = now
         append_resource_event(
             session,
             pool,
@@ -569,7 +636,7 @@ def _scale_down(
                     instance.provider_instance_id if instance is not None else None
                 ),
                 "order": order,
-                "released": released,
+                "released": True,
                 "price_usd": state["price_usd"],
             },
             dedupe_key=f"{pool.id}:scaled_down:{runner.id}",
@@ -601,6 +668,8 @@ def reconcile_pool(
 
     now = now or datetime.now(UTC)
     connection = _connection(session, pool)
+    if provisioner is not None and connection is not None:
+        _retry_pending_releases(session, pool, provisioner=provisioner, now=now)
     quote = _quote(pool, provisioner=provisioner, connection=connection, now=now)
     state = _build_state(
         session,
