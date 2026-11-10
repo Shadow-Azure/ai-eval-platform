@@ -1,5 +1,5 @@
 # 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
 # git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
 #   pnpm run record:i18n -- .agents/flow/issues/m4-03-resource-connection-capacity-control.md
-m4-03-resource-connection-capacity-control.md: 24cde090681a6b8446ddcb1be29fc7e1535b41cd
-m4-03-resource-connection-capacity-control.en.md: 15f8e60ebbbd014b72bc5163f6ceb249e1bb8210
+m4-03-resource-connection-capacity-control.md: f62f7eec00c6c2aa70f5f04e766fc79f25d16501
+m4-03-resource-connection-capacity-control.en.md: 2ca06ba0be0f056dc10a3652d726d1745a6b7d67

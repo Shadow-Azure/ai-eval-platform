@@ -6,7 +6,7 @@ English | [中文](m4-03-resource-connection-capacity-control.md)
 kind: issue
 milestone: m4
 priority: P0
-status: ready
+status: done
 scope:
   - .agents/flow/issues/m4-03-resource-connection-capacity-control.*
   - .agents/flow/milestones/m4-concurrency-and-spot-pool.*
