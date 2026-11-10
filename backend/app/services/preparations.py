@@ -35,6 +35,7 @@ from ..models import (
     ResourcePool,
     new_id,
 )
+from ..money import UNIT_PRICE, Money, MoneyError, money_str
 from ..runtimes.claude_code import get_runtime_adapter
 from . import capacity
 from . import evaluations as evaluation_service
@@ -119,16 +120,6 @@ def _iso(value: datetime | None) -> str | None:
     if value is None:
         return None
     return _as_utc(value).isoformat(timespec="seconds").replace("+00:00", "Z")
-
-
-def _money(value: Decimal) -> str:
-    return str(value.quantize(Decimal("0.0001")))
-
-
-def _decimal_str(value: object | None) -> str | None:
-    if value is None:
-        return None
-    return str(value)
 
 
 def _digest(payload: object) -> str:
@@ -238,9 +229,9 @@ def estimate_cost(
     """
 
     try:
-        input_rate = float((pricing or {}).get("input_per_1m") or 0)
-        output_rate = float((pricing or {}).get("output_per_1m") or 0)
-    except (TypeError, ValueError):
+        input_rate = Money.of((pricing or {}).get("input_per_1m") or 0)
+        output_rate = Money.of((pricing or {}).get("output_per_1m") or 0)
+    except MoneyError:
         return None
     if input_rate <= 0 and output_rate <= 0:
         return None
@@ -248,13 +239,13 @@ def estimate_cost(
     input_tokens = max(0, settings.eval_estimate_input_tokens_per_case)
     output_tokens = max(0, settings.eval_estimate_output_tokens_per_case)
     per_case = (
-        Decimal(str(input_tokens)) / Decimal(1_000_000) * Decimal(str(input_rate))
-        + Decimal(str(output_tokens)) / Decimal(1_000_000) * Decimal(str(output_rate))
+        input_rate * Decimal(input_tokens) / Decimal(1_000_000)
+        + output_rate * Decimal(output_tokens) / Decimal(1_000_000)
     )
     spread = Decimal(str(max(0.0, float(settings.eval_estimate_spread))))
-    total = per_case * Decimal(case_count)
-    model_low = (total * (Decimal(1) - spread)).quantize(Decimal("0.0001"))
-    model_high = (total * (Decimal(1) + spread)).quantize(Decimal("0.0001"))
+    total = per_case * case_count
+    model_low = (total * (Decimal(1) - spread)).quantize(UNIT_PRICE)
+    model_high = (total * (Decimal(1) + spread)).quantize(UNIT_PRICE)
 
     parallel = max(1, int(effective_concurrency or 0))
     waves = math.ceil(case_count / parallel) if case_count else 0
@@ -263,31 +254,31 @@ def estimate_cost(
     duration_high = int(duration_mid * 1.5)
 
     runner_low = runner_high = None
-    pool_price = pool.price_usd if pool is not None else None
+    pool_price = pool.price_cny if pool is not None else None
     if pool_price is not None:
-        price = Decimal(str(pool_price))
-        runner_low = (price * Decimal(duration_low) / Decimal(3600)).quantize(Decimal("0.0001"))
-        runner_high = (price * Decimal(duration_high) / Decimal(3600)).quantize(Decimal("0.0001"))
+        price = Money.of(pool_price)
+        runner_low = (price * duration_low / 3600).quantize(UNIT_PRICE)
+        runner_high = (price * duration_high / 3600).quantize(UNIT_PRICE)
 
-    total_low = model_low + (runner_low or Decimal(0))
-    total_high = model_high + (runner_high or Decimal(0))
+    total_low = model_low + (runner_low or Money.zero())
+    total_high = model_high + (runner_high or Money.zero())
     pricing_basis = (
         f"按 {input_tokens:,} 输入 + {output_tokens:,} 输出 token/用例 × {case_count} 用例，"
-        f"输入 ${input_rate}/百万、输出 ${output_rate}/百万估算"
+        f"输入 {input_rate.format()} /百万、输出 {output_rate.format()} /百万估算"
     )
     if runner_low is not None:
         pricing_basis += "；含资源池机时，按估算时长与当前价格"
     else:
         pricing_basis += "；不含机时"
     return {
-        "currency": "USD",
-        "model_usd": {"low": _money(model_low), "high": _money(model_high)},
-        "runner_usd": (
-            {"low": _money(runner_low), "high": _money(runner_high)}
+        "currency": "CNY",
+        "model_cny": {"low": money_str(model_low), "high": money_str(model_high)},
+        "runner_cny": (
+            {"low": money_str(runner_low), "high": money_str(runner_high)}
             if runner_low is not None and runner_high is not None
             else None
         ),
-        "total_usd": {"low": _money(total_low), "high": _money(total_high)},
+        "total_cny": {"low": money_str(total_low), "high": money_str(total_high)},
         "estimated_duration_seconds": {"low": duration_low, "high": duration_high},
         "basis": pricing_basis,
         "assumptions": {
@@ -424,7 +415,7 @@ def _live_identity(
             "concurrency": execution.get("concurrency"),
             "case_timeout_seconds": execution.get("case_timeout_seconds"),
             "max_attempts": execution.get("max_attempts"),
-            "model_budget_usd": _decimal_str(execution.get("model_budget_usd")),
+            "model_budget_cny": money_str(execution.get("model_budget_cny")),
             "shard_size": execution.get("shard_size"),
         },
         "resolved_images": {
@@ -457,7 +448,7 @@ def _normalise_execution(execution: dict | None, settings: Settings) -> dict:
             execution.get("case_timeout_seconds"), DEFAULT_CASE_TIMEOUT_SECONDS
         ),
         "max_attempts": _pick(execution.get("max_attempts"), DEFAULT_MAX_ATTEMPTS),
-        "model_budget_usd": execution.get("model_budget_usd"),
+        "model_budget_cny": execution.get("model_budget_cny"),
         "shard_size": _pick(execution.get("shard_size"), settings.eval_shard_size_default),
         "execution_image_digest": execution.get("execution_image_digest"),
         "scoring_image_digest": execution.get("scoring_image_digest"),
@@ -512,9 +503,9 @@ def build_preparation(
         asset_snapshot_id=asset_snapshot_id,
         case_timeout_seconds=int(execution["case_timeout_seconds"]),
         max_attempts=int(execution["max_attempts"]),
-        model_budget_usd=(
-            float(execution["model_budget_usd"])
-            if execution.get("model_budget_usd") is not None
+        model_budget_cny=(
+            float(execution["model_budget_cny"])
+            if execution.get("model_budget_cny") is not None
             else None
         ),
     )
@@ -616,7 +607,7 @@ def build_preparation(
             "provider_key": pool.provider_key if pool is not None else None,
             "max_capacity": capacity.pool_max_capacity(pool),
             "online_runners": _online_runners(session, pool, settings),
-            "price_usd": _decimal_str(pool.price_usd) if pool is not None else None,
+            "price_cny": money_str(pool.price_cny) if pool is not None else None,
         },
         "execution": execution,
         "resolved": {
@@ -758,9 +749,9 @@ def consume_preparation(
         asset_snapshot_id=(snapshot.get("asset_snapshot") or {}).get("id"),
         case_timeout_seconds=execution.get("case_timeout_seconds"),
         max_attempts=execution.get("max_attempts"),
-        model_budget_usd=(
-            float(execution["model_budget_usd"])
-            if execution.get("model_budget_usd") is not None
+        model_budget_cny=(
+            float(execution["model_budget_cny"])
+            if execution.get("model_budget_cny") is not None
             else None
         ),
     )
@@ -783,7 +774,7 @@ def consume_preparation(
         created_by=created_by,
         model_config_id=(snapshot.get("model") or {}).get("config_id"),
         model_name=(snapshot.get("model") or {}).get("model_name"),
-        model_budget_usd=execution.get("model_budget_usd"),
+        model_budget_cny=execution.get("model_budget_cny"),
         runtime_key=(snapshot.get("runtime") or {}).get("key"),
         runtime_version=(snapshot.get("runtime") or {}).get("version"),
         resource_pool_id=(snapshot.get("resource_pool") or {}).get("id"),

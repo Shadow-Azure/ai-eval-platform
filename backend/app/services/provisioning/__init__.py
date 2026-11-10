@@ -35,19 +35,15 @@ PROVISIONER_CAPABILITIES = frozenset({CAPABILITY_ECS_SPOT, CAPABILITY_ECS_INVENT
 class PriceQuote:
     """One spot price sample for a connection/pool pair.
 
-    ``price_usd`` is what scheduling compares with the pool threshold.
-    Aliyun quotes CNY per hour, so its provisioner converts with the
-    configurable ``ALIYUN_CNY_PER_USD`` rate while keeping the native sample
-    in ``price_native``/``currency`` for diagnostics.
+    ``price_cny`` is the provider's native CNY/hour quote, the same unit the
+    pool threshold is stored in, so scheduling compares them directly.
     """
 
-    price_usd: Decimal
+    price_cny: Decimal
     available: bool
     region: str | None
     instance_type: str | None
     checked_at: datetime
-    price_native: Decimal | None = None
-    currency: str = "USD"
     zone_id: str | None = None
 
 

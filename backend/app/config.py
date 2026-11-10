@@ -109,12 +109,12 @@ class Settings(BaseSettings):
     # cheap even when a large queue arrives at once).
     eval_capacity_check_seconds: int = 300
     eval_capacity_batch_size: int = 5
-    # M4-04 Aliyun ECS spot provisioner. Aliyun quotes CNY/hour; scheduling
-    # compares USD against ``price_threshold_usd`` using this rate. Credentials
-    # come from the encrypted resource connection, never from these settings.
+    # M4-04 Aliyun ECS spot provisioner. Aliyun quotes CNY/hour and the pool
+    # threshold is stored in the same unit (M5-10), so scheduling compares them
+    # directly. Credentials come from the encrypted resource connection, never
+    # from these settings.
     aliyun_ecs_endpoint: str = "https://ecs.aliyuncs.com"
     aliyun_default_region: str = "cn-hangzhou"
-    aliyun_cny_per_usd: float = 7.2
     aliyun_default_instance_type: str = "ecs.g7.large"
     # A spot instance is reclaimed when it never starts or never registers a
     # runner; queued attempts stay queued and the next tick retries.

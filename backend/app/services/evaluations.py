@@ -34,6 +34,7 @@ from ..models import (
     Outbox,
     ResourcePool,
 )
+from ..money import money_str
 from ..runner_contracts import ContractInvalid, validate_payload
 from .runner_labels import DEFAULT_RUNS_ON, pool_runner_labels
 
@@ -128,7 +129,7 @@ def create_synthetic_evaluation(
     created_by: str,
     model_config_id: str | None = None,
     model_name: str | None = None,
-    model_budget_usd: Decimal | float | str | None = None,
+    model_budget_cny: Decimal | float | str | None = None,
     dataset_version_id: str | None = None,
     runtime_key: str | None = None,
     runtime_version: str | None = None,
@@ -188,10 +189,10 @@ def create_synthetic_evaluation(
     elif model_name:
         raise EvaluationInvalid("指定 model_name 时必须同时指定 model_config_id", field="model_name")
     budget = None
-    if model_budget_usd is not None:
-        budget = Decimal(str(model_budget_usd))
+    if model_budget_cny is not None:
+        budget = Decimal(str(model_budget_cny))
         if budget < 0:
-            raise EvaluationInvalid("model_budget_usd 不能为负", field="model_budget_usd")
+            raise EvaluationInvalid("model_budget_cny 不能为负", field="model_budget_cny")
     project_id = str(DEFAULT_PROJECT_ID)
     existing = session.scalar(
         select(EvalRun).where(
@@ -272,7 +273,7 @@ def create_synthetic_evaluation(
         queued_count=total_cases,
         model_config_id=model_config_id,
         model_name=model_name,
-        model_budget_usd=budget,
+        model_budget_cny=budget,
         dataset_version_id=dataset_version_id,
         runtime_key=runtime_key,
         runtime_version=runtime_version,
@@ -507,22 +508,22 @@ def build_case_dispatches(
 # ---------------------------------------------------------------------------
 
 
-def spent_usd(session: Session, run_id: str) -> Decimal:
+def spent_cny(session: Session, run_id: str) -> Decimal:
     """Authoritative model spend for one run (design 06 §8: ModelUsage is the
-    source of truth; ``eval_run.budget_spent_usd`` is a reconciled snapshot)."""
+    source of truth; ``eval_run.budget_spent_cny`` is a reconciled snapshot)."""
 
     value = session.scalar(
-        select(func.coalesce(func.sum(ModelUsage.cost_usd), 0)).where(
+        select(func.coalesce(func.sum(ModelUsage.cost_cny), 0)).where(
             ModelUsage.eval_run_id == run_id
         )
     )
     return Decimal(str(value or 0))
 
 
-def budget_remaining_usd(run: EvalRun, spent: Decimal | None = None) -> Decimal | None:
-    if run.model_budget_usd is None:
+def budget_remaining_cny(run: EvalRun, spent: Decimal | None = None) -> Decimal | None:
+    if run.model_budget_cny is None:
         return None
-    return max(Decimal("0"), Decimal(str(run.model_budget_usd)) - (spent or Decimal("0")))
+    return max(Decimal("0"), Decimal(str(run.model_budget_cny)) - (spent or Decimal("0")))
 
 
 def get_evaluation(session: Session, run_id: str) -> EvalRun:
@@ -545,8 +546,8 @@ def list_evaluations(session: Session, *, limit: int = 50) -> tuple[list[EvalRun
     return items, total
 
 
-def evaluation_summary(run: EvalRun, *, spent_usd: Decimal | None = None) -> dict:
-    spent = spent_usd if spent_usd is not None else run.budget_spent_usd
+def evaluation_summary(run: EvalRun, *, spent_cny: Decimal | None = None) -> dict:
+    spent = spent_cny if spent_cny is not None else run.budget_spent_cny
     unfinished = int(run.queued_count or 0) + int(run.running_count or 0)
     return {
         "id": run.id,
@@ -568,11 +569,11 @@ def evaluation_summary(run: EvalRun, *, spent_usd: Decimal | None = None) -> dic
         "max_attempts": run.max_attempts,
         "model_config_id": run.model_config_id,
         "model_name": run.model_name,
-        "model_budget_usd": str(run.model_budget_usd) if run.model_budget_usd is not None else None,
-        "budget_spent_usd": str(spent) if spent is not None else None,
-        "budget_remaining_usd": (
-            str(budget_remaining_usd(run, spent if spent is not None else Decimal("0")))
-            if run.model_budget_usd is not None
+        "model_budget_cny": money_str(run.model_budget_cny),
+        "budget_spent_cny": money_str(spent),
+        "budget_remaining_cny": (
+            money_str(budget_remaining_cny(run, spent if spent is not None else Decimal("0")))
+            if run.model_budget_cny is not None
             else None
         ),
         "budget_version": run.budget_version,
@@ -603,7 +604,7 @@ def evaluation_detail(session: Session, run: EvalRun) -> dict:
     )
     # The detail view reconciles the spend snapshot against the gateway usage
     # rows so the pause dialog always shows the authoritative figure.
-    live_spent = spent_usd(session, run.id) if run.model_budget_usd is not None else None
+    live_spent = spent_cny(session, run.id) if run.model_budget_cny is not None else None
     shards = [
         {
             "shard_id": row.payload_json.get("shard_id"),
@@ -651,7 +652,7 @@ def evaluation_detail(session: Session, run: EvalRun) -> dict:
         ):
             retryable_count += 1
     return {
-        **evaluation_summary(run, spent_usd=live_spent),
+        **evaluation_summary(run, spent_cny=live_spent),
         "asset_snapshot": run.asset_snapshot_json or {},
         # M5-04: the frozen preparation snapshot (execution policy, case
         # subset summary, digest) is part of the run record for traceability.

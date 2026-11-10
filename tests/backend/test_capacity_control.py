@@ -326,7 +326,7 @@ def test_scale_up_creates_exactly_one_batch(
     monkeypatch.setenv("EVAL_CAPACITY_CHECK_SECONDS", "120")
     get_settings.cache_clear()
     settings = get_settings()
-    fake = FakeProvisioner(price_usd=Decimal("0.1000"))
+    fake = FakeProvisioner(price_cny=Decimal("0.1000"))
     pool = _spot_pool_with_connection(session, scope, max_capacity=6)
     _queued_cases(session, scope, pool, 8)
     now = datetime.now(UTC)
@@ -351,7 +351,7 @@ def test_scale_up_creates_exactly_one_batch(
         "fake-instance-2",
     }
     assert pool.capacity_reason == capacity_control.REASON_CAPACITY_SCALE_UP
-    assert pool.price_usd == Decimal("0.1000")
+    assert pool.price_cny == Decimal("0.1000")
     assert _utc(pool.last_checked_at) == now
     assert _utc(pool.next_check_at) == now + timedelta(seconds=settings.eval_capacity_check_seconds)
 
@@ -367,9 +367,9 @@ def test_capacity_event_is_deduped_across_ticks(
     session: Session, scope: dict[str, str]
 ) -> None:
     settings = get_settings()
-    fake = FakeProvisioner(price_usd=Decimal("0.5000"))
+    fake = FakeProvisioner(price_cny=Decimal("0.5000"))
     pool = _spot_pool_with_connection(
-        session, scope, max_capacity=3, price_threshold_usd=Decimal("0.1000")
+        session, scope, max_capacity=3, price_threshold_cny=Decimal("0.1000")
     )
     _queued_cases(session, scope, pool, 2)
     now = datetime.now(UTC)
@@ -396,9 +396,9 @@ def test_price_above_threshold_blocks_creation(
     session: Session, scope: dict[str, str]
 ) -> None:
     settings = get_settings()
-    fake = FakeProvisioner(price_usd=Decimal("0.5000"))
+    fake = FakeProvisioner(price_cny=Decimal("0.5000"))
     pool = _spot_pool_with_connection(
-        session, scope, min_capacity=0, max_capacity=4, price_threshold_usd=Decimal("0.2000")
+        session, scope, min_capacity=0, max_capacity=4, price_threshold_cny=Decimal("0.2000")
     )
     run = _queued_cases(session, scope, pool, 3)
     now = datetime.now(UTC)
@@ -408,14 +408,14 @@ def test_price_above_threshold_blocks_creation(
     )
 
     assert state["capacity_reason"] == capacity_control.REASON_PRICE_ABOVE_THRESHOLD
-    assert state["price_usd"] == "0.5000"
-    assert state["price_threshold_usd"] == "0.2000"
+    assert state["price_cny"] == "0.5000"
+    assert state["price_threshold_cny"] == "0.2000"
     assert state["checked_at"] == now.isoformat(timespec="microseconds")
     assert state["next_check_at"] == (now + timedelta(seconds=settings.eval_capacity_check_seconds)).isoformat(
         timespec="microseconds"
     )
-    assert pool.price_usd == Decimal("0.5000")
-    assert pool.price_threshold_usd == Decimal("0.2000")
+    assert pool.price_cny == Decimal("0.5000")
+    assert pool.price_threshold_cny == Decimal("0.2000")
     assert pool.capacity_reason == capacity_control.REASON_PRICE_ABOVE_THRESHOLD
 
     assert session.scalar(select(func.count()).select_from(ProvisionedInstance)) == 0
@@ -437,7 +437,7 @@ def test_inventory_shortage_keeps_cases_queued(
     session: Session, scope: dict[str, str]
 ) -> None:
     settings = get_settings()
-    fake = FakeProvisioner(price_usd=Decimal("0.1000"), available=False)
+    fake = FakeProvisioner(price_cny=Decimal("0.1000"), available=False)
     pool = _spot_pool_with_connection(session, scope, max_capacity=3)
     run = _queued_cases(session, scope, pool, 3)
 
@@ -460,7 +460,7 @@ def test_create_failure_is_recorded_not_raised(
     session: Session, scope: dict[str, str]
 ) -> None:
     settings = get_settings()
-    fake = FakeProvisioner(price_usd=Decimal("0.1000"), create_error="quota_exceeded")
+    fake = FakeProvisioner(price_cny=Decimal("0.1000"), create_error="quota_exceeded")
     pool = _spot_pool_with_connection(session, scope, max_capacity=3)
     run = _queued_cases(session, scope, pool, 2)
 
@@ -512,7 +512,7 @@ def test_scale_down_drains_runner_before_release(
     session: Session, scope: dict[str, str]
 ) -> None:
     settings = get_settings()
-    fake = _RecordingProvisioner(price_usd=Decimal("0.1000"))
+    fake = _RecordingProvisioner(price_cny=Decimal("0.1000"))
     pool = _spot_pool_with_connection(session, scope, min_capacity=0, max_capacity=4)
     now = datetime.now(UTC)
     older, _ = _runner(
@@ -673,7 +673,7 @@ def test_reconcile_pools_counts_one_spot_pool(
     session: Session, scope: dict[str, str]
 ) -> None:
     settings = get_settings()
-    fake = FakeProvisioner(price_usd=Decimal("0.1000"))
+    fake = FakeProvisioner(price_cny=Decimal("0.1000"))
     pool = _spot_pool_with_connection(session, scope, max_capacity=3)
     _queued_cases(session, scope, pool, 2)
     now = datetime.now(UTC)

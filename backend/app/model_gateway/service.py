@@ -21,6 +21,7 @@ from ..models import (
     ModelConfig,
     ModelUsage,
 )
+from ..money import MICRO, Money, money_str
 from ..secrets import SecretBoxError, mask_secret
 from ..services.evaluations import TERMINAL_ATTEMPT_STATUSES
 from .tokens import GatewayClaims
@@ -122,17 +123,17 @@ def check_model_allowed(model: str, claims: GatewayClaims, config: ModelConfig) 
         raise GatewayError(403, "model_forbidden", "token 无权调用该模型")
 
 
-def spent_usd(session: Session, claims: GatewayClaims) -> Decimal:
+def spent_cny(session: Session, claims: GatewayClaims) -> Money:
     if not claims.eval_run_id:
-        return Decimal("0")
-    statement = select(func.coalesce(func.sum(ModelUsage.cost_usd), 0)).where(
+        return Money.zero()
+    statement = select(func.coalesce(func.sum(ModelUsage.cost_cny), 0)).where(
         ModelUsage.eval_run_id == claims.eval_run_id
     )
     value = session.scalar(statement)
-    return Decimal(str(value or 0))
+    return Money.of(value or 0)
 
 
-def budget_limit_usd(session: Session, claims: GatewayClaims) -> Decimal | None:
+def budget_limit_cny(session: Session, claims: GatewayClaims) -> Money | None:
     """Current authoritative budget for the token's run.
 
     The token carries the budget snapshot from manifest time, but a resume can
@@ -142,18 +143,18 @@ def budget_limit_usd(session: Session, claims: GatewayClaims) -> Decimal | None:
 
     if claims.eval_run_id:
         run = session.get(EvalRun, claims.eval_run_id)
-        if run is not None and run.model_budget_usd is not None:
-            return Decimal(str(run.model_budget_usd))
-    if claims.budget_usd is None:
+        if run is not None and run.model_budget_cny is not None:
+            return Money.of(run.model_budget_cny)
+    if claims.budget_cny is None:
         return None
-    return Decimal(str(claims.budget_usd))
+    return Money.of(claims.budget_cny)
 
 
 def ensure_budget(session: Session, claims: GatewayClaims) -> None:
-    limit = budget_limit_usd(session, claims)
+    limit = budget_limit_cny(session, claims)
     if limit is None:
         return
-    if spent_usd(session, claims) >= limit:
+    if spent_cny(session, claims) >= limit:
         raise GatewayError(402, "budget_paused", "模型预算已用尽，评测暂停")
 
 
@@ -168,15 +169,15 @@ def usage_from_payload(payload: dict) -> tuple[int, int]:
     return prompt, completion
 
 
-def cost_for(config: ModelConfig, prompt_tokens: int, completion_tokens: int) -> Decimal:
+def cost_for(config: ModelConfig, prompt_tokens: int, completion_tokens: int) -> Money:
     pricing = config.pricing_json if isinstance(config.pricing_json, dict) else {}
-    input_rate = Decimal(str(pricing.get("input_per_1m", 0) or 0))
-    output_rate = Decimal(str(pricing.get("output_per_1m", 0) or 0))
+    input_rate = Money.of(pricing.get("input_per_1m", 0))
+    output_rate = Money.of(pricing.get("output_per_1m", 0))
     cost = (
-        Decimal(prompt_tokens) / Decimal(1_000_000) * input_rate
-        + Decimal(completion_tokens) / Decimal(1_000_000) * output_rate
+        input_rate * Decimal(prompt_tokens) / Decimal(1_000_000)
+        + output_rate * Decimal(completion_tokens) / Decimal(1_000_000)
     )
-    return cost.quantize(Decimal("0.000001"))
+    return cost.quantize(MICRO)
 
 
 def record_usage(
@@ -200,7 +201,7 @@ def record_usage(
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
         total_tokens=prompt_tokens + completion_tokens,
-        cost_usd=cost_for(config, prompt_tokens, completion_tokens),
+        cost_cny=cost_for(config, prompt_tokens, completion_tokens).amount,
     )
     session.add(usage)
     session.commit()
@@ -250,7 +251,7 @@ def usage_payload(usage: ModelUsage) -> dict[str, object]:
         "prompt_tokens": usage.prompt_tokens,
         "completion_tokens": usage.completion_tokens,
         "total_tokens": usage.total_tokens,
-        "cost_usd": str(usage.cost_usd),
+        "cost_cny": money_str(usage.cost_cny),
         "request_id": usage.request_id,
         "created_at": usage.created_at,
     }
@@ -260,13 +261,13 @@ def usage_totals(usages: list[ModelUsage]) -> dict[str, object]:
     prompt = sum(item.prompt_tokens for item in usages)
     completion = sum(item.completion_tokens for item in usages)
     total = sum(item.total_tokens for item in usages)
-    cost = sum((item.cost_usd for item in usages), Decimal("0"))
+    cost = Money.sum(item.cost_cny for item in usages).quantize(MICRO)
     return {
         "requests": len(usages),
         "prompt_tokens": prompt,
         "completion_tokens": completion,
         "total_tokens": total,
-        "cost_usd": str(cost.quantize(Decimal("0.000001"))),
+        "cost_cny": cost.as_str(),
     }
 
 
@@ -331,7 +332,7 @@ __all__ = [
     "read_secret",
     "record_usage",
     "resolve_config",
-    "spent_usd",
+    "spent_cny",
     "upstream_messages_url",
     "upstream_url",
     "usage_from_payload",

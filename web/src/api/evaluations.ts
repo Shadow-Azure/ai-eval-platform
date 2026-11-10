@@ -47,9 +47,9 @@ export interface EvaluationSummary {
   runtime_key?: string | null;
   runtime_version?: string | null;
   model_name?: string | null;
-  model_budget_usd?: string | null;
-  budget_spent_usd?: string | null;
-  budget_remaining_usd?: string | null;
+  model_budget_cny?: string | null;
+  budget_spent_cny?: string | null;
+  budget_remaining_cny?: string | null;
   budget_version?: number;
   pause_reason?: string | null;
   execution_image_digest?: string | null;
@@ -187,7 +187,7 @@ export interface ExecutionPolicy {
   concurrency?: number | null;
   case_timeout_seconds?: number | null;
   max_attempts?: number | null;
-  model_budget_usd?: number | null;
+  model_budget_cny?: number | null;
   shard_size?: number | null;
 }
 
@@ -195,7 +195,7 @@ export interface ResolvedExecutionPolicy {
   concurrency: number;
   case_timeout_seconds: number;
   max_attempts: number;
-  model_budget_usd: number | null;
+  model_budget_cny: number | null;
   shard_size: number;
   execution_image_digest: string | null;
   scoring_image_digest: string | null;
@@ -208,9 +208,9 @@ export interface CostRange {
 
 export interface CostEstimate {
   currency: string;
-  model_usd: CostRange;
-  runner_usd: CostRange | null;
-  total_usd: CostRange;
+  model_cny: CostRange;
+  runner_cny: CostRange | null;
+  total_cny: CostRange;
   estimated_duration_seconds: { low: number; high: number };
   basis: string;
   assumptions: Record<string, number>;
@@ -253,7 +253,7 @@ export interface PreparationSummary {
     provider_key: string | null;
     max_capacity: number | null;
     online_runners: number;
-    price_usd: string | null;
+    price_cny: string | null;
   };
   execution: ResolvedExecutionPolicy;
   resolved: {
@@ -300,7 +300,7 @@ export interface PrepareRequest {
   asset_snapshot_id?: string;
   case_selection?: CaseSelection;
   execution?: ExecutionPolicy;
-  model_budget_usd?: number;
+  model_budget_cny?: number;
   shard_size?: number;
 }
 
@@ -464,9 +464,9 @@ export function parseEvaluationSummary(payload: unknown): EvaluationSummary {
     runtime_key: readOptionalString(payload.runtime_key),
     runtime_version: readOptionalString(payload.runtime_version),
     model_name: readOptionalString(payload.model_name),
-    model_budget_usd: readOptionalString(payload.model_budget_usd),
-    budget_spent_usd: readOptionalString(payload.budget_spent_usd),
-    budget_remaining_usd: readOptionalString(payload.budget_remaining_usd),
+    model_budget_cny: readOptionalString(payload.model_budget_cny),
+    budget_spent_cny: readOptionalString(payload.budget_spent_cny),
+    budget_remaining_cny: readOptionalString(payload.budget_remaining_cny),
     budget_version: typeof payload.budget_version === "number" ? payload.budget_version : 1,
     pause_reason: readOptionalString(payload.pause_reason),
     finished_count: typeof payload.finished_count === "number" ? payload.finished_count : undefined,
@@ -629,7 +629,7 @@ export async function cancelEvaluation(runId: string): Promise<EvaluationSummary
 }
 
 export interface ResumeBudgetRequest {
-  additional_budget_usd: number;
+  additional_budget_cny: number;
   budget_version: number;
 }
 
@@ -689,17 +689,17 @@ function parseCostRange(value: unknown): CostRange | null {
 
 function parseCostEstimate(value: unknown): CostEstimate | null {
   if (!isRecord(value)) return null;
-  const model = parseCostRange(value.model_usd);
-  const total = parseCostRange(value.total_usd);
+  const model = parseCostRange(value.model_cny);
+  const total = parseCostRange(value.total_cny);
   if (!model || !total) return null;
   const duration = isRecord(value.estimated_duration_seconds)
     ? value.estimated_duration_seconds
     : {};
   return {
-    currency: readString(value.currency) || "USD",
-    model_usd: model,
-    runner_usd: parseCostRange(value.runner_usd),
-    total_usd: total,
+    currency: readString(value.currency) || "CNY",
+    model_cny: model,
+    runner_cny: parseCostRange(value.runner_cny),
+    total_cny: total,
     estimated_duration_seconds: {
       low: readCountOrZero(duration.low),
       high: readCountOrZero(duration.high),
@@ -721,7 +721,7 @@ function parseExecutionPolicy(value: unknown): ResolvedExecutionPolicy | null {
     concurrency: readCountOrZero(value.concurrency),
     case_timeout_seconds: readCountOrZero(value.case_timeout_seconds),
     max_attempts: readCountOrZero(value.max_attempts),
-    model_budget_usd: readFiniteNumber(value.model_budget_usd),
+    model_budget_cny: readFiniteNumber(value.model_budget_cny),
     shard_size: readCountOrZero(value.shard_size),
     execution_image_digest: readOptionalString(value.execution_image_digest),
     scoring_image_digest: readOptionalString(value.scoring_image_digest),
@@ -789,7 +789,7 @@ function parsePreparationSummary(value: unknown): PreparationSummary | null {
       provider_key: readOptionalString(pool.provider_key),
       max_capacity: readFiniteNumber(pool.max_capacity),
       online_runners: readCountOrZero(pool.online_runners),
-      price_usd: readOptionalString(pool.price_usd),
+      price_cny: readOptionalString(pool.price_cny),
     },
     execution,
     resolved: {

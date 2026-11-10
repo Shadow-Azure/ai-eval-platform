@@ -163,8 +163,8 @@ def test_migration_exposes_connection_and_pool_capacity_columns(session: Session
         "min_capacity",
         "max_capacity",
         "instance_config_json",
-        "price_threshold_usd",
-        "price_usd",
+        "price_threshold_cny",
+        "price_cny",
         "capacity_reason",
         "last_checked_at",
         "next_check_at",
@@ -183,8 +183,8 @@ def test_connection_and_pool_round_trip(session: Session, scope: dict[str, str])
         min_capacity=1,
         max_capacity=3,
         instance_config_json={"instance_type": "ecs.g7.large", "image_id": "img-1"},
-        price_threshold_usd=Decimal("0.5000"),
-        price_usd=Decimal("0.3100"),
+        price_threshold_cny=Decimal("0.5000"),
+        price_cny=Decimal("0.3100"),
         capacity_reason="waiting_for_price",
         last_checked_at=checked_at,
         next_check_at=checked_at,
@@ -200,8 +200,8 @@ def test_connection_and_pool_round_trip(session: Session, scope: dict[str, str])
     assert stored_pool.min_capacity == 1
     assert stored_pool.max_capacity == 3
     assert stored_pool.instance_config_json["instance_type"] == "ecs.g7.large"
-    assert stored_pool.price_threshold_usd == Decimal("0.5000")
-    assert stored_pool.price_usd == Decimal("0.3100")
+    assert stored_pool.price_threshold_cny == Decimal("0.5000")
+    assert stored_pool.price_cny == Decimal("0.3100")
     assert stored_pool.capacity_reason == "waiting_for_price"
     assert stored_pool.last_checked_at is not None
     assert stored_pool.next_check_at is not None
@@ -227,7 +227,7 @@ def test_new_pool_defaults_to_fixed_unbounded_capacity(
     assert stored.max_capacity == 50
     assert stored.instance_config_json == {}
     assert stored.connection_id is None
-    assert stored.price_threshold_usd is None
+    assert stored.price_threshold_cny is None
 
 
 def test_pool_rejects_unknown_provisioning_mode(
@@ -344,7 +344,7 @@ def test_price_threshold_must_be_positive(threshold: object) -> None:
     with pytest.raises(ResourceValidationError) as caught:
         validate_pool_configuration(None, "fixed", 0, 1, threshold)  # type: ignore[arg-type]
     assert caught.value.code == "price_threshold_invalid"
-    assert caught.value.field == "price_threshold_usd"
+    assert caught.value.field == "price_threshold_cny"
 
 
 def test_positive_price_threshold_is_accepted() -> None:
@@ -489,8 +489,8 @@ def test_pool_payload_carries_capacity_policy(
         min_capacity=1,
         max_capacity=5,
         instance_config_json={"instance_type": "ecs.g7.large"},
-        price_threshold_usd=Decimal("0.5000"),
-        price_usd=Decimal("0.4000"),
+        price_threshold_cny=Decimal("0.5000"),
+        price_cny=Decimal("0.4000"),
         capacity_reason="waiting_for_price",
         last_checked_at=checked_at,
         next_check_at=checked_at,
@@ -503,8 +503,8 @@ def test_pool_payload_carries_capacity_policy(
     assert payload["min_capacity"] == 1
     assert payload["max_capacity"] == 5
     assert payload["instance_config"] == {"instance_type": "ecs.g7.large"}
-    assert payload["price_threshold_usd"] == "0.5000"
-    assert payload["price_usd"] == "0.4000"
+    assert payload["price_threshold_cny"] == "0.5000"
+    assert payload["price_cny"] == "0.4000"
     assert payload["capacity_reason"] == "waiting_for_price"
     assert payload["last_checked_at"] == checked_at.isoformat(timespec="microseconds")
     assert payload["next_check_at"] == checked_at.isoformat(timespec="microseconds")
@@ -535,7 +535,7 @@ def test_fake_quote_returns_configured_price(
     session: Session, scope: dict[str, str]
 ) -> None:
     fake = FakeProvisioner(
-        price_usd=Decimal("0.4200"),
+        price_cny=Decimal("0.4200"),
         available=True,
         instance_type="ecs.g7.large",
     )
@@ -545,7 +545,7 @@ def test_fake_quote_returns_configured_price(
     quote = fake.quote(connection=connection, pool=pool, now=now)
 
     assert isinstance(quote, PriceQuote)
-    assert quote.price_usd == Decimal("0.4200")
+    assert quote.price_cny == Decimal("0.4200")
     assert quote.available is True
     assert quote.region == "cn-hangzhou"
     assert quote.instance_type == "ecs.g7.large"

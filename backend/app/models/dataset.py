@@ -25,7 +25,7 @@ from .base import Base, CreatedAtMixin, TimestampMixin, json_type, new_id, tenan
 
 # 平台聚合器白名单（design 07 §3.1；新算法 = 新代码 + 平台版本，不是新 DB 值）。
 AGGREGATOR_WHITELIST = ("ratio", "sum", "mean", "percentile", "histogram")
-METRIC_DISPLAY_KINDS = ("number", "percentage", "histogram", "ms", "usd")
+METRIC_DISPLAY_KINDS = ("number", "percentage", "histogram", "ms", "cny")
 METRIC_DIRECTIONS = ("higher_is_better", "lower_is_better")
 DATASET_VERSION_STATUSES = ("active", "archived")
 DATASET_IMPORT_STATUSES = ("succeeded", "failed", "duplicate")

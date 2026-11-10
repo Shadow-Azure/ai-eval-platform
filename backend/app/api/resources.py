@@ -30,6 +30,7 @@ from ..config import Settings, get_settings
 from ..db import get_session
 from ..defaults import DEFAULT_PROJECT_ID
 from ..models import Connection, Credential, ResourceEvent, ResourcePool, Runner
+from ..money import money_str
 from ..services import capacity_control, identity
 from ..services.provisioning import (
     ProvisionerError,
@@ -72,7 +73,7 @@ class PoolCreate(BaseModel):
     provisioning_mode: str = Field(min_length=1, max_length=32)
     min_capacity: int = Field(ge=0)
     max_capacity: int = Field(ge=1)
-    price_threshold_usd: Decimal | None = None
+    price_threshold_cny: Decimal | None = None
     instance_config: dict[str, Any] = Field(default_factory=dict)
     runner_group: str | None = Field(default=None, max_length=128)
     labels: dict[str, Any] = Field(default_factory=dict)
@@ -84,7 +85,7 @@ class PoolUpdate(BaseModel):
     provisioning_mode: str | None = Field(default=None, max_length=32)
     min_capacity: int | None = Field(default=None, ge=0)
     max_capacity: int | None = Field(default=None, ge=1)
-    price_threshold_usd: Decimal | None = None
+    price_threshold_cny: Decimal | None = None
     instance_config: dict[str, Any] | None = None
     runner_group: str | None = Field(default=None, max_length=128)
     labels: dict[str, Any] | None = None
@@ -112,10 +113,6 @@ def _as_utc(value: datetime | None) -> datetime | None:
 def _iso(value: datetime | None) -> str | None:
     aware = _as_utc(value)
     return None if aware is None else aware.isoformat(timespec="microseconds")
-
-
-def _price_str(value: Decimal | None) -> str | None:
-    return None if value is None else str(value)
 
 
 def _http_error(
@@ -436,7 +433,7 @@ def create_resource_pool(
             mode,
             payload.min_capacity,
             payload.max_capacity,
-            payload.price_threshold_usd,
+            payload.price_threshold_cny,
             provider_key=provider_key,
             session=session,
             tenant_id=tenant_id,
@@ -455,7 +452,7 @@ def create_resource_pool(
         min_capacity=payload.min_capacity,
         max_capacity=payload.max_capacity,
         instance_config_json=dict(payload.instance_config),
-        price_threshold_usd=payload.price_threshold_usd,
+        price_threshold_cny=payload.price_threshold_cny,
         labels_json=dict(payload.labels),
         status="active",
     )
@@ -527,9 +524,9 @@ def update_resource_pool(
     min_capacity = int(fields.get("min_capacity", pool.min_capacity))
     max_capacity = int(fields.get("max_capacity", pool.max_capacity))
     price_threshold = (
-        fields["price_threshold_usd"]
-        if "price_threshold_usd" in fields
-        else pool.price_threshold_usd
+        fields["price_threshold_cny"]
+        if "price_threshold_cny" in fields
+        else pool.price_threshold_cny
     )
     provider_key = _provider_key(mode, connection)
     try:
@@ -551,7 +548,7 @@ def update_resource_pool(
     pool.connection_id = connection.id if connection is not None else None
     pool.min_capacity = min_capacity
     pool.max_capacity = max_capacity
-    pool.price_threshold_usd = price_threshold
+    pool.price_threshold_cny = price_threshold
     if "name" in fields and fields["name"]:
         pool.name = str(fields["name"])
     if "instance_config" in fields:
@@ -667,8 +664,8 @@ def test_provisioning(
                 "zone_id": quote.zone_id,
             },
         )
-    price_usd = _price_str(quote.price_usd)
-    threshold = _price_str(pool.price_threshold_usd)
+    price_cny = money_str(quote.price_cny)
+    threshold = money_str(pool.price_threshold_cny)
     # A provisioning test must not leave a billable instance behind: create,
     # then release immediately. A failed release is parked as ``draining`` and
     # the capacity controller retries it every tick (M4-03).
@@ -702,7 +699,7 @@ def test_provisioning(
         {
             "instance_id": instance.id,
             "provider_instance_id": instance.provider_instance_id,
-            "price_usd": price_usd,
+            "price_cny": price_cny,
             "threshold": threshold,
             "released": released,
         },
@@ -716,8 +713,8 @@ def test_provisioning(
         target_id=pool.id,
         metadata={
             "instance_id": instance.id,
-            "price_usd": price_usd,
-            "price_threshold_usd": threshold,
+            "price_cny": price_cny,
+            "price_threshold_cny": threshold,
             "released": released,
         },
     )
@@ -739,8 +736,8 @@ def test_provisioning(
             "status": "passed",
             "at": checked_at,
             "detail": {
-                "price_usd": price_usd,
-                "price_threshold_usd": threshold,
+                "price_cny": price_cny,
+                "price_threshold_cny": threshold,
                 "price_available": quote.available,
                 "region": quote.region,
                 "instance_type": quote.instance_type,
@@ -789,8 +786,8 @@ def test_provisioning(
             "spot_strategy": instance.spot_strategy,
             "created_at": _iso(instance.created_at),
         },
-        "price_usd": price_usd,
-        "price_threshold_usd": threshold,
+        "price_cny": price_cny,
+        "price_threshold_cny": threshold,
         "price_available": quote.available,
         "region": quote.region,
         "instance_type": quote.instance_type,

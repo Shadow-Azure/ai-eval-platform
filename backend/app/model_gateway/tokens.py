@@ -43,7 +43,7 @@ class GatewayClaims:
     eval_run_id: str | None = None
     shard_id: str | None = None
     attempt: int | None = None
-    budget_usd: float | None = None
+    budget_cny: float | None = None
 
 
 def issue_gateway_token(
@@ -67,8 +67,8 @@ def issue_gateway_token(
         payload["shard_id"] = claims.shard_id
     if claims.attempt is not None:
         payload["attempt"] = claims.attempt
-    if claims.budget_usd is not None:
-        payload["budget_usd"] = claims.budget_usd
+    if claims.budget_cny is not None:
+        payload["budget_cny"] = claims.budget_cny
     return issue_short_token(payload, secret, ttl_seconds=ttl_seconds, now=now)
 
 
@@ -102,7 +102,7 @@ def verify_gateway_token(
     eval_run_id = payload.get("eval_run_id")
     shard_id = payload.get("shard_id")
     attempt = payload.get("attempt")
-    budget = payload.get("budget_usd")
+    budget = payload.get("budget_cny")
     if eval_run_id is not None and not isinstance(eval_run_id, str):
         raise GatewayTokenError("invalid_token", "eval_run_id 无效")
     if shard_id is not None and not isinstance(shard_id, str):
@@ -110,7 +110,7 @@ def verify_gateway_token(
     if attempt is not None and not isinstance(attempt, int):
         raise GatewayTokenError("invalid_token", "attempt 无效")
     if budget is not None and not isinstance(budget, (int, float)):
-        raise GatewayTokenError("invalid_token", "budget_usd 无效")
+        raise GatewayTokenError("invalid_token", "budget_cny 无效")
 
     return GatewayClaims(
         tenant_id=tenant_id,
@@ -119,7 +119,7 @@ def verify_gateway_token(
         eval_run_id=eval_run_id,
         shard_id=shard_id,
         attempt=attempt,
-        budget_usd=float(budget) if budget is not None else None,
+        budget_cny=float(budget) if budget is not None else None,
     )
 
 

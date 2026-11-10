@@ -197,7 +197,7 @@ def prepare_body(ids: dict, **overrides) -> dict:
             "concurrency": 2,
             "case_timeout_seconds": 1800,
             "max_attempts": 3,
-            "model_budget_usd": 5,
+            "model_budget_cny": 5,
         },
     }
     body.update(overrides)
@@ -220,7 +220,7 @@ def test_prepare_freezes_snapshot_with_ttl(client: TestClient, session: Session)
     assert body["expires_at"].endswith("Z")
     assert body["summary"]["execution"]["case_timeout_seconds"] == 1800
     assert body["summary"]["execution"]["max_attempts"] == 3
-    assert body["cost_estimate"]["total_usd"]["low"]
+    assert body["cost_estimate"]["total_cny"]["low"]
 
     preparation = session.get(EvalPreparation, body["preparation_id"])
     assert preparation is not None
@@ -255,7 +255,7 @@ def test_create_from_preparation_uses_frozen_subset_and_policy(
     stored = session.get(EvalRun, run["id"])
     assert stored.case_timeout_seconds == 1800
     assert stored.max_attempts == 3
-    assert float(stored.model_budget_usd) == 5.0
+    assert float(stored.model_budget_cny) == 5.0
     assert stored.consistency_json["preparation_id"] == prepared["preparation_id"]
     preparation = session.get(EvalPreparation, prepared["preparation_id"])
     assert preparation.status == "consumed"

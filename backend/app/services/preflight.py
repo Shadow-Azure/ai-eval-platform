@@ -119,7 +119,7 @@ def check_preparation(
     model_name: str | None = None,
     case_timeout_seconds: int | None = None,
     max_attempts: int | None = None,
-    model_budget_usd: float | None = None,
+    model_budget_cny: float | None = None,
 ) -> PreflightResult:
     tenant_id = str(DEFAULT_TENANT_ID)
     blockers: list[PreflightIssue] = []
@@ -172,10 +172,10 @@ def check_preparation(
                 {"max": settings.eval_max_case_attempts},
             )
         )
-    if model_budget_usd is not None and model_budget_usd < 0:
+    if model_budget_cny is not None and model_budget_cny < 0:
         blockers.append(
             PreflightIssue(
-                "model_budget_invalid", "模型预算不能为负", "model_budget_usd"
+                "model_budget_invalid", "模型预算不能为负", "model_budget_cny"
             )
         )
 

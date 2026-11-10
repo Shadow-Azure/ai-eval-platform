@@ -62,7 +62,7 @@ def _pool(session: Session, connection: Connection):
         min_capacity=0,
         max_capacity=2,
         instance_config_json={"instance_type": "ecs.g7.large"},
-        price_threshold_usd=Decimal("0.5000"),
+        price_threshold_cny=Decimal("0.5000"),
         labels_json={"runs_on": ["self-hosted", "linux", "eval"]},
         status="active",
     )

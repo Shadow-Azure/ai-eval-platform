@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from decimal import Decimal
 from typing import Annotated, Literal
 
 import httpx
@@ -22,6 +21,7 @@ from ..model_gateway.service import (
     usage_totals,
 )
 from ..models import Credential, ModelConfig, ModelUsage, utcnow
+from ..money import MICRO, Money
 from ..secrets import SecretBoxError, get_secret_box, mask_secret
 from ..seed import ensure_default_scope
 from .dependencies import require_admin
@@ -84,7 +84,7 @@ def _usage_by_config(
                 "completion_tokens"
             ),
             func.coalesce(func.sum(ModelUsage.total_tokens), 0).label("total_tokens"),
-            func.coalesce(func.sum(ModelUsage.cost_usd), 0).label("cost_usd"),
+            func.coalesce(func.sum(ModelUsage.cost_cny), 0).label("cost_cny"),
         )
         .where(
             ModelUsage.tenant_id == tenant_id,
@@ -99,9 +99,7 @@ def _usage_by_config(
             "prompt_tokens": int(row.prompt_tokens or 0),
             "completion_tokens": int(row.completion_tokens or 0),
             "total_tokens": int(row.total_tokens or 0),
-            "cost_usd": str(
-                Decimal(str(row.cost_usd or 0)).quantize(Decimal("0.000001"))
-            ),
+            "cost_cny": Money.of(row.cost_cny or 0).quantize(MICRO).as_str(),
         }
         for row in rows
     }
@@ -141,7 +139,7 @@ def _config_payload(
         "prompt_tokens": 0,
         "completion_tokens": 0,
         "total_tokens": 0,
-        "cost_usd": "0.000000",
+        "cost_cny": "0.000000",
     }
     payload["last_used_at"] = summary["last_used_at"]
     payload["usage"] = {
@@ -149,7 +147,7 @@ def _config_payload(
         "prompt_tokens": summary["prompt_tokens"],
         "completion_tokens": summary["completion_tokens"],
         "total_tokens": summary["total_tokens"],
-        "cost_usd": summary["cost_usd"],
+        "cost_cny": summary["cost_cny"],
     }
     return payload
 

@@ -53,6 +53,7 @@ import { Icon } from "../components/Icon";
 import { PageHeading } from "../components/PageHeading";
 import { QueryError } from "../components/QueryError";
 import { StatusCard } from "../components/StatusCard";
+import { formatMoney } from "../utils/money";
 
 const TAB_KEYS = ["overview", "cases", "results", "config", "events"] as const;
 type TabKey = (typeof TAB_KEYS)[number];
@@ -179,14 +180,6 @@ function statusTag(
   return <Tag color={entry.color}>{entry.label}</Tag>;
 }
 
-function formatUsd(value: string | number | null | undefined): string {
-  if (value === null || value === undefined || value === "") return "—";
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return String(value);
-  if (parsed === 0) return "$0.00";
-  return `$${parsed.toFixed(parsed < 1 ? 4 : 2)}`;
-}
-
 function formatDuration(ms: number | null | undefined): string {
   if (ms === null || ms === undefined) return "—";
   if (ms < 1000) return `${ms} ms`;
@@ -225,8 +218,8 @@ function formatMetricValue(metric: MetricResult): string {
   if (metric.display_kind === "ms" && typeof value === "number") {
     return formatDuration(value);
   }
-  if (metric.display_kind === "usd" && typeof value === "number") {
-    return formatUsd(value);
+  if (metric.display_kind === "cny" && typeof value === "number") {
+    return formatMoney(value);
   }
   if (typeof value === "object") return JSON.stringify(value);
   return metric.unit ? `${String(value)} ${metric.unit}` : String(value);
@@ -255,7 +248,7 @@ const displayKindLabels: Record<string, string> = {
   number: "数值",
   percentage: "百分比",
   ms: "耗时",
-  usd: "美元",
+  cny: "人民币",
   histogram: "直方图",
 };
 
@@ -269,7 +262,7 @@ function directionLabel(value: string): string {
 }
 
 function isKnownMetricKind(kind: string): boolean {
-  return ["number", "percentage", "ms", "usd"].includes(kind);
+  return ["number", "percentage", "ms", "cny"].includes(kind);
 }
 
 function SummaryList({ items }: { items: Array<[string, React.ReactNode]> }) {
@@ -394,9 +387,9 @@ function eventSummary(event: EvaluationEvent, caseKeys: Map<string, string>): st
     case "eval.cancelled":
       return `取消原因：${payload.reason ?? "client_requested"}`;
     case "eval.budget_paused":
-      return `已花费 ${formatUsd(payload.spent_usd as string | number | undefined)}，等待增加预算`;
+      return `已花费 ${formatMoney(payload.spent_cny as string | number | undefined)}，等待增加预算`;
     case "eval.budget_resumed":
-      return `增加 ${formatUsd(payload.additional_budget_usd as string | number | undefined)} 预算，恢复 ${payload.attempts_created ?? "?"} 个用例`;
+      return `增加 ${formatMoney(payload.additional_budget_cny as string | number | undefined)} 预算，恢复 ${payload.attempts_created ?? "?"} 个用例`;
     case "eval.retry_failed":
       return `批量重试 ${payload.retried ?? 0} 个用例，跳过 ${payload.skipped ?? 0} 个`;
     case "case.retry_requested":
@@ -545,7 +538,7 @@ export function EvalDetailPage() {
   const resumeBudget = useMutation({
     mutationFn: () =>
       resumeEvaluationBudget(runId, {
-        additional_budget_usd: additionalBudget,
+        additional_budget_cny: additionalBudget,
         budget_version: detail.data?.budget_version ?? 1,
       }),
     onSuccess: (result) => {
@@ -606,15 +599,15 @@ export function EvalDetailPage() {
     : 0;
   const retryableCount = detail.data?.retryable_count ?? 0;
   const traceCounts = detail.data?.trace_counts ?? {};
-  const budgetUsd = detail.data?.model_budget_usd;
+  const budgetCny = detail.data?.model_budget_cny;
   const pausedBudget = detail.data?.status === "paused_budget";
   const pausingBudget = detail.data?.status === "pausing_budget";
   const unfinishedCount =
     detail.data?.unfinished_count ??
     (detail.data?.queued_count ?? 0) + (detail.data?.running_count ?? 0);
-  const nextBudgetUsd =
-    budgetUsd !== null && budgetUsd !== undefined
-      ? (Number(budgetUsd) + additionalBudget).toFixed(2)
+  const nextBudgetCny =
+    budgetCny !== null && budgetCny !== undefined
+      ? (Number(budgetCny) + additionalBudget).toFixed(2)
       : "—";
   const caseKeyById = useMemo(
     () =>
@@ -742,7 +735,7 @@ export function EvalDetailPage() {
         </span>
         <span className="eval-status-item">
           <span className="eval-status-label">已用成本</span>
-          <span className="mono">{formatUsd(data.budget_spent_usd)}</span>
+          <span className="mono">{formatMoney(data.budget_spent_cny)}</span>
         </span>
       </div>
 
@@ -1026,14 +1019,14 @@ export function EvalDetailPage() {
         />
         <SummaryList
           items={[
-            ["当前预算", formatUsd(budgetUsd)],
-            ["已花费", formatUsd(data.budget_spent_usd)],
+            ["当前预算", formatMoney(budgetCny)],
+            ["已花费", formatMoney(data.budget_spent_cny)],
             ["未完成用例", `${unfinishedCount} 个`],
             ["预算版本", `v${data.budget_version ?? 1}`],
             ["暂停原因", pausingBudget ? "预算用尽，正在收口运行中的用例" : pausedBudget ? "模型预算用尽" : "—"],
           ]}
         />
-        <div style={{ marginTop: 16, marginBottom: 6 }}>新增预算（USD）</div>
+        <div style={{ marginTop: 16, marginBottom: 6 }}>新增预算（CNY）</div>
         <InputNumber
           min={0.01}
           step={1}
@@ -1043,7 +1036,7 @@ export function EvalDetailPage() {
           style={{ width: "100%" }}
         />
         <div className="muted small" style={{ marginTop: 8 }}>
-          恢复后总预算约 {nextBudgetUsd} USD；实际费用仍以模型网关记录为准。
+          恢复后总预算约 {nextBudgetCny} CNY；实际费用仍以模型网关记录为准。
         </div>
       </Modal>
     </section>
@@ -1161,7 +1154,7 @@ function OverviewPanel(props: OverviewPanelProps) {
     onOpenCase,
     onViewEvents,
   } = props;
-  const hasBudget = detail.model_budget_usd !== null && detail.model_budget_usd !== undefined;
+  const hasBudget = detail.model_budget_cny !== null && detail.model_budget_cny !== undefined;
   const pausedBudget = detail.status === "paused_budget";
   const pausingBudget = detail.status === "pausing_budget";
   const unfinishedCount =
@@ -1295,7 +1288,7 @@ function OverviewPanel(props: OverviewPanelProps) {
             </div>
             <div className="eval-context-item">
               <div className="eval-context-label">已用成本</div>
-              <div className="eval-context-value">{formatUsd(detail.budget_spent_usd)}</div>
+              <div className="eval-context-value">{formatMoney(detail.budget_spent_cny)}</div>
             </div>
             <div className="eval-context-item">
               <div className="eval-context-label">启动时间</div>
@@ -1322,7 +1315,7 @@ function OverviewPanel(props: OverviewPanelProps) {
               showIcon
               style={{ marginBottom: 16 }}
               message="预算已暂停，评测尚未结束"
-              description={`已花费 ${formatUsd(detail.budget_spent_usd)} / 预算 ${formatUsd(detail.model_budget_usd)}，${unfinishedCount} 个用例未完成。增加预算后只会重新调度未完成用例；已完成用例的结果与成本保持不变。`}
+              description={`已花费 ${formatMoney(detail.budget_spent_cny)} / 预算 ${formatMoney(detail.model_budget_cny)}，${unfinishedCount} 个用例未完成。增加预算后只会重新调度未完成用例；已完成用例的结果与成本保持不变。`}
               action={
                 <Button type="primary" size="small" onClick={onResumeBudget}>
                   增加预算并恢复
@@ -1332,9 +1325,9 @@ function OverviewPanel(props: OverviewPanelProps) {
           ) : null}
           <SummaryList
             items={[
-              ["模型预算", formatUsd(detail.model_budget_usd)],
-              ["已花费", formatUsd(detail.budget_spent_usd)],
-              ["剩余", formatUsd(detail.budget_remaining_usd)],
+              ["模型预算", formatMoney(detail.model_budget_cny)],
+              ["已花费", formatMoney(detail.budget_spent_cny)],
+              ["剩余", formatMoney(detail.budget_remaining_cny)],
               ["预算版本", `v${detail.budget_version ?? 1}`],
               ["已完成", `${finishedCount} 个`],
               ["未完成", `${unfinishedCount} 个`],
@@ -1624,9 +1617,9 @@ function ConfigPanel({ config, loading, error, onRetry }: ConfigPanelProps) {
         <Card title="模型预算" className="eval-panel-card">
           <SummaryList
             items={[
-              ["预算", formatUsd(config.budget.model_budget_usd)],
-              ["已花费", formatUsd(config.budget.budget_spent_usd)],
-              ["剩余", formatUsd(config.budget.budget_remaining_usd)],
+              ["预算", formatMoney(config.budget.model_budget_cny)],
+              ["已花费", formatMoney(config.budget.budget_spent_cny)],
+              ["剩余", formatMoney(config.budget.budget_remaining_cny)],
               ["预算版本", `v${config.budget.budget_version}`],
               ["暂停原因", config.budget.pause_reason ?? "—"],
             ]}
