@@ -234,6 +234,35 @@ def test_prepare_freezes_snapshot_with_ttl(client: TestClient, session: Session)
     assert expires_at > datetime.now(UTC)
 
 
+def test_prepare_and_create_without_agent_assets(
+    client: TestClient, session: Session
+) -> None:
+    """Assets are optional: the runtime always runs, the snapshot may be absent."""
+
+    ids = seed_launch(session)
+    response = client.post("/api/v1/evaluations/prepare", json=prepare_body(ids))
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["ready"] is True
+    assert body["asset_snapshot"] is None
+    assert body["resolved_commit"] is None
+    assert body["summary"]["asset_snapshot"] is None
+    assert [warning["code"] for warning in body["warnings"]] == ["assets_empty"]
+
+    created = client.post(
+        "/api/v1/evaluations",
+        json={"preparation_id": body["preparation_id"], "name": "无资产评测"},
+        headers={"Idempotency-Key": "idem-no-assets"},
+    )
+    assert created.status_code == 201, created.text
+    run = created.json()
+    assert run["asset_snapshot_id"] is None
+    stored = session.get(EvalRun, run["id"])
+    assert stored.asset_snapshot_id is None
+    assert stored.asset_snapshot_json == {}
+    assert stored.runtime_key == "claude-code"
+
+
 def test_create_from_preparation_uses_frozen_subset_and_policy(
     client: TestClient, session: Session
 ) -> None:
