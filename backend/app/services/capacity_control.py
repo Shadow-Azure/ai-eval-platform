@@ -793,6 +793,12 @@ def reconcile_pools(
         )
     )
     for pool in pools:
+        # Re-read under a row lock: next_check_at is a read-decide-write field,
+        # so without this two workers could both create instances for one gap.
+        # Postgres honours FOR UPDATE; SQLite serialises writes anyway.
+        locked = session.get(ResourcePool, pool.id, with_for_update=True)
+        if locked is not None:
+            pool = locked
         next_check = _aware(pool.next_check_at)
         if next_check is not None and next_check > _aware(due):
             continue

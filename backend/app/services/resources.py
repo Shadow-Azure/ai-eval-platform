@@ -26,8 +26,6 @@ CONNECTION_STATUS_UNVERIFIED = "unverified"
 CONNECTION_STATUS_VERIFIED = "verified"
 CONNECTION_STATUS_FAILED = "failed"
 
-#: Names of credential fields that must never appear in an API payload.
-SECRET_FIELDS = ("ciphertext", "key_version")
 
 
 class ResourceValidationError(Exception):
