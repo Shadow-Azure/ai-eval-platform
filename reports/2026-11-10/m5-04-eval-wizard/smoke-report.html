@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>M5-04 发起评测向导与准备快照 · 集成冒烟报告</title>
+  <style>
+    :root{
+      color-scheme:light;
+      --bg:#f4f7fb;--card:#fff;--ink:#16202f;--ink2:#55637a;--ink3:#7b869b;
+      --line:#dde4ee;--accent:#2563eb;--accent-wash:#e8efff;--good:#157347;
+      --good-wash:#e7f6ee;--warn:#b45309;--warn-wash:#fff2dd;--bad:#c9282e;
+      --bad-wash:#ffeded;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:radial-gradient(circle at 8% 0,#dbe9ff 0,transparent 32rem),radial-gradient(circle at 92% 4%,#e7f1ff 0,transparent 28rem),var(--bg);color:var(--ink);font:14px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Noto Sans CJK SC",sans-serif}
+    main{max-width:1220px;margin:auto;padding:36px 28px 72px}
+    .hero{padding:30px 34px;border:1px solid #dbe3ee;border-radius:24px;background:rgba(255,255,255,.92);box-shadow:0 18px 44px #17202f12}
+    .eyebrow{margin:0;color:var(--accent);font-size:12px;font-weight:800;letter-spacing:.16em;text-transform:uppercase}
+    h1{margin:10px 0 8px;font-size:clamp(28px,4vw,44px);letter-spacing:-.04em}
+    .summary{margin:0;max-width:850px;color:var(--ink2);font-size:15px}
+    .meta{display:block;margin-top:8px;color:var(--ink3);font-size:12px}
+    .metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-top:26px}
+    .metric{padding:16px 18px;border:1px solid var(--line);border-radius:16px;background:#fafbfd}
+    .metric b{display:block;font-size:30px;letter-spacing:-.04em}
+    .metric span{display:block;margin-top:2px;color:var(--ink3);font-size:12px}
+    section{margin-top:28px}
+    .head{display:flex;align-items:baseline;justify-content:space-between;gap:16px;margin:0 4px 14px}
+    h2{margin:0;font-size:21px;letter-spacing:-.03em}
+    .head small{color:var(--ink3);white-space:nowrap}
+    .card{padding:22px;border:1px solid var(--line);border-radius:20px;background:var(--card);box-shadow:0 5px 22px #17202f08}
+    .facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin:0}
+    .fact{padding:13px 16px;border:1px solid #eceff5;border-radius:12px;background:#fafbfd}
+    .fact dt{color:var(--ink3);font-size:11px;font-weight:700}
+    .fact dd{margin:3px 0 0;overflow-wrap:anywhere}
+    code{font-family:var(--mono);font-size:.9em;color:#29456d;overflow-wrap:anywhere}
+    .status{display:inline-flex;padding:3px 8px;border-radius:999px;font-size:11px;font-weight:800;white-space:nowrap;background:#eef1f6;color:var(--ink2)}
+    .status.pass,.status.fixed{background:var(--good-wash);color:var(--good)}
+    .status.warn,.status.manual{background:var(--warn-wash);color:var(--warn)}
+    .status.fail{background:var(--bad-wash);color:var(--bad)}
+    .tableWrap{overflow:auto;border:1px solid var(--line);border-radius:18px;background:var(--card);box-shadow:0 5px 22px #17202f08}
+    table{width:100%;min-width:920px;border-collapse:collapse}
+    th,td{padding:12px 15px;border-bottom:1px solid #edf0f5;text-align:left;vertical-align:top}
+    th{position:sticky;top:0;background:#fafbfe;color:var(--ink2);font-size:12px}
+    tr:last-child td{border-bottom:0}
+    tr:hover{background:#fcfdff}
+    .num{color:var(--ink3);font-family:var(--mono);font-size:12px}
+    .evidence{color:var(--ink3);font-size:12px}
+    .issues{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px}
+    .issueCard{padding:18px 21px;border:1px solid #ffcece;border-left:5px solid var(--bad);border-radius:16px;background:#fffbfb}
+    .issueCard h3{margin:0;color:#b91c1c;font-size:16px}
+    .issueCard p{margin:8px 0;color:var(--ink2)}
+    .issueCard dt{color:var(--ink3);font-size:11px;font-weight:700}
+    .issueCard dd{margin:2px 0 0;color:var(--ink2)}
+    .tag{float:right;padding:3px 8px;border-radius:999px;background:#fee4e4;color:#9a1b21;font-size:11px;font-weight:800}
+    .fixed{display:inline-flex;gap:5px;align-items:center;margin-top:11px;padding:6px 10px;border-radius:999px;background:var(--good-wash);color:var(--good);font-size:12px;font-weight:800}
+    .shots{display:grid;grid-template-columns:repeat(auto-fit,minmax(430px,1fr));gap:16px}
+    figure{margin:0;overflow:hidden;border:1px solid var(--line);border-radius:18px;background:#fff;box-shadow:0 6px 22px #17202f08}
+    figure.wide{grid-column:1/-1}
+    img{display:block;width:100%;max-height:500px;object-fit:contain;background:#eef2f7}
+    figcaption{display:flex;gap:9px;align-items:flex-start;padding:11px 14px;border-top:1px solid #edf0f5;background:#fafbfd;color:var(--ink2);font-size:12.5px}
+    figcaption b{flex:none;color:var(--ink)}
+    .issue-shot{border-color:#ffcece}
+    .conclusion{border:1px solid #c8e5d2;border-radius:20px;background:linear-gradient(135deg,#f2fbf6,white 54%)}
+    .conclusion.warn{border-color:#f1d9a4;background:linear-gradient(135deg,#fff8e8,white 54%)}
+    .conclusion.fail{border-color:#ffc9c9;background:linear-gradient(135deg,#fff5f5,white 54%)}
+    .conclusion ul{margin:12px 0 0;padding-left:20px;color:#344155}
+    .conclusion li+li{margin-top:7px}
+    .empty{padding:20px;text-align:center;color:var(--ink3);background:#fafbfd;border:1px dashed var(--line);border-radius:12px}
+    .foot{margin-top:24px;color:var(--ink3);font-size:12px;text-align:center}
+    @media(max-width:860px){main{padding:22px 14px 52px}.hero{padding:23px}.shots{grid-template-columns:1fr}.head{align-items:flex-start;flex-direction:column;gap:4px}}
+    @media print{body{background:white}main{max-width:none;padding:0}.card,.issueCard,figure,.tableWrap{box-shadow:none;break-inside:avoid}img{max-height:420px}}
+  </style>
+</head>
+<body>
+<main>
+  <header class="hero">
+    <p class="eyebrow">Browser smoke · 真实登录 / 用例子集 / 资产快照 / 执行策略 / 准备快照 / 幂等创建 / 过期与配置变化</p>
+    <h1>M5-04 发起评测向导与准备快照 · 集成冒烟报告</h1>
+    <p class="summary">在本地开发栈上用系统 Chrome headless 走通 M5-04 的主路径：从 origin/main 的旧向导基线开始，依次选择数据集版本与 5 个用例子集、复用冻结的 Agent 资产快照、配置并发/超时/重试/预算，服务端返回 60 秒有效的准备快照，确认页展示冻结输入、容量与费用区间，创建后进入详情并验证 5 个用例、准备快照已消费、同一 Idempotency-Key 重放返回同一评测。随后验证了准备快照过期、确认后配置变化（409）与容量非法（422）三条错误路径，以及无数据集空态。14 个检查点全部通过，未发现产品缺陷。</p>
+    <span class="meta">2026-11-10 · AI Eval Platform · M5-04 · 本地开发栈浏览器冒烟</span>
+    <div class="metrics"><div class="metric"><b>14</b><span>检查点</span></div><div class="metric"><b>0</b><span>发现缺陷</span></div><div class="metric"><b>14</b><span>证据截图</span></div><div class="metric"><b>全绿</b><span>pytest / web / docs 门禁</span></div></div>
+  </header>
+
+  <section>
+    <div class="head"><h2>Environment and Artifact</h2><small>2026-11-10 · AI Eval Platform · M5-04 · 本地开发栈浏览器冒烟</small></div>
+    <article class="card"><dl class="facts"><div class="fact"><dt>应用</dt><dd>AI Eval Platform 本地开发栈（FastAPI + Vite React）</dd></div><div class="fact"><dt>分支</dt><dd>agent/complete-m5-04-5c28b62b132a</dd></div><div class="fact"><dt>基线</dt><dd>origin/main @ 052dfb2 的同一页面（独立 worktree，同一后端与数据）</dd></div><div class="fact"><dt>数据库</dt><dd>一次性 SQLite + 迁移 head 0017_eval_preparations</dd></div><div class="fact"><dt>浏览器</dt><dd>系统 Chrome headless · 1440×1000（另测 1280×800）· Playwright 驱动</dd></div><div class="fact"><dt>数据形态</dt><dd>1 个数据集版本（30 用例）/ 1 个模型配置 / 1 个资源池（8 上限，3 在线 Runner）/ 15 个 Skill 资产快照 / 1 个管理员</dd></div><div class="fact"><dt>资产快照</dt><dd>通过真实 GitHub API 解析并用本地 S3 stub 冻结到 commit 22f0b463；向导复用该冻结快照</dd></div><div class="fact"><dt>准备快照 TTL</dt><dd>冒烟环境设为 60 秒（生产默认 900 秒），用于验证过期页面提示</dd></div><div class="fact"><dt>模型调用</dt><dd>未发起真实模型请求：本次只验证发起与冻结链路，不验证 Agent 执行</dd></div></dl></article>
+  </section>
+
+  <section>
+    <div class="head"><h2>Scenario Matrix</h2><small>2 info · 12 pass</small></div>
+    <div class="tableWrap"><table><table><thead><tr><th>#</th><th>场景</th><th>结果</th><th>说明</th><th>证据</th></tr></thead><tbody><tr><td class="num">01</td><td>改动前基线：数据集步骤</td><td><span class="status info">BASELINE</span></td><td>origin/main 的向导是 AntD Steps + 卡片，仅能选择数据集与版本，没有用例子集、步骤条与摘要侧栏。</td><td class="evidence">before-01-wizard-dataset.png</td></tr><tr><td class="num">02</td><td>改动前基线：资产步骤</td><td><span class="status info">BASELINE</span></td><td>旧向导的资产步骤只有资产树与 Ref 解析，没有 4 步导航和右侧冻结摘要。</td><td class="evidence">before-02-wizard-assets.png</td></tr><tr><td class="num">03</td><td>数据集与用例子集</td><td><span class="status pass">PASS</span></td><td>新向导展示 4 步步骤条、数据集/版本选择与“全部 / 按数量 / 指定用例”三种范围；按数量选择 5 个用例，右侧摘要同步。</td><td class="evidence">after-01-wizard-dataset.png<br>after-02-wizard-subset.png</td></tr><tr><td class="num">04</td><td>非敏感草稿刷新不丢</td><td><span class="status pass">PASS</span></td><td>输入用例数量 5 后刷新页面，模式与数量从 localStorage 恢复；草稿不含任何密钥字段。</td><td class="evidence">after-02-wizard-subset.png</td></tr><tr><td class="num">05</td><td>Agent 资产与冻结 commit</td><td><span class="status pass">PASS</span></td><td>向导展示已冻结的 15 个 Skill 与 commit 22f0b463；Ref 未解析时禁止进入下一步。</td><td class="evidence">after-03-wizard-assets.png</td></tr><tr><td class="num">06</td><td>模型、资源池与高级执行策略</td><td><span class="status pass">PASS</span></td><td>选择模型与资源池，配置并发 2、单用例超时 30 分钟、重试 1 次、预算 $10；容量提示按在线 Runner 与池上限解释。</td><td class="evidence">after-04-wizard-policy.png</td></tr><tr><td class="num">07</td><td>1280×800 主操作可达</td><td><span class="status pass">PASS</span></td><td>在 1280×800 下滚到主操作，按钮完整可见且未被遮挡；布局在窄窗口仍保持两栏语义。</td><td class="evidence">after-05-wizard-policy-1280.png</td></tr><tr><td class="num">08</td><td>准备快照与确认页</td><td><span class="status pass">PASS</span></td><td>服务端返回 preparation_id、60 秒有效期与 snapshot_digest；确认页展示 5 个用例、资产 commit、模型、资源池、执行策略、镜像 digest、费用区间与倒计时。</td><td class="evidence">after-06-wizard-confirm.png</td></tr><tr><td class="num">09</td><td>创建评测与冻结输入</td><td><span class="status pass">PASS</span></td><td>点击创建后进入详情；后端记录 5 个用例，准备快照状态变为 consumed 并指向该 run。</td><td class="evidence">after-07-created-detail.png</td></tr><tr><td class="num">10</td><td>同一幂等键重放</td><td><span class="status pass">PASS</span></td><td>用创建请求携带的 Idempotency-Key 再次提交同一 preparation_id 返回 200 与同一 run id，没有重复创建。</td><td class="evidence">after-07-created-detail.png</td></tr><tr><td class="num">11</td><td>准备快照过期</td><td><span class="status pass">PASS</span></td><td>倒计时归零后页面显示“准备快照已过期”，创建按钮禁用；不会静默沿用旧快照。</td><td class="evidence">after-08-wizard-confirm-before-expiry.png<br>after-09-wizard-expired.png</td></tr><tr><td class="num">12</td><td>确认后配置变化</td><td><span class="status pass">PASS</span></td><td>准备后撤销模型凭据再创建，服务端返回 409 configuration_changed，页面回到执行策略并给出持久提示。</td><td class="evidence">after-10-wizard-configuration-changed.png</td></tr><tr><td class="num">13</td><td>容量非法</td><td><span class="status pass">PASS</span></td><td>准备后把池上限降到 2，再创建返回 422 capacity_invalid，页面回到执行策略并在并发字段下显示阻塞原因。</td><td class="evidence">after-11-wizard-capacity-invalid.png</td></tr><tr><td class="num">14</td><td>无数据集空态</td><td><span class="status pass">PASS</span></td><td>数据集列表为空时展示“还没有数据集”并给出导入入口；该用例通过拦截 /api/v1/datasets 响应构造，报告中已标注。</td><td class="evidence">after-12-wizard-empty-datasets.png</td></tr></tbody></table></table></div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Issues and Observations</h2><small>No defects found</small></div>
+    <div class="empty">No defects were found.</div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Evidence</h2><small>12 screenshots</small></div>
+    <div class="shots"><figure class="wide"><img loading="lazy" src="before-01-wizard-dataset.png" alt="改动前数据集步骤"><figcaption><b>01 · Before</b><span>origin/main 的向导只有数据集/版本两个选择，没有用例子集、步骤条或摘要侧栏。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="after-01-wizard-dataset.png" alt="改动后数据集与用例步骤"><figcaption><b>03 · After</b><span>4 步步骤条、用例范围与右侧评测摘要；同一 1440×1000 视口与同一后端数据。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="after-02-wizard-subset.png" alt="按数量选择用例并刷新恢复"><figcaption><b>04 · Draft</b><span>用例数量=5 在刷新后仍从草稿恢复，摘要同步为 5 个用例。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="after-03-wizard-assets.png" alt="Agent 资产冻结快照"><figcaption><b>05 · Assets</b><span>15 个 Skill 固定到 commit 22f0b463；未解析 Ref 时阻塞下一步。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="after-04-wizard-policy.png" alt="模型、资源池与执行策略"><figcaption><b>06 · Policy</b><span>并发、超时、重试、预算与镜像 digest 均可配置，右侧摘要实时同步。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="after-05-wizard-policy-1280.png" alt="1280×800 主操作可达"><figcaption><b>07 · 1280</b><span>目标窗口下滚到主操作，按钮完整可见。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="after-06-wizard-confirm.png" alt="准备快照确认页"><figcaption><b>08 · Confirm</b><span>冻结的数据集、资产 commit、模型、资源池、执行策略、费用区间与 60 秒倒计时。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="after-07-created-detail.png" alt="创建后的评测详情"><figcaption><b>09 · Created</b><span>创建成功进入详情；run 含 5 个用例，准备快照已消费。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="after-09-wizard-expired.png" alt="准备快照过期"><figcaption><b>11 · Expired</b><span>倒计时归零后显示过期提示并禁用创建，不静默使用旧快照。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="after-10-wizard-configuration-changed.png" alt="配置在确认后变化"><figcaption><b>12 · Changed</b><span>凭据撤销后创建返回 409，页面回到执行策略并展示持久错误提示。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="after-11-wizard-capacity-invalid.png" alt="容量非法"><figcaption><b>13 · Capacity</b><span>池上限降到 2 后创建返回 422，阻塞原因显示在并发字段下方。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="after-12-wizard-empty-datasets.png" alt="无数据集空态"><figcaption><b>14 · Empty</b><span>数据集为空时说明原因并给出导入入口（该场景拦截了 datasets 响应）。</span></figcaption></figure></div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Automated Coverage Assessment</h2><small>6 areas reviewed</small></div>
+    <div class="tableWrap"><table><table><thead><tr><th>区域</th><th>覆盖</th><th>结论</th><th>建议</th></tr></thead><tbody><tr><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td></tr></tbody></table></table></div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Conclusion</h2><small>主路径与错误路径通过，未发现产品缺陷</small></div>
+    <article class="card conclusion pass"><p><strong>M5-04 的发起向导在真实登录、真实 API 与真实浏览器下走通数据集子集、资产快照、执行策略、准备快照、确认、幂等创建与错误回退；没有需要修复的缺陷。</strong></p><ul><li>Before 基线是 origin/main @ 052dfb2 的独立 worktree 页面，同一后端与同一份数据，不是修改后页面的回放。</li><li>资产解析在浏览器冒烟开始前通过真实 GitHub API + 本地 S3 stub 完成；向导复用冻结快照，避免重复扫描，也避免把 M5-01 的解析交互算作本 PR 覆盖。</li><li>准备快照 TTL 在冒烟环境设为 60 秒以验证过期提示；生产默认 900 秒由配置控制。</li><li>本地使用 SQLite 与假模型凭据，未发起真实模型调用；真实执行、预算暂停与结果页面仍属 M3/M4/M5-05 的部署后冒烟范围。</li><li>无数据集空态通过拦截 API 响应生成证据，报告已明确标注，不冒充真实空库。</li></ul></article>
+  </section>
+
+  <p class="foot">M5-04 · 发起评测向导与准备快照 · 本地开发栈浏览器冒烟</p>
+</main>
+</body>
+</html>

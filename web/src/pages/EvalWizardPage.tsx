@@ -1,17 +1,14 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   Alert,
   Button,
-  Card,
   Descriptions,
   Empty,
-  Form,
   Input,
+  InputNumber,
   Segmented,
   Select,
-  Space,
-  Steps,
   Table,
   Tag,
   message,
@@ -22,21 +19,220 @@ import {
   fetchAssetSources,
   fetchAssetTree,
   resolveAgentAssets,
-  type AssetSnapshot,
   type AssetSource,
   type AssetType,
   type ScannedAsset,
 } from "../api/agentAssets";
-import { fetchDatasetCases, fetchDatasetVersion, fetchDatasetVersions, fetchDatasets } from "../api/datasets";
+import {
+  fetchDatasetCasesPage,
+  fetchDatasetVersion,
+  fetchDatasetVersions,
+  fetchDatasets,
+  type DatasetCaseSummary,
+  type DatasetVersion,
+} from "../api/datasets";
 import {
   createEvaluation,
   prepareEvaluation,
+  type CaseSelection,
+  type CaseSelectionMode,
+  type CostRange,
+  type ExecutionPolicy,
   type PrepareResponse,
+  type PreflightIssue,
 } from "../api/evaluations";
 import { fetchModelConfigs } from "../api/models";
-import { fetchRunners, fetchRuntimes } from "../api/runtimes";
+import { fetchResourcePools } from "../api/resources";
+import { fetchRuntimes } from "../api/runtimes";
+import { ApiError } from "../api/types";
 import { Icon } from "../components/Icon";
 import { PageHeading } from "../components/PageHeading";
+
+const DRAFT_KEY = "ai-eval-platform:eval-wizard-draft:v1";
+const CASE_PAGE_SIZE = 20;
+
+const STEP_ITEMS: { title: string; meta: string }[] = [
+  { title: "数据集与用例", meta: "版本与子集" },
+  { title: "Agent / 资产", meta: "Runtime 与 Git 源" },
+  { title: "模型 / 资源", meta: "凭据、容量与执行策略" },
+  { title: "确认启动", meta: "冻结快照与费用" },
+];
+
+const TIMEOUT_OPTIONS = [15, 30, 60, 120].map((minutes) => ({
+  value: minutes * 60,
+  label: `${minutes} 分钟`,
+}));
+
+interface WizardDraft {
+  datasetId: string | null;
+  versionId: string | null;
+  selectionMode: CaseSelectionMode;
+  selectionCount: number;
+  selectionKeys: string[];
+  assetSourceId: string | null;
+  assetRef: string;
+  selectedPaths: string[];
+  assetSelectionTouched: boolean;
+  assetSnapshotId: string | null;
+  assetSnapshotCommit: string | null;
+  assetSnapshotCount: number;
+  modelConfigId: string | null;
+  runtimeKey: string;
+  poolId: string | null;
+  concurrency: number;
+  caseTimeoutSeconds: number;
+  maxAttempts: number;
+  budgetUsd: number | null;
+  executionDigest: string;
+  scoringDigest: string;
+}
+
+function defaultDraft(): WizardDraft {
+  return {
+    datasetId: null,
+    versionId: null,
+    selectionMode: "all",
+    selectionCount: 50,
+    selectionKeys: [],
+    assetSourceId: null,
+    assetRef: "",
+    selectedPaths: [],
+    assetSelectionTouched: false,
+    assetSnapshotId: null,
+    assetSnapshotCommit: null,
+    assetSnapshotCount: 0,
+    modelConfigId: null,
+    runtimeKey: "claude-code",
+    poolId: null,
+    concurrency: 8,
+    caseTimeoutSeconds: 3600,
+    maxAttempts: 2,
+    budgetUsd: null,
+    executionDigest: "",
+    scoringDigest: "",
+  };
+}
+
+function stringOrNull(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function numberOr(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function readDraft(): WizardDraft | null {
+  try {
+    const raw = window.localStorage.getItem(DRAFT_KEY);
+    if (!raw) return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null) return null;
+    const it = parsed as Record<string, unknown>;
+    const base = defaultDraft();
+    const mode = it.selectionMode;
+    return {
+      ...base,
+      datasetId: stringOrNull(it.datasetId),
+      versionId: stringOrNull(it.versionId),
+      selectionMode: mode === "count" || mode === "cases" ? mode : "all",
+      selectionCount: numberOr(it.selectionCount, base.selectionCount),
+      selectionKeys: Array.isArray(it.selectionKeys)
+        ? it.selectionKeys.filter((key): key is string => typeof key === "string")
+        : [],
+      assetSourceId: stringOrNull(it.assetSourceId),
+      assetRef: typeof it.assetRef === "string" ? it.assetRef : "",
+      selectedPaths: Array.isArray(it.selectedPaths)
+        ? it.selectedPaths.filter((path): path is string => typeof path === "string")
+        : [],
+      assetSelectionTouched: it.assetSelectionTouched === true,
+      assetSnapshotId: stringOrNull(it.assetSnapshotId),
+      assetSnapshotCommit: stringOrNull(it.assetSnapshotCommit),
+      assetSnapshotCount: numberOr(it.assetSnapshotCount, 0),
+      modelConfigId: stringOrNull(it.modelConfigId),
+      runtimeKey: typeof it.runtimeKey === "string" && it.runtimeKey ? it.runtimeKey : base.runtimeKey,
+      poolId: stringOrNull(it.poolId),
+      concurrency: Math.max(1, numberOr(it.concurrency, base.concurrency)),
+      caseTimeoutSeconds: Math.max(60, numberOr(it.caseTimeoutSeconds, base.caseTimeoutSeconds)),
+      maxAttempts: Math.max(1, numberOr(it.maxAttempts, base.maxAttempts)),
+      budgetUsd:
+        typeof it.budgetUsd === "number" && Number.isFinite(it.budgetUsd) ? it.budgetUsd : null,
+      executionDigest: typeof it.executionDigest === "string" ? it.executionDigest : "",
+      scoringDigest: typeof it.scoringDigest === "string" ? it.scoringDigest : "",
+    };
+  } catch {
+    return null;
+  }
+}
+
+function saveDraft(draft: WizardDraft): void {
+  try {
+    window.localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
+  } catch {
+    // Storage can be unavailable (private mode); the wizard still works.
+  }
+}
+
+function clearDraft(): void {
+  try {
+    window.localStorage.removeItem(DRAFT_KEY);
+  } catch {
+    // ignore
+  }
+}
+
+function newIdempotencyKey(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `idem-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function trimMoney(value: string): string {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return value;
+  return number >= 1 ? number.toFixed(2) : number.toFixed(4);
+}
+
+function formatUsd(range: CostRange | null): string {
+  if (!range) return "—";
+  return `$${trimMoney(range.low)}–$${trimMoney(range.high)}`;
+}
+
+function formatMinutes(seconds: number): string {
+  const minutes = Math.max(0, Math.round(seconds / 60));
+  if (minutes < 60) return `${minutes} 分钟`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest ? `${hours} 小时 ${rest} 分` : `${hours} 小时`;
+}
+
+function formatDuration(range: { low: number; high: number } | null): string {
+  if (!range || range.high <= 0) return "—";
+  return `${formatMinutes(range.low)}–${formatMinutes(range.high)}`;
+}
+
+function formatCountdown(seconds: number): string {
+  const safe = Math.max(0, seconds);
+  const minutes = Math.floor(safe / 60);
+  const rest = safe % 60;
+  return `${minutes}:${String(rest).padStart(2, "0")}`;
+}
+
+function blockersFromDetails(details: Record<string, unknown> | null | undefined): PreflightIssue[] {
+  const raw = details && Array.isArray(details.blockers) ? details.blockers : [];
+  return raw.map((entry) => {
+    const item = (entry ?? {}) as Record<string, unknown>;
+    return {
+      code: typeof item.code === "string" ? item.code : "",
+      message: typeof item.message === "string" ? item.message : "",
+      field: typeof item.field === "string" ? item.field : undefined,
+      details:
+        typeof item.details === "object" && item.details !== null
+          ? (item.details as Record<string, unknown>)
+          : undefined,
+    };
+  });
+}
 
 function assetTypeTag(type: AssetType) {
   if (type === "command") return <Tag color="purple">Command</Tag>;
@@ -51,212 +247,351 @@ function sourceOption(source: AssetSource): string {
 export function EvalWizardPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const initialDraft = useRef<WizardDraft | null>(null);
+  if (initialDraft.current === null) {
+    initialDraft.current = readDraft() ?? defaultDraft();
+  }
+  const [draft, setDraft] = useState<WizardDraft>(initialDraft.current);
   const [step, setStep] = useState(0);
-  const [datasetId, setDatasetId] = useState<string | null>(null);
-  const [versionId, setVersionId] = useState<string | null>(searchParams.get("datasetVersionId"));
-  const [modelConfigId, setModelConfigId] = useState<string | null>(null);
-  const [runtimeKey, setRuntimeKey] = useState("claude-code");
-  const [poolId, setPoolId] = useState<string | null>(null);
-  const [executionDigest, setExecutionDigest] = useState("");
-  const [scoringDigest, setScoringDigest] = useState("");
-  const [preflight, setPreflight] = useState<PrepareResponse | null>(null);
-  const [preflightError, setPreflightError] = useState<string | null>(null);
+  const [preparation, setPreparation] = useState<PrepareResponse | null>(null);
+  const [blockers, setBlockers] = useState<PreflightIssue[]>([]);
+  const [createNotice, setCreateNotice] = useState<{
+    title: string;
+    description?: string;
+  } | null>(null);
   const [checking, setChecking] = useState(false);
-
-  const [assetSourceId, setAssetSourceId] = useState<string | null>(searchParams.get("assetSourceId"));
-  const [assetRef, setAssetRef] = useState("");
-  const [selectedPaths, setSelectedPaths] = useState<string[]>([]);
+  const [name, setName] = useState("");
+  const [caseOffset, setCaseOffset] = useState(0);
+  const [caseLimit, setCaseLimit] = useState(CASE_PAGE_SIZE);
   const [assetFilter, setAssetFilter] = useState<"all" | AssetType>("all");
-  const [snapshot, setSnapshot] = useState<AssetSnapshot | null>(null);
+  const [nowTick, setNowTick] = useState(() => Date.now());
+  const idempotencyRef = useRef<{ preparationId: string; key: string } | null>(null);
+
+  const update = useCallback(
+    (patch: Partial<WizardDraft>, options?: { invalidate?: boolean }) => {
+      setDraft((current) => ({ ...current, ...patch }));
+      if (options?.invalidate !== false) {
+        setPreparation(null);
+        setBlockers([]);
+        setCreateNotice(null);
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    saveDraft(draft);
+  }, [draft]);
 
   const datasets = useQuery({ queryKey: ["datasets"], queryFn: ({ signal }) => fetchDatasets(signal) });
   const versions = useQuery({
-    queryKey: ["dataset", datasetId, "versions"],
-    queryFn: ({ signal }) => fetchDatasetVersions(datasetId ?? "", signal),
-    enabled: Boolean(datasetId),
+    queryKey: ["dataset", draft.datasetId, "versions"],
+    queryFn: ({ signal }) => fetchDatasetVersions(draft.datasetId ?? "", signal),
+    enabled: Boolean(draft.datasetId),
   });
   const versionDetail = useQuery({
-    queryKey: ["dataset-version", versionId],
-    queryFn: ({ signal }) => fetchDatasetVersion(versionId ?? "", signal),
-    enabled: Boolean(versionId),
+    queryKey: ["dataset-version", draft.versionId],
+    queryFn: ({ signal }) => fetchDatasetVersion(draft.versionId ?? "", signal),
+    enabled: Boolean(draft.versionId),
   });
-  const cases = useQuery({
-    queryKey: ["dataset-version", versionId, "cases"],
-    queryFn: ({ signal }) => fetchDatasetCases(versionId ?? "", signal),
-    enabled: Boolean(versionId),
+  const casesPage = useQuery({
+    queryKey: ["dataset-version", draft.versionId, "cases", caseLimit, caseOffset],
+    queryFn: ({ signal }) =>
+      fetchDatasetCasesPage(draft.versionId ?? "", { limit: caseLimit, offset: caseOffset }, signal),
+    enabled: Boolean(draft.versionId) && draft.selectionMode === "cases",
   });
   const models = useQuery({ queryKey: ["model-configs"], queryFn: ({ signal }) => fetchModelConfigs(signal) });
   const runtimes = useQuery({ queryKey: ["runtimes"], queryFn: ({ signal }) => fetchRuntimes(signal) });
-  const runners = useQuery({ queryKey: ["runners"], queryFn: ({ signal }) => fetchRunners(signal) });
+  const pools = useQuery({
+    queryKey: ["resource-pools"],
+    queryFn: ({ signal }) => fetchResourcePools(signal),
+  });
   const sources = useQuery({
     queryKey: ["asset-sources"],
     queryFn: ({ signal }) => fetchAssetSources(signal),
   });
   const assetTree = useQuery({
-    queryKey: ["asset-tree", assetSourceId],
-    queryFn: ({ signal }) => fetchAssetTree(assetSourceId ?? "", signal),
-    enabled: Boolean(assetSourceId),
+    queryKey: ["asset-tree", draft.assetSourceId],
+    queryFn: ({ signal }) => fetchAssetTree(draft.assetSourceId ?? "", signal),
+    enabled: Boolean(draft.assetSourceId),
   });
 
+  // Deep links from the dataset/asset pages override a fresh wizard only.
+  const deepLinkApplied = useRef(false);
+  useEffect(() => {
+    if (deepLinkApplied.current) return;
+    deepLinkApplied.current = true;
+    const versionId = searchParams.get("datasetVersionId");
+    const assetSourceId = searchParams.get("assetSourceId");
+    if (!versionId && !assetSourceId) return;
+    update(
+      {
+        ...(versionId ? { versionId } : {}),
+        ...(assetSourceId ? { assetSourceId } : {}),
+      },
+      { invalidate: false },
+    );
+  }, [searchParams, update]);
+
   const runtime = useMemo(
-    () => runtimes.data?.find((item) => item.key === runtimeKey) ?? runtimes.data?.[0],
-    [runtimeKey, runtimes.data],
+    () => runtimes.data?.find((item) => item.key === draft.runtimeKey) ?? runtimes.data?.[0],
+    [draft.runtimeKey, runtimes.data],
   );
-  const poolIds = useMemo(() => {
-    const ids = new Set<string>();
-    (runners.data ?? []).filter((runner) => runner.status === "online" || runner.status === "busy").forEach((runner) => ids.add(runner.resource_pool_id));
-    return Array.from(ids);
-  }, [runners.data]);
-  const selectedSource = sources.data?.find((source) => source.id === assetSourceId) ?? null;
+  const selectedModel = models.data?.find((item) => item.id === draft.modelConfigId) ?? null;
+  const selectedPool = pools.data?.find((item) => item.id === draft.poolId) ?? null;
+  const selectedSource = sources.data?.find((source) => source.id === draft.assetSourceId) ?? null;
+  const totalCases = versionDetail.data?.case_count ?? 0;
+  const selectedCaseCount =
+    draft.selectionMode === "all"
+      ? totalCases
+      : draft.selectionMode === "count"
+        ? Math.min(Math.max(1, draft.selectionCount), Math.max(1, totalCases))
+        : draft.selectionKeys.length;
 
   useEffect(() => {
-    if (!poolId && poolIds.length === 1) setPoolId(poolIds[0]);
-  }, [poolId, poolIds]);
+    if (!draft.datasetId && datasets.data?.length) {
+      update({ datasetId: datasets.data[0].id }, { invalidate: false });
+    }
+  }, [datasets.data, draft.datasetId, update]);
+
   useEffect(() => {
-    if (runtime) setRuntimeKey(runtime.key);
-  }, [runtime]);
+    if (draft.versionId || !versions.data?.length) return;
+    const first = versions.data[0];
+    update(
+      {
+        versionId: first.id,
+        selectionCount: Math.min(50, Math.max(1, first.case_count)),
+        executionDigest: "",
+        scoringDigest: "",
+      },
+      { invalidate: false },
+    );
+  }, [draft.versionId, versions.data, update]);
+
+  useEffect(() => {
+    if (versionDetail.data && versionDetail.data.dataset_id !== draft.datasetId) {
+      update({ datasetId: versionDetail.data.dataset_id }, { invalidate: false });
+    }
+  }, [draft.datasetId, versionDetail.data, update]);
+
+  useEffect(() => {
+    if (!draft.modelConfigId && models.data?.length) {
+      update({ modelConfigId: models.data[0].id }, { invalidate: false });
+    }
+  }, [draft.modelConfigId, models.data, update]);
+
+  useEffect(() => {
+    const activePools = (pools.data ?? []).filter((pool) => pool.status === "active");
+    if (!draft.poolId && activePools.length === 1) {
+      update({ poolId: activePools[0].id }, { invalidate: false });
+    }
+  }, [draft.poolId, pools.data, update]);
+
   useEffect(() => {
     if (!versionDetail.data) return;
-    setExecutionDigest(
-      versionDetail.data.execution_image_digest || runtime?.execution_image_digest || "",
-    );
-    setScoringDigest(
-      versionDetail.data.scoring_image_digest || runtime?.scoring_image_digest || "",
-    );
-  }, [versionDetail.data, runtime]);
-  useEffect(() => {
-    if (versionDetail.data) setDatasetId(versionDetail.data.dataset_id);
-  }, [versionDetail.data]);
-  useEffect(() => {
-    if (!modelConfigId && models.data?.length) setModelConfigId(models.data[0].id);
-  }, [modelConfigId, models.data]);
-  useEffect(() => {
-    if (!datasetId && datasets.data?.length) setDatasetId(datasets.data[0].id);
-  }, [datasetId, datasets.data]);
-  useEffect(() => {
-    if (!versionId && versions.data?.length) setVersionId(versions.data[0].id);
-  }, [versionId, versions.data]);
+    const fallbackRuntime = runtimes.data?.find((item) => item.key === draft.runtimeKey);
+    const patch: Partial<WizardDraft> = {};
+    if (!draft.executionDigest) {
+      patch.executionDigest =
+        versionDetail.data.execution_image_digest ||
+        fallbackRuntime?.execution_image_digest ||
+        "";
+    }
+    if (!draft.scoringDigest) {
+      patch.scoringDigest =
+        versionDetail.data.scoring_image_digest || fallbackRuntime?.scoring_image_digest || "";
+    }
+    if (Object.keys(patch).length) update(patch, { invalidate: false });
+  }, [
+    draft.executionDigest,
+    draft.runtimeKey,
+    draft.scoringDigest,
+    runtimes.data,
+    update,
+    versionDetail.data,
+  ]);
 
   // Pick a default asset source once the catalog loads (deep link wins).
-  const defaultSourceApplied = useRef(false);
   useEffect(() => {
-    if (defaultSourceApplied.current || !sources.data?.length) return;
-    const preferred =
-      sources.data.find((source) => source.id === assetSourceId) ?? sources.data[0];
-    defaultSourceApplied.current = true;
-    setAssetSourceId(preferred.id);
-    setAssetRef(preferred.default_ref);
-  }, [assetSourceId, sources.data]);
+    if (draft.assetSourceId || !sources.data?.length) return;
+    const preferred = sources.data[0];
+    update(
+      { assetSourceId: preferred.id, assetRef: preferred.default_ref },
+      { invalidate: false },
+    );
+  }, [draft.assetSourceId, sources.data, update]);
 
-  // Auto-select every classified asset once per source/tree load. Clearing all
-  // afterwards is a deliberate user action and must not snap back.
+  // Directory-mode sources auto-select every asset until the operator edits
+  // the selection themselves.
   useEffect(() => {
-    if (!assetTree.data) return;
-    setSelectedPaths((current) => {
-      if (current.length) return current;
-      if (selectedSource?.selection_mode !== "directory") return [];
-      return assetTree.data!.assets.map((asset) => asset.path);
+    if (!assetTree.data || draft.assetSelectionTouched) return;
+    if (selectedSource?.selection_mode !== "directory") return;
+    update(
+      { selectedPaths: assetTree.data.assets.map((asset) => asset.path) },
+      { invalidate: false },
+    );
+  }, [assetTree.data, draft.assetSelectionTouched, selectedSource?.selection_mode, update]);
+
+  useEffect(() => {
+    setCaseOffset(0);
+  }, [draft.versionId, draft.selectionMode]);
+
+  useEffect(() => {
+    if (!preparation) return;
+    const timer = window.setInterval(() => setNowTick(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [preparation]);
+
+  const resolve = useMutation({
+    mutationFn: () =>
+      resolveAgentAssets({
+        source_id: draft.assetSourceId ?? "",
+        requested_ref: draft.assetRef || selectedSource?.default_ref,
+        paths: draft.selectedPaths,
+        runtime_key: draft.runtimeKey,
+      }),
+    onSuccess: (result) => {
+      update({
+        assetSnapshotId: result.snapshot.id,
+        assetSnapshotCommit: result.snapshot.resolved_commit,
+        assetSnapshotCount: result.snapshot.asset_count,
+      });
+      message.success(
+        `已冻结 ${result.snapshot.asset_count} 个资产到 @${result.snapshot.resolved_commit.slice(0, 8)}`,
+      );
+    },
+    onError: (error) => message.error(error instanceof Error ? error.message : "资产解析失败"),
+  });
+
+  const create = useMutation({
+    mutationFn: async () => {
+      if (!preparation?.preparation_id) throw new Error("准备快照缺失");
+      if (!idempotencyRef.current || idempotencyRef.current.preparationId !== preparation.preparation_id) {
+        idempotencyRef.current = {
+          preparationId: preparation.preparation_id,
+          key: newIdempotencyKey(),
+        };
+      }
+      return createEvaluation(
+        { preparation_id: preparation.preparation_id, name: name.trim() || undefined },
+        idempotencyRef.current.key,
+      );
+    },
+    onSuccess: (run) => {
+      clearDraft();
+      message.success("评测已创建");
+      navigate(`/evals/${run.id}`);
+    },
+    onError: (error) => {
+      const api = error instanceof ApiError ? error : null;
+      if (api && api.code === "preparation_expired") {
+        setPreparation(null);
+        setStep(2);
+        setCreateNotice({
+          title: "准备快照已过期",
+          description: "请返回执行策略重新准备；已冻结的输入不会自动沿用。",
+        });
+        return;
+      }
+      if (api && api.code === "configuration_changed") {
+        setPreparation(null);
+        setStep(2);
+        setCreateNotice({
+          title: "配置在确认后发生变化",
+          description:
+            "模型凭据、资源池、资产 commit 或镜像默认值已变化，请重新准备后再确认。",
+        });
+        return;
+      }
+      if (api && api.code === "preparation_consumed") {
+        setPreparation(null);
+        setStep(2);
+        setCreateNotice({
+          title: "准备快照已用于创建评测",
+          description: "创建是单次操作；需要再次发起评测时请重新准备。",
+        });
+        return;
+      }
+      if (api && (api.code === "capacity_invalid" || api.code === "preparation_blocked")) {
+        setPreparation(null);
+        setStep(2);
+        setBlockers(blockersFromDetails(api.details));
+        setCreateNotice({
+          title: "一致性命中阻塞项",
+          description: api.message,
+        });
+        return;
+      }
+      message.error(error instanceof Error ? error.message : "创建失败");
+    },
+  });
+
+  function selectDataset(datasetId: string) {
+    update({
+      datasetId,
+      versionId: null,
+      selectionKeys: [],
+      executionDigest: "",
+      scoringDigest: "",
     });
-    // A background refetch with the same commit must not invalidate a valid
-    // resolution; a moved Ref clears it so the operator resolves again.
-    setSnapshot((current) => {
-      if (!current) return current;
-      const latest = assetTree.data?.resolved_commit;
-      return latest && current.resolved_commit !== latest ? null : current;
+  }
+
+  function selectVersion(versionId: string, version?: DatasetVersion) {
+    update({
+      versionId,
+      selectionKeys: [],
+      selectionCount: Math.min(50, Math.max(1, version?.case_count ?? 50)),
+      executionDigest: "",
+      scoringDigest: "",
     });
-  }, [assetTree.data, selectedSource?.selection_mode]);
+  }
 
   function selectAssetSource(sourceId: string) {
     const source = sources.data?.find((item) => item.id === sourceId);
-    setAssetSourceId(sourceId);
-    setAssetRef(source?.default_ref ?? "");
-    setSelectedPaths([]);
-    setSnapshot(null);
+    update({
+      assetSourceId: sourceId,
+      assetRef: source?.default_ref ?? "",
+      selectedPaths: [],
+      assetSelectionTouched: false,
+      assetSnapshotId: null,
+      assetSnapshotCommit: null,
+      assetSnapshotCount: 0,
+    });
     setAssetFilter("all");
   }
 
   function toggleAsset(path: string, checked: boolean) {
-    setSelectedPaths((current) =>
-      checked ? [...current, path] : current.filter((item) => item !== path),
-    );
-    setSnapshot(null);
+    update({
+      selectedPaths: checked
+        ? [...draft.selectedPaths, path]
+        : draft.selectedPaths.filter((item) => item !== path),
+      assetSelectionTouched: true,
+      assetSnapshotId: null,
+      assetSnapshotCommit: null,
+      assetSnapshotCount: 0,
+    });
   }
 
   const filteredAssets = useMemo(() => {
     const assets = assetTree.data?.assets ?? [];
     return assetFilter === "all" ? assets : assets.filter((asset) => asset.asset_type === assetFilter);
   }, [assetFilter, assetTree.data]);
-
-  const resolve = useMutation({
-    mutationFn: () =>
-      resolveAgentAssets({
-        source_id: assetSourceId ?? "",
-        requested_ref: assetRef || selectedSource?.default_ref,
-        paths: selectedPaths,
-        runtime_key: runtimeKey,
-      }),
-    onSuccess: (result) => {
-      setSnapshot(result.snapshot);
-      message.success(`已冻结 ${result.snapshot.asset_count} 个资产到 @${result.snapshot.resolved_commit.slice(0, 8)}`);
-    },
-    onError: (error) => message.error(error instanceof Error ? error.message : "资产解析失败"),
-  });
-
-  async function runPreflight() {
-    if (!versionId || !modelConfigId || !poolId) {
-      message.warning("先选择数据集版本、模型配置和资源池");
-      return;
-    }
-    if (!snapshot) {
-      message.warning("先解析 Agent 资产快照");
-      return;
-    }
-    setChecking(true);
-    setPreflightError(null);
-    try {
-      const result = await prepareEvaluation({
-        dataset_version_id: versionId,
-        model_config_id: modelConfigId,
-        runtime_key: runtimeKey,
-        resource_pool_id: poolId,
-        requested_concurrency: 1,
-        scoring_image_digest: scoringDigest || undefined,
-        execution_image_digest: executionDigest || undefined,
-        asset_snapshot_id: snapshot.id,
-      });
-      setPreflight(result);
-      setStep(3);
-    } catch (error) {
-      setPreflightError(error instanceof Error ? error.message : "预检失败");
-    } finally {
-      setChecking(false);
-    }
-  }
-
-  const create = useMutation({
-    mutationFn: () =>
-      createEvaluation({
-        name: `真实评测 · ${versionDetail.data?.version ?? ""}`,
-        dataset_version_id: versionId ?? undefined,
-        model_config_id: modelConfigId ?? undefined,
-        runtime_key: runtimeKey,
-        resource_pool_id: poolId ?? undefined,
-        scoring_image_digest: scoringDigest || undefined,
-        execution_image_digest: executionDigest || undefined,
-        asset_snapshot_id: snapshot?.id,
-        idempotency_key: crypto.randomUUID(),
-      }),
-    onSuccess: (run) => {
-      message.success("评测已创建");
-      navigate(`/evals/${run.id}`);
-    },
-    onError: (error) => message.error(error instanceof Error ? error.message : "创建失败"),
-  });
-
-  const selectedModel = models.data?.find((item) => item.id === modelConfigId);
   const counts = assetTree.data?.counts ?? { skill: 0, command: 0, subagent: 0 };
+  const expiresAt = preparation?.expires_at ? Date.parse(preparation.expires_at) : null;
+  const remainingSeconds = expiresAt ? Math.max(0, Math.floor((expiresAt - nowTick) / 1000)) : 0;
+  const expired = Boolean(preparation) && remainingSeconds <= 0;
+  const summary = preparation?.summary ?? null;
+  const costEstimate = preparation?.cost_estimate ?? null;
 
-  const assetColumns: TableColumnsType<ScannedAsset> = [
+  const poolOptions = (pools.data ?? []).map((pool) => ({
+    value: pool.id,
+    disabled: pool.status !== "active",
+    label: `${pool.name} · ${pool.runners.online} 在线 / ${pool.max_capacity > 0 ? pool.max_capacity : "—"} 上限${
+      pool.status !== "active" ? " · 不可用" : ""
+    }`,
+  }));
+
+  const assetTableColumns: TableColumnsType<ScannedAsset> = [
     {
       title: "类型",
       dataIndex: "asset_type",
@@ -282,276 +617,953 @@ export function EvalWizardPage() {
     },
   ];
 
-  return (
-    <section className="page">
-      <PageHeading
-        eyebrow="Evaluation · Launch"
-        title="发起真实评测"
-        description="冻结数据集版本、Agent 资产、模型、Runtime 与资源池；一致性检查阻塞项会在创建前展示。"
-      />
-      <Steps
-        current={step}
-        items={[
-          { title: "数据集" },
-          { title: "Agent 资产" },
-          { title: "模型与资源" },
-          { title: "一致性检查" },
-        ]}
-        style={{ marginBottom: 24 }}
-      />
-      <Card>
-        {step === 0 ? (
-          <Space direction="vertical" size="large" style={{ width: "100%" }}>
-            <Form layout="vertical">
-              <Form.Item label="数据集">
-                <Select
-                  value={datasetId ?? undefined}
-                  onChange={(value) => { setDatasetId(value); setVersionId(null); }}
-                  options={(datasets.data ?? []).map((item) => ({ value: item.id, label: item.name }))}
-                  placeholder="选择数据集"
-                  style={{ maxWidth: 420 }}
-                />
-              </Form.Item>
-              <Form.Item label="版本">
-                <Select
-                  value={versionId ?? undefined}
-                  onChange={setVersionId}
-                  options={(versions.data ?? []).map((item) => ({
-                    value: item.id,
-                    label: `${item.version} · ${item.case_count} cases · ${item.source_revision.slice(0, 8)}`,
-                  }))}
-                  placeholder="选择版本"
-                  style={{ maxWidth: 560 }}
-                />
-              </Form.Item>
-            </Form>
-            {versionDetail.data ? (
-              <Descriptions size="small" column={3}>
-                <Descriptions.Item label="来源">{versionDetail.data.source_uri || "—"}</Descriptions.Item>
-                <Descriptions.Item label="用例">{versionDetail.data.case_count}</Descriptions.Item>
-                <Descriptions.Item label="状态"><Tag>{versionDetail.data.status}</Tag></Descriptions.Item>
-              </Descriptions>
-            ) : null}
-            {cases.data?.length ? <Alert type="info" showIcon message={`将选取 ${cases.data.length} 个用例（当前支持全量）`} /> : null}
-            <Button type="primary" disabled={!versionId} onClick={() => setStep(1)}>下一步</Button>
-          </Space>
-        ) : null}
-        {step === 1 ? (
-          <Space direction="vertical" size="large" style={{ width: "100%" }}>
-            {!sources.isLoading && !(sources.data ?? []).length ? (
-              <Alert
-                type="warning"
-                showIcon
-                message="还没有 Agent 资产源"
-                description="先到 Agent 资产页添加 Git 资产源并扫描，再回到这里选择本次评测使用的资产。"
-                action={<Button size="small" onClick={() => navigate("/assets")}>去添加</Button>}
-              />
-            ) : null}
-            <div className="asset-runtime-panel">
-              <div className="asset-runtime-meta">
-                <span className="mono small">
-                  {selectedSource ? selectedSource.repo_url.replace("https://github.com/", "") : "选择 Git 资产源"}
-                </span>
-                <span className="tag tag-primary">{counts.skill} Skill</span>
-                <span className="tag tag-violet">{counts.command} Command</span>
-                <span className="tag tag-success">{counts.subagent} Subagent</span>
-              </div>
-              <Form layout="vertical">
-                <Form.Item label="资产源">
-                  <Select
-                    value={assetSourceId ?? undefined}
-                    onChange={selectAssetSource}
-                    options={(sources.data ?? []).map((source) => ({ value: source.id, label: sourceOption(source) }))}
-                    placeholder="选择 Git 资产源"
-                    style={{ maxWidth: 620 }}
-                  />
-                </Form.Item>
-              </Form>
-              <div className="asset-ref-row">
-                <Form layout="vertical" style={{ flex: 1 }}>
-                  <Form.Item label="评测 Ref" extra={selectedSource ? `默认 ${selectedSource.default_ref}；修改后必须重新解析` : undefined}>
-                    <Input
-                      className="mono"
-                      value={assetRef}
-                      onChange={(event) => { setAssetRef(event.target.value); setSnapshot(null); }}
-                      placeholder="分支、tag 或 commit"
-                    />
-                  </Form.Item>
-                </Form>
-                <div className="asset-commit-box">
-                  <span className="mono">
-                    {snapshot ? `@${snapshot.resolved_commit}` : "尚未解析当前 Ref"}
-                  </span>
-                  <Button
-                    onClick={() => resolve.mutate()}
-                    loading={resolve.isPending}
-                    disabled={!assetSourceId || !selectedPaths.length}
-                  >
-                    <Icon name="refresh" size={13} /> 读取资产
-                  </Button>
-                </div>
-              </div>
-              <Alert
-                type={snapshot ? "success" : "warning"}
-                showIcon
-                message={
-                  snapshot
-                    ? `已从 ${snapshot.requested_ref} 冻结 ${snapshot.asset_count} 项资产；评测将固定到 commit ${snapshot.resolved_commit.slice(0, 12)}。`
-                    : "Ref 尚未解析；未解析或选择为空不能进入下一步。"
-                }
-              />
-            </div>
+  const caseColumns: TableColumnsType<DatasetCaseSummary> = [
+    {
+      title: "用例",
+      dataIndex: "case_key",
+      render: (value: string, record) => (
+        <div>
+          <div className="mono">{value}</div>
+          <div className="small muted">{record.repo ?? "—"}</div>
+        </div>
+      ),
+    },
+    {
+      title: "Base commit",
+      dataIndex: "base_commit",
+      width: 150,
+      render: (value: string | null) => (
+        <span className="mono small muted">{value ? value.slice(0, 10) : "—"}</span>
+      ),
+    },
+  ];
+
+  function blockerFor(field: string): PreflightIssue | undefined {
+    return blockers.find((item) => item.field === field);
+  }
+
+  function caseSelectionPayload(): CaseSelection {
+    if (draft.selectionMode === "count") {
+      return {
+        mode: "count",
+        count: Math.max(1, Math.min(draft.selectionCount, Math.max(1, totalCases))),
+      };
+    }
+    if (draft.selectionMode === "cases") {
+      return { mode: "cases", case_keys: draft.selectionKeys };
+    }
+    return { mode: "all" };
+  }
+
+  function executionPayload(): ExecutionPolicy {
+    return {
+      concurrency: draft.concurrency,
+      case_timeout_seconds: draft.caseTimeoutSeconds,
+      max_attempts: draft.maxAttempts,
+      model_budget_usd: draft.budgetUsd ?? undefined,
+    };
+  }
+
+  async function runPrepare() {
+    if (!draft.versionId || !draft.modelConfigId || !draft.poolId) {
+      message.warning("先选择数据集版本、模型配置和资源池");
+      return;
+    }
+    if (!draft.assetSnapshotId) {
+      message.warning("先读取并冻结 Agent 资产");
+      return;
+    }
+    setChecking(true);
+    setBlockers([]);
+    setCreateNotice(null);
+    try {
+      const result = await prepareEvaluation({
+        dataset_version_id: draft.versionId,
+        model_config_id: draft.modelConfigId,
+        runtime_key: draft.runtimeKey,
+        resource_pool_id: draft.poolId,
+        asset_snapshot_id: draft.assetSnapshotId,
+        case_selection: caseSelectionPayload(),
+        execution: executionPayload(),
+        scoring_image_digest: draft.scoringDigest || undefined,
+        execution_image_digest: draft.executionDigest || undefined,
+      });
+      setPreparation(result);
+      if (result.ready) {
+        setStep(3);
+      } else {
+        setBlockers(result.blockers);
+        setStep(2);
+      }
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "准备失败");
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  function goNext() {
+    if (step === 0) {
+      if (!draft.versionId) {
+        message.warning("先选择数据集版本");
+        return;
+      }
+      if (draft.selectionMode === "cases" && draft.selectionKeys.length === 0) {
+        message.warning("指定用例模式下至少选择 1 个用例");
+        return;
+      }
+      setStep(1);
+      return;
+    }
+    if (step === 1) {
+      if (!draft.assetSnapshotId) {
+        message.warning("Ref 尚未解析，不能进入下一步");
+        return;
+      }
+      setStep(2);
+    }
+  }
+
+  function goBack() {
+    if (step === 0) {
+      navigate("/evals");
+      return;
+    }
+    setStep(step - 1);
+  }
+
+  const canPrepare = Boolean(draft.versionId && draft.modelConfigId && draft.poolId && draft.assetSnapshotId);
+
+  const datasetName = versionDetail.data?.dataset_id
+    ? datasets.data?.find((item) => item.id === versionDetail.data?.dataset_id)?.name
+    : null;
+  const selectedDatasetName =
+    datasetName ?? datasets.data?.find((item) => item.id === draft.datasetId)?.name ?? "未选择";
+  const versionLabel = versionDetail.data?.version ?? "—";
+  const assetSummary = draft.assetSnapshotId
+    ? `${draft.assetSnapshotCount} 项 @${(draft.assetSnapshotCommit ?? "").slice(0, 8)}`
+    : "尚未解析";
+  const peakConcurrency =
+    summary?.resolved.effective_concurrency ??
+    (selectedPool
+      ? Math.min(
+          draft.concurrency,
+          selectedPool.max_capacity > 0 ? selectedPool.max_capacity : draft.concurrency,
+        )
+      : draft.concurrency);
+  const selectedMetrics = versionDetail.data?.metrics?.map((metric) => metric.display_name) ?? [];
+
+  function renderStepBar() {
+    return (
+      <div className="step-bar">
+        {STEP_ITEMS.map((item, index) => (
+          <div
+            key={item.title}
+            className={`step ${step === index ? "active" : step > index ? "done" : ""}`}
+          >
+            <div className="step-index">{step > index ? "✓" : index + 1}</div>
             <div>
-              <div className="row-between" style={{ marginBottom: 10 }}>
-                <div>
-                  <strong>选择资产</strong>
-                  <div className="small muted">已选择 {selectedPaths.length} / {assetTree.data?.assets.length ?? 0} 项</div>
-                </div>
-                <Segmented
-                  value={assetFilter}
-                  onChange={(value) => setAssetFilter(value as "all" | AssetType)}
-                  options={[
-                    { value: "all", label: `全部 ${assetTree.data?.assets.length ?? 0}` },
-                    { value: "skill", label: `Skill ${counts.skill}` },
-                    { value: "command", label: `Command ${counts.command}` },
-                    { value: "subagent", label: `Subagent ${counts.subagent}` },
-                  ]}
-                />
-              </div>
-              {assetTree.isLoading ? <Card loading /> : filteredAssets.length ? (
-                <Table<ScannedAsset>
-                  rowKey={(record) => record.path}
+              <div>{item.title}</div>
+              <div className="small muted">{item.meta}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  function renderAside() {
+    return (
+      <aside className="card wizard-aside">
+        <div className="card-header">
+          <div>
+            <h2 className="card-title">评测摘要</h2>
+            <p className="card-subtitle">提交后仍可取消排队任务</p>
+          </div>
+          <Icon name="lock" size={15} className="muted" />
+        </div>
+        <div className="card-body summary-list">
+          <div className="summary-item">
+            <span className="summary-label">数据集</span>
+            <span className="summary-value">
+              {selectedDatasetName}
+              <br />
+              <span className="muted">
+                {versionLabel} · {selectedCaseCount} 用例
+              </span>
+            </span>
+          </div>
+          <div className="summary-item">
+            <span className="summary-label">Runtime</span>
+            <span className="summary-value">
+              {runtime ? `${runtime.key} ${runtime.version}` : draft.runtimeKey}
+            </span>
+          </div>
+          <div className="summary-item">
+            <span className="summary-label">Agent 资产</span>
+            <span className="summary-value">
+              {selectedSource?.name ?? "未选择"}
+              <br />
+              <span className="muted mono">{assetSummary}</span>
+            </span>
+          </div>
+          <div className="summary-item">
+            <span className="summary-label">模型</span>
+            <span className="summary-value">
+              {selectedModel ? `${selectedModel.display_name} · ${selectedModel.model_name}` : "未选择"}
+            </span>
+          </div>
+          <div className="summary-item">
+            <span className="summary-label">资源池</span>
+            <span className="summary-value">
+              {selectedPool
+                ? `${selectedPool.name} · ${selectedPool.runners.online} 在线`
+                : "未选择"}
+            </span>
+          </div>
+        </div>
+        <div className="summary-cost">
+          <div className="review-box">
+            <div className="row-between">
+              <span className="small muted">预计模型费</span>
+              <strong>{costEstimate ? formatUsd(costEstimate.model_usd) : "确认后计算"}</strong>
+            </div>
+            <div className="row-between" style={{ marginTop: 7 }}>
+              <span className="small muted">预计峰值并发</span>
+              <strong>{peakConcurrency} Runner</strong>
+            </div>
+            <div className="row-between" style={{ marginTop: 7 }}>
+              <span className="small muted">预计总耗时</span>
+              <strong>{formatDuration(costEstimate?.estimated_duration_seconds ?? null)}</strong>
+            </div>
+          </div>
+        </div>
+      </aside>
+    );
+  }
+
+  function renderDatasetStep() {
+    return (
+      <div>
+        <div className="eyebrow">Step 1 · Dataset</div>
+        <h2 className="wizard-title">选择数据集与用例</h2>
+        <p className="small muted wizard-subtitle">
+          版本固定用例、环境、评分命令与指标口径，确保结果可复现。
+        </p>
+        <div className="field-row">
+          <div className="field">
+            <label className="required">数据集</label>
+            <Select
+              value={draft.datasetId ?? undefined}
+              onChange={selectDataset}
+              options={(datasets.data ?? []).map((item) => ({ value: item.id, label: item.name }))}
+              placeholder="选择数据集"
+              loading={datasets.isLoading}
+              showSearch
+              optionFilterProp="label"
+            />
+          </div>
+          <div className="field">
+            <label className="required">版本</label>
+            <Select
+              value={draft.versionId ?? undefined}
+              onChange={(value) => selectVersion(value, versions.data?.find((v) => v.id === value))}
+              options={(versions.data ?? []).map((item) => ({
+                value: item.id,
+                label: `${item.version} · ${item.case_count} cases · ${item.source_revision.slice(0, 8)}`,
+              }))}
+              placeholder="选择版本"
+              loading={versions.isLoading}
+              disabled={!draft.datasetId}
+            />
+          </div>
+        </div>
+        {versionDetail.data ? (
+          <Descriptions size="small" column={4} className="wizard-descriptions">
+            <Descriptions.Item label="来源">{versionDetail.data.source_uri || "—"}</Descriptions.Item>
+            <Descriptions.Item label="用例">{versionDetail.data.case_count}</Descriptions.Item>
+            <Descriptions.Item label="状态">
+              <Tag>{versionDetail.data.status}</Tag>
+            </Descriptions.Item>
+            <Descriptions.Item label="指标口径">
+              {selectedMetrics.length ? selectedMetrics.slice(0, 3).join(" · ") : "—"}
+            </Descriptions.Item>
+          </Descriptions>
+        ) : null}
+        <div className="field">
+          <label>用例范围</label>
+          <Segmented
+            value={draft.selectionMode}
+            onChange={(value) =>
+              update({ selectionMode: value as CaseSelectionMode }, { invalidate: false })
+            }
+            options={[
+              { value: "all", label: `全部 ${totalCases || ""}`.trim() },
+              { value: "count", label: "按数量" },
+              { value: "cases", label: "指定用例" },
+            ]}
+          />
+          <span className="hint">
+            子集在执行时按 ordinal 冻结进准备快照；指定用例可跨页勾选。
+          </span>
+        </div>
+        {draft.selectionMode === "count" ? (
+          <div className="field wizard-narrow">
+            <label className="required">用例数量</label>
+            <InputNumber
+              id="wizard-case-count"
+              min={1}
+              max={Math.max(1, totalCases)}
+              value={draft.selectionCount}
+              onChange={(value) =>
+                update(
+                  { selectionCount: Math.max(1, Math.min(value ?? 1, Math.max(1, totalCases))) },
+                  { invalidate: false },
+                )
+              }
+              style={{ width: 160 }}
+            />
+            <span className="hint">从版本第一个用例起取前 N 个（按 ordinal 排序）。</span>
+          </div>
+        ) : null}
+        {draft.selectionMode === "cases" ? (
+          <div className="wizard-case-picker">
+            <div className="row-between wizard-case-toolbar">
+              <span className="small muted">
+                已选择 {draft.selectionKeys.length} / {casesPage.data?.total ?? totalCases} 个用例
+              </span>
+              <Button size="small" onClick={() => update({ selectionKeys: [] }, { invalidate: false })}>
+                全部取消
+              </Button>
+            </div>
+            <Table<DatasetCaseSummary>
+              rowKey="case_key"
+              size="small"
+              columns={caseColumns}
+              dataSource={casesPage.data?.items ?? []}
+              loading={casesPage.isLoading}
+              rowSelection={{
+                selectedRowKeys: draft.selectionKeys,
+                preserveSelectedRowKeys: true,
+                onChange: (keys) =>
+                  update(
+                    { selectionKeys: keys.map(String) },
+                    { invalidate: false },
+                  ),
+              }}
+              pagination={{
+                current: Math.floor(caseOffset / caseLimit) + 1,
+                pageSize: caseLimit,
+                total: casesPage.data?.total ?? 0,
+                showSizeChanger: true,
+                pageSizeOptions: [20, 50, 100],
+                onChange: (page, pageSize) => {
+                  setCaseLimit(pageSize);
+                  setCaseOffset((page - 1) * pageSize);
+                },
+              }}
+            />
+          </div>
+        ) : null}
+        {!datasets.isLoading && !(datasets.data ?? []).length ? (
+          <Alert
+            type="warning"
+            showIcon
+            message="还没有数据集"
+            description="先到数据集页导入一个数据集版本，再回到这里发起评测。"
+            action={
+              <Button size="small" onClick={() => navigate("/datasets")}>
+                去导入
+              </Button>
+            }
+          />
+        ) : null}
+      </div>
+    );
+  }
+
+  function renderAssetsStep() {
+    return (
+      <div>
+        <div className="eyebrow">Step 2 · Runtime</div>
+        <h2 className="wizard-title">选择 Agent 与资产源</h2>
+        <p className="small muted wizard-subtitle">
+          从 Git 仓库加载 Skill、Command 与 Subagent；启动时固定到解析出的 commit。
+        </p>
+        <div className="field wizard-narrow">
+          <label className="required">Runtime</label>
+          <Select
+            value={draft.runtimeKey}
+            onChange={(value) =>
+              update(
+                {
+                  runtimeKey: value,
+                  assetSnapshotId: null,
+                  assetSnapshotCommit: null,
+                  assetSnapshotCount: 0,
+                },
+                { invalidate: true },
+              )
+            }
+            options={(runtimes.data ?? []).map((item) => ({
+              value: item.key,
+              label: `${item.key} ${item.version}`,
+            }))}
+            placeholder="选择 Runtime"
+          />
+        </div>
+        {!sources.isLoading && !(sources.data ?? []).length ? (
+          <Alert
+            type="warning"
+            showIcon
+            message="还没有 Agent 资产源"
+            description="先到 Agent 资产页添加 Git 资产源并扫描，再回到这里选择本次评测使用的资产。"
+            action={
+              <Button size="small" onClick={() => navigate("/assets")}>
+                去添加
+              </Button>
+            }
+          />
+        ) : null}
+        <div className="asset-runtime-panel">
+          <div className="asset-runtime-meta">
+            <span className="mono small">
+              {selectedSource
+                ? selectedSource.repo_url.replace("https://github.com/", "")
+                : "选择 Git 资产源"}
+            </span>
+            <span className="tag tag-primary">{counts.skill} Skill</span>
+            <span className="tag tag-violet">{counts.command} Command</span>
+            <span className="tag tag-success">{counts.subagent} Subagent</span>
+          </div>
+          <div className="field">
+            <label className="required">资产源</label>
+            <Select
+              value={draft.assetSourceId ?? undefined}
+              onChange={selectAssetSource}
+              options={(sources.data ?? []).map((source) => ({
+                value: source.id,
+                label: sourceOption(source),
+              }))}
+              placeholder="选择 Git 资产源"
+              loading={sources.isLoading}
+              showSearch
+              optionFilterProp="label"
+            />
+          </div>
+          <div className="field-row asset-ref-row">
+            <div className="field">
+              <label className="required">评测 Ref</label>
+              <Input
+                className="mono"
+                value={draft.assetRef}
+                onChange={(event) =>
+                  update(
+                    {
+                      assetRef: event.target.value,
+                      assetSnapshotId: null,
+                      assetSnapshotCommit: null,
+                      assetSnapshotCount: 0,
+                    },
+                    { invalidate: true },
+                  )
+                }
+                placeholder="分支、tag 或 commit"
+              />
+              <span className="hint">
+                {selectedSource
+                  ? `默认 ${selectedSource.default_ref}；修改后必须重新解析`
+                  : "选择资产源后填入默认 Ref"}
+              </span>
+            </div>
+            <div className="field">
+              <label>已解析版本</label>
+              <div className="asset-commit-box">
+                <span className="mono small">
+                  {draft.assetSnapshotCommit
+                    ? `@${draft.assetSnapshotCommit}`
+                    : "尚未解析当前 Ref"}
+                </span>
+                <Button
                   size="small"
-                  columns={assetColumns}
-                  dataSource={filteredAssets}
-                  pagination={false}
-                  rowSelection={{
-                    selectedRowKeys: selectedPaths,
-                    onChange: (keys) => {
-                      setSelectedPaths(keys.map(String));
-                      setSnapshot(null);
-                    },
-                  }}
-                  onRow={(record) => ({
-                    onClick: (event) => {
-                      const target = event.target as HTMLElement;
-                      if (target.closest(".ant-checkbox-wrapper")) return;
-                      toggleAsset(record.path, !selectedPaths.includes(record.path));
-                    },
-                    style: { cursor: "pointer" },
-                  })}
-                />
-              ) : (
-                <Empty
-                  description={selectedSource ? "该资产源还没有扫描结果" : "先选择资产源"}
-                  image={Empty.PRESENTED_IMAGE_SIMPLE}
+                  onClick={() => resolve.mutate()}
+                  loading={resolve.isPending}
+                  disabled={!draft.assetSourceId || !draft.selectedPaths.length}
                 >
-                  <Button onClick={() => navigate("/assets")}>去扫描资产源</Button>
-                </Empty>
+                  <Icon name="refresh" size={13} /> 读取资产
+                </Button>
+              </div>
+            </div>
+          </div>
+          <div className={`banner ${draft.assetSnapshotId ? "success" : "warning"}`}>
+            <Icon name={draft.assetSnapshotId ? "check" : "alert"} size={15} />
+            <div>
+              {draft.assetSnapshotId ? (
+                <>
+                  已从 <span className="mono">{draft.assetRef || selectedSource?.default_ref}</span> 冻结{" "}
+                  {draft.assetSnapshotCount} 项资产；评测将固定到 commit{" "}
+                  <span className="mono">{draft.assetSnapshotCommit}</span>。
+                </>
+              ) : (
+                <>
+                  <strong>Ref 尚未解析。</strong> 未解析或选择为空不能进入下一步。
+                </>
               )}
             </div>
-            {selectedPaths.some((path) => assetTree.data?.assets.find((asset) => asset.path === path)?.metadata.prerequisites?.length) ? (
+          </div>
+        </div>
+        <div className="row-between wizard-asset-toolbar">
+          <div>
+            <strong>选择资产</strong>
+            <div className="small muted">
+              已选择 {draft.selectedPaths.length} / {assetTree.data?.assets.length ?? 0} 项
+            </div>
+          </div>
+          <Segmented
+            value={assetFilter}
+            onChange={(value) => setAssetFilter(value as "all" | AssetType)}
+            options={[
+              { value: "all", label: `全部 ${assetTree.data?.assets.length ?? 0}` },
+              { value: "skill", label: `Skill ${counts.skill}` },
+              { value: "command", label: `Command ${counts.command}` },
+              { value: "subagent", label: `Subagent ${counts.subagent}` },
+            ]}
+          />
+        </div>
+        {assetTree.isLoading ? (
+          <div className="card wizard-asset-placeholder">正在读取资产树…</div>
+        ) : filteredAssets.length ? (
+          <Table<ScannedAsset>
+            rowKey={(record) => record.path}
+            size="small"
+            columns={assetTableColumns}
+            dataSource={filteredAssets}
+            pagination={false}
+            rowSelection={{
+              selectedRowKeys: draft.selectedPaths,
+              preserveSelectedRowKeys: true,
+              onChange: (keys) =>
+                update(
+                  {
+                    selectedPaths: keys.map(String),
+                    assetSelectionTouched: true,
+                    assetSnapshotId: null,
+                    assetSnapshotCommit: null,
+                    assetSnapshotCount: 0,
+                  },
+                  { invalidate: true },
+                ),
+            }}
+            onRow={(record) => ({
+              onClick: (event) => {
+                const target = event.target as HTMLElement;
+                if (target.closest(".ant-checkbox-wrapper")) return;
+                toggleAsset(record.path, !draft.selectedPaths.includes(record.path));
+              },
+              style: { cursor: "pointer" },
+            })}
+          />
+        ) : (
+          <Empty
+            description={selectedSource ? "该资产源还没有扫描结果" : "先选择资产源"}
+            image={Empty.PRESENTED_IMAGE_SIMPLE}
+          >
+            <Button onClick={() => navigate("/assets")}>去扫描资产源</Button>
+          </Empty>
+        )}
+        {draft.selectedPaths.some(
+          (path) =>
+            assetTree.data?.assets.find((asset) => asset.path === path)?.metadata.prerequisites?.length,
+        ) ? (
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginTop: 14 }}
+            message="所选资产包含运行时前置依赖"
+            description="OpenSpec 生成型 Command 需要目标沙箱提供 openspec CLI；快照会记录前置依赖，但不会静默授予宿主机执行权限。"
+          />
+        ) : null}
+        {blockerFor("asset_snapshot_id") ? (
+          <span className="field-error">{blockerFor("asset_snapshot_id")?.message}</span>
+        ) : null}
+      </div>
+    );
+  }
+
+  function renderPolicyStep() {
+    const online = selectedPool?.runners.online ?? 0;
+    const capacityWarning = selectedPool ? online < draft.concurrency : false;
+    return (
+      <div>
+        <div className="eyebrow">Step 3 · Model &amp; capacity</div>
+        <h2 className="wizard-title">选择模型凭据、资源池与执行策略</h2>
+        <p className="small muted wizard-subtitle">
+          可引用已保存凭据；临时 Key 不在本向导中输入，也不会写入浏览器存储。
+        </p>
+        {createNotice ? (
+          <Alert
+            type="error"
+            showIcon
+            closable
+            message={createNotice.title}
+            description={createNotice.description}
+            onClose={() => setCreateNotice(null)}
+            style={{ marginBottom: 14 }}
+          />
+        ) : null}
+        <div className="field">
+          <label className="required">模型配置</label>
+          <Select
+            value={draft.modelConfigId ?? undefined}
+            onChange={(value) => update({ modelConfigId: value })}
+            options={(models.data ?? []).map((item) => ({
+              value: item.id,
+              label: `${item.display_name} · ${item.model_name} · ${item.api_style}${
+                item.credential?.revoked_at ? " · 凭据已撤销" : ""
+              }`,
+            }))}
+            placeholder="选择模型配置"
+            loading={models.isLoading}
+          />
+          {selectedModel?.credential?.revoked_at ? (
+            <span className="field-error">
+              所选模型配置的凭据已撤销，一致性检查会阻塞；请先在「模型凭据」页替换 Key。
+            </span>
+          ) : null}
+        </div>
+        <div className="field">
+          <label className="required">资源池</label>
+          <Select
+            value={draft.poolId ?? undefined}
+            onChange={(value) => update({ poolId: value })}
+            options={poolOptions}
+            placeholder="选择在线资源池"
+            loading={pools.isLoading}
+          />
+          <span className="hint">
+            容量显示“在线 / 上限”，实际并发取在线 Runner、池上限与请求并发的最小值。
+          </span>
+          {blockerFor("resource_pool_id") ? (
+            <span className="field-error">{blockerFor("resource_pool_id")?.message}</span>
+          ) : null}
+        </div>
+        <h3 className="wizard-section-title">高级执行策略</h3>
+        <div className="policy-grid">
+          <div className="field">
+            <label className="required">并发上限</label>
+            <InputNumber
+              id="wizard-concurrency"
+              min={1}
+              max={256}
+              value={draft.concurrency}
+              onChange={(value) => update({ concurrency: Math.max(1, Math.min(value ?? 1, 256)) })}
+              style={{ width: "100%" }}
+            />
+            <span className="hint">超出在线容量时排队，不承诺秒级启动。</span>
+            {blockerFor("requested_concurrency") ? (
+              <span className="field-error">{blockerFor("requested_concurrency")?.message}</span>
+            ) : null}
+          </div>
+          <div className="field">
+            <label className="required">单用例超时</label>
+            <Select
+              id="wizard-timeout"
+              value={draft.caseTimeoutSeconds}
+              onChange={(value) => update({ caseTimeoutSeconds: value })}
+              options={TIMEOUT_OPTIONS}
+            />
+            <span className="hint">超时按失败处理并受重试策略约束。</span>
+            {blockerFor("case_timeout_seconds") ? (
+              <span className="field-error">{blockerFor("case_timeout_seconds")?.message}</span>
+            ) : null}
+          </div>
+          <div className="field">
+            <label className="required">失败重试次数</label>
+            <Select
+              id="wizard-retries"
+              value={draft.maxAttempts - 1}
+              onChange={(value) => update({ maxAttempts: value + 1 })}
+              options={[0, 1, 2, 3, 4].map((value) => ({
+                value,
+                label: value === 0 ? "不重试" : `重试 ${value} 次`,
+              }))}
+            />
+            <span className="hint">总尝试次数 = 1 + 重试次数，旧 attempt 轨迹保留。</span>
+            {blockerFor("max_attempts") ? (
+              <span className="field-error">{blockerFor("max_attempts")?.message}</span>
+            ) : null}
+          </div>
+          <div className="field">
+            <label>模型预算（USD，可选）</label>
+            <InputNumber
+              id="wizard-budget"
+              min={0}
+              step={1}
+              value={draft.budgetUsd}
+              onChange={(value) =>
+                update({ budgetUsd: value === null ? null : Math.max(0, value) })
+              }
+              placeholder="不设置则不暂停"
+              style={{ width: "100%" }}
+            />
+            <span className="hint">达到预算时评测暂停；确认追加预算后从未完成用例继续。</span>
+            {blockerFor("model_budget_usd") ? (
+              <span className="field-error">{blockerFor("model_budget_usd")?.message}</span>
+            ) : null}
+          </div>
+        </div>
+        <div className="field-row wizard-digest-row">
+          <div className="field">
+            <label>执行镜像 digest</label>
+            <Input
+              value={draft.executionDigest}
+              onChange={(event) => update({ executionDigest: event.target.value })}
+              placeholder="sha256:…"
+            />
+          </div>
+          <div className="field">
+            <label>评分镜像 digest</label>
+            <Input
+              value={draft.scoringDigest}
+              onChange={(event) => update({ scoringDigest: event.target.value })}
+              placeholder="sha256:…"
+            />
+          </div>
+        </div>
+        {capacityWarning ? (
+          <Alert
+            type="warning"
+            showIcon
+            message={`当前在线 ${online} 个 Runner，请求并发 ${draft.concurrency}，评测将排队等待`}
+            description="准备快照会记录容量警告；不会因为排队而判定失败。"
+          />
+        ) : null}
+        {blockerFor("dataset_version_id") ? (
+          <span className="field-error">{blockerFor("dataset_version_id")?.message}</span>
+        ) : null}
+        {blockerFor("case_selection") ? (
+          <span className="field-error">{blockerFor("case_selection")?.message}</span>
+        ) : null}
+        {blockers.length && !checking ? (
+          <div className="wizard-blockers">
+            <Alert
+              type="error"
+              showIcon
+              message={`准备快照存在 ${blockers.length} 个阻塞项`}
+              description="修正以下配置后重新准备；阻塞项不会被静默忽略。"
+            />
+            {blockers.map((issue) => (
               <Alert
+                key={`${issue.code}-${issue.field ?? ""}`}
+                type="error"
+                showIcon
+                message={issue.code}
+                description={issue.message}
+              />
+            ))}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  function renderConfirmStep() {
+    if (!preparation || !summary) {
+      return (
+        <Empty description="还没有准备快照，请返回上一步重新准备">
+          <Button onClick={() => setStep(2)}>返回执行策略</Button>
+        </Empty>
+      );
+    }
+    return (
+      <div>
+        <div className="eyebrow">Step 4 · Review</div>
+        <h2 className="wizard-title">确认并启动评测</h2>
+        <p className="small muted wizard-subtitle">
+          启动后平台会创建评测记录并拆分为多个 GitHub Actions 分片；创建按钮是幂等操作。
+        </p>
+        <div className="field wizard-narrow">
+          <label>评测名称</label>
+          <Input
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            placeholder={`留空自动命名：${summary.dataset.name} · ${summary.dataset.version}`}
+          />
+        </div>
+        <div className="review-box">
+          <div className="summary-item">
+            <span className="summary-label">数据集</span>
+            <span className="summary-value">
+              {summary.dataset.name} · {summary.dataset.version}
+            </span>
+          </div>
+          <div className="summary-item">
+            <span className="summary-label">用例与 Job</span>
+            <span className="summary-value">
+              {summary.case_count} 个用例 / {summary.estimated_job_count} 个 Job
+            </span>
+          </div>
+          <div className="summary-item">
+            <span className="summary-label">Runtime</span>
+            <span className="summary-value">
+              {summary.runtime.key} {summary.runtime.version ?? ""}
+            </span>
+          </div>
+          <div className="summary-item">
+            <span className="summary-label">Agent 资产</span>
+            <span className="summary-value">
+              {summary.asset_snapshot
+                ? `${summary.asset_snapshot.asset_count ?? 0} 项 · @${(summary.asset_snapshot.resolved_commit ?? "").slice(0, 12)}`
+                : "未选择（只使用 Runtime 内置能力）"}
+            </span>
+          </div>
+          <div className="summary-item">
+            <span className="summary-label">模型与凭据</span>
+            <span className="summary-value">
+              {summary.model.display_name ?? "—"} · {summary.model.model_name ?? "—"}
+            </span>
+          </div>
+          <div className="summary-item">
+            <span className="summary-label">资源池与容量</span>
+            <span className="summary-value">
+              {summary.resource_pool.name ?? "—"} · {summary.resource_pool.online_runners} 在线 /{" "}
+              {summary.resource_pool.max_capacity ?? "—"} 上限
+            </span>
+          </div>
+          <div className="summary-item">
+            <span className="summary-label">执行策略</span>
+            <span className="summary-value">
+              并发 {summary.execution.concurrency} · 超时{" "}
+              {formatMinutes(summary.execution.case_timeout_seconds)} · 重试{" "}
+              {summary.execution.max_attempts - 1} 次
+              {summary.execution.model_budget_usd !== null
+                ? ` · 预算 $${summary.execution.model_budget_usd}`
+                : ""}
+            </span>
+          </div>
+          <div className="summary-item">
+            <span className="summary-label">评分镜像 digest</span>
+            <span className="summary-value mono small">
+              {summary.resolved.scoring_image_digest ?? "—"}
+            </span>
+          </div>
+          <div className="summary-item">
+            <span className="summary-label">准备快照</span>
+            <span className="summary-value mono small">
+              {preparation.snapshot_digest?.slice(0, 23) ?? "—"}
+            </span>
+          </div>
+        </div>
+        <div className={`banner ${expired ? "danger" : "warning"}`} style={{ marginTop: 14 }}>
+          <Icon name={expired ? "alert" : "clock"} size={15} />
+          <div>
+            {expired ? (
+              <strong>准备快照已过期。</strong>
+            ) : (
+              <>
+                准备快照将在 <strong>{formatCountdown(remainingSeconds)}</strong> 后过期；修改任何配置都需要重新准备。
+              </>
+            )}
+          </div>
+        </div>
+        {preparation.warnings.length ? (
+          <div className="wizard-warnings">
+            {preparation.warnings.map((issue) => (
+              <Alert
+                key={`${issue.code}-${issue.field ?? ""}`}
                 type="warning"
                 showIcon
-                message="所选资产包含运行时前置依赖"
-                description="OpenSpec 生成型 Command 需要目标沙箱提供 openspec CLI；快照会记录前置依赖，但不会静默授予宿主机执行权限。"
+                message={issue.code}
+                description={issue.message}
               />
+            ))}
+          </div>
+        ) : null}
+        {costEstimate ? (
+          <div className="review-box wizard-estimate">
+            <div className="row-between">
+              <span className="small muted">预计模型费</span>
+              <strong>{formatUsd(costEstimate.model_usd)}</strong>
+            </div>
+            {costEstimate.runner_usd ? (
+              <div className="row-between" style={{ marginTop: 7 }}>
+                <span className="small muted">预计机时费</span>
+                <strong>{formatUsd(costEstimate.runner_usd)}</strong>
+              </div>
             ) : null}
-            <Space>
-              <Button onClick={() => setStep(0)}>上一步</Button>
-              <Button type="primary" disabled={!snapshot} onClick={() => setStep(2)}>下一步</Button>
-            </Space>
-          </Space>
-        ) : null}
-        {step === 2 ? (
-          <Space direction="vertical" size="large" style={{ width: "100%" }}>
-            <Form layout="vertical">
-              <Form.Item label="模型配置">
-                <Select
-                  value={modelConfigId ?? undefined}
-                  onChange={setModelConfigId}
-                  options={(models.data ?? []).map((item) => ({
-                    value: item.id,
-                    label: `${item.display_name} · ${item.model_name} · ${item.api_style}${
-                      item.credential?.revoked_at ? " · 凭据已撤销" : ""
-                    }`,
-                  }))}
-                  placeholder="选择模型配置"
-                  style={{ maxWidth: 560 }}
-                />
-              </Form.Item>
-              {selectedModel?.credential?.revoked_at ? (
-                <Alert
-                  type="warning"
-                  showIcon
-                  message="所选模型配置的凭据已撤销"
-                  description="一致性检查会把 credential_unavailable 列为阻塞项；请先在「模型凭据」页替换 Key 后再发起评测。"
-                />
+            <div className="row-between" style={{ marginTop: 7 }}>
+              <span className="small muted">预计合计</span>
+              <strong>{formatUsd(costEstimate.total_usd)}</strong>
+            </div>
+            <div className="row-between" style={{ marginTop: 7 }}>
+              <span className="small muted">预计总耗时</span>
+              <strong>{formatDuration(costEstimate.estimated_duration_seconds)}</strong>
+            </div>
+            <div className="small muted" style={{ marginTop: 9 }}>
+              {costEstimate.basis}
+            </div>
+          </div>
+        ) : (
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginTop: 14 }}
+            message="该模型配置未填写定价，无法给出费用区间"
+            description="费用以模型网关实际记账为准；可先在「模型凭据」页补充 pricing。"
+          />
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <section className="page eval-wizard">
+      <PageHeading
+        eyebrow="New evaluation"
+        title="发起评测"
+        description="组合数据集、Agent 资产、模型、资源池与执行策略；准备快照会冻结全部输入，创建是幂等操作。"
+        actions={
+          <Button onClick={() => navigate("/evals")}>
+            <Icon name="list" size={14} /> 评测任务
+          </Button>
+        }
+      />
+      {renderStepBar()}
+      <div className="wizard-layout">
+        <section className="card wizard-main">
+          <div className="card-body">
+            {step === 0 ? renderDatasetStep() : null}
+            {step === 1 ? renderAssetsStep() : null}
+            {step === 2 ? renderPolicyStep() : null}
+            {step === 3 ? renderConfirmStep() : null}
+            <div className="wizard-footer">
+              <Button onClick={goBack}>{step === 0 ? "取消" : "上一步"}</Button>
+              {step < 2 ? (
+                <Button type="primary" onClick={goNext}>
+                  下一步 <Icon name="arrowRight" size={13} />
+                </Button>
               ) : null}
-              <Form.Item label="Runtime">
-                <Select
-                  value={runtimeKey}
-                  onChange={(value) => { setRuntimeKey(value); setSnapshot(null); }}
-                  options={(runtimes.data ?? []).map((item) => ({ value: item.key, label: `${item.key} ${item.version}` }))}
-                  style={{ maxWidth: 360 }}
-                />
-              </Form.Item>
-              <Form.Item label="资源池">
-                <Select
-                  value={poolId ?? undefined}
-                  onChange={setPoolId}
-                  options={poolIds.map((id) => ({ value: id, label: id }))}
-                  placeholder="从在线 Runner 推导"
-                  style={{ maxWidth: 420 }}
-                />
-              </Form.Item>
-              <Form.Item label="执行镜像 digest" extra="默认来自数据集版本或平台配置；可覆盖，仅本次评测使用">
-                <Input value={executionDigest} onChange={(event) => setExecutionDigest(event.target.value)} placeholder="sha256:…" style={{ maxWidth: 560 }} />
-              </Form.Item>
-              <Form.Item label="评分镜像 digest" extra="默认来自数据集版本或平台配置；可覆盖，仅本次评测使用">
-                <Input value={scoringDigest} onChange={(event) => setScoringDigest(event.target.value)} placeholder="sha256:…" style={{ maxWidth: 560 }} />
-              </Form.Item>
-            </Form>
-            <Space>
-              <Button onClick={() => setStep(1)}>上一步</Button>
-              <Button type="primary" loading={checking} onClick={runPreflight}>运行一致性检查</Button>
-            </Space>
-            {preflightError ? <Alert type="error" showIcon message={preflightError} /> : null}
-          </Space>
-        ) : null}
-        {step === 3 && preflight ? (
-          <Space direction="vertical" size="large" style={{ width: "100%" }}>
-            <Alert
-              type={preflight.ready ? "success" : "error"}
-              showIcon
-              message={preflight.ready ? "一致性检查通过" : `存在 ${preflight.blockers.length} 个阻塞项`}
-            />
-            {preflight.blockers.map((issue) => (
-              <Alert key={issue.code} type="error" showIcon message={issue.code} description={issue.message} />
-            ))}
-            {preflight.warnings.map((issue) => (
-              <Alert key={issue.code} type="warning" showIcon message={issue.code} description={issue.message} />
-            ))}
-            <Descriptions size="small" column={2}>
-              <Descriptions.Item label="版本">{versionDetail.data?.version ?? versionId}</Descriptions.Item>
-              <Descriptions.Item label="模型">{selectedModel?.display_name ?? modelConfigId}</Descriptions.Item>
-              <Descriptions.Item label="Runtime">{runtime?.key} {runtime?.version}</Descriptions.Item>
-              <Descriptions.Item label="资源池">{poolId}</Descriptions.Item>
-              <Descriptions.Item label="资产 commit">
-                <span className="mono">{snapshot?.resolved_commit ?? "—"}</span>
-              </Descriptions.Item>
-              <Descriptions.Item label="资产数量">{snapshot?.asset_count ?? 0}</Descriptions.Item>
-            </Descriptions>
-            <Space>
-              <Button onClick={() => setStep(2)}>上一步</Button>
-              <Button type="primary" disabled={!preflight.ready} loading={create.isPending} onClick={() => create.mutate()}>
-                创建评测
-              </Button>
-            </Space>
-          </Space>
-        ) : null}
-      </Card>
+              {step === 2 ? (
+                <Button type="primary" loading={checking} onClick={runPrepare} disabled={!canPrepare}>
+                  准备并检查
+                </Button>
+              ) : null}
+              {step === 3 ? (
+                <Button
+                  type="primary"
+                  size="large"
+                  loading={create.isPending}
+                  disabled={!preparation || expired}
+                  onClick={() => create.mutate()}
+                >
+                  <Icon name="play" size={14} /> 创建评测
+                </Button>
+              ) : null}
+            </div>
+          </div>
+        </section>
+        {renderAside()}
+      </div>
     </section>
   );
 }

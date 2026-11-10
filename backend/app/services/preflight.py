@@ -117,6 +117,9 @@ def check_preparation(
     assets_resolved: bool = True,
     asset_snapshot_id: str | None = None,
     model_name: str | None = None,
+    case_timeout_seconds: int | None = None,
+    max_attempts: int | None = None,
+    model_budget_usd: float | None = None,
 ) -> PreflightResult:
     tenant_id = str(DEFAULT_TENANT_ID)
     blockers: list[PreflightIssue] = []
@@ -140,6 +143,40 @@ def check_preparation(
     if requested_concurrency < 1:
         blockers.append(
             PreflightIssue("concurrency_invalid", "并发必须至少为 1", "requested_concurrency")
+        )
+    # M5-04 execution policy: the wizard's timeout/retry/budget inputs are
+    # re-validated here so a crafted request cannot fake a successful default.
+    if case_timeout_seconds is not None and not (
+        settings.eval_min_case_timeout_seconds
+        <= case_timeout_seconds
+        <= settings.eval_max_case_timeout_seconds
+    ):
+        blockers.append(
+            PreflightIssue(
+                "case_timeout_invalid",
+                f"单用例超时必须在 {settings.eval_min_case_timeout_seconds}–"
+                f"{settings.eval_max_case_timeout_seconds} 秒之间",
+                "case_timeout_seconds",
+                {
+                    "min": settings.eval_min_case_timeout_seconds,
+                    "max": settings.eval_max_case_timeout_seconds,
+                },
+            )
+        )
+    if max_attempts is not None and not 1 <= max_attempts <= settings.eval_max_case_attempts:
+        blockers.append(
+            PreflightIssue(
+                "max_attempts_invalid",
+                f"最大重试次数必须在 1–{settings.eval_max_case_attempts} 之间",
+                "max_attempts",
+                {"max": settings.eval_max_case_attempts},
+            )
+        )
+    if model_budget_usd is not None and model_budget_usd < 0:
+        blockers.append(
+            PreflightIssue(
+                "model_budget_invalid", "模型预算不能为负", "model_budget_usd"
+            )
         )
 
     adapter = get_runtime_adapter(runtime_key)
@@ -305,6 +342,16 @@ def check_preparation(
             capacity.pool_runner_capacity(session, pool, settings=settings),
             capacity.pool_max_capacity(pool),
         )
+        max_capacity = capacity.pool_max_capacity(pool)
+        if max_capacity is not None and requested_concurrency > max_capacity:
+            blockers.append(
+                PreflightIssue(
+                    "capacity_invalid",
+                    f"请求并发 {requested_concurrency} 超过资源池上限 {max_capacity}",
+                    "requested_concurrency",
+                    {"max_capacity": max_capacity, "requested_concurrency": requested_concurrency},
+                )
+            )
 
     if not (scoring_image_digest or "").strip():
         blockers.append(

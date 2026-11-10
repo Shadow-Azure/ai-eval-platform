@@ -183,6 +183,27 @@ export async function fetchDatasetCases(
   return items(payload).records.map(parseCase);
 }
 
+export interface DatasetCasePage {
+  items: DatasetCaseSummary[];
+  total: number;
+}
+
+/** Server-paginated case list used by the launch wizard's subset picker. */
+export async function fetchDatasetCasesPage(
+  versionId: string,
+  params: { limit?: number; offset?: number },
+  signal?: AbortSignal,
+): Promise<DatasetCasePage> {
+  const limit = params.limit ?? 20;
+  const offset = params.offset ?? 0;
+  const payload = await request(
+    `/api/v1/dataset-versions/${versionId}/cases?limit=${limit}&offset=${offset}`,
+    { signal },
+  );
+  const { records, page } = items(payload);
+  return { items: records.map(parseCase), total: page.total ?? records.length };
+}
+
 export interface ImportResult {
   created: boolean;
   status: string;
