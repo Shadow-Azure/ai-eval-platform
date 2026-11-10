@@ -99,7 +99,10 @@ def main() -> int:
         [sys.executable, "-m", "app.seed"], cwd=BACKEND, env=env, check=True, capture_output=True
     )
 
-    os.environ.update({key: env[key] for key in env if key not in os.environ or key.startswith(("RUNNER_", "DATABASE_URL", "S3_", "AUTH_", "EVAL_", "REDIS_", "GITHUB_"))})
+    inherited = ("RUNNER_", "DATABASE_URL", "S3_", "AUTH_", "EVAL_", "REDIS_", "GITHUB_")
+    os.environ.update(
+        {key: env[key] for key in env if key not in os.environ or key.startswith(inherited)}
+    )
     sys.path.insert(0, str(BACKEND))
     from app.db import SessionLocal  # noqa: PLC0415
     from app.models import EvalCaseAttempt, EvalCaseRun, Outbox, ResourcePool, Runner  # noqa: PLC0415
@@ -266,7 +269,11 @@ def main() -> int:
             }
 
         Path(args.out).write_text(json.dumps(packed, ensure_ascii=False, indent=2), encoding="utf-8")
-        print(json.dumps({key: packed[key] for key in ("peak_running", "effective_concurrency", "cases", "runner_results")}, ensure_ascii=False, indent=2))
+        summary = {
+            key: packed[key]
+            for key in ("peak_running", "effective_concurrency", "cases", "runner_results")
+        }
+        print(json.dumps(summary, ensure_ascii=False, indent=2))
 
         ok = (
             all(item["exit_code"] == 0 for item in results)
