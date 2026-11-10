@@ -32,6 +32,7 @@ from app.model_gateway.tokens import (
 )
 from app.models import EvalCaseAttempt, EvalCaseRun, EvalEvent, EvalRun, ModelUsage, Outbox
 from app.secrets import reset_secret_box_cache
+from app.services import budget
 from app.services.short_token import issue_short_token
 from cryptography.fernet import Fernet
 from sqlalchemy import select
@@ -417,6 +418,22 @@ def test_gateway_budget_refusal_triggers_platform_pause(
     rejected = _gateway(client, token)
     assert rejected.status_code == 409
     assert rejected.json()["error"]["code"] == "budget_paused"
+    assert provider.calls == []
+
+    # Resume raises the budget, but the interrupted attempt is terminal: its
+    # old token must stay revoked instead of becoming valid again.
+    with Session(engine) as session:
+        budget.reconcile_budget_pauses(session, settings=get_settings())
+    with Session(engine) as session:
+        assert session.get(EvalRun, bound_eval["run_id"]).status == "paused_budget"
+    resumed = client.post(
+        f"/api/v1/evaluations/{bound_eval['run_id']}/resume-budget",
+        json={"additional_budget_usd": 1, "budget_version": 1},
+    )
+    assert resumed.status_code == 200, resumed.text
+    stale = _gateway(client, token)
+    assert stale.status_code == 409
+    assert stale.json()["error"]["code"] == "stale_attempt"
     assert provider.calls == []
 
 
