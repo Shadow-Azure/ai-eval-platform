@@ -76,6 +76,25 @@ function shortDigest(value: string | null | undefined): string {
   return value.replace(/^sha256:/, "").slice(0, 12);
 }
 
+interface FrozenFile {
+  path?: unknown;
+  sha256?: unknown;
+  size?: unknown;
+}
+
+function frozenFiles(record: FrozenAsset): Array<{ path: string; sha256: string; size: number }> {
+  const raw = record.metadata?.files;
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((item): item is FrozenFile => typeof item === "object" && item !== null)
+    .map((item) => ({
+      path: String(item.path ?? ""),
+      sha256: String(item.sha256 ?? ""),
+      size: typeof item.size === "number" ? item.size : 0,
+    }))
+    .filter((item) => Boolean(item.path));
+}
+
 const testColumns: TableColumnsType<CaseTestResult> = [
   { title: "组", dataIndex: "test_group", key: "test_group", width: 64 },
   { title: "测试", dataIndex: "test_name", key: "test_name" },
@@ -252,6 +271,21 @@ export function EvalDetailPage() {
             columns={frozenAssetColumns}
             dataSource={detail.data.asset_snapshot.assets ?? []}
             pagination={false}
+            expandable={{
+              rowExpandable: (record) => frozenFiles(record).length > 0,
+              expandedRowRender: (record) => (
+                <div className="asset-file-list">
+                  {frozenFiles(record).map((file) => (
+                    <div className="asset-file-row" key={file.path}>
+                      <span className="mono">{file.path}</span>
+                      <span className="mono muted">
+                        {shortDigest(file.sha256)} · {file.size} B
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ),
+            }}
           />
         </Card>
       ) : null}

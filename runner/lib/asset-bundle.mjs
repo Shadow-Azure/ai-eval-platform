@@ -7,9 +7,9 @@
  * hard case failure (`asset_invalid`), not a silent fallback to built-ins.
  */
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { gunzipSync } from "node:zlib";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 
 import { materializeAssets, RuntimeError } from "./runtime-claude-code.mjs";
 
@@ -46,7 +46,7 @@ export async function downloadAssetBundle(assetSnapshot, { fetchImpl = fetch } =
 }
 
 /** Parse and verify a bundle against the frozen snapshot metadata. */
-export function parseAssetBundle(bytes, assetSnapshot) {
+export function parseAssetBundleDetailed(bytes, assetSnapshot) {
   const expected = String(assetSnapshot?.bundle_digest || "");
   if (!expected || digest(bytes) !== expected) {
     throw new RuntimeError("资产包 digest 不匹配", { code: "asset_digest_mismatch" });
@@ -68,6 +68,7 @@ export function parseAssetBundle(bytes, assetSnapshot) {
   }
   const files = {};
   const digests = {};
+  const modes = {};
   for (const item of Array.isArray(document.files) ? document.files : []) {
     if (!item || typeof item !== "object") {
       throw new RuntimeError("资产包条目无效", { code: "asset_bundle_invalid" });
@@ -85,6 +86,7 @@ export function parseAssetBundle(bytes, assetSnapshot) {
     }
     files[item.path] = content;
     digests[item.path] = digest(content);
+    modes[item.path] = typeof item.mode === "string" ? item.mode : "100644";
   }
   if (assetSnapshot.tree_digest) {
     const treeDigest = digest(
@@ -97,7 +99,11 @@ export function parseAssetBundle(bytes, assetSnapshot) {
       throw new RuntimeError("资产树 digest 不匹配", { code: "asset_digest_mismatch" });
     }
   }
-  return files;
+  return { files, modes };
+}
+
+export function parseAssetBundle(bytes, assetSnapshot) {
+  return parseAssetBundleDetailed(bytes, assetSnapshot).files;
 }
 
 /**
@@ -109,11 +115,15 @@ export async function materializeSnapshot(assetSnapshot, workspace, options = {}
     return [];
   }
   const bytes = await downloadAssetBundle(assetSnapshot, options);
-  const files = parseAssetBundle(bytes, assetSnapshot);
+  const { files, modes } = parseAssetBundleDetailed(bytes, assetSnapshot);
   const root = resolve(workspace, ".claude");
   // Remove the repository's own .claude so only the frozen snapshot is loaded.
   // Dispatch workloads must not inherit host or repository asset definitions.
   rmSync(root, { recursive: true, force: true });
   mkdirSync(root, { recursive: true });
-  return materializeAssets(files, workspace);
+  const written = materializeAssets(files, workspace);
+  for (const path of Object.keys(files)) {
+    chmodSync(join(root, ...path.split("/")), modes[path] === "100755" ? 0o755 : 0o644);
+  }
+  return written;
 }

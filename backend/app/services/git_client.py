@@ -41,6 +41,7 @@ class TreeEntry:
     entry_type: str
     sha: str
     size: int | None = None
+    mode: str = "100644"
 
 
 def parse_repo_url(repo_url: str) -> tuple[str, str]:
@@ -164,12 +165,14 @@ class GitHubClient:
             if entry_type not in ("blob", "tree"):
                 continue
             size = entry.get("size")
+            mode = entry.get("mode")
             result.append(
                 TreeEntry(
                     path=path,
                     entry_type=entry_type,
                     sha=sha,
                     size=size if isinstance(size, int) else None,
+                    mode=mode if isinstance(mode, str) else "100644",
                 )
             )
         return result

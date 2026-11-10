@@ -695,9 +695,34 @@ def _pack_assets(
     runtime_key: str,
     settings: Settings,
     client: GitHubClient,
-    snapshot_id: str,
+    modes: dict[str, str],
 ) -> tuple[dict[str, bytes], list[dict[str, Any]], str]:
     owner, repo = parse_repo_url(source.repo_url)
+    planned: set[str] = set()
+    for asset in selected:
+        if asset.asset_type == "skill":
+            planned.update(
+                path
+                for path in blobs
+                if path == asset.path or path.startswith(asset.path + "/")
+            )
+        else:
+            planned.add(asset.path)
+    # Bound before downloading: a large repository file must fail cheaply
+    # instead of being fetched into memory and rejected afterwards.
+    if len(planned) > MAX_ASSET_FILES:
+        raise AgentAssetError(
+            "asset_count_exceeded",
+            f"资产文件数 {len(planned)} 超过上限 {MAX_ASSET_FILES}",
+            details={"count": len(planned)},
+        )
+    planned_bytes = sum(blobs[path].size or 0 for path in planned)
+    if planned_bytes > MAX_ASSET_BYTES:
+        raise AgentAssetError(
+            "asset_size_exceeded",
+            f"资产总大小 {planned_bytes} 超过上限 {MAX_ASSET_BYTES}",
+            details={"bytes": planned_bytes},
+        )
     files: dict[str, bytes] = {}
     assets_payload: list[dict[str, Any]] = []
     total_bytes = 0
@@ -731,7 +756,12 @@ def _pack_assets(
                 files[destination] = content
                 total_bytes += len(content)
                 asset_files.append(
-                    {"path": destination, "sha256": _digest(content), "size": len(content)}
+                    {
+                        "path": destination,
+                        "sha256": _digest(content),
+                        "size": len(content),
+                        "mode": modes.get(path, "100644"),
+                    }
                 )
         else:
             destination = str(asset.metadata["runtime_path"])
@@ -743,7 +773,12 @@ def _pack_assets(
             files[destination] = content
             total_bytes += len(content)
             asset_files.append(
-                {"path": destination, "sha256": _digest(content), "size": len(content)}
+                {
+                    "path": destination,
+                    "sha256": _digest(content),
+                    "size": len(content),
+                    "mode": modes.get(asset.path, "100644"),
+                }
             )
         if not asset_files:
             raise AgentAssetError("asset_empty", f"资产没有文件：{asset.path}", details={"path": asset.path})
@@ -867,6 +902,7 @@ def resolve_assets(
             return existing, snapshot_assets(session, existing.id), False
 
         snapshot_id = new_id()
+        modes = {entry.path: entry.mode for entry in scan.tree_entries}
         files, assets_payload, tree_digest = _pack_assets(
             source=source,
             commit=commit,
@@ -876,7 +912,7 @@ def resolve_assets(
             runtime_key=runtime_key,
             settings=settings,
             client=client,
-            snapshot_id=snapshot_id,
+            modes=modes,
         )
         bundle_doc = {
             "schema_version": ASSET_BUNDLE_SCHEMA,
@@ -888,6 +924,7 @@ def resolve_assets(
                     "path": path,
                     "sha256": _digest(files[path]),
                     "size": len(files[path]),
+                    "mode": modes.get(path, "100644"),
                     "content_base64": base64.b64encode(files[path]).decode("ascii"),
                 }
                 for path in sorted(files)
@@ -911,7 +948,12 @@ def resolve_assets(
         manifest = {
             "schema_version": ASSET_BUNDLE_SCHEMA,
             "files": [
-                {"path": path, "sha256": _digest(files[path]), "size": len(files[path])}
+                {
+                    "path": path,
+                    "sha256": _digest(files[path]),
+                    "size": len(files[path]),
+                    "mode": modes.get(path, "100644"),
+                }
                 for path in sorted(files)
             ],
             "assets": assets_payload,

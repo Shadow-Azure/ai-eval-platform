@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
@@ -12,13 +12,14 @@ function sha256(text) {
   return `sha256:${createHash("sha256").update(text).digest("hex")}`;
 }
 
-function bundleFor(files, { snapshotId = "snap-1", commit = "a".repeat(40) } = {}) {
+function bundleFor(files, { snapshotId = "snap-1", commit = "a".repeat(40), modes = {} } = {}) {
   const entries = Object.keys(files)
     .sort()
     .map((path) => ({
       path,
       sha256: sha256(files[path]),
       size: Buffer.byteLength(files[path]),
+      mode: modes[path] ?? "100644",
       content_base64: Buffer.from(files[path]).toString("base64"),
     }));
   const treeDigest = sha256(
@@ -46,6 +47,7 @@ function bundleFor(files, { snapshotId = "snap-1", commit = "a".repeat(40) } = {
 
 const assetFiles = {
   "skills/brainstorming/SKILL.md": "# brainstorming\n",
+  "skills/brainstorming/scripts/run.sh": "#!/bin/sh\n",
   "commands/ship-check.md": "# ship\n",
 };
 
@@ -54,7 +56,9 @@ test("materializes exactly the verified snapshot and removes stale assets", asyn
   mkdirSync(join(workspace, ".claude", "skills", "stale"), { recursive: true });
   writeFileSync(join(workspace, ".claude", "skills", "stale", "SKILL.md"), "# stale\n");
 
-  const { gzip, snapshot } = bundleFor(assetFiles);
+  const { gzip, snapshot } = bundleFor(assetFiles, {
+    modes: { "skills/brainstorming/scripts/run.sh": "100755" },
+  });
   const bundlePath = join(workspace, "bundle.json.gz");
   writeFileSync(bundlePath, gzip);
 
@@ -62,12 +66,20 @@ test("materializes exactly the verified snapshot and removes stale assets", asyn
     { ...snapshot, bundle_url: `file://${bundlePath}` },
     workspace,
   );
-  assert.deepEqual(written, [".claude/commands/ship-check.md", ".claude/skills/brainstorming/SKILL.md"]);
+  assert.deepEqual(written, [
+    ".claude/commands/ship-check.md",
+    ".claude/skills/brainstorming/SKILL.md",
+    ".claude/skills/brainstorming/scripts/run.sh",
+  ]);
   assert.equal(
     readFileSync(join(workspace, ".claude", "skills", "brainstorming", "SKILL.md"), "utf8"),
     "# brainstorming\n",
   );
   assert.equal(readFileSync(join(workspace, ".claude", "commands", "ship-check.md"), "utf8"), "# ship\n");
+  assert.ok(
+    (statSync(join(workspace, ".claude", "skills", "brainstorming", "scripts", "run.sh")).mode & 0o111) !== 0,
+    "snapshot executable mode is preserved",
+  );
   assert.throws(
     () => readFileSync(join(workspace, ".claude", "skills", "stale", "SKILL.md")),
     /ENOENT/,
