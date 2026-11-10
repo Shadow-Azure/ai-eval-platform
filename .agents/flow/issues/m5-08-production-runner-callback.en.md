@@ -44,7 +44,7 @@ M4-03/M4-04 already provide resource connections, spot provisioning and JIT ephe
 | Label dispatch | Carry `runs_on` in dispatch/manifest; eval-shard prepare outputs it and execute uses it | Code |
 | Provisioning test | Keep creation-verification semantics and state in UI/docs that it does not register a runner | Docs |
 | Security group | Allow TCP 8000 from the VPC CIDR and confirm private-only access | Human |
-| Secret injection | Set `API_BIND_ADDRESS`, `RUNNER_CALLBACK_BASE_URL` and the optional runner tarball URL | Human |
+| Secret injection | Set `API_BIND_ADDRESS` (the callback base URL is derived) and the optional runner tarball URL | Human |
 | End-to-end check | Create the Aliyun connection and spot pool, run 5 cases at concurrency 5 and keep evidence | Human |
 
 ## Acceptance
@@ -57,6 +57,6 @@ M4-03/M4-04 already provide resource connections, spot provisioning and JIT ephe
 ## Production enablement checklist
 
 - [ ] Allow inbound TCP 8000 from the VPC CIDR in the security group.
-- [ ] Set `API_BIND_ADDRESS` and `RUNNER_CALLBACK_BASE_URL` in GitHub Secrets.
+- [ ] Set `API_BIND_ADDRESS` in GitHub Secrets; `RUNNER_CALLBACK_BASE_URL` is derived from it by default and may be overridden.
 - [ ] Merge this PR and confirm the automatic deployment succeeds.
 - [ ] Create the connection and spot pool with the existing Aliyun AK, run 5 cases at concurrency 5 and accept the result.

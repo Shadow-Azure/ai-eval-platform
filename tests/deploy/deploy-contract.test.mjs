@@ -132,6 +132,14 @@ test("production runner callback entry stays VPC-only and keeps loopback", () =>
   assert.ok(workflow.includes("printf 'API_BIND_ADDRESS=%s\\n'"));
   assert.ok(workflow.includes("printf 'RUNNER_CALLBACK_BASE_URL=%s\\n'"));
   assert.ok(workflow.includes("|API_BIND_ADDRESS|RUNNER_CALLBACK_BASE_URL|"));
+  assert.ok(
+    workflow.includes('callback_base_url="${RUNNER_CALLBACK_BASE_URL:-}"'),
+    "callback base URL should accept an explicit override",
+  );
+  assert.ok(
+    workflow.includes('callback_base_url="http://${API_BIND_ADDRESS}:8000"'),
+    "callback base URL should be derived from API_BIND_ADDRESS",
+  );
 });
 
 test("eval-shard executes on the runner labels frozen in the dispatch", () => {

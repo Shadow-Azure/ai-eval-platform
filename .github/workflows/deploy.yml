@@ -126,6 +126,13 @@ jobs:
           : "${GATEWAY_TOKEN_SECRET:?GATEWAY_TOKEN_SECRET secret is required}"
           : "${RUNNER_TASK_SECRET:?RUNNER_TASK_SECRET secret is required}"
           : "${RUNNER_HEARTBEAT_TOKEN:?RUNNER_HEARTBEAT_TOKEN secret is required}"
+          # M5-08: the runner callback base URL follows the VPC binding. Only
+          # set RUNNER_CALLBACK_BASE_URL explicitly to override the derived
+          # value (for example a DNS name or a different port).
+          callback_base_url="${RUNNER_CALLBACK_BASE_URL:-}"
+          if [ -z "$callback_base_url" ] && [ -n "$API_BIND_ADDRESS" ]; then
+            callback_base_url="http://${API_BIND_ADDRESS}:8000"
+          fi
           {
             printf 'S3_ENDPOINT=%s\n' "$OSS_ENDPOINT"
             printf 'S3_BUCKET=%s\n' "$OSS_BUCKET"
@@ -143,7 +150,7 @@ jobs:
             printf 'RUNNER_HEARTBEAT_TOKEN=%s\n' "$RUNNER_HEARTBEAT_TOKEN"
             printf 'RUNNER_ADMIN_TOKEN=%s\n' "$RUNNER_ADMIN_TOKEN"
             printf 'API_BIND_ADDRESS=%s\n' "$API_BIND_ADDRESS"
-            printf 'RUNNER_CALLBACK_BASE_URL=%s\n' "$RUNNER_CALLBACK_BASE_URL"
+            printf 'RUNNER_CALLBACK_BASE_URL=%s\n' "$callback_base_url"
             printf 'RUNNER_SPOT_RUNNER_TARBALL_URL=%s\n' "$RUNNER_SPOT_RUNNER_TARBALL_URL"
           } | ssh "root@${{ secrets.ECS_HOST }}" 'umask 077; cd /opt/ai-eval-platform && touch .env && chmod 600 .env && grep -Ev "^(S3_ENDPOINT|S3_BUCKET|S3_ACCESS_KEY|S3_SECRET_KEY|S3_REGION|S3_ADDRESSING_STYLE|GITHUB_TOKEN|DATABASE_STORAGE_LIMIT_BYTES|SECRET_BOX_KEY|POSTGRES_PASSWORD|AUTH_SESSION_SECRET|GATEWAY_TOKEN_SECRET|RUNNER_TASK_SECRET|RUNNER_HEARTBEAT_TOKEN|RUNNER_ADMIN_TOKEN|API_BIND_ADDRESS|RUNNER_CALLBACK_BASE_URL|RUNNER_SPOT_RUNNER_TARBALL_URL)=" .env > .env.tmp && cat .env.tmp > .env && cat >> .env && rm -f .env.tmp'
 

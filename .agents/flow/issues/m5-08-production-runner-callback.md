@@ -44,7 +44,7 @@ M4-03/M4-04 已具备资源连接、竞价供给与 JIT 临时 Runner，M5-03 �
 | 标签调度 | dispatch/manifest 携带 `runs_on`，eval-shard 的 prepare 输出并用于 execute | 代码 |
 | 供给测试 | 维持创建验证语义，界面与文档明确该操作不注册 Runner | 文档 |
 | 安全组 | 放行 TCP 8000 ← VPC 网段，确认只走私网 | 人工 |
-| 密钥注入 | 配置 `API_BIND_ADDRESS`、`RUNNER_CALLBACK_BASE_URL`，可选 Runner 包缓存 URL | 人工 |
+| 密钥注入 | 配置 `API_BIND_ADDRESS`（回调基址自动推导），可选 Runner 包缓存 URL | 人工 |
 | 端到端验证 | 建阿里云连接与竞价池，跑 5 用例并发 5 并保留证据 | 人工 |
 
 ## 验收
@@ -57,6 +57,6 @@ M4-03/M4-04 已具备资源连接、竞价供给与 JIT 临时 Runner，M5-03 �
 ## 生产启用清单
 
 - [ ] 安全组入方向放行 TCP 8000，来源为 VPC 网段。
-- [ ] GitHub Secrets 设置 `API_BIND_ADDRESS` 与 `RUNNER_CALLBACK_BASE_URL`。
+- [ ] GitHub Secrets 设置 `API_BIND_ADDRESS`；`RUNNER_CALLBACK_BASE_URL` 默认由它推导，可按需覆盖。
 - [ ] 合并本 PR 并确认自动部署成功。
 - [ ] 用现有阿里云 AK 建连接与竞价池，跑 5 用例并发 5 并验收。
