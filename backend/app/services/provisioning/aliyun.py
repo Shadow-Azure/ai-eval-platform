@@ -361,7 +361,7 @@ class AliyunEcsClient:
         instance_name: str,
         user_data: str,
         zone_id: str | None = None,
-        internet_max_bandwidth_out: int = 5,
+        internet_max_bandwidth_out: int = 100,
     ) -> str:
         params: dict[str, object] = {
             "RegionId": region_id,
@@ -390,6 +390,20 @@ class AliyunEcsClient:
         if not instances or not isinstance(instances[0], str):
             raise ProvisionerError("cloud_api_unreadable", "Aliyun RunInstances 未返回实例 ID")
         return instances[0]
+
+    def get_instance_console_output(self, region_id: str, instance_id: str) -> str:
+        """Last console output (base64-decoded) for bootstrap diagnosis."""
+
+        payload = self.call(
+            "GetInstanceConsoleOutput", {"RegionId": region_id, "InstanceId": instance_id}
+        )
+        output = payload.get("Output")
+        if not isinstance(output, str) or not output:
+            return ""
+        try:
+            return base64.b64decode(output).decode("utf-8", errors="replace")
+        except (ValueError, TypeError):
+            return ""
 
     def delete_instance(self, region_id: str, instance_id: str) -> bool:
         try:
@@ -755,7 +769,7 @@ class AliyunEcsProvisioner:
                 instance_name=runner_name,
                 user_data=user_data,
                 zone_id=zone_id,
-                internet_max_bandwidth_out=int(config.get("internet_max_bandwidth_out") or 5),
+                internet_max_bandwidth_out=int(config.get("internet_max_bandwidth_out") or 100),
             )
         except ProvisionerError:
             # Do not leave a JIT runner pointing at an instance that never

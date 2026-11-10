@@ -605,6 +605,16 @@ def main() -> int:
             evidence["ok"] = True
         except Exception as exc:  # noqa: BLE001 - record the failure, then clean up
             evidence["ok"] = False
+            # Bootstrap failures happen before the runner can report anything;
+            # keep the tail of the instance console output (redacted) so the
+            # next attempt can distinguish apt/network/JIT problems.
+            try:
+                console = client.get_instance_console_output(
+                    region, evidence.get("instance_id") or instance.provider_instance_id
+                )
+                evidence["console_output"] = console.replace(ak_secret, "<redacted>")[-4000:]
+            except ProvisionerError as console_exc:
+                evidence["console_output_error"] = console_exc.code
             evidence["issues"].append(
                 {
                     "severity": "P1",

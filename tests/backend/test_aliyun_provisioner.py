@@ -88,6 +88,8 @@ class FakeAliyun:
             return 200, json.dumps(
                 {"Instances": {"Instance": [self.instances[i] for i in ids if i in self.instances]}}
             )
+        if action == "GetInstanceConsoleOutput":
+            return 200, json.dumps({"Output": base64.b64encode(b"cloud-init boot log").decode()})
         if action == "DeleteInstance":
             if self.delete_error is not None:
                 status, payload = self.delete_error
@@ -642,3 +644,17 @@ def test_run_instance_balance_error_is_a_stable_code(
         )
     assert caught.value.code == "cloud_account_balance_insufficient"
     assert caught.value.details["provider_code"] == "InvalidAccountStatus.NotEnoughBalance"
+
+
+def test_console_output_is_decoded(
+    session: Session, scope: dict[str, str]
+) -> None:
+    _connection(session, scope)
+    transport = FakeAliyun()
+    client = AliyunEcsClient(
+        access_key_id=SECRET_AK_ID,
+        access_key_secret=SECRET_AK_SECRET,
+        endpoint="https://ecs.aliyuncs.com",
+        transport=transport,
+    )
+    assert "cloud-init" in client.get_instance_console_output("cn-hangzhou", "i-test-1")
