@@ -52,7 +52,7 @@ const CASE_PAGE_SIZE = 20;
 
 const STEP_ITEMS: { title: string; meta: string }[] = [
   { title: "数据集与用例", meta: "版本与子集" },
-  { title: "Agent / 资产", meta: "Runtime 与 Git 源" },
+  { title: "Agent / 资产", meta: "Runtime 必选 · 资产可选" },
   { title: "模型 / 资源", meta: "凭据、容量与执行策略" },
   { title: "确认启动", meta: "冻结快照与费用" },
 ];
@@ -401,15 +401,9 @@ export function EvalWizardPage() {
     versionDetail.data,
   ]);
 
-  // Pick a default asset source once the catalog loads (deep link wins).
-  useEffect(() => {
-    if (draft.assetSourceId || !sources.data?.length) return;
-    const preferred = sources.data[0];
-    update(
-      { assetSourceId: preferred.id, assetRef: preferred.default_ref },
-      { invalidate: false },
-    );
-  }, [draft.assetSourceId, sources.data, update]);
+  // Assets stay unselected until the operator opts in: the asset step is
+  // optional, while the Agent Runtime remains required. Deep links from the
+  // dataset/asset pages still preselect a source through the effect above.
 
   // Directory-mode sources auto-select every asset until the operator edits
   // the selection themselves.
@@ -652,8 +646,12 @@ export function EvalWizardPage() {
       message.warning("先选择数据集版本、模型配置和资源池");
       return;
     }
-    if (!draft.assetSnapshotId) {
-      message.warning("先读取并冻结 Agent 资产");
+    if (!draft.runtimeKey) {
+      message.warning("先选择 Agent Runtime");
+      return;
+    }
+    if (draft.assetSourceId && !draft.assetSnapshotId && draft.selectedPaths.length > 0) {
+      message.warning("已选择资产但尚未读取冻结：点击「读取资产」，或清空选择后跳过资产");
       return;
     }
     setChecking(true);
@@ -665,7 +663,7 @@ export function EvalWizardPage() {
         model_config_id: draft.modelConfigId,
         runtime_key: draft.runtimeKey,
         resource_pool_id: draft.poolId,
-        asset_snapshot_id: draft.assetSnapshotId,
+        ...(draft.assetSnapshotId ? { asset_snapshot_id: draft.assetSnapshotId } : {}),
         case_selection: caseSelectionPayload(),
         execution: executionPayload(),
         scoring_image_digest: draft.scoringDigest || undefined,
@@ -699,8 +697,12 @@ export function EvalWizardPage() {
       return;
     }
     if (step === 1) {
-      if (!draft.assetSnapshotId) {
-        message.warning("Ref 尚未解析，不能进入下一步");
+      if (!draft.runtimeKey) {
+        message.warning("先选择 Agent Runtime");
+        return;
+      }
+      if (draft.assetSourceId && !draft.assetSnapshotId && draft.selectedPaths.length > 0) {
+        message.warning("已选择资产但尚未读取冻结：点击「读取资产」，或清空选择后跳过资产");
         return;
       }
       setStep(2);
@@ -715,7 +717,7 @@ export function EvalWizardPage() {
     setStep(step - 1);
   }
 
-  const canPrepare = Boolean(draft.versionId && draft.modelConfigId && draft.poolId && draft.assetSnapshotId);
+  const canPrepare = Boolean(draft.versionId && draft.modelConfigId && draft.poolId && draft.runtimeKey);
 
   const datasetName = versionDetail.data?.dataset_id
     ? datasets.data?.find((item) => item.id === versionDetail.data?.dataset_id)?.name
@@ -725,7 +727,9 @@ export function EvalWizardPage() {
   const versionLabel = versionDetail.data?.version ?? "—";
   const assetSummary = draft.assetSnapshotId
     ? `${draft.assetSnapshotCount} 项 @${(draft.assetSnapshotCommit ?? "").slice(0, 8)}`
-    : "尚未解析";
+    : draft.assetSourceId
+      ? "尚未读取冻结"
+      : "仅使用内置能力";
   const peakConcurrency =
     summary?.resolved.effective_concurrency ??
     (selectedPool
@@ -785,7 +789,7 @@ export function EvalWizardPage() {
           <div className="summary-item">
             <span className="summary-label">Agent 资产</span>
             <span className="summary-value">
-              {selectedSource?.name ?? "未选择"}
+              {selectedSource?.name ?? "未选择（可选）"}
               <br />
               <span className="muted mono">{assetSummary}</span>
             </span>
@@ -1005,8 +1009,14 @@ export function EvalWizardPage() {
         <div className="eyebrow">Step 2 · Runtime</div>
         <h2 className="wizard-title">选择 Agent 与资产源</h2>
         <p className="small muted wizard-subtitle">
-          从 Git 仓库加载 Skill、Command 与 Subagent；启动时固定到解析出的 commit。
+          Agent Runtime 为必选；Git 资产源可选，不选择时只使用 Runtime 内置能力。
         </p>
+        <div className="wizard-section-head">
+          <div>
+            <h3>Agent Runtime（必选）</h3>
+            <p className="small muted">决定会话适配器与 Runtime 内置能力</p>
+          </div>
+        </div>
         <div className="choice-grid">
           {(runtimes.data ?? []).map((item) => {
             const selected = draft.runtimeKey === item.key;
@@ -1033,8 +1043,8 @@ export function EvalWizardPage() {
         </div>
         <div className="wizard-section-head">
           <div>
-            <h3>Git 资产源</h3>
-            <p className="small muted">仓库、默认 Ref 与扫描路径来自资产源配置</p>
+            <h3>Git 资产源（可选）</h3>
+            <p className="small muted">不选择时只使用 Runtime 内置能力；选择后可读取并冻结快照</p>
           </div>
           <Button type="link" onClick={() => navigate("/assets")}>
             管理资产源 →
@@ -1042,10 +1052,10 @@ export function EvalWizardPage() {
         </div>
         {!sources.isLoading && !(sources.data ?? []).length ? (
           <Alert
-            type="warning"
+            type="info"
             showIcon
-            message="还没有 Agent 资产源"
-            description="先到 Agent 资产页添加 Git 资产源并扫描，再回到这里选择本次评测使用的资产。"
+            message="还没有 Agent 资产源（可选）"
+            description="资产可选；如需加载 Skill、Command 或 Subagent，先到 Agent 资产页添加 Git 资产源并扫描。"
             action={
               <Button size="small" onClick={() => navigate("/assets")}>
                 去添加
@@ -1055,7 +1065,7 @@ export function EvalWizardPage() {
         ) : null}
         <div className="asset-runtime-panel">
           <div className="field">
-            <label className="required">资产源</label>
+            <label>资产源（可选）</label>
             <Select
               value={draft.assetSourceId ?? undefined}
               onChange={selectAssetSource}
@@ -1084,7 +1094,7 @@ export function EvalWizardPage() {
           </div>
           <div className="field-row asset-ref-row">
             <div className="field">
-              <label className="required">评测 Ref</label>
+              <label>评测 Ref（可选）</label>
               <Input
                 className="mono"
                 value={draft.assetRef}
@@ -1121,8 +1131,15 @@ export function EvalWizardPage() {
               </div>
             </div>
           </div>
-          <div className={`banner ${draft.assetSnapshotId ? "success" : "warning"}`}>
-            <Icon name={draft.assetSnapshotId ? "check" : "alert"} size={15} />
+          <div
+            className={`banner ${
+              draft.assetSnapshotId ? "success" : draft.assetSourceId ? "warning" : ""
+            }`}
+          >
+            <Icon
+              name={draft.assetSnapshotId ? "check" : draft.assetSourceId ? "alert" : "help"}
+              size={15}
+            />
             <div>
               {draft.assetSnapshotId ? (
                 <>
@@ -1130,9 +1147,19 @@ export function EvalWizardPage() {
                   {draft.assetSnapshotCount} 项资产；启动时会固定到 commit{" "}
                   <span className="mono">{draft.assetSnapshotCommit}</span>。
                 </>
+              ) : draft.assetSourceId ? (
+                <>
+                  <strong>资产尚未读取冻结。</strong>{" "}
+                  {draft.selectedPaths.length
+                    ? `已选择 ${draft.selectedPaths.length} 项资产；点击「读取资产」冻结快照，或清空选择后跳过资产。`
+                    : assetTree.isLoading
+                      ? "正在读取资产树；读取完成后可选择并冻结，或清空选择后跳过资产。"
+                      : "未选择任何资产；可直接进入下一步，只使用 Runtime 内置能力。"}
+                </>
               ) : (
                 <>
-                  <strong>Ref 尚未解析。</strong> 未解析或选择为空不能进入下一步。
+                  <strong>未选择 Agent 资产（可选）。</strong> 可直接进入下一步，只使用 Runtime
+                  内置能力；如需 Skill、Command 或 Subagent，请选择资产源与 Ref 后读取资产。
                 </>
               )}
             </div>
