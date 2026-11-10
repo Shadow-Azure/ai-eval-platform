@@ -42,6 +42,7 @@ class FakeRepo:
                 ".claude/commands/opsx/propose.md": b"# openspec propose\n",
                 ".claude/agents/test-runner.md": b"# Test runner\n",
                 "docs/readme.md": b"# docs\n",
+                "src/commands/deploy.md": b"# Not a runtime command\n",
             }
 
 
@@ -112,7 +113,7 @@ def create_source(client: TestClient, **overrides: object) -> dict:
         "name": "superpowers",
         "repo_url": "https://github.com/obra/superpowers",
         "default_ref": "main",
-        "scan_paths": ["skills", ".claude", "docs"],
+        "scan_paths": ["skills", ".claude", "docs", "src"],
         "selection_mode": "explicit",
         "description": "workflow skills",
         **overrides,
@@ -147,6 +148,9 @@ def test_create_scan_and_tree_roundtrip(
     scanned = scan_source(client, source["id"])
     assert scanned["resolved_commit"] == COMMIT_ONE
     assert scanned["counts"] == {"skill": 2, "command": 2, "subagent": 1}
+    # A random src/commands folder is not a native runtime layout: it must stay
+    # unclassified and require an explicit type.
+    assert all(asset["path"] != "src/commands/deploy.md" for asset in scanned["assets"])
     names = {(asset["asset_type"], asset["path"]) for asset in scanned["assets"]}
     assert ("skill", "skills/brainstorming") in names
     assert ("command", ".claude/commands/opsx/propose.md") in names
@@ -158,6 +162,7 @@ def test_create_scan_and_tree_roundtrip(
     assert tree["scanned"] is True
     assert tree["counts"]["skill"] == 2
     assert any(item["path"] == "docs/readme.md" for item in tree["unclassified"])
+    assert any(item["path"] == "src/commands/deploy.md" for item in tree["unclassified"])
 
 
 def test_scan_preview_does_not_persist_source(
@@ -168,7 +173,7 @@ def test_scan_preview_does_not_persist_source(
         json={
             "repo_url": "https://github.com/obra/superpowers",
             "requested_ref": "main",
-            "scan_paths": ["skills", ".claude", "docs"],
+            "scan_paths": ["skills", ".claude", "docs", "src"],
         },
     )
     assert response.status_code == 200, response.text

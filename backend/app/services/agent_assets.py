@@ -157,6 +157,33 @@ def _decode_text(content: bytes) -> str:
     return content.decode("utf-8", errors="replace")
 
 
+_RUNTIME_DIRS = (".claude", ".agents", ".codex", ".opencode", ".pi")
+
+
+def _runtime_asset(path: str) -> tuple[str, str] | None:
+    """Return ``(asset_type, runtime_path)`` for native runtime layouts only.
+
+    A random ``src/commands`` folder is not a Claude Code command directory;
+    unknown layouts stay unclassified so the operator must choose a type
+    explicitly (design 02 §3.2 / 07 §4.1).
+    """
+
+    if not path.endswith(".md"):
+        return None
+    parts = PurePosixPath(path).parts
+    for index in range(len(parts) - 2):
+        if parts[index] in _RUNTIME_DIRS and parts[index + 1] in ("commands", "agents"):
+            kind = "command" if parts[index + 1] == "commands" else "subagent"
+            rest = parts[index + 2 :]
+            if not rest:
+                return None
+            return kind, f"{parts[index + 1]}/" + "/".join(rest)
+    if len(parts) >= 2 and parts[0] in ("commands", "agents"):
+        kind = "command" if parts[0] == "commands" else "subagent"
+        return kind, f"{parts[0]}/" + "/".join(parts[1:])
+    return None
+
+
 def _command_runtime_path(path: str) -> str:
     parts = PurePosixPath(path).parts
     if "commands" in parts[:-1]:
@@ -309,11 +336,11 @@ def scan_repository(
         if _under_any(path, skill_dirs):
             continue
         entry = blobs[path]
-        parts = PurePosixPath(path).parts
-        if path.endswith(".md") and "commands" in parts[:-1]:
+        runtime_asset = _runtime_asset(path)
+        if runtime_asset is not None:
+            asset_type, runtime_path = runtime_asset
             content = read_blob(path)
-            runtime_path = _command_runtime_path(path)
-            name = runtime_path.removeprefix("commands/").removesuffix(".md")
+            name = runtime_path.split("/", 1)[1].removesuffix(".md")
             prerequisites = (
                 ["openspec CLI"]
                 if "openspec" in path.lower() or "openspec" in _decode_text(content).lower()
@@ -322,31 +349,14 @@ def scan_repository(
             assets.append(
                 ScannedAsset(
                     path=path,
-                    asset_type="command",
+                    asset_type=asset_type,
                     name=name,
                     content_digest=_digest(content),
                     metadata={
                         "description": _command_description(content),
                         "size": len(content),
                         "runtime_path": runtime_path,
-                        "prerequisites": prerequisites,
-                    },
-                )
-            )
-        elif path.endswith(".md") and "agents" in parts[:-1]:
-            content = read_blob(path)
-            name = PurePosixPath(path).stem
-            assets.append(
-                ScannedAsset(
-                    path=path,
-                    asset_type="subagent",
-                    name=name,
-                    content_digest=_digest(content),
-                    metadata={
-                        "description": _command_description(content),
-                        "size": len(content),
-                        "runtime_path": _subagent_runtime_path(path),
-                        "prerequisites": [],
+                        "prerequisites": prerequisites if asset_type == "command" else [],
                     },
                 )
             )
