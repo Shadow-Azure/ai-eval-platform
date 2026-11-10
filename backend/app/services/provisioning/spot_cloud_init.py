@@ -72,9 +72,25 @@ apt-get update -y
 apt-get install -y --no-install-recommends ca-certificates curl git jq docker.io libicu-dev
 systemctl enable --now docker
 
+# The eval-shard workflow runs Node on the runner host: the prepare job
+# validates the dispatch contract and plans the matrix (contracts.mjs,
+# plan-cases.mjs) and every execute job runs real-task.mjs. The distro Node
+# is too old on some images, so install Node 22 from NodeSource. Keep the
+# downloads bounded so a slow mirror cannot hang cloud-init past the runner
+# registration timeout; a bootstrap failure leaves a diagnosable
+# register_timeout instead of a silently idle instance.
+curl -fsSL --max-time 120 --retry 2 -o /tmp/nodesource_setup.sh \\
+  https://deb.nodesource.com/setup_22.x
+bash /tmp/nodesource_setup.sh
+apt-get install -y --no-install-recommends nodejs
+node --version
+
 mkdir -p /opt/actions-runner /etc/eval
 cd /opt/actions-runner
-curl -fsSL --max-time 180 --retry 1 -o runner.tar.gz \\
+# Runner tarball: prefer the pool's OSS cache. GitHub releases are slow or
+# unreachable from Aliyun, and a 3-minute cap used to abort the download for
+# whole instance batches; allow 10 minutes with retries before giving up.
+curl -fsSL --max-time 600 --retry 3 --retry-delay 5 -o runner.tar.gz \\
   "{runner_tarball_url}"
 tar -xzf runner.tar.gz
 rm -f runner.tar.gz
