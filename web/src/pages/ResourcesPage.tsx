@@ -264,6 +264,7 @@ function spotCompatibility(
 
 export function ResourcesPage() {
   const { session } = useAuth();
+  const queryClient = useQueryClient();
   const isAdmin = session?.role === "admin";
   const [tab, setTab] = useState<TabKey>("pools");
   const [connectionModalOpen, setConnectionModalOpen] = useState(false);
@@ -682,6 +683,14 @@ export function ResourcesPage() {
         onClose={() => setTestPoolId(null)}
         onFinished={() => {
           void poolsQuery.refetch();
+          if (testPoolId) {
+            void queryClient.invalidateQueries({
+              queryKey: ["resource-pool", testPoolId],
+            });
+            void queryClient.invalidateQueries({
+              queryKey: ["resource-pool", testPoolId, "runners"],
+            });
+          }
         }}
       />
     </section>
@@ -874,6 +883,7 @@ function ConnectionModal({
   onCreated: () => void;
 }) {
   const [form] = Form.useForm<ConnectionFormValues>();
+  const queryClient = useQueryClient();
   const [mode, setMode] = useState<"existing" | "new">("new");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<unknown>(null);
@@ -900,6 +910,7 @@ function ConnectionModal({
   }, [form, open, provider]);
 
   async function submit() {
+    let createdCredentialId: string | null = null;
     try {
       const values = await form.validateFields();
       setSubmitting(true);
@@ -917,7 +928,9 @@ function ConnectionModal({
           provider: values.provider,
           secret,
         });
+        createdCredentialId = credential.id;
         credentialId = credential.id;
+        void queryClient.invalidateQueries({ queryKey: ["resource-credentials"] });
       }
       if (!credentialId) {
         throw new ApiError("请选择或新建资源凭据", { code: "credential_required" });
@@ -946,6 +959,14 @@ function ConnectionModal({
       onCreated();
       onClose();
     } catch (submitError) {
+      // A credential may already exist when connection creation fails (for
+      // example a duplicate name). Keep it selectable instead of leaving an
+      // orphaned secret behind or asking the operator to paste the key again.
+      if (createdCredentialId) {
+        setMode("existing");
+        form.setFieldValue("credential_id", createdCredentialId);
+        await queryClient.invalidateQueries({ queryKey: ["resource-credentials"] });
+      }
       setError(submitError);
       if (submitError instanceof ApiError && Object.keys(submitError.fields).length > 0) {
         form.setFields(

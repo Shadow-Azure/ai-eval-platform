@@ -314,7 +314,7 @@ export async function fetchResourceCredentials(
       revoked_at: optionalText(item.revoked_at),
       last_rotated_at: optionalText(item.last_rotated_at),
     }))
-    .filter((item) => item.id && item.kind === "resource");
+    .filter((item) => item.id && item.kind === "resource" && !item.revoked_at);
 }
 
 export async function createResourceCredential(input: {
