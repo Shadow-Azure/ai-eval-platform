@@ -213,7 +213,11 @@ def test_credentials_are_never_returned_in_plaintext(client, model_env) -> None:
 def test_model_config_does_not_echo_secret(client, model_env) -> None:
     config = _create_config(client)
     assert config["credential_id"]
-    assert "secret" not in json.dumps(config)
+    # M5-02 adds a nested masked-credential summary; only the mask is exposed.
+    assert "secret" not in config
+    assert "sk-test-1234567890" not in json.dumps(config)
+    assert config["credential"]["secret_mask"] == "****7890"
+    assert "ciphertext" not in json.dumps(config)
     detail = client.get(f"/api/v1/model-configs/{config['id']}")
     assert detail.status_code == 200
     assert "sk-test-1234567890" not in detail.text

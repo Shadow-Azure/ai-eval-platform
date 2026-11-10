@@ -190,12 +190,22 @@ export function EvalWizardPage() {
                   onChange={setModelConfigId}
                   options={(models.data ?? []).map((item) => ({
                     value: item.id,
-                    label: `${item.display_name} · ${item.model_name} · ${item.api_style}`,
+                    label: `${item.display_name} · ${item.model_name} · ${item.api_style}${
+                      item.credential?.revoked_at ? " · 凭据已撤销" : ""
+                    }`,
                   }))}
                   placeholder="选择模型配置"
                   style={{ maxWidth: 560 }}
                 />
               </Form.Item>
+              {selectedModel?.credential?.revoked_at ? (
+                <Alert
+                  type="warning"
+                  showIcon
+                  message="所选模型配置的凭据已撤销"
+                  description="一致性检查会把 credential_unavailable 列为阻塞项；请先在「模型凭据」页替换 Key 后再发起评测。"
+                />
+              ) : null}
               <Form.Item label="Runtime">
                 <Select
                   value={runtimeKey}

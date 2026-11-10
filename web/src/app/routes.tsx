@@ -9,6 +9,7 @@ import { EvalDetailPage } from "../pages/EvalDetailPage";
 import { EvalWizardPage } from "../pages/EvalWizardPage";
 import { EvalsPage } from "../pages/EvalsPage";
 import { LoginPage } from "../pages/LoginPage";
+import { ModelsPage } from "../pages/ModelsPage";
 import { NotFoundPage } from "../pages/NotFoundPage";
 import { OperationsPage } from "../pages/OperationsPage";
 import { OverviewPage } from "../pages/OverviewPage";
@@ -19,12 +20,6 @@ const placeholders = [
     eyebrow: "Configuration · Agent assets",
     title: "Agent 资产",
     description: "维护 Git 资产源、扫描路径与 Skill / Command / Subagent 清单。",
-  },
-  {
-    path: "models",
-    eyebrow: "Configuration · Model credentials",
-    title: "模型凭据",
-    description: "配置模型供应商与集中式凭据，并验证端点连通性。",
   },
   {
     path: "resources",
@@ -54,6 +49,7 @@ export function AppRoutes() {
           <Route path="/datasets" element={<DatasetsPage />} />
           <Route path="/datasets/import" element={<DatasetImportPage />} />
           <Route path="/datasets/:datasetId" element={<DatasetDetailPage />} />
+          <Route path="/models" element={<ModelsPage />} />
           <Route element={<RequireAdmin />}>
             <Route path="/operations" element={<OperationsPage />} />
           </Route>

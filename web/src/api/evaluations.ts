@@ -190,6 +190,21 @@ function errorInfo(payload: unknown): { code: string | null; message: string | n
   };
 }
 
+function errorFields(payload: unknown): Record<string, string> {
+  const error = errorObject(payload);
+  if (!isRecord(error)) return {};
+  let raw: unknown = error.fields;
+  if (!isRecord(raw) && isRecord(error.details) && isRecord(error.details.fields)) {
+    raw = error.details.fields;
+  }
+  if (!isRecord(raw)) return {};
+  const fields: Record<string, string> = {};
+  for (const [name, value] of Object.entries(raw)) {
+    if (typeof value === "string" && value.trim()) fields[name] = value;
+  }
+  return fields;
+}
+
 export async function request(path: string, init?: RequestInit): Promise<unknown> {
   let response: Response;
   try {
@@ -211,6 +226,7 @@ export async function request(path: string, init?: RequestInit): Promise<unknown
     throw new ApiError(info.message ?? `控制面请求失败（HTTP ${response.status}）`, {
       status: response.status,
       code: info.code,
+      fields: errorFields(payload),
     });
   }
   return payload;

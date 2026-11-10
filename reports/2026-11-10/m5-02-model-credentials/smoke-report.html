@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>M5-02 模型凭据与配置页 · 浏览器集成冒烟</title>
+  <style>
+    :root{
+      color-scheme:light;
+      --bg:#f4f7fb;--card:#fff;--ink:#16202f;--ink2:#55637a;--ink3:#7b869b;
+      --line:#dde4ee;--accent:#2563eb;--accent-wash:#e8efff;--good:#157347;
+      --good-wash:#e7f6ee;--warn:#b45309;--warn-wash:#fff2dd;--bad:#c9282e;
+      --bad-wash:#ffeded;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:radial-gradient(circle at 8% 0,#dbe9ff 0,transparent 32rem),radial-gradient(circle at 92% 4%,#e7f1ff 0,transparent 28rem),var(--bg);color:var(--ink);font:14px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Noto Sans CJK SC",sans-serif}
+    main{max-width:1220px;margin:auto;padding:36px 28px 72px}
+    .hero{padding:30px 34px;border:1px solid #dbe3ee;border-radius:24px;background:rgba(255,255,255,.92);box-shadow:0 18px 44px #17202f12}
+    .eyebrow{margin:0;color:var(--accent);font-size:12px;font-weight:800;letter-spacing:.16em;text-transform:uppercase}
+    h1{margin:10px 0 8px;font-size:clamp(28px,4vw,44px);letter-spacing:-.04em}
+    .summary{margin:0;max-width:850px;color:var(--ink2);font-size:15px}
+    .meta{display:block;margin-top:8px;color:var(--ink3);font-size:12px}
+    .metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-top:26px}
+    .metric{padding:16px 18px;border:1px solid var(--line);border-radius:16px;background:#fafbfd}
+    .metric b{display:block;font-size:30px;letter-spacing:-.04em}
+    .metric span{display:block;margin-top:2px;color:var(--ink3);font-size:12px}
+    section{margin-top:28px}
+    .head{display:flex;align-items:baseline;justify-content:space-between;gap:16px;margin:0 4px 14px}
+    h2{margin:0;font-size:21px;letter-spacing:-.03em}
+    .head small{color:var(--ink3);white-space:nowrap}
+    .card{padding:22px;border:1px solid var(--line);border-radius:20px;background:var(--card);box-shadow:0 5px 22px #17202f08}
+    .facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin:0}
+    .fact{padding:13px 16px;border:1px solid #eceff5;border-radius:12px;background:#fafbfd}
+    .fact dt{color:var(--ink3);font-size:11px;font-weight:700}
+    .fact dd{margin:3px 0 0;overflow-wrap:anywhere}
+    code{font-family:var(--mono);font-size:.9em;color:#29456d;overflow-wrap:anywhere}
+    .status{display:inline-flex;padding:3px 8px;border-radius:999px;font-size:11px;font-weight:800;white-space:nowrap;background:#eef1f6;color:var(--ink2)}
+    .status.pass,.status.fixed{background:var(--good-wash);color:var(--good)}
+    .status.warn,.status.manual{background:var(--warn-wash);color:var(--warn)}
+    .status.fail{background:var(--bad-wash);color:var(--bad)}
+    .tableWrap{overflow:auto;border:1px solid var(--line);border-radius:18px;background:var(--card);box-shadow:0 5px 22px #17202f08}
+    table{width:100%;min-width:920px;border-collapse:collapse}
+    th,td{padding:12px 15px;border-bottom:1px solid #edf0f5;text-align:left;vertical-align:top}
+    th{position:sticky;top:0;background:#fafbfe;color:var(--ink2);font-size:12px}
+    tr:last-child td{border-bottom:0}
+    tr:hover{background:#fcfdff}
+    .num{color:var(--ink3);font-family:var(--mono);font-size:12px}
+    .evidence{color:var(--ink3);font-size:12px}
+    .issues{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px}
+    .issueCard{padding:18px 21px;border:1px solid #ffcece;border-left:5px solid var(--bad);border-radius:16px;background:#fffbfb}
+    .issueCard h3{margin:0;color:#b91c1c;font-size:16px}
+    .issueCard p{margin:8px 0;color:var(--ink2)}
+    .issueCard dt{color:var(--ink3);font-size:11px;font-weight:700}
+    .issueCard dd{margin:2px 0 0;color:var(--ink2)}
+    .tag{float:right;padding:3px 8px;border-radius:999px;background:#fee4e4;color:#9a1b21;font-size:11px;font-weight:800}
+    .fixed{display:inline-flex;gap:5px;align-items:center;margin-top:11px;padding:6px 10px;border-radius:999px;background:var(--good-wash);color:var(--good);font-size:12px;font-weight:800}
+    .shots{display:grid;grid-template-columns:repeat(auto-fit,minmax(430px,1fr));gap:16px}
+    figure{margin:0;overflow:hidden;border:1px solid var(--line);border-radius:18px;background:#fff;box-shadow:0 6px 22px #17202f08}
+    figure.wide{grid-column:1/-1}
+    img{display:block;width:100%;max-height:500px;object-fit:contain;background:#eef2f7}
+    figcaption{display:flex;gap:9px;align-items:flex-start;padding:11px 14px;border-top:1px solid #edf0f5;background:#fafbfd;color:var(--ink2);font-size:12.5px}
+    figcaption b{flex:none;color:var(--ink)}
+    .issue-shot{border-color:#ffcece}
+    .conclusion{border:1px solid #c8e5d2;border-radius:20px;background:linear-gradient(135deg,#f2fbf6,white 54%)}
+    .conclusion.warn{border-color:#f1d9a4;background:linear-gradient(135deg,#fff8e8,white 54%)}
+    .conclusion.fail{border-color:#ffc9c9;background:linear-gradient(135deg,#fff5f5,white 54%)}
+    .conclusion ul{margin:12px 0 0;padding-left:20px;color:#344155}
+    .conclusion li+li{margin-top:7px}
+    .empty{padding:20px;text-align:center;color:var(--ink3);background:#fafbfd;border:1px dashed var(--line);border-radius:12px}
+    .foot{margin-top:24px;color:var(--ink3);font-size:12px;text-align:center}
+    @media(max-width:860px){main{padding:22px 14px 52px}.hero{padding:23px}.shots{grid-template-columns:1fr}.head{align-items:flex-start;flex-direction:column;gap:4px}}
+    @media print{body{background:white}main{max-width:none;padding:0}.card,.issueCard,figure,.tableWrap{box-shadow:none;break-inside:avoid}img{max-height:420px}}
+  </style>
+</head>
+<body>
+<main>
+  <header class="hero">
+    <p class="eyebrow">Browser smoke · 真实登录 / 列表 / 新建 / 测试 / 轮换 / 撤销 / 权限 / 预检</p>
+    <h1>M5-02 模型凭据与配置页 · 浏览器集成冒烟</h1>
+    <p class="summary">对 M5-02 模型凭据页做端到端浏览器冒烟：基线占位页对比、配置列表与详情、表单校验、新建凭据、刷新后的密钥卫生、端点连通性、搜索空态、轮换、撤销、只读权限、向导感知、预检阻塞与失败诊断。共 16 个场景、37 项断言全部通过，未发现产品缺陷。</p>
+    <span class="meta">2026-11-10 · AI Eval Platform · M5-02</span>
+    <div class="metrics"><div class="metric"><b>16</b><span>冒烟场景</span></div><div class="metric"><b>37</b><span>断言</span></div><div class="metric"><b>0</b><span>发现缺陷</span></div><div class="metric"><b>10</b><span>新增 API 集成测试</span></div></div>
+  </header>
+
+  <section>
+    <div class="head"><h2>Environment and Artifact</h2><small>2026-11-10 · AI Eval Platform · M5-02</small></div>
+    <article class="card"><dl class="facts"><div class="fact"><dt>应用</dt><dd>AI Eval Platform 本地开发栈（FastAPI + Vite React）</dd></div><div class="fact"><dt>分支</dt><dd>agent/complete-m5-02-3f0df081fb69（PR head）</dd></div><div class="fact"><dt>基线</dt><dd>origin/main @ 5ae37df</dd></div><div class="fact"><dt>数据库</dt><dd>SQLite 演示库 + 迁移 0015_dataset_image_digests</dd></div><div class="fact"><dt>浏览器</dt><dd>Google Chrome headless · Playwright 1.65.0 · 1440×1000</dd></div><div class="fact"><dt>数据形态</dt><dd>5 个模型配置（4 正常 / 1 撤销）+ 流程中新建 1 个、轮换 1 个、撤销 1 个</dd></div><div class="fact"><dt>模型端点</dt><dd>本地假供应商（可达）与不可达端口各一个，确定性覆盖成功/失败</dd></div><div class="fact"><dt>账号</dt><dd>本地演示管理员与只读成员（密码不写入报告）</dd></div></dl></article>
+  </section>
+
+  <section>
+    <div class="head"><h2>Scenario Matrix</h2><small>16 pass</small></div>
+    <div class="tableWrap"><table><table><thead><tr><th>#</th><th>场景</th><th>结果</th><th>说明</th><th>证据</th></tr></thead><tbody><tr><td class="num">01</td><td>基线：模型凭据占位页</td><td><span class="status pass">PASS</span></td><td>基线 `origin/main` 的 /models 只有“后续里程碑接入”占位，无列表、操作或凭据信息。</td><td class="evidence">before-01-models-placeholder.png</td></tr><tr><td class="num">02</td><td>基线：发起评测未标记撤销凭据</td><td><span class="status pass">PASS</span></td><td>选择已撤销凭据的模型时，旧页面照常展示选项且没有警告。</td><td class="evidence">before-02-wizard-revoked-model.png</td></tr><tr><td class="num">03</td><td>模型配置列表与可用性</td><td><span class="status pass">PASS</span></td><td>展示 5 个配置、4/5 可用、服务商、端点、模型名、协议、价格、掩码与最近使用；撤销项有独立状态。</td><td class="evidence">after-01-models-list.png</td></tr><tr><td class="num">04</td><td>模型配置详情</td><td><span class="status pass">PASS</span></td><td>详情抽屉展示掩码、价格、最近轮换/使用、累计请求、Token、成本与限制。</td><td class="evidence">after-02-detail.png</td></tr><tr><td class="num">05</td><td>表单字段级校验</td><td><span class="status pass">PASS</span></td><td>空表单提交时在服务商、名称、端点、模型名等字段就地报错，不发起写请求。</td><td class="evidence">after-03-validation.png</td></tr><tr><td class="num">06</td><td>新建模型配置</td><td><span class="status pass">PASS</span></td><td>可新建凭据并保存；卡片只出现 `****1234` 掩码。流程同时断言写请求后列表立即出现新配置。</td><td class="evidence">after-04-create-drawer.png<br>after-05-created.png</td></tr><tr><td class="num">07</td><td>刷新与浏览器状态</td><td><span class="status pass">PASS</span></td><td>刷新后配置仍在、密钥仍只显示掩码；DOM、localStorage、sessionStorage、URL 与资源请求 URL 均无明文 Key。</td><td class="evidence">after-05-created.png</td></tr><tr><td class="num">08</td><td>端点连通性批量测试</td><td><span class="status pass">PASS</span></td><td>全部验证后 4 个可达端点显示“刚刚验证通过”，不可达端点显示“验证失败”；可用数保持 5/6。</td><td class="evidence">after-06-test-all.png</td></tr><tr><td class="num">09</td><td>搜索无结果空态</td><td><span class="status pass">PASS</span></td><td>无匹配时展示空态与“清除搜索”，不伪造数据。</td><td class="evidence">after-07-search-empty.png</td></tr><tr><td class="num">10</td><td>轮换 Key</td><td><span class="status pass">PASS</span></td><td>替换 Key 后掩码变为 `****9999`，旧 Key 立即失效，新 Key 自动复测。</td><td class="evidence">after-08-rotate-dialog.png<br>after-09-rotated.png</td></tr><tr><td class="num">11</td><td>撤销凭据</td><td><span class="status pass">PASS</span></td><td>二次确认展示影响范围；撤销后卡片标“已撤销”、可用数降为 4/6。</td><td class="evidence">after-10-revoke-dialog.png<br>after-11-revoked.png</td></tr><tr><td class="num">12</td><td>只读成员权限边界</td><td><span class="status pass">PASS</span></td><td>只读账号可读配置与掩码，页面没有新增/替换/撤销/测试入口；API 写请求返回 403 `forbidden`。</td><td class="evidence">after-12-viewer-readonly.png</td></tr><tr><td class="num">13</td><td>向导即时感知</td><td><span class="status pass">PASS</span></td><td>新建的模型立即出现在发起评测选择中；已撤销凭据的选项带“凭据已撤销”，选中后出现阻塞说明。</td><td class="evidence">after-13-wizard-warning.png</td></tr><tr><td class="num">14</td><td>预检阻塞</td><td><span class="status pass">PASS</span></td><td>对撤销凭据运行一致性检查，显示 `credential_unavailable` 阻塞项且“创建评测”禁用。</td><td class="evidence">after-14-preflight-blocked.png</td></tr><tr><td class="num">15</td><td>连通性失败诊断</td><td><span class="status pass">PASS</span></td><td>失败弹窗展示稳定错误码 `provider_unavailable`、字段 `Base URL` 与失败原因，并给出修复建议。</td><td class="evidence">after-15-diagnostic.png</td></tr><tr><td class="num">16</td><td>API 预检不变量</td><td><span class="status pass">PASS</span></td><td>直接调用 prepare：撤销配置返回 `credential_unavailable` 阻塞项；页面断言与 API 断言一致。</td><td class="evidence">—</td></tr></tbody></table></table></div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Issues and Observations</h2><small>No defects found</small></div>
+    <div class="empty">No defects were found.</div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Evidence</h2><small>17 screenshots</small></div>
+    <div class="shots"><figure class="wide"><img loading="lazy" src="before-01-models-placeholder.png" alt="改动前模型凭据占位页"><figcaption><b>Before · /models</b><span>基线只有占位说明，没有配置列表与凭据操作。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="before-02-wizard-revoked-model.png" alt="改动前向导选中撤销模型"><figcaption><b>Before · 发起评测</b><span>旧页面允许选中已撤销凭据的模型，且没有任何警告。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="after-01-models-list.png" alt="模型凭据列表"><figcaption><b>After · 列表</b><span>真实 API 数据驱动：服务商、端点、模型、协议、价格、掩码、最近使用与撤销状态。</span></figcaption></figure><figure class=""><img loading="lazy" src="after-02-detail.png" alt="模型配置详情"><figcaption><b>After · 详情</b><span>详情抽屉展示掩码、价格、最近使用与累计用量。</span></figcaption></figure><figure class=""><img loading="lazy" src="after-03-validation.png" alt="表单字段校验"><figcaption><b>After · 校验</b><span>空表单提交时字段就地报错。</span></figcaption></figure><figure class=""><img loading="lazy" src="after-04-create-drawer.png" alt="新建模型凭据抽屉"><figcaption><b>After · 新建</b><span>Key 输入为密码框，保存后只显示掩码；可选择已有凭据或本次新建。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="after-05-created.png" alt="新建后的列表"><figcaption><b>After · 新建完成</b><span>新配置立即出现，凭据仅显示 `****1234`，浏览器刷新后仍只显示掩码。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="after-06-test-all.png" alt="全部验证结果"><figcaption><b>After · 连通性</b><span>可达端点显示验证通过，不可达端点显示验证失败；可用数与撤销状态一致。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="after-07-search-empty.png" alt="搜索空态"><figcaption><b>After · 空态</b><span>无匹配结果时展示空态与清除搜索入口。</span></figcaption></figure><figure class=""><img loading="lazy" src="after-08-rotate-dialog.png" alt="替换 Key 弹窗"><figcaption><b>After · 轮换</b><span>轮换需要输入新 Key，并说明旧 Key 失效与运行中评测使用短期凭据。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="after-09-rotated.png" alt="轮换后的列表"><figcaption><b>After · 轮换完成</b><span>掩码更新为 `****9999`，页面无明文 Key。</span></figcaption></figure><figure class=""><img loading="lazy" src="after-10-revoke-dialog.png" alt="撤销确认弹窗"><figcaption><b>After · 撤销确认</b><span>确认弹窗说明影响范围与恢复方式。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="after-11-revoked.png" alt="撤销后的列表"><figcaption><b>After · 撤销完成</b><span>卡片标“已撤销”，可用数降为 4/6；仍可替换 Key 恢复。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="after-12-viewer-readonly.png" alt="只读成员页面"><figcaption><b>After · 只读</b><span>只读成员看不到新增、替换、撤销与测试入口；API 写请求返回 403。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="after-13-wizard-warning.png" alt="发起评测中的撤销警告"><figcaption><b>After · 向导</b><span>新模型即时可见；撤销凭据选项带标记，选中后提示预检会阻塞。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="after-14-preflight-blocked.png" alt="预检阻塞"><figcaption><b>After · 预检</b><span>一致性检查列出 `credential_unavailable`，创建按钮禁用。</span></figcaption></figure><figure class=""><img loading="lazy" src="after-15-diagnostic.png" alt="连通性失败诊断"><figcaption><b>After · 诊断</b><span>失败弹窗展示错误码、字段级原因与修复建议。</span></figcaption></figure></div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Automated Coverage Assessment</h2><small>4 areas reviewed</small></div>
+    <div class="tableWrap"><table><table><thead><tr><th>区域</th><th>覆盖</th><th>结论</th><th>建议</th></tr></thead><tbody><tr><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td></tr></tbody></table></table></div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Conclusion</h2><small>Ready for review</small></div>
+    <article class="card conclusion pass"><p><strong>16 个场景、37 项断言全部通过；页面、权限与预检行为符合 M5-02 验收。</strong></p><ul><li>预期控制台噪声已排除：未登录 auth/me 401、故障端点 503、AntD 静态 message 提示，均非产品缺陷。</li><li>Before 截图来自独立 worktree 的 origin/main，使用同一数据库、账号、视口与假供应商。</li><li>真实供应商连通性与费用不在本次自动化范围内。</li></ul></article>
+  </section>
+
+  <p class="foot">Generated from report-data.json by computer-use-smoke-reporting; screenshots are unedited browser captures.</p>
+</main>
+</body>
+</html>
