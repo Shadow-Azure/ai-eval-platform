@@ -91,6 +91,8 @@ Datasets and dataset versions are separate, and versions are immutable; cases st
 4. The platform generates the task view of that version per the evaluation task package contract, fixing the environment definition, scoring command, and metric mapping with the version.
 5. The dataset detail page immediately shows the case count, expected metrics, and the case list, and the version can be referenced directly when launching an evaluation.
 
+A dataset version also records the execution and scoring image digests: an import may override the platform defaults, and omitted values use the platform configuration. Selecting the version on the launch page pre-fills both digests, which can still be overridden per evaluation.
+
 ### 5.3 Model and Credential Management
 
 A model configuration records the provider, endpoint URL, and model name, all integrated through the OpenAI-compatible protocol; API keys are stored encrypted and are only decrypted when dispatching tasks. When launching an evaluation, the user can reference an existing credential or enter a new one temporarily; temporary credentials bind only to that evaluation. Tasks sent to runners carry short-lived credentials issued by the platform, never written to the runner machine.

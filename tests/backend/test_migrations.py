@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -74,6 +75,10 @@ def test_empty_database_migrates_to_head(database_url: str) -> None:
     try:
         tables = set(inspect(engine).get_table_names())
         assert EXPECTED_TABLES <= tables
+        dataset_version_columns = {
+            column["name"] for column in inspect(engine).get_columns("dataset_version")
+        }
+        assert {"execution_image_digest", "scoring_image_digest"} <= dataset_version_columns
         with Session(engine) as session:
             assert session.scalar(select(func.count()).select_from(Tenant)) == 1
             assert session.scalar(select(func.count()).select_from(Workspace)) == 1
@@ -107,3 +112,18 @@ def test_invalid_revision_fails_clearly(database_url: str) -> None:
     result = run_alembic(database_url, "upgrade", "does_not_exist", check=False)
     assert result.returncode != 0
     assert "does_not_exist" in (result.stderr + result.stdout)
+
+
+def test_revision_ids_fit_alembic_version_column() -> None:
+    """Alembic stores revision ids in alembic_version.version_num VARCHAR(32)."""
+
+    versions_dir = REPO_ROOT / "backend" / "migrations" / "versions"
+    for path in sorted(versions_dir.glob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        match = re.search(r"^revision(?:: str)? = ['\"]([^'\"]+)['\"]", text, re.MULTILINE)
+        assert match is not None, path.name
+        revision = match.group(1)
+        assert len(revision) <= 32, (
+            f"{path.name}: revision id {revision!r} exceeds "
+            "alembic_version.version_num VARCHAR(32)"
+        )

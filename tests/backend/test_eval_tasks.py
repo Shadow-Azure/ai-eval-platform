@@ -54,7 +54,12 @@ def test_shard_tasks_requires_attempt_token(eval_env, session: Session, client) 
     assert response.status_code == 401
 
 
-def _seed_dataset(session: Session) -> DatasetVersion:
+def _seed_dataset(
+    session: Session,
+    *,
+    execution_image_digest: str | None = None,
+    scoring_image_digest: str | None = None,
+) -> DatasetVersion:
     tenant, _workspace, project = ensure_default_scope(session)
     suffix = uuid4().hex[:8]
     dataset = Dataset(
@@ -75,6 +80,8 @@ def _seed_dataset(session: Session) -> DatasetVersion:
         adapter_version="1.0",
         case_count=1,
         status="active",
+        execution_image_digest=execution_image_digest,
+        scoring_image_digest=scoring_image_digest,
     )
     session.add(version)
     session.flush()
@@ -155,6 +162,42 @@ def test_create_real_evaluation_freezes_case_task(client, session: Session) -> N
     assert case.dataset_case_id != case.case_key
     assert case.task_json["repo"] == "astropy/astropy"
     assert case.task_json["problem_statement"].startswith("Fix the separable")
+
+
+def test_create_real_evaluation_inherits_dataset_version_images(
+    client, session: Session
+) -> None:
+    execution = "sha256:" + "c" * 64
+    scoring = "sha256:" + "d" * 64
+    version = _seed_dataset(
+        session,
+        execution_image_digest=execution,
+        scoring_image_digest=scoring,
+    )
+    config = client.post(
+        "/api/v1/model-configs",
+        json={
+            "provider": "minimax",
+            "display_name": "MiniMax M2.7",
+            "base_url": "https://api.minimaxi.com/anthropic",
+            "model_name": "MiniMax-M2.7-highspeed",
+            "secret": "sk-real-test-123456",
+        },
+    ).json()
+    pool = session.scalar(select(ResourcePool).where(ResourcePool.name.like("pool-%")))
+    assert pool is not None
+    response = client.post(
+        "/api/v1/evaluations",
+        json={
+            "dataset_version_id": version.id,
+            "model_config_id": config["id"],
+            "resource_pool_id": pool.id,
+        },
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["execution_image_digest"] == execution
+    assert body["scoring_image_digest"] == scoring
 
 
 def test_create_real_evaluation_blocks_without_image(client, session: Session) -> None:

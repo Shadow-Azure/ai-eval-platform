@@ -32,6 +32,8 @@ def _seed(
     runner_status: str = "online",
     runner_count: int = 1,
     pool_status: str = "active",
+    execution_image_digest: str | None = None,
+    scoring_image_digest: str | None = None,
 ) -> dict:
     tenant, _workspace, project = ensure_default_scope(session)
     suffix = uuid4().hex[:8]
@@ -53,6 +55,8 @@ def _seed(
         adapter_version="1.0",
         case_count=case_count,
         status=dataset_status,
+        execution_image_digest=execution_image_digest,
+        scoring_image_digest=scoring_image_digest,
     )
     session.add(version)
     session.flush()
@@ -198,6 +202,49 @@ def test_scoring_image_and_assets_block(session: Session) -> None:
 
     bad_assets = AssetSnapshot(files={"../evil": b"x"})
     assert "asset_invalid" in _codes(_check(session, ids, assets=bad_assets))
+
+
+def test_dataset_version_images_are_used_as_defaults(session: Session) -> None:
+    execution = "sha256:" + "b" * 64
+    scoring = "sha256:" + "a" * 64
+    ids = _seed(
+        session,
+        execution_image_digest=execution,
+        scoring_image_digest=scoring,
+    )
+    result = _check(
+        session,
+        ids,
+        scoring_image_digest=None,
+        execution_image_digest=None,
+    )
+    assert result.ready
+    assert result.execution_image_digest == execution
+    assert result.scoring_image_digest == scoring
+    payload = result.payload()
+    assert payload["execution_image_digest"] == execution
+    assert payload["scoring_image_digest"] == scoring
+
+
+def test_platform_image_defaults_are_used_when_version_has_none(
+    session: Session, configure_settings
+) -> None:
+    execution = "sha256:" + "e" * 64
+    scoring = "sha256:" + "f" * 64
+    configure_settings(
+        DEFAULT_EXECUTION_IMAGE_DIGEST=execution,
+        DEFAULT_SCORING_IMAGE_DIGEST=scoring,
+    )
+    ids = _seed(session)
+    result = _check(
+        session,
+        ids,
+        scoring_image_digest=None,
+        execution_image_digest=None,
+    )
+    assert result.ready
+    assert result.execution_image_digest == execution
+    assert result.scoring_image_digest == scoring
 
 
 def test_capacity_shortage_is_only_a_warning(session: Session) -> None:

@@ -53,6 +53,10 @@ class PreflightResult:
     warnings: tuple[PreflightIssue, ...] = ()
     # M4-01: the cap the evaluation will actually get at scheduling time.
     effective_concurrency: int = 0
+    # M5-07: resolved image digests after the request, dataset version and
+    # platform defaults were consulted; the create path freezes these values.
+    execution_image_digest: str | None = None
+    scoring_image_digest: str | None = None
 
     @property
     def ready(self) -> bool:
@@ -64,7 +68,22 @@ class PreflightResult:
             "blockers": [issue.as_dict() for issue in self.blockers],
             "warnings": [issue.as_dict() for issue in self.warnings],
             "effective_concurrency": self.effective_concurrency,
+            "execution_image_digest": self.execution_image_digest,
+            "scoring_image_digest": self.scoring_image_digest,
         }
+
+
+def _effective_image_digest(
+    provided: str | None,
+    bound: str | None,
+    fallback: str | None,
+) -> str | None:
+    """Pick the first non-blank digest: request, dataset version, platform default."""
+
+    for candidate in (provided, bound, fallback):
+        if candidate and candidate.strip():
+            return candidate.strip()
+    return None
 
 
 def _runner_labels(runner: Runner) -> set[str]:
@@ -99,6 +118,20 @@ def check_preparation(
     warnings: list[PreflightIssue] = []
     effective = 0
 
+    settings = get_settings()
+    version = session.get(DatasetVersion, dataset_version_id)
+    bound_version = version if version is not None and version.tenant_id == tenant_id else None
+    scoring_image_digest = _effective_image_digest(
+        scoring_image_digest,
+        bound_version.scoring_image_digest if bound_version is not None else None,
+        settings.default_scoring_image_digest,
+    )
+    execution_image_digest = _effective_image_digest(
+        execution_image_digest,
+        bound_version.execution_image_digest if bound_version is not None else None,
+        settings.default_execution_image_digest,
+    )
+
     if requested_concurrency < 1:
         blockers.append(
             PreflightIssue("concurrency_invalid", "并发必须至少为 1", "requested_concurrency")
@@ -113,7 +146,13 @@ def check_preparation(
                 "runtime_key",
             )
         )
-        return PreflightResult(tuple(blockers), tuple(warnings), effective)
+        return PreflightResult(
+            tuple(blockers),
+            tuple(warnings),
+            effective,
+            execution_image_digest,
+            scoring_image_digest,
+        )
 
     if runtime_version and not runtime_version.startswith(
         adapter.runtime_version.split(".")[0] + "."
@@ -126,7 +165,6 @@ def check_preparation(
             )
         )
 
-    version = session.get(DatasetVersion, dataset_version_id)
     if version is None or version.tenant_id != tenant_id:
         blockers.append(
             PreflightIssue(
@@ -259,7 +297,7 @@ def check_preparation(
             )
         effective = capacity.combine_effective_concurrency(
             requested_concurrency,
-            capacity.pool_runner_capacity(session, pool, settings=get_settings()),
+            capacity.pool_runner_capacity(session, pool, settings=settings),
             capacity.pool_max_capacity(pool),
         )
 
@@ -296,4 +334,10 @@ def check_preparation(
             PreflightIssue("assets_empty", "未选择 Agent 资产，Runtime 将只使用内置能力", "assets")
         )
 
-    return PreflightResult(tuple(blockers), tuple(warnings), effective)
+    return PreflightResult(
+        blockers=tuple(blockers),
+        warnings=tuple(warnings),
+        effective_concurrency=effective,
+        execution_image_digest=execution_image_digest,
+        scoring_image_digest=scoring_image_digest,
+    )

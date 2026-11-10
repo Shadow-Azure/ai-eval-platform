@@ -61,12 +61,17 @@ export function EvalWizardPage() {
     if (!poolId && poolIds.length === 1) setPoolId(poolIds[0]);
   }, [poolId, poolIds]);
   useEffect(() => {
-    if (runtime) {
-      setRuntimeKey(runtime.key);
-      setExecutionDigest((current) => current || runtime.execution_image_digest || "");
-      setScoringDigest((current) => current || runtime.scoring_image_digest || "");
-    }
+    if (runtime) setRuntimeKey(runtime.key);
   }, [runtime]);
+  useEffect(() => {
+    if (!versionDetail.data) return;
+    setExecutionDigest(
+      versionDetail.data.execution_image_digest || runtime?.execution_image_digest || "",
+    );
+    setScoringDigest(
+      versionDetail.data.scoring_image_digest || runtime?.scoring_image_digest || "",
+    );
+  }, [versionDetail.data, runtime]);
   useEffect(() => {
     if (versionDetail.data) setDatasetId(versionDetail.data.dataset_id);
   }, [versionDetail.data]);
@@ -208,10 +213,10 @@ export function EvalWizardPage() {
                   style={{ maxWidth: 420 }}
                 />
               </Form.Item>
-              <Form.Item label="执行镜像 digest">
+              <Form.Item label="执行镜像 digest" extra="默认来自数据集版本或平台配置；可覆盖，仅本次评测使用">
                 <Input value={executionDigest} onChange={(event) => setExecutionDigest(event.target.value)} placeholder="sha256:…" style={{ maxWidth: 560 }} />
               </Form.Item>
-              <Form.Item label="评分镜像 digest">
+              <Form.Item label="评分镜像 digest" extra="默认来自数据集版本或平台配置；可覆盖，仅本次评测使用">
                 <Input value={scoringDigest} onChange={(event) => setScoringDigest(event.target.value)} placeholder="sha256:…" style={{ maxWidth: 560 }} />
               </Form.Item>
             </Form>

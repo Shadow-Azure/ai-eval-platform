@@ -20,20 +20,24 @@ def seeded(session: Session) -> Session:
 
 
 def post_import(
-    client: TestClient, *, records, version: str = "verified-smoke", slug: str = "swebench-verified"
+    client: TestClient,
+    *,
+    records,
+    version: str = "verified-smoke",
+    slug: str = "swebench-verified",
+    **extra: object,
 ) -> dict:
-    response = client.post(
-        "/api/v1/dataset-imports",
-        json={
-            "dataset_slug": slug,
-            "dataset_name": "SWE-bench Verified",
-            "adapter_key": "swebench",
-            "version": version,
-            "source_uri": "tests/backend/fixtures/swebench/verified-slice.jsonl",
-            "source_revision": "rev-0001",
-            "records": records,
-        },
-    )
+    payload = {
+        "dataset_slug": slug,
+        "dataset_name": "SWE-bench Verified",
+        "adapter_key": "swebench",
+        "version": version,
+        "source_uri": "tests/backend/fixtures/swebench/verified-slice.jsonl",
+        "source_revision": "rev-0001",
+        "records": records,
+        **extra,
+    }
+    response = client.post("/api/v1/dataset-imports", json=payload)
     assert response.status_code in (200, 201), response.text
     return response.json()
 
@@ -84,6 +88,35 @@ def test_import_endpoint_creates_and_replays(seeded: Session, client: TestClient
     second = second_response.json()
     assert second["created"] is False
     assert second["version"]["id"] == first["version"]["id"]
+
+
+def test_import_returns_explicit_image_digests(
+    seeded: Session, client: TestClient
+) -> None:
+    execution = "sha256:" + "1" * 64
+    scoring = "sha256:" + "2" * 64
+    body = post_import(
+        client,
+        records=fixture_records(),
+        execution_image_digest=execution,
+        scoring_image_digest=scoring,
+    )
+    assert body["version"]["execution_image_digest"] == execution
+    assert body["version"]["scoring_image_digest"] == scoring
+
+
+def test_import_applies_platform_default_image_digests(
+    seeded: Session, client: TestClient, configure_settings
+) -> None:
+    execution = "sha256:" + "3" * 64
+    scoring = "sha256:" + "4" * 64
+    configure_settings(
+        DEFAULT_EXECUTION_IMAGE_DIGEST=execution,
+        DEFAULT_SCORING_IMAGE_DIGEST=scoring,
+    )
+    body = post_import(client, records=fixture_records())
+    assert body["version"]["execution_image_digest"] == execution
+    assert body["version"]["scoring_image_digest"] == scoring
 
 
 def test_import_endpoint_validation_failure_is_diagnosable(
