@@ -142,6 +142,23 @@ class Settings(BaseSettings):
     # upload their existing artifacts; after this window the reconciler settles
     # whatever is left as ``budget_paused`` so the run can reach paused_budget.
     eval_budget_pause_grace_seconds: int = 600
+    # M5-04 launch preparations (design 04 §3.1). Prepare returns a short-lived,
+    # single-use snapshot; the operator confirms it instead of re-posting the
+    # whole configuration. The TTL is deliberately short because it freezes an
+    # asset commit and the resolved capacity context.
+    eval_preparation_ttl_seconds: int = 900
+    # Execution policy bounds accepted by prepare/create. The wizard renders
+    # these as field errors; the server is the authority (never a fake success).
+    eval_min_case_timeout_seconds: int = 60
+    eval_max_case_timeout_seconds: int = 86400
+    eval_max_case_attempts: int = 5
+    # Cost-range estimate shown on the confirmation step. These are documented
+    # modelling assumptions, never billing data: the UI labels the basis and
+    # the range, and the gateway remains the spend authority.
+    eval_estimate_input_tokens_per_case: int = 120000
+    eval_estimate_output_tokens_per_case: int = 8000
+    eval_estimate_case_seconds: int = 1200
+    eval_estimate_spread: float = 0.3
 
     # M3-02 centralized model gateway. Credentials are encrypted with a
     # host-local Fernet key (SECRET_BOX_KEY); the gateway signs short-lived

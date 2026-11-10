@@ -315,3 +315,49 @@ class EvalEvent(Base):
         ),
         Index("ix_eval_event_run_id", "eval_run_id", "id"),
     )
+
+
+PREPARATION_STATUSES = ("active", "consumed", "expired")
+
+
+class EvalPreparation(Base, TimestampMixin):
+    """Short-lived, server-side frozen launch snapshot (M5-04, design 04 §3.1).
+
+    ``prepare`` does not create an evaluation: it resolves the case subset,
+    runtime, asset commit, model credential, pool and execution policy and
+    stores the outcome with a TTL. ``create`` accepts only the preparation id,
+    so the launched run always matches what the operator confirmed. A
+    preparation is single-use; replaying the same idempotency key returns the
+    run it produced instead of creating a second one.
+    """
+
+    __tablename__ = "eval_preparation"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    tenant_id: Mapped[str] = tenant_fk()
+    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="active", server_default="active"
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    snapshot_json: Mapped[dict] = mapped_column(json_type(), default=dict, nullable=False)
+    snapshot_digest: Mapped[str] = mapped_column(String(80), nullable=False)
+    consumed_eval_run_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "id", name="uq_eval_preparation_tenant_id_id"),
+        ForeignKeyConstraint(
+            ["tenant_id", "consumed_eval_run_id"],
+            ["eval_run.tenant_id", "eval_run.id"],
+            name="fk_eval_preparation_run_tenant",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint(_in_clause("status", PREPARATION_STATUSES), name="status"),
+        Index(
+            "ix_eval_preparation_actor_status",
+            "tenant_id",
+            "created_by",
+            "status",
+        ),
+        Index("ix_eval_preparation_expiry", "status", "expires_at"),
+    )

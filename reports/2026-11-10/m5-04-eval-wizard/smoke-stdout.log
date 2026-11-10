@@ -1,0 +1,18 @@
+SMOKE_OK
+run=f599cc1e-617f-4e7b-b6e0-dc1007734e87
+preparation=9f65108b-97e1-4f04-9941-58bbc6f8b460
+CHECK baseline: main branch wizard captured before the change
+CHECK seed: 15 assets frozen at 22f0b463
+CHECK draft-persistence: count=5 survived a page reload
+CHECK frozen-snapshot: wizard shows frozen snapshot at 22f0b463
+CHECK back-navigation: returning to assets and forward keeps the resolved snapshot
+CHECK target-window: primary action visible within 1280×800
+CHECK prepare: ready, 5 cases, digest sha256:f24ddd76…
+CHECK create: run f599cc1e-617f-4e7b-b6e0-dc1007734e87 created and detail page opened
+CHECK frozen-inputs: run has 5 cases; preparation consumed by that run
+CHECK idempotency: same key + preparation returned the same run with 200
+CHECK expired: expired preparation disables create and explains why
+CHECK configuration-change: revoked credential returns 409 and a page-level prompt
+CHECK capacity-invalid: 422 capacity_invalid is mapped back to the policy step
+CHECK empty-state: dataset empty state explains the next action
+consoleErrors=["Failed to load resource: the server responded with a status of 401 (Unauthorized)", "Warning: [antd: message] Static function can not consume context like dynamic theme. Please use 'App' component instead.", "Failed to load resource: the server responded with a status of 409 (Conflict)", "Failed to load resource: the server responded with a status of 422 (Unprocessable Entity)"]

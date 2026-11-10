@@ -24,11 +24,13 @@ from .evaluation import (
     ATTEMPT_STATUSES,
     EVAL_RUN_STATUSES,
     EXECUTION_STATUSES,
+    PREPARATION_STATUSES,
     RESULT_STATUSES,
     TRACE_STATUSES,
     EvalCaseAttempt,
     EvalCaseRun,
     EvalEvent,
+    EvalPreparation,
     EvalRun,
 )
 from .identity import (
@@ -94,6 +96,7 @@ __all__ = [
     "EvalCaseRun",
     "EvalCaseAttempt",
     "EvalEvent",
+    "EvalPreparation",
     "Dataset",
     "DatasetVersion",
     "DatasetCase",
@@ -120,4 +123,5 @@ __all__ = [
     "RESULT_STATUSES",
     "TRACE_STATUSES",
     "ATTEMPT_STATUSES",
+    "PREPARATION_STATUSES",
 ]

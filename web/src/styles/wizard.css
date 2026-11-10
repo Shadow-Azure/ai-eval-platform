@@ -1,0 +1,518 @@
+/*
+ * M5-04 launch wizard. The visual language mirrors prototype/index.html and
+ * its tokens: 30px step dots, 310px summary aside, 10px radius cards and the
+ * same field/banner rhythm. Ant Design supplies the controls; layout stays
+ * local so the prototype language is not replaced by AntD defaults.
+ */
+
+.eval-wizard .step-bar {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+  margin-bottom: 22px;
+  padding: 0 10px;
+}
+
+.eval-wizard .step {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.eval-wizard .step:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  top: 15px;
+  right: 18px;
+  left: 45px;
+  height: 1px;
+  background: var(--line-strong);
+}
+
+.eval-wizard .step.done:not(:last-child)::after {
+  background: #91caff;
+}
+
+.eval-wizard .step-index {
+  z-index: 1;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  color: #7d8899;
+  background: #fff;
+  font-size: 11px;
+}
+
+.eval-wizard .step.active {
+  color: var(--primary);
+}
+
+.eval-wizard .step.active .step-index {
+  color: #fff;
+  border-color: var(--primary);
+  background: var(--primary);
+  box-shadow: 0 0 0 4px rgba(22, 119, 255, 0.1);
+}
+
+.eval-wizard .step.done {
+  color: var(--ink);
+}
+
+.eval-wizard .step.done .step-index {
+  color: var(--primary);
+  border-color: #91caff;
+  background: var(--primary-soft);
+}
+
+.eval-wizard .wizard-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 310px;
+  gap: 16px;
+  align-items: start;
+}
+
+.eval-wizard .wizard-main {
+  min-height: 520px;
+}
+
+.eval-wizard .wizard-aside {
+  position: sticky;
+  top: 18px;
+}
+
+.eval-wizard .wizard-title {
+  margin: 0 0 6px;
+  font-size: 19px;
+  line-height: 1.35;
+  color: var(--ink);
+}
+
+.eval-wizard .wizard-subtitle {
+  margin: 0 0 18px;
+  color: var(--muted);
+}
+
+.eval-wizard .summary-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.eval-wizard .summary-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px dashed var(--line);
+  font-size: 11px;
+}
+
+.eval-wizard .summary-item:last-child {
+  border-bottom: 0;
+}
+
+.eval-wizard .summary-label {
+  color: var(--muted);
+  flex: 0 0 auto;
+}
+
+.eval-wizard .summary-value {
+  max-width: 185px;
+  font-weight: 650;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.eval-wizard .summary-cost {
+  padding: 0 19px 19px;
+}
+
+.eval-wizard .review-box {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fafcff;
+}
+
+.eval-wizard .review-box .summary-item {
+  padding: 7px 0;
+}
+
+.eval-wizard .wizard-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 20px;
+  padding-top: 15px;
+  border-top: 1px solid var(--line);
+}
+
+.eval-wizard .field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 16px;
+  min-width: 0;
+}
+
+.eval-wizard .field > label {
+  font-size: 11px;
+  font-weight: 650;
+  color: var(--ink-2);
+}
+
+.eval-wizard .field > label.required::after {
+  content: " *";
+  color: var(--danger);
+}
+
+.eval-wizard .field .hint {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.eval-wizard .field-error {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--danger);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.eval-wizard .field-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.eval-wizard .policy-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.eval-wizard .wizard-narrow {
+  max-width: 420px;
+}
+
+.eval-wizard .wizard-descriptions {
+  margin-bottom: 14px;
+}
+
+.eval-wizard .wizard-section-title {
+  margin: 18px 0 12px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.eval-wizard .asset-runtime-panel {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fafcff;
+  margin-bottom: 8px;
+}
+
+.eval-wizard .asset-runtime-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 11px;
+}
+
+.eval-wizard .asset-ref-row {
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.eval-wizard .asset-commit-box {
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 4px 2px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: #fff;
+  font-size: 10px;
+}
+
+.eval-wizard .asset-commit-box .mono {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.eval-wizard .wizard-asset-toolbar {
+  margin: 16px 0 10px;
+}
+
+.eval-wizard .wizard-asset-placeholder {
+  padding: 28px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.eval-wizard .wizard-case-picker {
+  margin-top: 6px;
+}
+
+.eval-wizard .wizard-case-toolbar {
+  margin-bottom: 8px;
+}
+
+.eval-wizard .wizard-digest-row {
+  margin-top: 2px;
+}
+
+.eval-wizard .wizard-blockers,
+.eval-wizard .wizard-warnings {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.eval-wizard .wizard-estimate {
+  margin-top: 14px;
+}
+
+.eval-wizard .ant-table-wrapper {
+  min-width: 0;
+}
+
+@media (max-width: 1240px) {
+  .eval-wizard .wizard-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .eval-wizard .wizard-aside {
+    position: static;
+    width: 100%;
+  }
+
+  .eval-wizard .step-bar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    row-gap: 14px;
+  }
+}
+
+@media (max-width: 760px) {
+  .eval-wizard .field-row,
+  .eval-wizard .policy-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Prototype-aligned choice cards and radio rows (dataset / runtime / pool). */
+.eval-wizard .choice-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 4px 0 16px;
+}
+
+.eval-wizard .choice-card {
+  position: relative;
+  display: block;
+  padding: 15px;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  color: inherit;
+  background: #fff;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: 0.16s ease;
+}
+
+.eval-wizard .choice-card:hover {
+  border-color: #91caff;
+}
+
+.eval-wizard .choice-card.selected {
+  border-color: var(--primary);
+  background: #f8fbff;
+  box-shadow: 0 0 0 3px rgba(22, 119, 255, 0.08);
+}
+
+.eval-wizard .choice-card.selected::after {
+  content: "✓";
+  position: absolute;
+  top: 11px;
+  right: 11px;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: #fff;
+  background: var(--primary);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.eval-wizard .choice-icon {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  margin-bottom: 10px;
+  border-radius: 8px;
+  color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.eval-wizard .choice-title {
+  margin-bottom: 3px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.eval-wizard .choice-meta {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.eval-wizard .choice-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 11px;
+}
+
+.eval-wizard .wizard-version-meta {
+  margin: -6px 0 16px;
+}
+
+.eval-wizard .wizard-section-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 6px 0 10px;
+}
+
+.eval-wizard .wizard-section-head h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.eval-wizard .wizard-section-head .ant-btn-link {
+  height: auto;
+  padding: 0;
+}
+
+.eval-wizard .radio-list {
+  display: grid;
+  gap: 9px;
+  margin-bottom: 14px;
+}
+
+.eval-wizard .radio-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: inherit;
+  background: #fff;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.eval-wizard .radio-row:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.eval-wizard .radio-row.selected {
+  border-color: var(--primary);
+  background: #f8fbff;
+}
+
+.eval-wizard .radio {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  background: #fff;
+}
+
+.eval-wizard .radio.selected {
+  border: 4px solid var(--primary);
+}
+
+.eval-wizard .radio-copy {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.eval-wizard .radio-copy strong {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.eval-wizard .wizard-section-hint {
+  margin: -6px 0 10px;
+}
+
+.eval-wizard .wizard-asset-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.eval-wizard .wizard-asset-tools {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.eval-wizard .summary-value.wizard-name-input {
+  width: 340px;
+  max-width: 55%;
+  font-weight: 400;
+  text-align: left;
+}
+
+.eval-wizard .summary-value.wizard-name-input .ant-input {
+  width: 100%;
+}
+
+@media (max-width: 760px) {
+  .eval-wizard .choice-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .eval-wizard .summary-value.wizard-name-input {
+    width: 100%;
+    max-width: 100%;
+  }
+}
