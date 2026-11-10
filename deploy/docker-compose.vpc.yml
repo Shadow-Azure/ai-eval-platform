@@ -1,0 +1,13 @@
+# M5-08: optional VPC-only Runner callback entry.
+#
+# Ephemeral spot runners live in the VPC and must reach the API to fetch the
+# shard manifest and post callbacks. The base compose file keeps the loopback
+# binding used by the fixed runner on the API host; this override adds a second
+# host binding for API_BIND_ADDRESS (the host's VPC private address). It is
+# only included when that value is set to a non-loopback address, and the
+# security group remains the actual network boundary (TCP 8000 from the VPC
+# CIDR only, no public ingress).
+services:
+  api:
+    ports:
+      - "${API_BIND_ADDRESS}:8000:8000"

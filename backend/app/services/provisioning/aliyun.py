@@ -38,6 +38,7 @@ from sqlalchemy.orm import Session
 from ...config import Settings
 from ...models import Connection, Credential, ProvisionedInstance, ResourcePool, Runner
 from ...secrets import SecretBoxError, get_secret_box
+from ..runner_labels import pool_runner_labels
 from ..runner_registration import GitHubRunnerRegistrar
 from . import (
     CAPABILITY_ECS_INVENTORY,
@@ -475,21 +476,11 @@ def _pool_config(pool: ResourcePool) -> dict[str, Any]:
     return dict(pool.instance_config_json) if isinstance(pool.instance_config_json, dict) else {}
 
 
-def _labels_config(pool: ResourcePool) -> dict[str, Any]:
-    return dict(pool.labels_json) if isinstance(pool.labels_json, dict) else {}
-
-
 def _runner_labels(settings: Settings, pool: ResourcePool) -> list[str]:
-    for source in (_pool_config(pool), _labels_config(pool)):
-        for key in ("runs_on", "runner_labels", "labels"):
-            value = source.get(key)
-            if isinstance(value, str) and value.strip():
-                return [item.strip() for item in value.split(",") if item.strip()]
-            if isinstance(value, (list, tuple)):
-                labels = [str(item).strip() for item in value if str(item).strip()]
-                if labels:
-                    return labels
-    return [item.strip() for item in settings.runner_spot_labels.split(",") if item.strip()]
+    return pool_runner_labels(
+        pool,
+        fallback=[item.strip() for item in settings.runner_spot_labels.split(",") if item.strip()],
+    )
 
 
 def _config_str(config: dict[str, Any], key: str) -> str | None:

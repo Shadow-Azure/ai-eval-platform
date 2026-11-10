@@ -115,6 +115,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       cases: ${{ steps.plan.outputs.cases }}
+      runs_on: ${{ steps.plan.outputs.runs_on }}
     steps:
       - uses: actions/checkout@v4
 
@@ -131,15 +132,29 @@ jobs:
         id: plan
         run: |
           set -euo pipefail
+          # M5-08: a spot pool may register custom labels; execute must target
+          # the same labels the dispatch froze. The contract makes the field
+          # optional so older dispatches keep their historical default.
+          runs_on=$(node -e '
+            const fs = require("node:fs");
+            const dispatch = JSON.parse(fs.readFileSync(process.env.DISPATCH_FILE, "utf8"));
+            const labels = Array.isArray(dispatch.runs_on) && dispatch.runs_on.length
+              ? dispatch.runs_on
+              : ["self-hosted", "linux", "eval"];
+            process.stdout.write(JSON.stringify(labels));
+          ')
+          echo "runs_on=$runs_on" >> "$GITHUB_OUTPUT"
           cases=$(node runner/scripts/plan-cases.mjs \
             --dispatch "$RUNNER_TEMP/eval-dispatch/dispatch.json" \
             --state-dir "$RUNNER_TEMP/eval-state")
           echo "cases=$cases" >> "$GITHUB_OUTPUT"
+        env:
+          DISPATCH_FILE: ${{ runner.temp }}/eval-dispatch/dispatch.json
 
   execute:
     needs: prepare
     if: github.event_name == 'repository_dispatch' && needs.prepare.outputs.cases != '[]'
-    runs-on: [self-hosted, linux, eval]
+    runs-on: ${{ fromJson(needs.prepare.outputs.runs_on || '["self-hosted","linux","eval"]') }}
     timeout-minutes: 60
     strategy:
       fail-fast: false

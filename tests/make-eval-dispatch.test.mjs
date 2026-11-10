@@ -63,3 +63,18 @@ test("default callback base points at the local platform API", (t) => {
   assert.equal(manifest.callback_base_url, "http://127.0.0.1:8000");
   assert.equal(manifest.cases[0].case_run_id, "ecr_m204");
 });
+
+test("v1 contract accepts frozen runner labels and rejects malformed ones", (t) => {
+  const outDir = mkdtempSync(join(tmpdir(), "eval-dispatch-"));
+  t.after(() => rmSync(outDir, { recursive: true, force: true }));
+
+  makeDispatch(outDir);
+  const dispatch = JSON.parse(readFileSync(join(outDir, "dispatch.json"), "utf8"));
+  const manifest = JSON.parse(readFileSync(join(outDir, "manifest.json"), "utf8"));
+  const runsOn = ["self-hosted", "linux", "gpu"];
+
+  assert.deepEqual(validateDispatch({ ...dispatch, runs_on: runsOn }).errors, []);
+  assert.deepEqual(validateManifest({ ...manifest, runs_on: runsOn }).errors, []);
+  assert.notDeepEqual(validateDispatch({ ...dispatch, runs_on: ["bad label!"] }).errors, []);
+  assert.notDeepEqual(validateManifest({ ...manifest, runs_on: [] }).errors, []);
+});

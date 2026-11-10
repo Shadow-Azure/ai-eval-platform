@@ -696,6 +696,7 @@ def build_retry_dispatch(
     dispatch_key = f"{run.id}:{retry_shard_id}:{new_attempt_no}"
     deadline = now + timedelta(minutes=settings.eval_shard_deadline_minutes)
     expires_at = now + timedelta(seconds=settings.eval_shard_ttl_seconds)
+    runs_on = evaluations.run_runs_on(session, run, settings)
     manifest = {
         "schema_version": "1.0",
         "eval_run_id": run.id,
@@ -706,6 +707,7 @@ def build_retry_dispatch(
         "deadline": deadline.isoformat(timespec="microseconds").replace("+00:00", "Z"),
         "case_timeout_seconds": run.case_timeout_seconds,
         "max_attempts": run.max_attempts,
+        "runs_on": runs_on,
         "cases": [
             {
                 "case_run_id": ctx.case_run.id,
@@ -731,6 +733,7 @@ def build_retry_dispatch(
         "dispatch_key": dispatch_key,
         "manifest_url": manifest_url,
         "manifest_digest": manifest_digest,
+        "runs_on": runs_on,
         "expires_at": expires_at.isoformat(timespec="microseconds").replace("+00:00", "Z"),
     }
     validate_payload("dispatch", client_payload)

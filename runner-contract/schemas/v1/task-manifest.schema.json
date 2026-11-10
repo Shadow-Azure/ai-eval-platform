@@ -25,6 +25,12 @@
     "deadline": { "type": "string", "format": "date-time" },
     "case_timeout_seconds": { "type": "integer", "minimum": 1 },
     "max_attempts": { "type": "integer", "minimum": 1 },
+    "runs_on": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "items": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9._ -]+$" }
+    },
     "cases": {
       "type": "array",
       "minItems": 1,
