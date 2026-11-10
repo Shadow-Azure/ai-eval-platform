@@ -370,7 +370,7 @@ def main() -> int:
     settings = get_settings()
     settings.runner_spot_runner_version = os.environ.get("SPOT_RUNNER_VERSION", "2.329.0")
     settings.aliyun_default_region = region
-    settings.eval_spot_register_timeout_seconds = int(os.environ.get("SPOT_SMOKE_RUNNER_TIMEOUT", "900"))
+    settings.eval_spot_register_timeout_seconds = int(os.environ.get("SPOT_SMOKE_RUNNER_TIMEOUT", "1200"))
     label = f"spot-smoke-{smoke_id}"
     evidence: dict = {
         "ok": False,
@@ -613,7 +613,7 @@ def main() -> int:
         try:
             online_started = time.monotonic()
             record = _wait_runner_online(
-                registrar, runner_name, timeout=int(os.environ.get("SPOT_SMOKE_RUNNER_TIMEOUT", "900"))
+                registrar, runner_name, timeout=int(os.environ.get("SPOT_SMOKE_RUNNER_TIMEOUT", "1200"))
             )
             evidence["runner_online"] = True
             evidence["runner_online_seconds"] = round(time.monotonic() - online_started, 1)

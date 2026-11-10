@@ -115,7 +115,7 @@ class Settings(BaseSettings):
     aliyun_default_instance_type: str = "ecs.g7.large"
     # A spot instance is reclaimed when it never starts or never registers a
     # runner; queued attempts stay queued and the next tick retries.
-    eval_spot_register_timeout_seconds: int = 900
+    eval_spot_register_timeout_seconds: int = 1200
     # Grace after the runner heartbeat timeout before an instance whose runner
     # vanished is reclaimed (the lifecycle reaper retries the attempt first).
     eval_spot_runner_lost_grace_seconds: int = 300

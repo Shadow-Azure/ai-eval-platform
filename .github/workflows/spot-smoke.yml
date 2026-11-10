@@ -39,9 +39,9 @@ jobs:
           RUNNER_ADMIN_TOKEN: ${{ secrets.RUNNER_ADMIN_TOKEN }}
           SPOT_SMOKE_CONFIRM: "1"
           SPOT_SMOKE_REF: ${{ github.event.pull_request.head.ref || github.ref_name }}
-          # A healthy 100 Mbps bootstrap registers in ~2-4 minutes; fail at 6
-          # minutes so Cloud Assistant diagnostics arrive quickly.
-          SPOT_SMOKE_RUNNER_TIMEOUT: "360"
+          # GitHub runner tarball downloads from Aliyun can take 10+ minutes;
+          # allow 20 minutes before Cloud Assistant diagnostics.
+          SPOT_SMOKE_RUNNER_TIMEOUT: "1200"
         run: >
           python tests/integration/m4_04_spot_smoke.py
           --out reports/2026-11-10/m4-04-spot/evidence.json
