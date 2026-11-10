@@ -84,6 +84,12 @@ jobs:
       RUNNER_TASK_SECRET: ${{ secrets.RUNNER_TASK_SECRET }}
       RUNNER_HEARTBEAT_TOKEN: ${{ secrets.RUNNER_HEARTBEAT_TOKEN }}
       RUNNER_ADMIN_TOKEN: ${{ secrets.RUNNER_ADMIN_TOKEN }}
+      # M5-08: VPC-only Runner callback entry. Empty keeps the loopback
+      # default and disables the VPC port binding; set both secrets in the
+      # production environment to let spot runners reach the API.
+      API_BIND_ADDRESS: ${{ secrets.API_BIND_ADDRESS }}
+      RUNNER_CALLBACK_BASE_URL: ${{ secrets.RUNNER_CALLBACK_BASE_URL }}
+      RUNNER_SPOT_RUNNER_TARBALL_URL: ${{ secrets.RUNNER_SPOT_RUNNER_TARBALL_URL }}
     steps:
       - uses: actions/checkout@v4
       - name: Install SSH key
@@ -136,7 +142,10 @@ jobs:
             printf 'RUNNER_TASK_SECRET=%s\n' "$RUNNER_TASK_SECRET"
             printf 'RUNNER_HEARTBEAT_TOKEN=%s\n' "$RUNNER_HEARTBEAT_TOKEN"
             printf 'RUNNER_ADMIN_TOKEN=%s\n' "$RUNNER_ADMIN_TOKEN"
-          } | ssh "root@${{ secrets.ECS_HOST }}" 'umask 077; cd /opt/ai-eval-platform && touch .env && chmod 600 .env && grep -Ev "^(S3_ENDPOINT|S3_BUCKET|S3_ACCESS_KEY|S3_SECRET_KEY|S3_REGION|S3_ADDRESSING_STYLE|GITHUB_TOKEN|DATABASE_STORAGE_LIMIT_BYTES|SECRET_BOX_KEY|POSTGRES_PASSWORD|AUTH_SESSION_SECRET|GATEWAY_TOKEN_SECRET|RUNNER_TASK_SECRET|RUNNER_HEARTBEAT_TOKEN|RUNNER_ADMIN_TOKEN)=" .env > .env.tmp && cat .env.tmp > .env && cat >> .env && rm -f .env.tmp'
+            printf 'API_BIND_ADDRESS=%s\n' "$API_BIND_ADDRESS"
+            printf 'RUNNER_CALLBACK_BASE_URL=%s\n' "$RUNNER_CALLBACK_BASE_URL"
+            printf 'RUNNER_SPOT_RUNNER_TARBALL_URL=%s\n' "$RUNNER_SPOT_RUNNER_TARBALL_URL"
+          } | ssh "root@${{ secrets.ECS_HOST }}" 'umask 077; cd /opt/ai-eval-platform && touch .env && chmod 600 .env && grep -Ev "^(S3_ENDPOINT|S3_BUCKET|S3_ACCESS_KEY|S3_SECRET_KEY|S3_REGION|S3_ADDRESSING_STYLE|GITHUB_TOKEN|DATABASE_STORAGE_LIMIT_BYTES|SECRET_BOX_KEY|POSTGRES_PASSWORD|AUTH_SESSION_SECRET|GATEWAY_TOKEN_SECRET|RUNNER_TASK_SECRET|RUNNER_HEARTBEAT_TOKEN|RUNNER_ADMIN_TOKEN|API_BIND_ADDRESS|RUNNER_CALLBACK_BASE_URL|RUNNER_SPOT_RUNNER_TARBALL_URL)=" .env > .env.tmp && cat .env.tmp > .env && cat >> .env && rm -f .env.tmp'
 
       - name: Deploy
         env:

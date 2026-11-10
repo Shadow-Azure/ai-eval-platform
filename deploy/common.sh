@@ -3,7 +3,16 @@
 DEPLOY_DIR="${DEPLOY_DIR:-/opt/ai-eval-platform}"
 ENV_FILE="$DEPLOY_DIR/.env"
 COMPOSE_FILE="$DEPLOY_DIR/deploy/docker-compose.prod.yml"
-COMPOSE=(docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE")
+COMPOSE_VPC_FILE="$DEPLOY_DIR/deploy/docker-compose.vpc.yml"
+# M5-08: add the VPC callback binding only when the host .env pins a
+# non-loopback address. Reading .env directly (instead of the shell env) keeps
+# deploy.sh, rollback.sh and manual compose runs in agreement.
+API_BIND_ADDRESS="${API_BIND_ADDRESS:-$(sed -n 's/^API_BIND_ADDRESS=//p' "$ENV_FILE" 2>/dev/null | tail -1)}"
+COMPOSE_FILES=(-f "$COMPOSE_FILE")
+if [ -n "$API_BIND_ADDRESS" ] && [ "$API_BIND_ADDRESS" != "127.0.0.1" ] && [ "$API_BIND_ADDRESS" != "localhost" ]; then
+  COMPOSE_FILES+=(-f "$COMPOSE_VPC_FILE")
+fi
+COMPOSE=(docker compose --env-file "$ENV_FILE" "${COMPOSE_FILES[@]}")
 STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 DEPLOY_ENVIRONMENT="${DEPLOY_ENVIRONMENT:-production}"
 DEPLOY_TRIGGERED_BY="${DEPLOY_TRIGGERED_BY:-github-actions}"

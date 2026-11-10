@@ -32,8 +32,10 @@ from ..models import (
     ModelConfig,
     ModelUsage,
     Outbox,
+    ResourcePool,
 )
 from ..runner_contracts import ContractInvalid, validate_payload
+from .runner_labels import DEFAULT_RUNS_ON, pool_runner_labels
 
 SHARD_DISPATCH_TOPIC = "eval.shard.dispatch"
 MANIFEST_PATH_TEMPLATE = "/runner/v1/shards/{shard_id}/manifest"
@@ -343,6 +345,22 @@ def build_shard_dispatches(
     )
 
 
+def run_runs_on(session: Session, run: EvalRun, settings: Settings) -> list[str]:
+    """Labels the shard jobs of ``run`` must target.
+
+    A spot pool may register custom labels; evaluating without the pool's
+    labels makes the job wait on the fixed runner forever. Fixed pools and
+    synthetic runs without a pool fall back to the fixed-runner defaults.
+    """
+
+    pool = session.get(ResourcePool, run.resource_pool_id) if run.resource_pool_id else None
+    if pool is not None and pool.provisioning_mode == "spot":
+        fallback = [item.strip() for item in settings.runner_spot_labels.split(",") if item.strip()]
+    else:
+        fallback = list(DEFAULT_RUNS_ON)
+    return pool_runner_labels(pool, fallback=fallback)
+
+
 def build_case_dispatches(
     session: Session,
     *,
@@ -365,6 +383,7 @@ def build_case_dispatches(
     tenant_id = str(DEFAULT_TENANT_ID)
     deadline = now + timedelta(minutes=settings.eval_shard_deadline_minutes)
     expires_at = now + timedelta(seconds=settings.eval_shard_ttl_seconds)
+    runs_on = run_runs_on(session, run, settings)
 
     for shard_index, start in enumerate(range(0, len(case_runs), shard_size)):
         chunk = case_runs[start : start + shard_size]
@@ -381,6 +400,7 @@ def build_case_dispatches(
             "deadline": deadline.isoformat(timespec="microseconds").replace("+00:00", "Z"),
             "case_timeout_seconds": run.case_timeout_seconds,
             "max_attempts": run.max_attempts,
+            "runs_on": runs_on,
             "cases": [
                 {
                     "case_run_id": case_run.id,
@@ -411,6 +431,7 @@ def build_case_dispatches(
             "dispatch_key": dispatch_key,
             "manifest_url": manifest_url,
             "manifest_digest": manifest_digest,
+            "runs_on": runs_on,
             "expires_at": expires_at.isoformat(timespec="microseconds").replace("+00:00", "Z"),
         }
         try:

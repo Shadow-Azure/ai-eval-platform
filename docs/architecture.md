@@ -54,6 +54,8 @@ M2 把执行与数据集、Agent 解耦：平台经 repository_dispatch 传 eval
 
 竞价池由供给器管理：Worker 解密租户资源连接中的阿里云 AccessKey，查询区域竞价价格与库存，按排队缺口创建 Spot ECS；实例以一次性 JIT 配置注册为 ephemeral Runner 并绑定池标签。价格、实例状态、竞价中断、心跳丢失与创建超时写入资源事件，队列保持可诊断；缩容先注销 Runner 再释放实例。
 
+生产部署把 Runner 回调入口绑定到 VPC 私网地址（`API_BIND_ADDRESS`），安全组只对 VPC 网段放行 8000，固定 Runner 保留回环路径；`RUNNER_CALLBACK_BASE_URL` 注入 api 与 worker，竞价实例据此取 manifest 并回传结果，`RUNNER_SPOT_RUNNER_TARBALL_URL` 可指向 OSS 缓存的 actions-runner 包以缩短 cloud-init 安装。池的 `labels_json.runs_on` 同时决定 Runner 注册标签与分片 dispatch/manifest 的 `runs_on`，自定义标签池因此能接到 execute job；未配置时沿用 `self-hosted,linux,eval`。`/resources` 的供给测试是创建验证，实例在注册 Runner 前释放，完整链路由真实评测验证。
+
 ## Agent 资产快照
 
 `/assets` 管理 GitHub 资产源：解析 Ref、识别 Skill（`SKILL.md` 目录）、Command 与 Subagent，并把选中资产冻结为不可变 OSS 包，记录 commit、tree digest、文件摘要与清单。评测只引用快照；Runner 在隔离 HOME 中映射到 `.claude/`，不重新拉取分支，也不加载仓库或宿主其他资产。Git 令牌加密保存，页面只显示掩码。

@@ -109,3 +109,34 @@ test("deployment record writes status, image digest and migration revision", () 
     assert.ok(script.includes(expected), `record script missing ${expected}`);
   }
 });
+
+test("production runner callback entry stays VPC-only and keeps loopback", () => {
+  const compose = read("deploy/docker-compose.prod.yml");
+  assert.ok(compose.includes('"127.0.0.1:8000:8000"'), "compose must keep the loopback binding");
+  for (const expected of ["RUNNER_CALLBACK_BASE_URL", "RUNNER_SPOT_RUNNER_TARBALL_URL"]) {
+    const mappings = compose.match(new RegExp(`^\\s+${expected}: \\$\\{${expected}`, "gm")) ?? [];
+    assert.equal(mappings.length, 2, `compose should pass ${expected} to api and worker`);
+  }
+
+  const override = read("deploy/docker-compose.vpc.yml");
+  assert.ok(override.includes("${API_BIND_ADDRESS}:8000:8000"));
+
+  const common = read("deploy/common.sh");
+  assert.ok(common.includes("docker-compose.vpc.yml"));
+  assert.ok(common.includes("API_BIND_ADDRESS"));
+  assert.ok(common.includes("127.0.0.1"), "the override must be skipped for loopback");
+
+  const workflow = read(".github/workflows/deploy.yml");
+  assert.ok(workflow.includes("secrets.API_BIND_ADDRESS"));
+  assert.ok(workflow.includes("secrets.RUNNER_CALLBACK_BASE_URL"));
+  assert.ok(workflow.includes("printf 'API_BIND_ADDRESS=%s\\n'"));
+  assert.ok(workflow.includes("printf 'RUNNER_CALLBACK_BASE_URL=%s\\n'"));
+  assert.ok(workflow.includes("|API_BIND_ADDRESS|RUNNER_CALLBACK_BASE_URL|"));
+});
+
+test("eval-shard executes on the runner labels frozen in the dispatch", () => {
+  const workflow = read(".github/workflows/eval-shard.yml");
+  assert.ok(workflow.includes("runs_on: ${{ steps.plan.outputs.runs_on }}"));
+  assert.ok(workflow.includes("fromJson(needs.prepare.outputs.runs_on"));
+  assert.ok(workflow.includes("dispatch.runs_on"));
+});

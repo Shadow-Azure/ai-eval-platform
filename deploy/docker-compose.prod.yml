@@ -41,6 +41,13 @@ services:
       S3_SECRET_KEY: ${S3_SECRET_KEY:-}
       S3_REGION: ${S3_REGION:-us-east-1}
       S3_ADDRESSING_STYLE: ${S3_ADDRESSING_STYLE:-auto}
+      # M5-08: the base URL ephemeral spot runners use to fetch the manifest
+      # and post callbacks. The API host is in the same VPC; the deploy
+      # workflow injects the VPC address, while loopback stays the default for
+      # the fixed runner on the API host.
+      RUNNER_CALLBACK_BASE_URL: ${RUNNER_CALLBACK_BASE_URL:-http://127.0.0.1:8000}
+      # Optional OSS-cached actions-runner tarball for Aliyun cloud-init.
+      RUNNER_SPOT_RUNNER_TARBALL_URL: ${RUNNER_SPOT_RUNNER_TARBALL_URL:-}
       # Runner-plane token (M2-04). Provisioned in the deploy .env; when set
       # the runner heartbeat/callback endpoints require it as a Bearer token.
       RUNNER_HEARTBEAT_TOKEN: ${RUNNER_HEARTBEAT_TOKEN:-}
@@ -71,7 +78,9 @@ services:
       GATEWAY_TOKEN_TTL_SECONDS: ${GATEWAY_TOKEN_TTL_SECONDS:-900}
       GATEWAY_TIMEOUT_SECONDS: ${GATEWAY_TIMEOUT_SECONDS:-120}
     # Fixed runners and the heartbeat agent run on the API host and reach the
-    # platform via loopback (PLATFORM_BASE_URL=http://127.0.0.1:8000).
+    # platform via loopback (PLATFORM_BASE_URL=http://127.0.0.1:8000). The
+    # optional docker-compose.vpc.yml override adds the VPC address used by
+    # ephemeral spot runners without dropping this loopback binding.
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:
@@ -102,6 +111,11 @@ services:
       SECRET_BOX_KEY: ${SECRET_BOX_KEY:-}
       RUNNER_HEARTBEAT_TOKEN: ${RUNNER_HEARTBEAT_TOKEN:-}
       RUNNER_ADMIN_TOKEN: ${RUNNER_ADMIN_TOKEN:-}
+      # M5-08: the capacity controller renders cloud-init and the shard
+      # dispatch loop builds manifest URLs, so the worker needs the same
+      # VPC-reachable callback address as the API.
+      RUNNER_CALLBACK_BASE_URL: ${RUNNER_CALLBACK_BASE_URL:-http://127.0.0.1:8000}
+      RUNNER_SPOT_RUNNER_TARBALL_URL: ${RUNNER_SPOT_RUNNER_TARBALL_URL:-}
       # M2-05: the worker consumes the shard-dispatch outbox and needs the
       # same GitHub dispatch credential as the API.
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}

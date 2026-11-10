@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 
 import pytest
 from app.config import get_settings
+from app.defaults import DEFAULT_PROJECT_ID, DEFAULT_TENANT_ID
 from app.models import (
     ATTEMPT_STATUSES,
     EvalCaseAttempt,
@@ -20,11 +21,13 @@ from app.models import (
     EvalEvent,
     EvalRun,
     Outbox,
+    ResourcePool,
 )
 from app.runner_contracts import validate_payload
 from app.seed import ensure_default_scope
 from app.services import evaluations
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 CASE_KEYS = ["case-alpha", "case-beta", "case-gamma"]
@@ -94,6 +97,7 @@ def test_create_builds_run_cases_attempts_and_contract_outbox(
         payload = row.payload_json
         client_payload = payload["client_payload"]
         validate_payload("dispatch", client_payload)
+        assert client_payload["runs_on"] == ["self-hosted", "linux", "eval"]
         assert client_payload["eval_run_id"] == run.id
         assert client_payload["attempt"] == 1
         assert client_payload["dispatch_key"] == row.dispatch_key
@@ -101,6 +105,7 @@ def test_create_builds_run_cases_attempts_and_contract_outbox(
         manifest_text = payload["manifest_text"]
         manifest = json.loads(manifest_text)
         validate_payload("manifest", manifest)
+        assert manifest["runs_on"] == ["self-hosted", "linux", "eval"]
         import hashlib
 
         assert client_payload["manifest_digest"] == (
@@ -123,6 +128,53 @@ def test_create_builds_run_cases_attempts_and_contract_outbox(
 
     events = seeded.query(EvalEvent).filter(EvalEvent.eval_run_id == run.id).all()
     assert [e.event_type for e in events] == ["eval.created"]
+
+
+def test_dispatch_freezes_custom_pool_labels(seeded: Session, configure_settings) -> None:
+    """M5-08: a custom-label spot pool must receive its own execute jobs."""
+
+    configure_settings()
+    run, _ = create_eval(seeded, shard_size=8, idempotency_key="custom-labels")
+    pool = ResourcePool(
+        id="pool-custom-labels",
+        tenant_id=str(DEFAULT_TENANT_ID),
+        project_id=str(DEFAULT_PROJECT_ID),
+        name="custom-labels",
+        provider_key="aliyun",
+        provisioning_mode="spot",
+        labels_json={"runs_on": ["self-hosted", "gpu", "eval"]},
+    )
+    seeded.add(pool)
+    seeded.flush()
+    run.resource_pool_id = pool.id
+    seeded.flush()
+
+    cases = list(
+        seeded.scalars(
+            select(EvalCaseRun)
+            .where(EvalCaseRun.eval_run_id == run.id)
+            .order_by(EvalCaseRun.ordinal)
+        )
+    )
+    bundle = evaluations.build_case_dispatches(
+        seeded,
+        run=run,
+        case_runs=cases,
+        attempt_no=2,
+        shard_size=8,
+        shard_prefix="labels",
+        settings=get_settings(),
+        now=datetime.now(UTC),
+    )
+
+    assert bundle.outbox_rows
+    for row in bundle.outbox_rows:
+        client_payload = row.payload_json["client_payload"]
+        manifest = json.loads(row.payload_json["manifest_text"])
+        validate_payload("dispatch", client_payload)
+        validate_payload("manifest", manifest)
+        assert client_payload["runs_on"] == ["self-hosted", "gpu", "eval"]
+        assert manifest["runs_on"] == ["self-hosted", "gpu", "eval"]
 
 
 def test_create_is_idempotent_on_client_key(seeded: Session, configure_settings) -> None:

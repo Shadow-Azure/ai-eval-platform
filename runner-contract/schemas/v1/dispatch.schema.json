@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://ai-eval-platform.local/runner-contract/v1/dispatch.schema.json",
   "title": "Eval shard dispatch",
-  "description": "repository_dispatch client_payload for one evaluation shard. It carries opaque IDs, a manifest reference and a digest, never cases, prompts, model keys or cloud credentials.",
+  "description": "repository_dispatch client_payload for one evaluation shard. It carries opaque IDs, a manifest reference, a digest and the runner labels the shard must run on, never cases, prompts, model keys or cloud credentials.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -23,6 +23,12 @@
     "dispatch_key": { "type": "string", "minLength": 1, "maxLength": 256 },
     "manifest_url": { "type": "string", "format": "uri", "maxLength": 2048 },
     "manifest_digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "runs_on": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "items": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9._ -]+$" }
+    },
     "expires_at": { "type": "string", "format": "date-time" }
   }
 }
