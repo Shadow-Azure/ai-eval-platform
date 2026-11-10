@@ -117,8 +117,11 @@ def create_synthetic_evaluation(
     *,
     name: str,
     case_keys: list[str],
+    selected_case_keys: list[str] | None = None,
     shard_size: int | None = None,
     requested_concurrency: int | None = None,
+    case_timeout_seconds: int | None = None,
+    max_attempts: int | None = None,
     idempotency_key: str | None = None,
     created_by: str,
     model_config_id: str | None = None,
@@ -156,6 +159,18 @@ def create_synthetic_evaluation(
     )
     if not isinstance(requested, int) or not 1 <= requested <= 256:
         raise EvaluationInvalid("requested_concurrency 必须在 1..256 之间", field="requested_concurrency")
+    timeout = case_timeout_seconds if case_timeout_seconds is not None else 3600
+    if not isinstance(timeout, int) or not (
+        settings.eval_min_case_timeout_seconds
+        <= timeout
+        <= settings.eval_max_case_timeout_seconds
+    ):
+        raise EvaluationInvalid(
+            "case_timeout_seconds 超出允许范围", field="case_timeout_seconds"
+        )
+    attempts = max_attempts if max_attempts is not None else 2
+    if not isinstance(attempts, int) or not 1 <= attempts <= settings.eval_max_case_attempts:
+        raise EvaluationInvalid("max_attempts 超出允许范围", field="max_attempts")
     idempotency_key = idempotency_key or str(uuid.uuid4())
 
     tenant_id = str(DEFAULT_TENANT_ID)
@@ -201,11 +216,22 @@ def create_synthetic_evaluation(
                 select(DatasetCase)
                 .where(DatasetCase.dataset_version_id == version.id)
                 .order_by(DatasetCase.ordinal)
-                .limit(settings.eval_max_cases)
             )
         )
+        if selected_case_keys is not None:
+            wanted = set(selected_case_keys)
+            selected = [case for case in cases if case.case_key in wanted]
+            if len(selected) != len(wanted):
+                raise EvaluationInvalid(
+                    "case_keys 包含不属于该数据集版本的用例", field="case_keys"
+                )
+            cases = selected
         if not cases:
             raise EvaluationInvalid("数据集版本没有用例", field="dataset_version_id")
+        if len(cases) > settings.eval_max_cases:
+            raise EvaluationInvalid(
+                f"单个评测最多 {settings.eval_max_cases} 个用例", field="case_keys"
+            )
         case_specs = [
             {
                 "case_key": case.case_key,
@@ -256,7 +282,8 @@ def create_synthetic_evaluation(
         consistency_json=consistency_json or {},
         idempotency_key=idempotency_key[:128],
         created_by=created_by[:128],
-        max_attempts=2,
+        case_timeout_seconds=timeout,
+        max_attempts=attempts,
     )
     session.add(run)
     session.flush()
@@ -605,6 +632,9 @@ def evaluation_detail(session: Session, run: EvalRun) -> dict:
     return {
         **evaluation_summary(run, spent_usd=live_spent),
         "asset_snapshot": run.asset_snapshot_json or {},
+        # M5-04: the frozen preparation snapshot (execution policy, case
+        # subset summary, digest) is part of the run record for traceability.
+        "consistency": run.consistency_json or {},
         "case_counts": case_counts,
         "trace_counts": trace_counts,
         "retryable_count": retryable_count,

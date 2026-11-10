@@ -11,6 +11,7 @@ import "./styles/assets.css";
 import "./styles/resources.css";
 import "./styles/eval-detail.css";
 import "./styles/login.css";
+import "./styles/wizard.css";
 import App from "./app/App";
 
 const container = document.getElementById("root");
