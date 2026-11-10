@@ -8,7 +8,7 @@
 kind: milestone
 id: m4
 title: 并发与弹性资源池
-status: planned
+status: done
 github:
   number: 4
   url: https://github.com/Shadow-Azure/ai-eval-platform/milestone/4

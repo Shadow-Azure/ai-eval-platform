@@ -1,5 +1,5 @@
 # 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
 # git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
 #   pnpm run record:i18n -- .agents/flow/milestones/m4-concurrency-and-spot-pool.md
-m4-concurrency-and-spot-pool.md: b68e4861b200319cde3f7ff8ac2d96ae6af43406
-m4-concurrency-and-spot-pool.en.md: b5cc9768f00967963e1398d15b5a22e98031e0da
+m4-concurrency-and-spot-pool.md: 0e0213baef5314c7c47977b5300831cc87e82144
+m4-concurrency-and-spot-pool.en.md: d51bc104b7eaf573b87a319e9b4a0be131b8f0df
