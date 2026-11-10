@@ -30,7 +30,7 @@ Long-lived production secrets (SECRET_BOX_KEY, POSTGRES_PASSWORD, AUTH_SESSION_S
 
 ## Acceptance
 
-- GitHub Secrets contain SECRET_BOX_KEY, POSTGRES_PASSWORD, AUTH_SESSION_SECRET, GATEWAY_TOKEN_SECRET, RUNNER_TASK_SECRET, RUNNER_HEARTBEAT_TOKEN, RUNNER_ADMIN_TOKEN with values matching the current production `.env`.
+- GitHub Secrets contain SECRET_BOX_KEY, POSTGRES_PASSWORD, AUTH_SESSION_SECRET, GATEWAY_TOKEN_SECRET, RUNNER_TASK_SECRET, RUNNER_HEARTBEAT_TOKEN, RUNNER_ADMIN_TOKEN with the same values as the current production `.env`.
 - The Deploy workflow writes these values to the host `.env` while preserving other keys; a new host can decrypt existing credentials with the same keys.
 - `deploy/docker-compose.prod.yml` exposes the needed env to api/worker; existing deployment contract tests pass.
 - AGENTS.md contains the host-migration and Secrets-injection constraint.
