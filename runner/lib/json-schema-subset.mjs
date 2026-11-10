@@ -57,6 +57,23 @@ export function validate(schema, data, path = "$") {
   if (schema.enum && !schema.enum.includes(data)) {
     errors.push(`${path}: 必须是 ${schema.enum.join(" / ")} 之一`);
   }
+  if (schema.oneOf !== undefined) {
+    if (!Array.isArray(schema.oneOf) || schema.oneOf.length === 0) {
+      errors.push(`${path}: oneOf 必须是非空数组`);
+    } else {
+      const branchErrors = [];
+      let matched = 0;
+      schema.oneOf.forEach((branch, index) => {
+        const result = validate(branch, data, path);
+        if (result.length === 0) matched += 1;
+        else branchErrors.push(`oneOf[${index}]: ${result.join("; ")}`);
+      });
+      if (matched !== 1) {
+        const detail = branchErrors.length > 0 ? `：${branchErrors.join(" | ")}` : "";
+        errors.push(`${path}: oneOf 必须恰好匹配一个分支（匹配 ${matched} 个）${detail}`);
+      }
+    }
+  }
 
   if (typeof data === "string") {
     if (schema.minLength !== undefined && data.length < schema.minLength) {

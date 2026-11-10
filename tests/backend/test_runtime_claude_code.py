@@ -144,11 +144,18 @@ def test_discover_trace_files_returns_digest_and_size(tmp_path: Path) -> None:
     session.parent.mkdir(parents=True)
     payload = b'{"type":"user"}\n'
     session.write_bytes(payload)
+    meta = tmp_path / ".claude/projects/-workspace/subagents/agent-a1.meta.json"
+    meta.parent.mkdir(parents=True)
+    meta_payload = b'{"agentId":"a1"}\n'
+    meta.write_bytes(meta_payload)
     traces = ClaudeCodeAdapter().discover_trace_files(str(tmp_path))
-    assert len(traces) == 1
-    assert traces[0].path == ".claude/projects/-workspace/session-1.jsonl"
+    assert [trace.path for trace in traces] == [
+        ".claude/projects/-workspace/session-1.jsonl",
+        ".claude/projects/-workspace/subagents/agent-a1.meta.json",
+    ]
     assert traces[0].size == len(payload)
     assert traces[0].sha256 == hashlib.sha256(payload).hexdigest()
+    assert traces[1].sha256 == hashlib.sha256(meta_payload).hexdigest()
 
 
 def test_adapter_registry() -> None:

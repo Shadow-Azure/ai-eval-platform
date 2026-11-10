@@ -40,7 +40,7 @@ EXECUTION_STATUSES = (
     "cancelled",
 )
 RESULT_STATUSES = ("resolved", "unresolved", "not_scored")
-TRACE_STATUSES = ("pending", "ready", "failed", "unlinked")
+TRACE_STATUSES = ("pending", "ready", "incomplete", "degraded", "failed", "unlinked")
 ATTEMPT_STATUSES = (
     "pending",
     "dispatching",

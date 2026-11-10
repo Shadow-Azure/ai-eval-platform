@@ -2,7 +2,7 @@
 
 [English](architecture.en.md) | 中文
 
-当前仓库进入 M5：执行底座与真实评测闭环已落地，正在把模型凭据、Git 资产、资源池与结果浏览组织成完整 Web 产品流程。
+当前仓库进入 M6：执行底座与真实评测闭环已落地，产品工作流可用，正在补齐原生轨迹采集与诊断闭环。
 
 ## 组成
 
@@ -59,6 +59,10 @@ M2 把执行与数据集、Agent 解耦：平台经 repository_dispatch 传 eval
 ## Agent 资产快照
 
 `/assets` 管理 GitHub 资产源：解析 Ref、识别 Skill（`SKILL.md` 目录）、Command 与 Subagent，并把选中资产冻结为不可变 OSS 包，记录 commit、tree digest、文件摘要与清单。评测引用冻结快照，无资产源则用内置能力；Runner 在隔离 HOME 中映射到 `.claude/`，不重新拉取分支，也不加载仓库或宿主其他资产。Git 令牌加密保存，页面只显示掩码。
+
+## 轨迹采集
+
+Runner 在用例结束时归档 Claude Code 原生文件：主/子 Agent 会话 JSONL、`subagents/*.meta.json` 关系元数据与 stdout/stderr 诊断日志进入 attempt 级多文件清单；失败执行保留文件。每项记录安全逻辑路径、artifact kind、digest、size、content type、Runtime 与格式版本，对象键仍由平台生成。后端校验回调 token 的 attempt 绑定、轨迹对象归属、逻辑路径和 digest 格式，按 object key 合并去重；内容 sha256 校验由后续导入流程完成，旧单文件 `trace_manifest` 继续可读。Runner 发现缺少主会话或子 Agent 元数据时标记采集不完整，后端也不允许仅凭诊断文件声称完整；`degraded` 由后续解析写入，不伪装成完整轨迹。
 
 ## 扩展位置
 

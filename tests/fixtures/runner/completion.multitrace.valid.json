@@ -1,0 +1,46 @@
+{
+  "schema_version": "1.0",
+  "event_id": "evt_ecr_001_completed",
+  "case_run_id": "ecr_001",
+  "attempt": 1,
+  "sequence": 2,
+  "execution_status": "succeeded",
+  "result_status": "resolved",
+  "score_manifest": {
+    "object_key": "objects/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "size": 12
+  },
+  "trace_manifest": {
+    "manifest_version": "1.0",
+    "capture_status": "complete",
+    "incomplete_reasons": [],
+    "runtime_version": "2.1.278",
+    "format_version": "1",
+    "objects": [
+      {
+        "artifact_kind": "trace",
+        "logical_path": "native/projects/-testbed/session-1.jsonl",
+        "object_key": "objects/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size": 210,
+        "content_type": "application/x-ndjson",
+        "native_format": "claude-code.session+jsonl",
+        "runtime_version": "2.1.278",
+        "format_version": "1"
+      },
+      {
+        "artifact_kind": "trace_diagnostic",
+        "logical_path": "diagnostics/stdout.jsonl",
+        "object_key": "objects/eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "size": 240,
+        "content_type": "application/x-ndjson",
+        "native_format": "claude-code.stdout.stream-json",
+        "runtime_version": "2.1.278",
+        "format_version": "1"
+      }
+    ]
+  },
+  "summary": { "duration_ms": 0, "input_tokens": 0, "output_tokens": 0 }
+}

@@ -46,6 +46,10 @@ node runner/scripts/real-task.mjs \
 - 子进程只从环境读取短期 token，不进入 argv 或日志；`RUNNER_HEARTBEAT_DISABLE=1` 可关闭。
 - 平台侧五类超时（排队、执行、评分、上传宽限、心跳）由对账 worker 收口；心跳只证明控制脚本存活，Agent stdout 静默不等于死亡。
 
+## 原生轨迹采集（M6-01）
+
+`real-task.mjs` 在用例结束时从隔离 HOME 的 `.claude/projects/` 收集主/子 Agent 的会话 JSONL 与 `*.meta.json`，连同 `trace/claude-stream.jsonl`、`trace/claude-stderr.log` 和失败诊断一起按 attempt 上传。`lib/trace-capture.mjs` 负责安全逻辑路径、digest、采集完整性判定与重复摘要去重；宿主绝对路径不进入清单。失败执行同样保留已生成文件，只有 stdout 时标记 `partial`。
+
 ## 目录
 
 - `lib/contracts.mjs`：加载 `runner-contract/schemas/v1` 并校验 payload。

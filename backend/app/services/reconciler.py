@@ -31,6 +31,7 @@ from ..models import EvalCaseAttempt, EvalCaseRun, EvalRun
 from . import budget, case_attempts, evaluations, lifecycle, reaper
 from .github_dispatch import GitHubDispatchError, cancel_workflow_run, find_workflow_run
 from .object_store import object_store_from_settings
+from .trace_manifest import TRACE_ARTIFACT_KINDS
 
 CANCEL_REQUESTED_EVENT = "eval.cancel_requested"
 CANCEL_FAILED_EVENT = "eval.cancel_failed"
@@ -244,14 +245,32 @@ def _backfill_completion(
     score = _object_of_kind(objects, "score")
     if score is None:
         return False
-    trace = _object_of_kind(objects, "trace")
+    stored_trace_manifest = (attempt.artifact_manifest_json or {}).get("trace_manifest")
+    trace_objects = [
+        item
+        for item in objects
+        if isinstance(item, dict) and item.get("artifact_kind") in TRACE_ARTIFACT_KINDS
+    ]
+    if stored_trace_manifest:
+        trace_manifest = stored_trace_manifest
+    elif trace_objects:
+        trace_manifest = {
+            "capture_status": (
+                "complete"
+                if any(item.get("artifact_kind") == "trace" for item in trace_objects)
+                else "partial"
+            ),
+            "objects": trace_objects,
+        }
+    else:
+        trace_manifest = None
 
     store = object_store_from_settings(settings)
     if store is None:
         # Nothing to verify against: leave the attempt to the upload reaper.
         return False
     try:
-        for item in [score] + ([trace] if trace is not None else []):
+        for item in [score] + trace_objects:
             store.verify_object(item["object_key"], expected_size=item.get("size"))
     except Exception:  # noqa: BLE001 - retry on the next pass
         # Missing/mismatched size is not a completion; the upload timeout keeps
@@ -285,7 +304,7 @@ def _backfill_completion(
         execution_status="succeeded",
         result_status=result_status,
         score_manifest=score,
-        trace_manifest=trace,
+        trace_manifest=trace_manifest,
         summary={"duration_ms": duration_ms},
         now=now,
         settings=settings,
