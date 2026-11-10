@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://ai-eval-platform.local/runner-contract/v1/upload-manifest.schema.json",
   "title": "Upload manifest",
-  "description": "Objects produced by an attempt. The platform-issued object keys are reported back before completion.",
+  "description": "Objects produced by an attempt. The platform-issued object keys are reported back before completion. Trace entries may carry a safe logical path and runtime/native format versions; legacy entries without them stay valid.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema_version", "case_run_id", "attempt", "objects"],
@@ -13,17 +13,32 @@
     "objects": {
       "type": "array",
       "minItems": 1,
-      "maxItems": 32,
+      "maxItems": 128,
       "items": {
         "type": "object",
         "additionalProperties": false,
         "required": ["artifact_kind", "object_key", "sha256", "size", "content_type"],
         "properties": {
-          "artifact_kind": { "enum": ["score", "trace", "artifact"] },
+          "artifact_kind": { "enum": ["score", "trace", "trace_metadata", "trace_diagnostic", "artifact"] },
           "object_key": { "type": "string", "minLength": 1, "maxLength": 1024 },
           "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
           "size": { "type": "integer", "minimum": 0 },
-          "content_type": { "type": "string", "minLength": 1, "maxLength": 128 }
+          "content_type": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "logical_path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512,
+            "pattern": "^(?!.*[\\r\\n])(?!.*(?:^|/)\\.{1,2}(?:/|$))[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$"
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512,
+            "pattern": "^(?!.*[\\r\\n])(?!.*(?:^|/)\\.{1,2}(?:/|$))[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$"
+          },
+          "native_format": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "runtime_version": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "format_version": { "type": "string", "minLength": 1, "maxLength": 64 }
         }
       }
     }

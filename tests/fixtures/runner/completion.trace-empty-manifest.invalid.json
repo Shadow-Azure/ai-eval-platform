@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0",
+  "event_id": "evt_ecr_001_completed",
+  "case_run_id": "ecr_001",
+  "attempt": 1,
+  "sequence": 2,
+  "execution_status": "succeeded",
+  "result_status": "resolved",
+  "score_manifest": {
+    "object_key": "objects/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "size": 12
+  },
+  "trace_manifest": {},
+  "summary": { "duration_ms": 0, "input_tokens": 0, "output_tokens": 0 }
+}

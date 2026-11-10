@@ -26,6 +26,7 @@ Rules pinned by tests/backend/test_case_callbacks.py:
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 
 from sqlalchemy import func, select
@@ -46,6 +47,15 @@ from ..scoring.service import ingest_score_report, recompute_metrics
 from . import capacity, evaluations, lifecycle
 from .evaluations import refresh_run_progress
 from .object_store import ObjectMissing, ObjectSizeMismatch, object_store_from_settings
+from .trace_manifest import (
+    TRACE_ARTIFACT_KINDS,
+    TraceManifestError,
+    merge_manifest_objects,
+    normalize_trace_manifest,
+    normalize_upload_objects,
+    trace_objects,
+    trace_status_for,
+)
 
 ACTIVE_ATTEMPT_STATUSES = evaluations.ACTIVE_ATTEMPT_STATUSES
 
@@ -86,6 +96,20 @@ class StaleSequence(CaseCallbackError):
 
 class ArtifactMissing(CaseCallbackError):
     code = "artifact_missing"
+
+
+class ManifestInvalid(CaseCallbackError):
+    status_code = 422
+    code = "manifest_invalid"
+
+
+class ManifestConflict(CaseCallbackError):
+    status_code = 409
+    code = "manifest_conflict"
+
+
+def _manifest_error(exc: TraceManifestError) -> CaseCallbackError:
+    return ManifestConflict(str(exc)) if exc.code == "manifest_conflict" else ManifestInvalid(str(exc))
 
 
 class CaseContext:
@@ -442,20 +466,54 @@ def handle_heartbeat(session: Session, *, payload: dict, now: datetime | None = 
 # ---------------------------------------------------------------------------
 
 
+def _expected_trace_object_key(ctx: CaseContext, item: dict) -> str:
+    return (
+        f"evaluations/{ctx.run.id}/{ctx.attempt.shard_id}"
+        f"/attempt{ctx.attempt.attempt_no}/{ctx.case_run.id}"
+        f"/{item['artifact_kind']}/{item['sha256']}"
+    )
+
+
+def _verify_trace_object_ownership(ctx: CaseContext, objects: list[dict]) -> None:
+    """Reject trace objects whose platform key belongs to another attempt."""
+
+    for item in objects:
+        if item.get("artifact_kind") not in TRACE_ARTIFACT_KINDS:
+            continue
+        expected = _expected_trace_object_key(ctx, item)
+        if item.get("object_key") != expected:
+            raise ManifestInvalid(
+                f"轨迹对象键不属于当前 attempt：{item.get('object_key')}"
+            )
+
+
 def _verify_objects(ctx: CaseContext, objects: list[dict], *, now: datetime, sequence: int = 0) -> None:
+    """Verify object existence/size, then trace-object attempt ownership."""
+
     settings = get_settings()
     store = object_store_from_settings(settings)
     if store is None:
-        # No object store configured (pure-dev): accept manifests as-is.
+        # No object store configured (pure-dev): still reject trace keys that
+        # claim another attempt's platform prefix.
+        _verify_trace_object_ownership(ctx, objects)
         return
+
+    def verify_one(item: dict) -> None:
+        try:
+            store.verify_object(item["object_key"], expected_size=item.get("size"))
+        except ObjectMissing as exc:
+            raise ArtifactMissing(f"对象不存在：{item['object_key']}") from exc
+        except ObjectSizeMismatch as exc:
+            raise ArtifactMissing(str(exc)) from exc
+
     try:
-        for item in objects:
-            try:
-                store.verify_object(item["object_key"], expected_size=item.get("size"))
-            except ObjectMissing as exc:
-                raise ArtifactMissing(f"对象不存在：{item['object_key']}") from exc
-            except ObjectSizeMismatch as exc:
-                raise ArtifactMissing(str(exc)) from exc
+        executor = ThreadPoolExecutor(max_workers=min(8, max(1, len(objects))))
+        try:
+            futures = [executor.submit(verify_one, item) for item in objects]
+            for future in as_completed(futures):
+                future.result()
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
     except ArtifactMissing:
         # 验收 4：对象缺失是可诊断失败态——attempt 落 artifact_missing、case 落
         # failed，绝不把用例标成完整成功。
@@ -474,6 +532,7 @@ def _verify_objects(ctx: CaseContext, objects: list[dict], *, now: datetime, seq
         refresh_run_progress(ctx.session, ctx.run, now=now)
         ctx.session.commit()
         raise
+    _verify_trace_object_ownership(ctx, objects)
 
 
 def handle_uploads(session: Session, *, payload: dict, now: datetime | None = None) -> dict:
@@ -482,17 +541,21 @@ def handle_uploads(session: Session, *, payload: dict, now: datetime | None = No
     if ctx.attempt.status not in ACTIVE_ATTEMPT_STATUSES:
         raise StaleAttempt(f"attempt 处于终态 {ctx.attempt.status}，拒绝上传清单")
 
-    _verify_objects(ctx, payload["objects"], now=now)
+    try:
+        objects = normalize_upload_objects(payload["objects"])
+    except TraceManifestError as exc:
+        raise _manifest_error(exc) from exc
+
+    _verify_objects(ctx, objects, now=now)
     _promote_running(ctx, now=now)
     # The upload manifest is the entry point of the upload grace period: the
     # reaper measures eval_upload_grace_seconds from this phase change.
     lifecycle.mark_status(ctx.attempt, "uploading", now)
     merged = dict(ctx.attempt.artifact_manifest_json or {})
-    merged.setdefault("objects", [])
-    known = {obj.get("object_key") for obj in merged["objects"]}
-    for item in payload["objects"]:
-        if item["object_key"] not in known:
-            merged["objects"].append(item)
+    try:
+        merged["objects"] = merge_manifest_objects(merged.get("objects"), objects)
+    except TraceManifestError as exc:
+        raise _manifest_error(exc) from exc
     ctx.attempt.artifact_manifest_json = merged
     session.commit()
     return {"ok": True, "deduped": False, "status": ctx.attempt.status}
@@ -586,10 +649,12 @@ def finalize_completion(
     attempt_status = COMPLETION_TO_ATTEMPT_STATUS[execution_status]
     lifecycle.mark_status(attempt, attempt_status, now)
     attempt.ended_at = now
+    merged = dict(attempt.artifact_manifest_json or {})
     manifests = {"score_manifest": score_manifest}
     if trace_manifest is not None:
-        manifests["trace_manifest"] = trace_manifest
-    merged = dict(attempt.artifact_manifest_json or {})
+        manifest_record = normalize_trace_manifest(trace_manifest)
+        manifests["trace_manifest"] = manifest_record
+        merged["objects"] = merge_manifest_objects(merged.get("objects"), trace_objects(manifest_record))
     merged.update(manifests)
     attempt.artifact_manifest_json = merged
     case_run.execution_status = execution_status
@@ -601,12 +666,14 @@ def finalize_completion(
         # 成功完成清掉旧失败 attempt 遗留在 case 行上的诊断字段。
         case_run.error_code = None
         case_run.error_summary = None
-    case_run.trace_status = "ready" if trace_manifest is not None else "unlinked"
+    trace_status = trace_status_for(manifest_record) if trace_manifest is not None else "unlinked"
+    case_run.trace_status = trace_status
 
     payload = dict(event_payload or {})
     payload.setdefault("execution_status", execution_status)
     payload.setdefault("result_status", result_status)
     payload.setdefault("score_manifest", score_manifest)
+    payload.setdefault("trace_status", trace_status)
     if sequence is None:
         sequence = next_free_sequence(session, case_run, attempt)
     _add_event(
@@ -643,26 +710,34 @@ def handle_completed(
         raise StaleAttempt(f"attempt 处于终态 {ctx.attempt.status}，拒绝完成回调")
 
     _verify_objects(ctx, [payload["score_manifest"]], now=now, sequence=payload["sequence"])
-    if "trace_manifest" in payload:
+    trace_manifest = None
+    if payload.get("trace_manifest") is not None:
+        try:
+            trace_manifest = normalize_trace_manifest(payload["trace_manifest"])
+        except TraceManifestError as exc:
+            raise _manifest_error(exc) from exc
         _verify_objects(
-            ctx, [payload["trace_manifest"]], now=now, sequence=payload["sequence"]
+            ctx, trace_objects(trace_manifest), now=now, sequence=payload["sequence"]
         )
 
-    finalize_completion(
-        session,
-        case_run=ctx.case_run,
-        attempt=ctx.attempt,
-        execution_status=payload["execution_status"],
-        result_status=payload["result_status"],
-        score_manifest=payload["score_manifest"],
-        trace_manifest=payload.get("trace_manifest"),
-        summary=payload["summary"],
-        now=now,
-        settings=settings,
-        event_type="case.completed",
-        event_payload={"event_id": payload["event_id"]},
-        sequence=payload["sequence"],
-    )
+    try:
+        finalize_completion(
+            session,
+            case_run=ctx.case_run,
+            attempt=ctx.attempt,
+            execution_status=payload["execution_status"],
+            result_status=payload["result_status"],
+            score_manifest=payload["score_manifest"],
+            trace_manifest=trace_manifest,
+            summary=payload["summary"],
+            now=now,
+            settings=settings,
+            event_type="case.completed",
+            event_payload={"event_id": payload["event_id"]},
+            sequence=payload["sequence"],
+        )
+    except TraceManifestError as exc:
+        raise _manifest_error(exc) from exc
     return {"ok": True, "deduped": False, "status": ctx.attempt.status}
 
 

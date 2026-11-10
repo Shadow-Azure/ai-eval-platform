@@ -85,6 +85,8 @@ const RESULT_OPTIONS = [
 const TRACE_OPTIONS = [
   { value: "pending", label: "待处理" },
   { value: "ready", label: "可用" },
+  { value: "incomplete", label: "采集不完整" },
+  { value: "degraded", label: "已降级" },
   { value: "failed", label: "失败" },
   { value: "unlinked", label: "未关联" },
 ];
@@ -121,6 +123,8 @@ const resultStatusMeta: Record<string, { label: string; color: string }> = {
 const traceStatusMeta: Record<string, { label: string; color: string }> = {
   pending: { label: "待处理", color: "default" },
   ready: { label: "可用", color: "success" },
+  incomplete: { label: "采集不完整", color: "warning" },
+  degraded: { label: "已降级", color: "warning" },
   failed: { label: "解析失败", color: "error" },
   unlinked: { label: "未关联", color: "warning" },
 };
@@ -668,6 +672,8 @@ export function EvalDetailPage() {
   const traceFailed = traceCounts.failed ?? 0;
   const traceReady = traceCounts.ready ?? 0;
   const tracePending = traceCounts.pending ?? 0;
+  const traceIncomplete = traceCounts.incomplete ?? 0;
+  const traceDegraded = traceCounts.degraded ?? 0;
   const traceUnlinked = traceCounts.unlinked ?? 0;
   const headerDatasetLabel = config.data?.dataset
     ? `${config.data.dataset.dataset_name ?? config.data.dataset.dataset_slug} · ${config.data.dataset.version}`
@@ -727,10 +733,22 @@ export function EvalDetailPage() {
         </span>
         <span className="eval-status-item">
           <span className="eval-status-label">轨迹处理</span>
-          <Tag color={traceFailed ? "error" : tracePending ? "processing" : "success"}>
-            ready {traceReady} · pending {tracePending}
-            {traceFailed ? ` · failed ${traceFailed}` : ""}
-            {traceUnlinked ? ` · unlinked ${traceUnlinked}` : ""}
+          <Tag
+            color={
+              traceFailed
+                ? "error"
+                : traceIncomplete || traceDegraded
+                  ? "warning"
+                  : tracePending
+                    ? "processing"
+                    : "success"
+            }
+          >
+            可用 {traceReady} · 待处理 {tracePending}
+            {traceIncomplete ? ` · 采集不完整 ${traceIncomplete}` : ""}
+            {traceDegraded ? ` · 已降级 ${traceDegraded}` : ""}
+            {traceFailed ? ` · 解析失败 ${traceFailed}` : ""}
+            {traceUnlinked ? ` · 未关联 ${traceUnlinked}` : ""}
           </Tag>
         </span>
         <span className="eval-status-item">

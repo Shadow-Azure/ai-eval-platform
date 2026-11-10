@@ -262,7 +262,9 @@ def _callback_error(exc: CaseCallbackError) -> HTTPException:
 
 
 class UploadObjectRequest(BaseModel):
-    artifact_kind: Literal["score", "trace", "artifact"]
+    artifact_kind: Literal[
+        "score", "trace", "trace_metadata", "trace_diagnostic", "artifact"
+    ]
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     size: int = Field(ge=0)
     content_type: str = Field(min_length=1, max_length=128)
@@ -270,7 +272,7 @@ class UploadObjectRequest(BaseModel):
 
 class UploadUrlsRequest(BaseModel):
     attempt: int = Field(ge=1)
-    objects: list[UploadObjectRequest] = Field(min_length=1, max_length=32)
+    objects: list[UploadObjectRequest] = Field(min_length=1, max_length=128)
 
 
 @router.post("/runner/v1/case-runs/{case_run_id}/upload-urls")

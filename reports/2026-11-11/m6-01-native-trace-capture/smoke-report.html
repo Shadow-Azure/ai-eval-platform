@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>M6-01 原生轨迹采集与多文件清单 · 集成冒烟报告</title>
+  <style>
+    :root{
+      color-scheme:light;
+      --bg:#f4f7fb;--card:#fff;--ink:#16202f;--ink2:#55637a;--ink3:#7b869b;
+      --line:#dde4ee;--accent:#2563eb;--accent-wash:#e8efff;--good:#157347;
+      --good-wash:#e7f6ee;--warn:#b45309;--warn-wash:#fff2dd;--bad:#c9282e;
+      --bad-wash:#ffeded;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:radial-gradient(circle at 8% 0,#dbe9ff 0,transparent 32rem),radial-gradient(circle at 92% 4%,#e7f1ff 0,transparent 28rem),var(--bg);color:var(--ink);font:14px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Noto Sans CJK SC",sans-serif}
+    main{max-width:1220px;margin:auto;padding:36px 28px 72px}
+    .hero{padding:30px 34px;border:1px solid #dbe3ee;border-radius:24px;background:rgba(255,255,255,.92);box-shadow:0 18px 44px #17202f12}
+    .eyebrow{margin:0;color:var(--accent);font-size:12px;font-weight:800;letter-spacing:.16em;text-transform:uppercase}
+    h1{margin:10px 0 8px;font-size:clamp(28px,4vw,44px);letter-spacing:-.04em}
+    .summary{margin:0;max-width:850px;color:var(--ink2);font-size:15px}
+    .meta{display:block;margin-top:8px;color:var(--ink3);font-size:12px}
+    .metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-top:26px}
+    .metric{padding:16px 18px;border:1px solid var(--line);border-radius:16px;background:#fafbfd}
+    .metric b{display:block;font-size:30px;letter-spacing:-.04em}
+    .metric span{display:block;margin-top:2px;color:var(--ink3);font-size:12px}
+    section{margin-top:28px}
+    .head{display:flex;align-items:baseline;justify-content:space-between;gap:16px;margin:0 4px 14px}
+    h2{margin:0;font-size:21px;letter-spacing:-.03em}
+    .head small{color:var(--ink3);white-space:nowrap}
+    .card{padding:22px;border:1px solid var(--line);border-radius:20px;background:var(--card);box-shadow:0 5px 22px #17202f08}
+    .facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin:0}
+    .fact{padding:13px 16px;border:1px solid #eceff5;border-radius:12px;background:#fafbfd}
+    .fact dt{color:var(--ink3);font-size:11px;font-weight:700}
+    .fact dd{margin:3px 0 0;overflow-wrap:anywhere}
+    code{font-family:var(--mono);font-size:.9em;color:#29456d;overflow-wrap:anywhere}
+    .status{display:inline-flex;padding:3px 8px;border-radius:999px;font-size:11px;font-weight:800;white-space:nowrap;background:#eef1f6;color:var(--ink2)}
+    .status.pass,.status.fixed{background:var(--good-wash);color:var(--good)}
+    .status.warn,.status.manual{background:var(--warn-wash);color:var(--warn)}
+    .status.fail{background:var(--bad-wash);color:var(--bad)}
+    .tableWrap{overflow:auto;border:1px solid var(--line);border-radius:18px;background:var(--card);box-shadow:0 5px 22px #17202f08}
+    table{width:100%;min-width:920px;border-collapse:collapse}
+    th,td{padding:12px 15px;border-bottom:1px solid #edf0f5;text-align:left;vertical-align:top}
+    th{position:sticky;top:0;background:#fafbfe;color:var(--ink2);font-size:12px}
+    tr:last-child td{border-bottom:0}
+    tr:hover{background:#fcfdff}
+    .num{color:var(--ink3);font-family:var(--mono);font-size:12px}
+    .evidence{color:var(--ink3);font-size:12px}
+    .issues{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px}
+    .issueCard{padding:18px 21px;border:1px solid #ffcece;border-left:5px solid var(--bad);border-radius:16px;background:#fffbfb}
+    .issueCard h3{margin:0;color:#b91c1c;font-size:16px}
+    .issueCard p{margin:8px 0;color:var(--ink2)}
+    .issueCard dt{color:var(--ink3);font-size:11px;font-weight:700}
+    .issueCard dd{margin:2px 0 0;color:var(--ink2)}
+    .tag{float:right;padding:3px 8px;border-radius:999px;background:#fee4e4;color:#9a1b21;font-size:11px;font-weight:800}
+    .fixed{display:inline-flex;gap:5px;align-items:center;margin-top:11px;padding:6px 10px;border-radius:999px;background:var(--good-wash);color:var(--good);font-size:12px;font-weight:800}
+    .shots{display:grid;grid-template-columns:repeat(auto-fit,minmax(430px,1fr));gap:16px}
+    figure{margin:0;overflow:hidden;border:1px solid var(--line);border-radius:18px;background:#fff;box-shadow:0 6px 22px #17202f08}
+    figure.wide{grid-column:1/-1}
+    img{display:block;width:100%;max-height:500px;object-fit:contain;background:#eef2f7}
+    figcaption{display:flex;gap:9px;align-items:flex-start;padding:11px 14px;border-top:1px solid #edf0f5;background:#fafbfd;color:var(--ink2);font-size:12.5px}
+    figcaption b{flex:none;color:var(--ink)}
+    .issue-shot{border-color:#ffcece}
+    .conclusion{border:1px solid #c8e5d2;border-radius:20px;background:linear-gradient(135deg,#f2fbf6,white 54%)}
+    .conclusion.warn{border-color:#f1d9a4;background:linear-gradient(135deg,#fff8e8,white 54%)}
+    .conclusion.fail{border-color:#ffc9c9;background:linear-gradient(135deg,#fff5f5,white 54%)}
+    .conclusion ul{margin:12px 0 0;padding-left:20px;color:#344155}
+    .conclusion li+li{margin-top:7px}
+    .empty{padding:20px;text-align:center;color:var(--ink3);background:#fafbfd;border:1px dashed var(--line);border-radius:12px}
+    .foot{margin-top:24px;color:var(--ink3);font-size:12px;text-align:center}
+    @media(max-width:860px){main{padding:22px 14px 52px}.hero{padding:23px}.shots{grid-template-columns:1fr}.head{align-items:flex-start;flex-direction:column;gap:4px}}
+    @media print{body{background:white}main{max-width:none;padding:0}.card,.issueCard,figure,.tableWrap{box-shadow:none;break-inside:avoid}img{max-height:420px}}
+  </style>
+</head>
+<body>
+<main>
+  <header class="hero">
+    <p class="eyebrow">Local stack · 真实 FastAPI 回调 / SQLite / Chrome</p>
+    <h1>M6-01 原生轨迹采集与多文件清单 · 集成冒烟报告</h1>
+    <p class="summary">在本地开发栈上用真实 FastAPI 回调复测 M6-01：多文件原生轨迹上传与完成回调把 case 标为 ready，页面显示「可用 1」；只用 stdout 的降级轨迹被标为 incomplete，页面显示「采集不完整 1」，用例表与筛选器均为中文状态。首轮冒烟发现的英文原值/漏计问题已修复，本轮复测通过。</p>
+    <span class="meta">2026-11-11 · AI Eval Platform · M6-01 · PR #127</span>
+    <div class="metrics"><div class="metric"><b>535 passed / 1 skipped</b><span>后端测试</span></div><div class="metric"><b>157 passed</b><span>Runner 测试</span></div><div class="metric"><b>4 通过 · 0 失败</b><span>冒烟场景</span></div><div class="metric"><b>1 已修复</b><span>缺陷</span></div></div>
+  </header>
+
+  <section>
+    <div class="head"><h2>Environment and Artifact</h2><small>2026-11-11 · AI Eval Platform · M6-01 · PR #127</small></div>
+    <article class="card"><dl class="facts"><div class="fact"><dt>应用</dt><dd>AI Eval Platform · M6-01</dd></div><div class="fact"><dt>提交</dt><dd>5c93e58（含检视修复）</dd></div><div class="fact"><dt>栈</dt><dd>本地 FastAPI + SQLite + Chrome dev server</dd></div><div class="fact"><dt>数据</dt><dd>ready 与 incomplete 两组 case attempt</dd></div><div class="fact"><dt>缺陷来源</dt><dd>Computer Use 观察页面状态展示</dd></div><div class="fact"><dt>修复范围</dt><dd>web/src/pages/EvalDetailPage.tsx</dd></div><div class="fact"><dt>真实 Claude Code</dt><dd>当前环境无 Docker/模型网络，转 #95 验收</dd></div></dl></article>
+  </section>
+
+  <section>
+    <div class="head"><h2>Scenario Matrix</h2><small>1 warn · 3 pass · 1 manual</small></div>
+    <div class="tableWrap"><table><table><thead><tr><th>#</th><th>场景</th><th>结果</th><th>说明</th><th>证据</th></tr></thead><tbody><tr><td class="num">01</td><td>修复前：完整轨迹详情</td><td><span class="status warn">DEFECT</span></td><td>修复前：多文件上传与完成回调成功后 trace_status=ready，但状态条直接显示英文键「ready」，与页面其余中文标签不一致。</td><td class="evidence">01-before-fix-raw-status.png</td></tr><tr><td class="num">02</td><td>完整原生轨迹 → 可用</td><td><span class="status pass">PASS</span></td><td>回调携带主会话、子 Agent 会话、子 Agent .meta.json 与 stderr 四项 trace 对象；case 为 ready，页面统计「可用 1 · 待处理 0」。</td><td class="evidence">02-after-fix-ready-status.png</td></tr><tr><td class="num">03</td><td>仅 stdout → 采集不完整</td><td><span class="status pass">PASS</span></td><td>完成回调声明 capture_status=partial 且仅含 trace_diagnostic；后端落 incomplete，页面统计「采集不完整 1」，用例表标签同步为中文。</td><td class="evidence">03-after-fix-incomplete-status.png</td></tr><tr><td class="num">04</td><td>轨迹筛选覆盖新状态</td><td><span class="status pass">PASS</span></td><td>轨迹状态下拉包含待处理、可用、采集不完整、已降级、失败、未关联，新增状态可被筛选。</td><td class="evidence">03-after-fix-incomplete-status.png</td></tr><tr><td class="num">05</td><td>失败保留 / 重复 digest / 旧契约</td><td><span class="status manual">AUTOMATED</span></td><td>真实 Claude Code 子 Agent 与 Docker 在当前环境不可用；由 fake claude、临时 .claude/projects fixture、重复 digest/非法路径/legacy manifest 的后端与 runner 测试覆盖，真实链路留给 #95。</td><td class="evidence">—</td></tr></tbody></table></table></div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Issues and Observations</h2><small>P2 轨迹状态在详情页显示英文原值且统计漏计新状态</small></div>
+    <div class="issues"><article class="issueCard"><span class="tag">P2</span><h3>轨迹状态在详情页显示英文原值且统计漏计新状态</h3><dl><div><dt>Actual</dt><dd>详情页显示英文 ready/incomplete，顶部只统计可用/待处理。</dd></div><div><dt>Expected</dt><dd>状态以中文展示，并计入 incomplete/degraded 数量与筛选项。</dd></div><div><dt>Root cause</dt><dd>traceStatusMeta 与统计未覆盖迁移 0019 新增状态。</dd></div><div><dt>Fix</dt><dd>补充中文标签、警告色、计数与筛选，复测通过。</dd></div></dl><div class="fixed">Fixed · 5c93e58</div></article></div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Evidence</h2><small>3 screenshots</small></div>
+    <div class="shots"><figure class="issue"><img loading="lazy" src="01-before-fix-raw-status.png" alt="修复前详情页显示英文 trace status"><figcaption><b>01 · Before fix</b><span>详情页直接展示英文原值 ready，顶部统计也未包含新状态。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="02-after-fix-ready-status.png" alt="完整轨迹详情显示可用计数"><figcaption><b>02 · Ready</b><span>多文件轨迹完成回调后显示「可用 1 · 待处理 0」。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="03-after-fix-incomplete-status.png" alt="仅 stdout 轨迹显示采集不完整与筛选器"><figcaption><b>03 · Incomplete</b><span>仅诊断文件落 incomplete，页面显示「采集不完整 1」，筛选项完整。</span></figcaption></figure></div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Automated Coverage Assessment</h2><small>4 areas reviewed</small></div>
+    <div class="tableWrap"><table><table><thead><tr><th>领域</th><th>覆盖</th><th>结论</th><th>建议</th></tr></thead><tbody><tr><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td></tr></tbody></table></table></div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Conclusion</h2><small>通过 · 无未解决缺陷</small></div>
+    <article class="card conclusion pass"><p><strong>复测后多文件轨迹、降级轨迹与状态筛选均符合预期，页面不再暴露英文状态原值。</strong></p><ul><li>真实 Claude Code 子 Agent 与真实 OSS 链路留给 #95 端到端验收。</li><li>剩余自动化覆盖由 runner/backend 测试与 CI 把关。</li></ul></article>
+  </section>
+
+  <p class="foot">Evidence captured with Computer Use on the local development stack; no production credentials or private paths are included.</p>
+</main>
+</body>
+</html>

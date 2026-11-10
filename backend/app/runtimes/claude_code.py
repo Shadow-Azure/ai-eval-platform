@@ -263,8 +263,10 @@ class ClaudeCodeAdapter:
         if not root.exists():
             return []
         traces: list[TraceFile] = []
-        for path in sorted(root.rglob("*.jsonl")):
+        for path in sorted(root.rglob("*")):
             if not path.is_file():
+                continue
+            if not (path.name.endswith(".jsonl") or path.name.endswith(".meta.json")):
                 continue
             data = path.read_bytes()
             traces.append(

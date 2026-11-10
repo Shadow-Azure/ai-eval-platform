@@ -1,6 +1,8 @@
 // Claude Code runtime adapter. The core runner knows nothing about Node, npm
 // or the claude CLI; it calls this adapter to install and launch the agent.
 export const key = "claude-code";
+export const adapterVersion = "claude-code-1.0";
+export const runtimeVersion = "2.x";
 
 export function installScript() {
   return [
