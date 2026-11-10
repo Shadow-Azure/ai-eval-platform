@@ -476,3 +476,27 @@ def test_detail_exposes_case_and_trace_counts(seeded: Session, client: TestClien
     assert body["trace_counts"] == {"pending": 2, "ready": 1}
     assert body["retryable_count"] == 2
     assert body["cases"][0]["trace_status"] == "ready"
+
+
+def test_retry_conflict_maps_to_409(seeded: Session, client: TestClient) -> None:
+    """Two tabs retrying the same case must not surface a 500."""
+
+    _run, cases = _prepare_failed_run(seeded, key="conflict-run")
+    target = cases[0]
+    # Simulate the winner of the race: attempt 2 already exists, while the
+    # losing request still sees the failed attempt 1 as the latest.
+    seeded.add(
+        EvalCaseAttempt(
+            tenant_id=target.tenant_id,
+            eval_case_run_id=target.id,
+            attempt_no=2,
+            status="pending",
+            dispatch_key=f"conflict-{target.id}",
+            shard_id="shard-conflict",
+        )
+    )
+    seeded.commit()
+
+    response = client.post(f"/api/v1/eval-case-runs/{target.id}/retry")
+    assert response.status_code == 409
+    assert response.json()["detail"]["error"]["code"] == "case_retry_conflict"

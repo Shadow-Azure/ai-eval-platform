@@ -911,11 +911,21 @@ def refresh_run_progress(session: Session, run: EvalRun, *, now: datetime | None
     return run
 
 
-def _iso(value: datetime | None) -> str | None:
+def iso_utc(value: datetime | None) -> str | None:
+    """Serialize a DB timestamp as UTC ISO-8601 with an explicit offset.
+
+    SQLite (local dev/tests) drops ``tzinfo``; a naive value must not be
+    rendered as local time by the browser. Postgres already returns aware
+    datetimes and is serialized unchanged.
+    """
+
     if value is None:
         return None
-    # SQLite (local dev/tests) drops tzinfo; the API contract is UTC ISO-8601
-    # with an offset, so a naive timestamp must not be rendered as local time.
     if value.tzinfo is None:
         value = value.replace(tzinfo=UTC)
     return value.isoformat(timespec="microseconds")
+
+
+# Internal alias kept for the service layer (the public helper is shared with
+# the results API).
+_iso = iso_utc

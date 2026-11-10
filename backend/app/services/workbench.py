@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..config import get_settings
@@ -291,8 +292,13 @@ def list_cases(
 # ---------------------------------------------------------------------------
 
 
-def _get_case(session: Session, case_run_id: str) -> EvalCaseRun:
-    case = session.get(EvalCaseRun, case_run_id)
+def _get_case(session: Session, case_run_id: str, *, lock: bool = False) -> EvalCaseRun:
+    statement = select(EvalCaseRun).where(EvalCaseRun.id == case_run_id)
+    if lock:
+        # Serialize concurrent retry requests on Postgres; SQLite (tests/local)
+        # ignores the clause and relies on the unique attempt constraint below.
+        statement = statement.with_for_update()
+    case = session.scalar(statement)
     if case is None:
         raise WorkbenchNotFound(f"评测用例不存在：{case_run_id}")
     return case
@@ -440,7 +446,7 @@ def _create_retry_attempt(
 
 def retry_case(session: Session, *, case_run_id: str, actor: str, now: datetime | None = None) -> dict[str, Any]:
     now = now or datetime.now(UTC)
-    case = _get_case(session, case_run_id)
+    case = _get_case(session, case_run_id, lock=True)
     run = session.get(EvalRun, case.eval_run_id)
     if run is None:
         raise WorkbenchNotFound(f"评测不存在：{case.eval_run_id}", code="eval_run_not_found")
@@ -450,13 +456,22 @@ def retry_case(session: Session, *, case_run_id: str, actor: str, now: datetime 
             _retry_reason_message(state["reason"]),
             code=f"case_retry_{state['reason']}",
         )
-    latest = _latest_attempt(session, case)
-    assert latest is not None  # retry_state guarantees it
-    attempt = _create_retry_attempt(
-        session, run=run, case=case, latest=latest, actor=actor, now=now
-    )
-    evaluations.refresh_run_progress(session, run, now=now)
-    session.commit()
+    try:
+        latest = _latest_attempt(session, case)
+        assert latest is not None  # retry_state guarantees it
+        attempt = _create_retry_attempt(
+            session, run=run, case=case, latest=latest, actor=actor, now=now
+        )
+        evaluations.refresh_run_progress(session, run, now=now)
+        session.commit()
+    except IntegrityError as exc:
+        # Two operators/tabs may race on the same case; the unique
+        # (case_run_id, attempt_no) constraint is the final arbiter.
+        session.rollback()
+        raise WorkbenchRejected(
+            "该用例已被并发重试或状态已变化，请刷新后重试",
+            code="case_retry_conflict",
+        ) from exc
     return {
         "case": case_row(case),
         "attempt": _attempt_row(session, attempt),
@@ -486,33 +501,41 @@ def retry_failed_cases(
                 EvalCaseRun.execution_status.in_(RETRYABLE_CASE_STATUSES),
             )
             .order_by(EvalCaseRun.ordinal)
+            .with_for_update()
         )
     )
     retried = 0
     skipped = 0
-    for case in cases:
-        state = retry_state(session, run, case)
-        latest = _latest_attempt(session, case)
-        if not state["retryable"] or latest is None:
-            skipped += 1
-            continue
-        _create_retry_attempt(session, run=run, case=case, latest=latest, actor=actor, now=now)
-        retried += 1
-    if retried:
-        session.add(
-            EvalEvent(
-                tenant_id=run.tenant_id,
-                eval_run_id=run.id,
-                event_type="eval.retry_failed",
-                payload_json={
-                    "requested_by": actor,
-                    "retried": retried,
-                    "skipped": skipped,
-                },
+    try:
+        for case in cases:
+            state = retry_state(session, run, case)
+            latest = _latest_attempt(session, case)
+            if not state["retryable"] or latest is None:
+                skipped += 1
+                continue
+            _create_retry_attempt(session, run=run, case=case, latest=latest, actor=actor, now=now)
+            retried += 1
+        if retried:
+            session.add(
+                EvalEvent(
+                    tenant_id=run.tenant_id,
+                    eval_run_id=run.id,
+                    event_type="eval.retry_failed",
+                    payload_json={
+                        "requested_by": actor,
+                        "retried": retried,
+                        "skipped": skipped,
+                    },
+                )
             )
-        )
-        evaluations.refresh_run_progress(session, run, now=now)
-        session.commit()
+            evaluations.refresh_run_progress(session, run, now=now)
+            session.commit()
+    except IntegrityError as exc:
+        session.rollback()
+        raise WorkbenchRejected(
+            "批量重试与另一请求冲突，请刷新后重试",
+            code="eval_retry_conflict",
+        ) from exc
     return {"run_id": run.id, "retried": retried, "skipped": skipped}
 
 
