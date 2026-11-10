@@ -360,7 +360,6 @@ def main() -> int:
     from app.secrets import get_secret_box  # noqa: PLC0415
     from app.seed import ensure_default_scope  # noqa: PLC0415
     from app.services.object_store import (  # noqa: PLC0415
-        ObjectMissing,
         ObjectStoreError,
         object_store_from_settings,
     )
@@ -415,21 +414,27 @@ def main() -> int:
         _write_outputs(evidence, Path(args.out), render=args.render)
         return 1
     version = settings.runner_spot_runner_version
-    runner_key = f"runner/actions-runner-linux-x64-{version}.tar.gz"
+    # Upload a fresh object each run: a stale/corrupt cache is worse than the
+    # extra CI upload, and the smoke must prove the exact bytes cloud-init gets.
+    runner_key = f"runner/actions-runner-linux-x64-{version}-{smoke_id}.tar.gz"
     try:
-        try:
-            store.head_object(runner_key)
-            evidence["runner_tarball"] = "oss-cache"
-        except ObjectMissing:
-            github_url = (
-                "https://github.com/actions/runner/releases/download/"
-                f"v{version}/actions-runner-linux-x64-{version}.tar.gz"
-            )
-            with urllib.request.urlopen(github_url, timeout=300) as response:
-                payload = response.read()
-            store.put_bytes(runner_key, payload, content_type="application/gzip")
-            evidence["runner_tarball"] = "oss-upload"
+        github_url = (
+            "https://github.com/actions/runner/releases/download/"
+            f"v{version}/actions-runner-linux-x64-{version}.tar.gz"
+        )
+        with urllib.request.urlopen(github_url, timeout=300) as response:
+            payload = response.read()
+        if len(payload) < 10_000_000 or payload[:2] != b"\x1f\x8b":
+            raise ObjectStoreError("下载的 Runner 不是有效 tar.gz")
+        store.put_bytes(runner_key, payload, content_type="application/gzip")
+        evidence["runner_tarball"] = "oss-upload"
         runner_tarball_url = store.presign_get_url(runner_key, expires=7200)
+        # Prove the URL works from a different network before paying for an
+        # instance; a bad SigV4 region/signature otherwise fails silently in
+        # cloud-init and only surfaces 20 minutes later.
+        with urllib.request.urlopen(runner_tarball_url, timeout=60) as response:
+            if not response.read(1024):
+                raise ObjectStoreError("Runner 缓存读取为空")
     except (ObjectStoreError, OSError) as exc:
         evidence["ok"] = False
         evidence["issues"].append(

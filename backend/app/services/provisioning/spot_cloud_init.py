@@ -74,7 +74,7 @@ systemctl enable --now docker
 
 mkdir -p /opt/actions-runner /etc/eval
 cd /opt/actions-runner
-curl -fsSL --max-time 600 --retry 3 -o runner.tar.gz \\
+curl -fsSL --max-time 180 --retry 1 -o runner.tar.gz \\
   "{runner_tarball_url}"
 tar -xzf runner.tar.gz
 rm -f runner.tar.gz
