@@ -299,6 +299,33 @@ def test_capacity_gap_counts_queued_idle_and_starting(
     assert _event_types(session) == []
 
 
+def test_capacity_gap_counts_pending_attempts_before_dispatch(
+    session: Session, scope: dict[str, str]
+) -> None:
+    """M5-08: an empty spot pool must bootstrap from a not-yet-dispatched run.
+
+    The dispatcher's capacity gate leaves attempts ``pending`` until a runner
+    exists, so the controller must count them as queue demand; otherwise the
+    pool never creates the first instance and the run deadlocks.
+    """
+
+    pool = _spot_pool_with_connection(session, scope, max_capacity=5)
+    _queued_cases(session, scope, pool, 5)
+    for attempt in session.scalars(
+        select(EvalCaseAttempt).where(EvalCaseAttempt.resource_pool_id == pool.id)
+    ):
+        attempt.status = "pending"
+    session.flush()
+
+    state = capacity_control.pool_capacity_state(
+        session, pool, settings=get_settings(), now=datetime.now(UTC), provisioner=FakeProvisioner()
+    )
+
+    assert state["queued_attempts"] == 5
+    assert state["capacity_gap"] == 5
+    assert state["desired_capacity"] == 5
+
+
 def test_desired_capacity_is_capped_by_max_capacity(
     session: Session, scope: dict[str, str]
 ) -> None:
