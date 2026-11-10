@@ -1,0 +1,23 @@
+{
+  "ok": true,
+  "started_at": "2026-11-10T04:24:46+00:00",
+  "region": "cn-hangzhou",
+  "smoke_id": "1794284683",
+  "runner_name": "spot-e52f98af-f1d9d698",
+  "instance_id": "i-bp196vs9fbekgdk6cxyy",
+  "instance_type": "ecs.g7.large",
+  "price_cny": "0.1",
+  "price_usd": "0.0139",
+  "zone_id": "cn-hangzhou-j",
+  "runner_online": true,
+  "runner_online_seconds": 72.7,
+  "workflow_url": "https://github.com/Shadow-Azure/ai-eval-platform/actions/runs/42755871260",
+  "workflow_conclusion": "success",
+  "cleaned_up": true,
+  "secrets_leaked": false,
+  "issues": [],
+  "runner_tarball": "oss-upload",
+  "runner_id": 31,
+  "workflow_run_id": 42755871260,
+  "total_seconds": 115.8
+}

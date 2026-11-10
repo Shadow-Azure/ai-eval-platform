@@ -1,0 +1,156 @@
+{
+  "title": "M4-04 阿里云竞价 ECS 与临时 Runner · 真实云冒烟",
+  "eyebrow": "Smoke Report · issue #81",
+  "summary": "受控阿里云环境创建竞价实例 i-bp196vs9fbekgdk6cxyy，一次性 Runner 上线后执行 runner-smoke 小任务，结论 success，随后注销 Runner 并释放实例（cleaned_up=True）。",
+  "meta": "2026-11-10T04:24:46+00:00 · cn-hangzhou · 真实阿里云 + GitHub API",
+  "metrics": [
+    {
+      "value": "0.0139",
+      "label": "USD/小时"
+    },
+    {
+      "value": "72.7",
+      "label": "Runner 上线秒数"
+    },
+    {
+      "value": "115.8",
+      "label": "总耗时秒数"
+    },
+    {
+      "value": "0",
+      "label": "密钥泄露"
+    }
+  ],
+  "facts": [
+    {
+      "label": "Issue",
+      "value": "#81 接入阿里云竞价 ECS 与临时 Runner"
+    },
+    {
+      "label": "实例",
+      "value": "i-bp196vs9fbekgdk6cxyy"
+    },
+    {
+      "label": "Runner",
+      "value": "spot-e52f98af-f1d9d698"
+    },
+    {
+      "label": "Region / Zone",
+      "value": "cn-hangzhou / cn-hangzhou-j"
+    },
+    {
+      "label": "工作流",
+      "value": "https://github.com/Shadow-Azure/ai-eval-platform/actions/runs/42755871260"
+    }
+  ],
+  "matrix": {
+    "columns": [
+      "#",
+      "场景",
+      "结果",
+      "说明",
+      "证据"
+    ],
+    "rows": [
+      {
+        "id": "01",
+        "name": "阿里云竞价价格与库存查询",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "CNY 0.1 / USD 0.0139，zone cn-hangzhou-j。",
+        "evidence": [
+          "evidence.json"
+        ]
+      },
+      {
+        "id": "02",
+        "name": "创建竞价实例",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "实例 i-bp196vs9fbekgdk6cxyy，类型 ecs.g7.large。",
+        "evidence": [
+          "evidence.json"
+        ]
+      },
+      {
+        "id": "03",
+        "name": "一次性 Runner 注册",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "Runner spot-e52f98af-f1d9d698 在 72.7s 内上线；JIT 配置不落库。",
+        "evidence": [
+          "evidence.json"
+        ]
+      },
+      {
+        "id": "04",
+        "name": "在临时 Runner 上执行小批量任务",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "eval-shard runner-smoke 结论 success。",
+        "evidence": [
+          "evidence.json"
+        ]
+      },
+      {
+        "id": "05",
+        "name": "注销 Runner 并释放实例",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "先删除一次性 Runner，再 DeleteInstance。",
+        "evidence": [
+          "evidence.json"
+        ]
+      }
+    ]
+  },
+  "issues": [],
+  "coverage": {
+    "columns": [
+      "区域",
+      "覆盖",
+      "结论",
+      "建议"
+    ],
+    "rows": [
+      {
+        "area": "真实云资源",
+        "coverage": "SMOKE",
+        "conclusion": "竞价创建/查询/释放走真实 Aliyun API。",
+        "recommendation": "保持按需触发，避免常规 CI 产生费用。"
+      },
+      {
+        "area": "Runner 执行",
+        "coverage": "SMOKE",
+        "conclusion": "runner-smoke 作业在临时实例上真实执行。",
+        "recommendation": "完整评测回调链仍由固定 Runner 的 M2/M3 套件覆盖。"
+      },
+      {
+        "area": "中断/超时/库存",
+        "coverage": "UT",
+        "conclusion": "由 FakeAliyun + DB 测试覆盖。",
+        "recommendation": "定期用真实中断演练复核。"
+      }
+    ]
+  },
+  "conclusion": {
+    "kind": "pass",
+    "label": "真实云冒烟通过",
+    "summary": "创建、一次性注册、执行小任务、注销与释放全部完成。",
+    "points": [
+      "JIT 配置仅存在于 cloud-init，未写入 DB/事件/日志。",
+      "失败模式（价格阈值/库存/中断/创建超时）由确定性测试覆盖。"
+    ]
+  },
+  "footer": "dsh-superagent generated · no credentials or private content included"
+}
