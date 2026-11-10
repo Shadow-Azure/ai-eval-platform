@@ -1,125 +1,242 @@
 {
   "title": "M5-04 发起评测向导与准备快照 · 集成冒烟报告",
   "eyebrow": "Browser smoke · 真实登录 / 用例子集 / 资产快照 / 执行策略 / 准备快照 / 幂等创建 / 过期与配置变化",
-  "summary": "在本地开发栈上用系统 Chrome headless 走通 M5-04 的主路径：从 origin/main 的旧向导基线开始，依次选择数据集版本与 5 个用例子集、复用冻结的 Agent 资产快照、配置并发/超时/重试/预算，服务端返回 60 秒有效的准备快照，确认页展示冻结输入、容量与费用区间，创建后进入详情并验证 5 个用例、准备快照已消费、同一 Idempotency-Key 重放返回同一评测。随后验证了准备快照过期、确认后配置变化（409）与容量非法（422）三条错误路径，以及无数据集空态。14 个检查点全部通过，未发现产品缺陷。",
+  "summary": "在本地开发栈上用系统 Chrome headless 走通 M5-04 的主路径：从 origin/main 的旧向导基线开始，以数据集/版本选择卡片、Runtime 卡片、模型与资源池单选行对齐原型，依次选择版本与 5 个用例子集、复用冻结的 Agent 资产快照（资产表按 类型/资产/路径/来源 分页）、配置并发/超时/重试/预算，服务端返回 60 秒有效的准备快照，确认页展示冻结输入、容量与费用区间，创建后进入详情并验证 5 个用例、准备快照已消费、同一 Idempotency-Key 重放返回同一评测。随后验证了准备快照过期、确认后配置变化（409）、容量非法（422）三条错误路径，以及无数据集空态。14 个检查点全部通过，未发现产品缺陷。",
   "meta": "2026-11-10 · AI Eval Platform · M5-04 · 本地开发栈浏览器冒烟",
   "metrics": [
-    { "value": "14", "label": "检查点" },
-    { "value": "0", "label": "发现缺陷" },
-    { "value": "14", "label": "证据截图" },
-    { "value": "全绿", "label": "pytest / web / docs 门禁" }
+    {
+      "value": "14",
+      "label": "检查点"
+    },
+    {
+      "value": "0",
+      "label": "发现缺陷"
+    },
+    {
+      "value": "14",
+      "label": "证据截图"
+    },
+    {
+      "value": "全绿",
+      "label": "pytest / web / docs 门禁"
+    }
   ],
   "facts": [
-    { "label": "应用", "value": "AI Eval Platform 本地开发栈（FastAPI + Vite React）" },
-    { "label": "分支", "value": "agent/complete-m5-04-5c28b62b132a" },
-    { "label": "基线", "value": "origin/main @ 052dfb2 的同一页面（独立 worktree，同一后端与数据）" },
-    { "label": "数据库", "value": "一次性 SQLite + 迁移 head 0017_eval_preparations" },
-    { "label": "浏览器", "value": "系统 Chrome headless · 1440×1000（另测 1280×800）· Playwright 驱动" },
-    { "label": "数据形态", "value": "1 个数据集版本（30 用例）/ 1 个模型配置 / 1 个资源池（8 上限，3 在线 Runner）/ 15 个 Skill 资产快照 / 1 个管理员" },
-    { "label": "资产快照", "value": "通过真实 GitHub API 解析并用本地 S3 stub 冻结到 commit 22f0b463；向导复用该冻结快照" },
-    { "label": "准备快照 TTL", "value": "冒烟环境设为 60 秒（生产默认 900 秒），用于验证过期页面提示" },
-    { "label": "模型调用", "value": "未发起真实模型请求：本次只验证发起与冻结链路，不验证 Agent 执行" }
+    {
+      "label": "应用",
+      "value": "AI Eval Platform 本地开发栈（FastAPI + Vite React）"
+    },
+    {
+      "label": "分支",
+      "value": "agent/complete-m5-04-5c28b62b132a"
+    },
+    {
+      "label": "基线",
+      "value": "origin/main @ 052dfb2 的同一页面（独立 worktree，同一后端与数据）"
+    },
+    {
+      "label": "数据库",
+      "value": "一次性 SQLite + 迁移 head 0017_eval_preparations"
+    },
+    {
+      "label": "浏览器",
+      "value": "系统 Chrome headless · 1440×1000（另测 1280×800）· Playwright 驱动"
+    },
+    {
+      "label": "数据形态",
+      "value": "1 个数据集版本（30 用例）/ 1 个模型配置 / 1 个资源池（8 上限，3 在线 Runner）/ 15 个 Skill 资产快照 / 1 个管理员"
+    },
+    {
+      "label": "资产快照",
+      "value": "通过真实 GitHub API 解析并用本地 S3 stub 冻结到 commit 22f0b463；向导复用该冻结快照"
+    },
+    {
+      "label": "准备快照 TTL",
+      "value": "冒烟环境设为 60 秒（生产默认 900 秒），用于验证过期页面提示"
+    },
+    {
+      "label": "模型调用",
+      "value": "未发起真实模型请求：本次只验证发起与冻结链路，不验证 Agent 执行"
+    }
   ],
   "matrix": {
-    "columns": ["#", "场景", "结果", "说明", "证据"],
+    "columns": [
+      "#",
+      "场景",
+      "结果",
+      "说明",
+      "证据"
+    ],
     "rows": [
       {
         "id": "01",
         "name": "改动前基线：数据集步骤",
-        "status": { "kind": "info", "label": "BASELINE" },
+        "status": {
+          "kind": "info",
+          "label": "BASELINE"
+        },
         "detail": "origin/main 的向导是 AntD Steps + 卡片，仅能选择数据集与版本，没有用例子集、步骤条与摘要侧栏。",
-        "evidence": ["before-01-wizard-dataset.png"]
+        "evidence": [
+          "before-01-wizard-dataset.png"
+        ]
       },
       {
         "id": "02",
         "name": "改动前基线：资产步骤",
-        "status": { "kind": "info", "label": "BASELINE" },
+        "status": {
+          "kind": "info",
+          "label": "BASELINE"
+        },
         "detail": "旧向导的资产步骤只有资产树与 Ref 解析，没有 4 步导航和右侧冻结摘要。",
-        "evidence": ["before-02-wizard-assets.png"]
+        "evidence": [
+          "before-02-wizard-assets.png"
+        ]
       },
       {
         "id": "03",
         "name": "数据集与用例子集",
-        "status": { "kind": "pass", "label": "PASS" },
-        "detail": "新向导展示 4 步步骤条、数据集/版本选择与“全部 / 按数量 / 指定用例”三种范围；按数量选择 5 个用例，右侧摘要同步。",
-        "evidence": ["after-01-wizard-dataset.png", "after-02-wizard-subset.png"]
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "新向导展示 4 步步骤条、数据集选择与版本选择卡片（版本号、用例数、状态、commit），并提供“全部 / 按数量 / 指定用例”三种范围；按数量选择 5 个用例，右侧摘要同步。",
+        "evidence": [
+          "after-01-wizard-dataset.png",
+          "after-02-wizard-subset.png"
+        ]
       },
       {
         "id": "04",
         "name": "非敏感草稿刷新不丢",
-        "status": { "kind": "pass", "label": "PASS" },
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
         "detail": "输入用例数量 5 后刷新页面，模式与数量从 localStorage 恢复；草稿不含任何密钥字段。",
-        "evidence": ["after-02-wizard-subset.png"]
+        "evidence": [
+          "after-02-wizard-subset.png"
+        ]
       },
       {
         "id": "05",
         "name": "Agent 资产与冻结 commit",
-        "status": { "kind": "pass", "label": "PASS" },
-        "detail": "向导展示已冻结的 15 个 Skill 与 commit 22f0b463；Ref 未解析时禁止进入下一步。",
-        "evidence": ["after-03-wizard-assets.png"]
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "Runtime 以选择卡片呈现，Git 资产源分组带“管理资产源”入口；资产表按 类型/资产/路径/来源 展示并分页（8 条/页），已冻结的 15 个 Skill 固定到 commit 22f0b463。",
+        "evidence": [
+          "after-03-wizard-assets.png"
+        ]
       },
       {
         "id": "06",
         "name": "模型、资源池与高级执行策略",
-        "status": { "kind": "pass", "label": "PASS" },
-        "detail": "选择模型与资源池，配置并发 2、单用例超时 30 分钟、重试 1 次、预算 $10；容量提示按在线 Runner 与池上限解释。",
-        "evidence": ["after-04-wizard-policy.png"]
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "模型凭据与执行资源以单选行呈现（名称、供应商/协议、凭据状态、在线/上限与可用标签）；并发 2、单用例超时 30 分钟、重试 1 次、预算 $10 由服务端复核。",
+        "evidence": [
+          "after-04-wizard-policy.png"
+        ]
       },
       {
         "id": "07",
         "name": "1280×800 主操作可达",
-        "status": { "kind": "pass", "label": "PASS" },
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
         "detail": "在 1280×800 下滚到主操作，按钮完整可见且未被遮挡；布局在窄窗口仍保持两栏语义。",
-        "evidence": ["after-05-wizard-policy-1280.png"]
+        "evidence": [
+          "after-05-wizard-policy-1280.png"
+        ]
       },
       {
         "id": "08",
         "name": "准备快照与确认页",
-        "status": { "kind": "pass", "label": "PASS" },
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
         "detail": "服务端返回 preparation_id、60 秒有效期与 snapshot_digest；确认页展示 5 个用例、资产 commit、模型、资源池、执行策略、镜像 digest、费用区间与倒计时。",
-        "evidence": ["after-06-wizard-confirm.png"]
+        "evidence": [
+          "after-06-wizard-confirm.png"
+        ]
       },
       {
         "id": "09",
         "name": "创建评测与冻结输入",
-        "status": { "kind": "pass", "label": "PASS" },
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
         "detail": "点击创建后进入详情；后端记录 5 个用例，准备快照状态变为 consumed 并指向该 run。",
-        "evidence": ["after-07-created-detail.png"]
+        "evidence": [
+          "after-07-created-detail.png"
+        ]
       },
       {
         "id": "10",
         "name": "同一幂等键重放",
-        "status": { "kind": "pass", "label": "PASS" },
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
         "detail": "用创建请求携带的 Idempotency-Key 再次提交同一 preparation_id 返回 200 与同一 run id，没有重复创建。",
-        "evidence": ["after-07-created-detail.png"]
+        "evidence": [
+          "after-07-created-detail.png"
+        ]
       },
       {
         "id": "11",
         "name": "准备快照过期",
-        "status": { "kind": "pass", "label": "PASS" },
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
         "detail": "倒计时归零后页面显示“准备快照已过期”，创建按钮禁用；不会静默沿用旧快照。",
-        "evidence": ["after-08-wizard-confirm-before-expiry.png", "after-09-wizard-expired.png"]
+        "evidence": [
+          "after-08-wizard-confirm-before-expiry.png",
+          "after-09-wizard-expired.png"
+        ]
       },
       {
         "id": "12",
         "name": "确认后配置变化",
-        "status": { "kind": "pass", "label": "PASS" },
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
         "detail": "准备后撤销模型凭据再创建，服务端返回 409 configuration_changed，页面回到执行策略并给出持久提示。",
-        "evidence": ["after-10-wizard-configuration-changed.png"]
+        "evidence": [
+          "after-10-wizard-configuration-changed.png"
+        ]
       },
       {
         "id": "13",
         "name": "容量非法",
-        "status": { "kind": "pass", "label": "PASS" },
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
         "detail": "准备后把池上限降到 2，再创建返回 422 capacity_invalid，页面回到执行策略并在并发字段下显示阻塞原因。",
-        "evidence": ["after-11-wizard-capacity-invalid.png"]
+        "evidence": [
+          "after-11-wizard-capacity-invalid.png"
+        ]
       },
       {
         "id": "14",
         "name": "无数据集空态",
-        "status": { "kind": "pass", "label": "PASS" },
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
         "detail": "数据集列表为空时展示“还没有数据集”并给出导入入口；该用例通过拦截 /api/v1/datasets 响应构造，报告中已标注。",
-        "evidence": ["after-12-wizard-empty-datasets.png"]
+        "evidence": [
+          "after-12-wizard-empty-datasets.png"
+        ]
       }
     ]
   },
@@ -211,7 +328,12 @@
     }
   ],
   "coverage": {
-    "columns": ["区域", "覆盖", "结论", "建议"],
+    "columns": [
+      "区域",
+      "覆盖",
+      "结论",
+      "建议"
+    ],
     "rows": [
       {
         "area": "准备快照契约",
@@ -248,6 +370,12 @@
         "coverage": "browser（拦截响应）",
         "conclusion": "无数据集时提示原因与导入入口；该用例用拦截 /api/v1/datasets 响应生成，不代表真实空库。",
         "recommendation": "无。"
+      },
+      {
+        "area": "原型对齐",
+        "coverage": "browser",
+        "conclusion": "数据集聚版本/运行时选择卡片、Git 资产源分组、资产表路径/来源与分页、模型与资源池单选行、确认页费用提示均按 prototype 复核调整；原型中的“重复次数/临时凭据/通知”未实现，属于产品未支持能力，未伪造。",
+        "recommendation": "后续新增临时模型与通知能力时再补对应原型区块。"
       }
     ]
   },
@@ -256,6 +384,7 @@
     "label": "主路径与错误路径通过，未发现产品缺陷",
     "summary": "M5-04 的发起向导在真实登录、真实 API 与真实浏览器下走通数据集子集、资产快照、执行策略、准备快照、确认、幂等创建与错误回退；没有需要修复的缺陷。",
     "points": [
+      "按人工反馈对照 prototype 后，卡片、单选行、分组标题与资产表列/分页已对齐；原型中的重复次数、临时凭据与通知属于当前未支持能力，未伪造入口。",
       "Before 基线是 origin/main @ 052dfb2 的独立 worktree 页面，同一后端与同一份数据，不是修改后页面的回放。",
       "资产解析在浏览器冒烟开始前通过真实 GitHub API + 本地 S3 stub 完成；向导复用冻结快照，避免重复扫描，也避免把 M5-01 的解析交互算作本 PR 覆盖。",
       "准备快照 TTL 在冒烟环境设为 60 秒以验证过期提示；生产默认 900 秒由配置控制。",

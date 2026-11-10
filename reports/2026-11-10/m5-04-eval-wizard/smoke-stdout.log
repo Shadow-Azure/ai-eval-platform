@@ -1,14 +1,14 @@
 SMOKE_OK
-run=1769fd2a-1a99-4618-9741-302eb4abacf5
-preparation=3c347752-8eb4-4343-90f4-13a08420cc9a
+run=f599cc1e-617f-4e7b-b6e0-dc1007734e87
+preparation=9f65108b-97e1-4f04-9941-58bbc6f8b460
 CHECK baseline: main branch wizard captured before the change
 CHECK seed: 15 assets frozen at 22f0b463
 CHECK draft-persistence: count=5 survived a page reload
 CHECK frozen-snapshot: wizard shows frozen snapshot at 22f0b463
 CHECK back-navigation: returning to assets and forward keeps the resolved snapshot
 CHECK target-window: primary action visible within 1280×800
-CHECK prepare: ready, 5 cases, digest sha256:5491399d…
-CHECK create: run 1769fd2a-1a99-4618-9741-302eb4abacf5 created and detail page opened
+CHECK prepare: ready, 5 cases, digest sha256:f24ddd76…
+CHECK create: run f599cc1e-617f-4e7b-b6e0-dc1007734e87 created and detail page opened
 CHECK frozen-inputs: run has 5 cases; preparation consumed by that run
 CHECK idempotency: same key + preparation returned the same run with 200
 CHECK expired: expired preparation disables create and explains why

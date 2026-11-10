@@ -3,7 +3,6 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   Alert,
   Button,
-  Descriptions,
   Empty,
   Input,
   InputNumber,
@@ -263,6 +262,8 @@ export function EvalWizardPage() {
   const [name, setName] = useState("");
   const [caseOffset, setCaseOffset] = useState(0);
   const [caseLimit, setCaseLimit] = useState(CASE_PAGE_SIZE);
+  const [assetPage, setAssetPage] = useState(1);
+  const [assetPageSize, setAssetPageSize] = useState(8);
   const [assetFilter, setAssetFilter] = useState<"all" | AssetType>("all");
   const [nowTick, setNowTick] = useState(() => Date.now());
   const idempotencyRef = useRef<{ preparationId: string; key: string } | null>(null);
@@ -382,7 +383,7 @@ export function EvalWizardPage() {
 
   useEffect(() => {
     const activePools = (pools.data ?? []).filter((pool) => pool.status === "active");
-    if (!draft.poolId && activePools.length === 1) {
+    if (!draft.poolId && activePools.length) {
       update({ poolId: activePools[0].id }, { invalidate: false });
     }
   }, [draft.poolId, pools.data, update]);
@@ -558,6 +559,7 @@ export function EvalWizardPage() {
       assetSnapshotCount: 0,
     });
     setAssetFilter("all");
+    setAssetPage(1);
   }
 
   function toggleAsset(path: string, checked: boolean) {
@@ -583,37 +585,29 @@ export function EvalWizardPage() {
   const summary = preparation?.summary ?? null;
   const costEstimate = preparation?.cost_estimate ?? null;
 
-  const poolOptions = (pools.data ?? []).map((pool) => ({
-    value: pool.id,
-    disabled: pool.status !== "active",
-    label: `${pool.name} · ${pool.runners.online} 在线 / ${pool.max_capacity > 0 ? pool.max_capacity : "—"} 上限${
-      pool.status !== "active" ? " · 不可用" : ""
-    }`,
-  }));
-
   const assetTableColumns: TableColumnsType<ScannedAsset> = [
     {
       title: "类型",
       dataIndex: "asset_type",
-      width: 110,
+      width: 100,
       render: (value: AssetType) => assetTypeTag(value),
     },
     {
       title: "资产",
       dataIndex: "name",
-      render: (value: string, record) => (
-        <div>
-          <div style={{ fontWeight: 600 }}>{value}</div>
-          <div className="mono small muted">{record.path}</div>
-        </div>
-      ),
+      render: (value: string) => <span style={{ fontWeight: 600 }}>{value}</span>,
     },
     {
-      title: "前置依赖",
-      dataIndex: ["metadata", "prerequisites"],
-      width: 170,
-      render: (value: string[] | undefined) =>
-        value && value.length ? <Tag color="warning">{value.join(" · ")}</Tag> : <span className="muted">—</span>,
+      title: "路径",
+      dataIndex: "path",
+      render: (value: string) => <span className="mono small muted">{value}</span>,
+    },
+    {
+      title: "来源",
+      dataIndex: "path",
+      width: 100,
+      render: (value: string) =>
+        value.startsWith("generated:") ? <Tag color="orange">生成</Tag> : <Tag>源文件</Tag>,
     },
   ];
 
@@ -794,7 +788,7 @@ export function EvalWizardPage() {
             </span>
           </div>
           <div className="summary-item">
-            <span className="summary-label">Runtime</span>
+            <span className="summary-label">Agent</span>
             <span className="summary-value">
               {runtime ? `${runtime.key} ${runtime.version}` : draft.runtimeKey}
             </span>
@@ -843,89 +837,114 @@ export function EvalWizardPage() {
   }
 
   function renderDatasetStep() {
+    const versionOptions = versions.data ?? [];
     return (
       <div>
         <div className="eyebrow">Step 1 · Dataset</div>
-        <h2 className="wizard-title">选择数据集与用例</h2>
+        <h2 className="wizard-title">选择数据集版本</h2>
         <p className="small muted wizard-subtitle">
-          版本固定用例、环境、评分命令与指标口径，确保结果可复现。
+          版本固定用例、环境、评分命令与指标口径，确保结果可复现；本次可再选择用例子集。
         </p>
+        <div className="field">
+          <label className="required">数据集</label>
+          <Select
+            value={draft.datasetId ?? undefined}
+            onChange={selectDataset}
+            options={(datasets.data ?? []).map((item) => ({ value: item.id, label: item.name }))}
+            placeholder="选择数据集"
+            loading={datasets.isLoading}
+            showSearch
+            optionFilterProp="label"
+          />
+        </div>
+        {versionOptions.length ? (
+          <div className="choice-grid">
+            {versionOptions.map((item) => {
+              const selected = draft.versionId === item.id;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={`choice-card ${selected ? "selected" : ""}`}
+                  onClick={() => selectVersion(item.id, item)}
+                >
+                  <div className="choice-icon">
+                    <Icon name="database" size={16} />
+                  </div>
+                  <div className="choice-title">
+                    {datasets.data?.find((dataset) => dataset.id === item.dataset_id)?.name ?? "数据集"}
+                  </div>
+                  <div className="choice-meta">
+                    {item.version} · {item.case_count} 个用例
+                  </div>
+                  <div className="choice-tags">
+                    <span className={`tag ${item.status === "active" ? "tag-success" : "tag-neutral"}`}>
+                      {item.status}
+                    </span>
+                    <span className="tag tag-neutral mono">{item.source_revision.slice(0, 8)}</span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          <Empty
+            description={draft.datasetId ? "该数据集还没有可用版本" : "先选择数据集"}
+            image={Empty.PRESENTED_IMAGE_SIMPLE}
+          >
+            <Button onClick={() => navigate("/datasets")}>去导入数据集</Button>
+          </Empty>
+        )}
+        {versionDetail.data ? (
+          <div className="small muted wizard-version-meta">
+            来源 {versionDetail.data.source_uri || "—"} · 用例 {versionDetail.data.case_count} · 指标口径{" "}
+            {selectedMetrics.length ? selectedMetrics.slice(0, 3).join(" · ") : "—"}
+          </div>
+        ) : null}
         <div className="field-row">
           <div className="field">
-            <label className="required">数据集</label>
+            <label>用例范围</label>
             <Select
-              value={draft.datasetId ?? undefined}
-              onChange={selectDataset}
-              options={(datasets.data ?? []).map((item) => ({ value: item.id, label: item.name }))}
-              placeholder="选择数据集"
-              loading={datasets.isLoading}
-              showSearch
-              optionFilterProp="label"
+              id="wizard-selection-mode"
+              value={draft.selectionMode}
+              onChange={(value) => {
+                update({ selectionMode: value as CaseSelectionMode }, { invalidate: false });
+                setCaseOffset(0);
+              }}
+              options={[
+                { value: "all", label: `全部 ${totalCases} 个用例` },
+                { value: "count", label: "按数量选择" },
+                { value: "cases", label: "指定用例" },
+              ]}
             />
           </div>
-          <div className="field">
-            <label className="required">版本</label>
-            <Select
-              value={draft.versionId ?? undefined}
-              onChange={(value) => selectVersion(value, versions.data?.find((v) => v.id === value))}
-              options={(versions.data ?? []).map((item) => ({
-                value: item.id,
-                label: `${item.version} · ${item.case_count} cases · ${item.source_revision.slice(0, 8)}`,
-              }))}
-              placeholder="选择版本"
-              loading={versions.isLoading}
-              disabled={!draft.datasetId}
-            />
-          </div>
+          {draft.selectionMode === "count" ? (
+            <div className="field">
+              <label className="required">用例数量</label>
+              <InputNumber
+                id="wizard-case-count"
+                min={1}
+                max={Math.max(1, totalCases)}
+                value={draft.selectionCount}
+                onChange={(value) =>
+                  update(
+                    { selectionCount: Math.max(1, Math.min(value ?? 1, Math.max(1, totalCases))) },
+                    { invalidate: false },
+                  )
+                }
+                style={{ width: "100%" }}
+              />
+              <span className="hint">从版本第一个用例起取前 N 个（按 ordinal 排序）。</span>
+            </div>
+          ) : draft.selectionMode === "cases" ? (
+            <div className="field">
+              <label>已选用例</label>
+              <div className="asset-commit-box">
+                <span className="mono small">{draft.selectionKeys.length} 个</span>
+              </div>
+            </div>
+          ) : null}
         </div>
-        {versionDetail.data ? (
-          <Descriptions size="small" column={4} className="wizard-descriptions">
-            <Descriptions.Item label="来源">{versionDetail.data.source_uri || "—"}</Descriptions.Item>
-            <Descriptions.Item label="用例">{versionDetail.data.case_count}</Descriptions.Item>
-            <Descriptions.Item label="状态">
-              <Tag>{versionDetail.data.status}</Tag>
-            </Descriptions.Item>
-            <Descriptions.Item label="指标口径">
-              {selectedMetrics.length ? selectedMetrics.slice(0, 3).join(" · ") : "—"}
-            </Descriptions.Item>
-          </Descriptions>
-        ) : null}
-        <div className="field">
-          <label>用例范围</label>
-          <Segmented
-            value={draft.selectionMode}
-            onChange={(value) =>
-              update({ selectionMode: value as CaseSelectionMode }, { invalidate: false })
-            }
-            options={[
-              { value: "all", label: `全部 ${totalCases || ""}`.trim() },
-              { value: "count", label: "按数量" },
-              { value: "cases", label: "指定用例" },
-            ]}
-          />
-          <span className="hint">
-            子集在执行时按 ordinal 冻结进准备快照；指定用例可跨页勾选。
-          </span>
-        </div>
-        {draft.selectionMode === "count" ? (
-          <div className="field wizard-narrow">
-            <label className="required">用例数量</label>
-            <InputNumber
-              id="wizard-case-count"
-              min={1}
-              max={Math.max(1, totalCases)}
-              value={draft.selectionCount}
-              onChange={(value) =>
-                update(
-                  { selectionCount: Math.max(1, Math.min(value ?? 1, Math.max(1, totalCases))) },
-                  { invalidate: false },
-                )
-              }
-              style={{ width: 160 }}
-            />
-            <span className="hint">从版本第一个用例起取前 N 个（按 ordinal 排序）。</span>
-          </div>
-        ) : null}
         {draft.selectionMode === "cases" ? (
           <div className="wizard-case-picker">
             <div className="row-between wizard-case-toolbar">
@@ -945,11 +964,7 @@ export function EvalWizardPage() {
               rowSelection={{
                 selectedRowKeys: draft.selectionKeys,
                 preserveSelectedRowKeys: true,
-                onChange: (keys) =>
-                  update(
-                    { selectionKeys: keys.map(String) },
-                    { invalidate: false },
-                  ),
+                onChange: (keys) => update({ selectionKeys: keys.map(String) }, { invalidate: false }),
               }}
               pagination={{
                 current: Math.floor(caseOffset / caseLimit) + 1,
@@ -965,6 +980,12 @@ export function EvalWizardPage() {
             />
           </div>
         ) : null}
+        <div className="banner">
+          <Icon name="list" size={15} />
+          <div>
+            <strong>结果将包含</strong> · 解决率、Token / 用例、成本 / 用例、难度分布与逐用例评分明细。
+          </div>
+        </div>
         {!datasets.isLoading && !(datasets.data ?? []).length ? (
           <Alert
             type="warning"
@@ -983,6 +1004,13 @@ export function EvalWizardPage() {
   }
 
   function renderAssetsStep() {
+    const pageCount = Math.max(1, Math.ceil(filteredAssets.length / assetPageSize));
+    const currentPage = Math.min(assetPage, pageCount);
+    const refreshSnapshot = {
+      assetSnapshotId: null,
+      assetSnapshotCommit: null,
+      assetSnapshotCount: 0,
+    };
     return (
       <div>
         <div className="eyebrow">Step 2 · Runtime</div>
@@ -990,27 +1018,38 @@ export function EvalWizardPage() {
         <p className="small muted wizard-subtitle">
           从 Git 仓库加载 Skill、Command 与 Subagent；启动时固定到解析出的 commit。
         </p>
-        <div className="field wizard-narrow">
-          <label className="required">Runtime</label>
-          <Select
-            value={draft.runtimeKey}
-            onChange={(value) =>
-              update(
-                {
-                  runtimeKey: value,
-                  assetSnapshotId: null,
-                  assetSnapshotCommit: null,
-                  assetSnapshotCount: 0,
-                },
-                { invalidate: true },
-              )
-            }
-            options={(runtimes.data ?? []).map((item) => ({
-              value: item.key,
-              label: `${item.key} ${item.version}`,
-            }))}
-            placeholder="选择 Runtime"
-          />
+        <div className="choice-grid">
+          {(runtimes.data ?? []).map((item) => {
+            const selected = draft.runtimeKey === item.key;
+            return (
+              <button
+                key={item.key}
+                type="button"
+                className={`choice-card ${selected ? "selected" : ""}`}
+                onClick={() => update({ runtimeKey: item.key, ...refreshSnapshot })}
+              >
+                <div className="choice-icon">
+                  <Icon name="terminal" size={16} />
+                </div>
+                <div className="choice-title">{item.key}</div>
+                <div className="choice-meta">
+                  {item.version} · {item.adapter_version}
+                </div>
+                <div className="choice-tags">
+                  <span className="tag tag-neutral">会话适配器已就绪</span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+        <div className="wizard-section-head">
+          <div>
+            <h3>Git 资产源</h3>
+            <p className="small muted">仓库、默认 Ref 与扫描路径来自资产源配置</p>
+          </div>
+          <Button type="link" onClick={() => navigate("/assets")}>
+            管理资产源 →
+          </Button>
         </div>
         {!sources.isLoading && !(sources.data ?? []).length ? (
           <Alert
@@ -1026,16 +1065,6 @@ export function EvalWizardPage() {
           />
         ) : null}
         <div className="asset-runtime-panel">
-          <div className="asset-runtime-meta">
-            <span className="mono small">
-              {selectedSource
-                ? selectedSource.repo_url.replace("https://github.com/", "")
-                : "选择 Git 资产源"}
-            </span>
-            <span className="tag tag-primary">{counts.skill} Skill</span>
-            <span className="tag tag-violet">{counts.command} Command</span>
-            <span className="tag tag-success">{counts.subagent} Subagent</span>
-          </div>
           <div className="field">
             <label className="required">资产源</label>
             <Select
@@ -1051,6 +1080,19 @@ export function EvalWizardPage() {
               optionFilterProp="label"
             />
           </div>
+          <div className="asset-runtime-meta">
+            <span className="tag tag-neutral mono">
+              {selectedSource
+                ? selectedSource.repo_url.replace("https://github.com/", "")
+                : "未选择仓库"}
+            </span>
+            <span className="tag tag-neutral">
+              路径 {(selectedSource?.scan_paths ?? []).join(" · ") || "—"}
+            </span>
+            <span className="tag tag-primary">{counts.skill} Skill</span>
+            <span className="tag tag-violet">{counts.command} Command</span>
+            <span className="tag tag-success">{counts.subagent} Subagent</span>
+          </div>
           <div className="field-row asset-ref-row">
             <div className="field">
               <label className="required">评测 Ref</label>
@@ -1058,21 +1100,16 @@ export function EvalWizardPage() {
                 className="mono"
                 value={draft.assetRef}
                 onChange={(event) =>
-                  update(
-                    {
-                      assetRef: event.target.value,
-                      assetSnapshotId: null,
-                      assetSnapshotCommit: null,
-                      assetSnapshotCount: 0,
-                    },
-                    { invalidate: true },
-                  )
+                  update({
+                    assetRef: event.target.value,
+                    ...refreshSnapshot,
+                  })
                 }
                 placeholder="分支、tag 或 commit"
               />
               <span className="hint">
                 {selectedSource
-                  ? `默认 ${selectedSource.default_ref}；修改后必须重新解析`
+                  ? `默认填入 ${selectedSource.default_ref}，发起本次评测前可以修改。`
                   : "选择资产源后填入默认 Ref"}
               </span>
             </div>
@@ -1101,7 +1138,7 @@ export function EvalWizardPage() {
               {draft.assetSnapshotId ? (
                 <>
                   已从 <span className="mono">{draft.assetRef || selectedSource?.default_ref}</span> 冻结{" "}
-                  {draft.assetSnapshotCount} 项资产；评测将固定到 commit{" "}
+                  {draft.assetSnapshotCount} 项资产；启动时会固定到 commit{" "}
                   <span className="mono">{draft.assetSnapshotCommit}</span>。
                 </>
               ) : (
@@ -1116,12 +1153,20 @@ export function EvalWizardPage() {
           <div>
             <strong>选择资产</strong>
             <div className="small muted">
-              已选择 {draft.selectedPaths.length} / {assetTree.data?.assets.length ?? 0} 项
+              已选择 {draft.selectedPaths.length} / {assetTree.data?.assets.length ?? 0} 项 · 全选覆盖当前筛选的所有页
             </div>
           </div>
+          <Button type="link" onClick={() => navigate("/assets")}>
+            查看资产详情
+          </Button>
+        </div>
+        <div className="wizard-asset-filters">
           <Segmented
             value={assetFilter}
-            onChange={(value) => setAssetFilter(value as "all" | AssetType)}
+            onChange={(value) => {
+              setAssetFilter(value as "all" | AssetType);
+              setAssetPage(1);
+            }}
             options={[
               { value: "all", label: `全部 ${assetTree.data?.assets.length ?? 0}` },
               { value: "skill", label: `Skill ${counts.skill}` },
@@ -1129,6 +1174,31 @@ export function EvalWizardPage() {
               { value: "subagent", label: `Subagent ${counts.subagent}` },
             ]}
           />
+          <div className="wizard-asset-tools">
+            <Button
+              size="small"
+              onClick={() =>
+                update(
+                  {
+                    selectedPaths: filteredAssets.map((asset) => asset.path),
+                    assetSelectionTouched: true,
+                    ...refreshSnapshot,
+                  },
+                  { invalidate: true },
+                )
+              }
+            >
+              <Icon name="check" size={13} /> 全选全部
+            </Button>
+            <Button
+              size="small"
+              onClick={() =>
+                update({ selectedPaths: [], assetSelectionTouched: true, ...refreshSnapshot }, { invalidate: true })
+              }
+            >
+              全部取消
+            </Button>
+          </div>
         </div>
         {assetTree.isLoading ? (
           <div className="card wizard-asset-placeholder">正在读取资产树…</div>
@@ -1138,7 +1208,6 @@ export function EvalWizardPage() {
             size="small"
             columns={assetTableColumns}
             dataSource={filteredAssets}
-            pagination={false}
             rowSelection={{
               selectedRowKeys: draft.selectedPaths,
               preserveSelectedRowKeys: true,
@@ -1147,12 +1216,22 @@ export function EvalWizardPage() {
                   {
                     selectedPaths: keys.map(String),
                     assetSelectionTouched: true,
-                    assetSnapshotId: null,
-                    assetSnapshotCommit: null,
-                    assetSnapshotCount: 0,
+                    ...refreshSnapshot,
                   },
                   { invalidate: true },
                 ),
+            }}
+            pagination={{
+              current: currentPage,
+              pageSize: assetPageSize,
+              total: filteredAssets.length,
+              showSizeChanger: true,
+              pageSizeOptions: [8, 16, 32],
+              showTotal: (total, range) => `显示 ${range[0]}–${range[1]} / ${total}`,
+              onChange: (page, pageSize) => {
+                setAssetPageSize(pageSize);
+                setAssetPage(page);
+              },
             }}
             onRow={(record) => ({
               onClick: (event) => {
@@ -1193,10 +1272,12 @@ export function EvalWizardPage() {
   function renderPolicyStep() {
     const online = selectedPool?.runners.online ?? 0;
     const capacityWarning = selectedPool ? online < draft.concurrency : false;
+    const modelOptions = models.data ?? [];
+    const poolOptions = pools.data ?? [];
     return (
       <div>
         <div className="eyebrow">Step 3 · Model &amp; capacity</div>
-        <h2 className="wizard-title">选择模型凭据、资源池与执行策略</h2>
+        <h2 className="wizard-title">选择模型凭据与资源池</h2>
         <p className="small muted wizard-subtitle">
           可引用已保存凭据；临时 Key 不在本向导中输入，也不会写入浏览器存储。
         </p>
@@ -1211,42 +1292,110 @@ export function EvalWizardPage() {
             style={{ marginBottom: 14 }}
           />
         ) : null}
-        <div className="field">
-          <label className="required">模型配置</label>
-          <Select
-            value={draft.modelConfigId ?? undefined}
-            onChange={(value) => update({ modelConfigId: value })}
-            options={(models.data ?? []).map((item) => ({
-              value: item.id,
-              label: `${item.display_name} · ${item.model_name} · ${item.api_style}${
-                item.credential?.revoked_at ? " · 凭据已撤销" : ""
-              }`,
-            }))}
-            placeholder="选择模型配置"
-            loading={models.isLoading}
+        <h3 className="wizard-section-title">模型凭据</h3>
+        {modelOptions.length ? (
+          <div className="radio-list">
+            {modelOptions.map((item) => {
+              const selected = draft.modelConfigId === item.id;
+              const revoked = Boolean(item.credential?.revoked_at);
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={`radio-row ${selected ? "selected" : ""}`}
+                  onClick={() => update({ modelConfigId: item.id })}
+                >
+                  <span className={`radio ${selected ? "selected" : ""}`} />
+                  <span className="radio-copy">
+                    <strong>
+                      {item.display_name} · {item.model_name}
+                    </strong>
+                    <span className="small muted">
+                      {item.provider} · {item.api_style} ·{" "}
+                      {revoked ? "凭据已撤销" : "凭据已加密，Runner 只接收短期凭据"}
+                    </span>
+                  </span>
+                  <span className={`tag ${revoked ? "tag-danger" : "tag-success"}`}>
+                    {revoked ? "已撤销" : "可用"}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          <Alert
+            type="warning"
+            showIcon
+            message="还没有模型配置"
+            description="先到模型凭据页添加模型配置与加密凭据，再回到这里发起评测。"
+            action={
+              <Button size="small" onClick={() => navigate("/models")}>
+                去配置
+              </Button>
+            }
           />
-          {selectedModel?.credential?.revoked_at ? (
-            <span className="field-error">
-              所选模型配置的凭据已撤销，一致性检查会阻塞；请先在「模型凭据」页替换 Key。
-            </span>
-          ) : null}
-        </div>
-        <div className="field">
-          <label className="required">资源池</label>
-          <Select
-            value={draft.poolId ?? undefined}
-            onChange={(value) => update({ poolId: value })}
-            options={poolOptions}
-            placeholder="选择在线资源池"
-            loading={pools.isLoading}
-          />
-          <span className="hint">
-            容量显示“在线 / 上限”，实际并发取在线 Runner、池上限与请求并发的最小值。
+        )}
+        {selectedModel?.credential?.revoked_at ? (
+          <span className="field-error">
+            所选模型配置的凭据已撤销，一致性检查会阻塞；请先在「模型凭据」页替换 Key。
           </span>
-          {blockerFor("resource_pool_id") ? (
-            <span className="field-error">{blockerFor("resource_pool_id")?.message}</span>
-          ) : null}
+        ) : null}
+        <h3 className="wizard-section-title">执行资源</h3>
+        <p className="small muted wizard-section-hint">按标签路由到匹配 Runner</p>
+        {poolOptions.length ? (
+          <div className="radio-list">
+            {poolOptions.map((pool) => {
+              const selected = draft.poolId === pool.id;
+              const poolOnline = pool.runners.online;
+              const unavailable = pool.status !== "active";
+              return (
+                <button
+                  key={pool.id}
+                  type="button"
+                  disabled={unavailable}
+                  className={`radio-row ${selected ? "selected" : ""}`}
+                  onClick={() => update({ poolId: pool.id })}
+                >
+                  <span className={`radio ${selected ? "selected" : ""}`} />
+                  <span className="radio-copy">
+                    <strong>{pool.name}</strong>
+                    <span className="small muted">
+                      {poolOnline} 在线 / {pool.max_capacity > 0 ? pool.max_capacity : "—"} 上限 ·{" "}
+                      {pool.provider_key}
+                      {unavailable ? " · 不可用" : ""}
+                    </span>
+                  </span>
+                  <span
+                    className={`tag ${
+                      unavailable ? "tag-neutral" : poolOnline > 0 ? "tag-primary" : "tag-warning"
+                    }`}
+                  >
+                    {unavailable ? "不可用" : poolOnline > 0 ? `${poolOnline} 路可用` : "无空闲 Runner"}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          <Alert
+            type="warning"
+            showIcon
+            message="还没有资源池"
+            description="先到资源池页创建池并等待 Runner 上线。"
+            action={
+              <Button size="small" onClick={() => navigate("/resources")}>
+                去配置
+              </Button>
+            }
+          />
+        )}
+        <div className="banner">
+          <Icon name="cpu" size={15} />
+          <div>按当前在线容量与执行策略估算；确认页会给出费用与耗时区间。队列等待时间不计入用例超时。</div>
         </div>
+        {blockerFor("resource_pool_id") ? (
+          <span className="field-error">{blockerFor("resource_pool_id")?.message}</span>
+        ) : null}
         <h3 className="wizard-section-title">高级执行策略</h3>
         <div className="policy-grid">
           <div className="field">
@@ -1300,9 +1449,7 @@ export function EvalWizardPage() {
               min={0}
               step={1}
               value={draft.budgetUsd}
-              onChange={(value) =>
-                update({ budgetUsd: value === null ? null : Math.max(0, value) })
-              }
+              onChange={(value) => update({ budgetUsd: value === null ? null : Math.max(0, value) })}
               placeholder="不设置则不暂停"
               style={{ width: "100%" }}
             />
@@ -1382,15 +1529,17 @@ export function EvalWizardPage() {
         <p className="small muted wizard-subtitle">
           启动后平台会创建评测记录并拆分为多个 GitHub Actions 分片；创建按钮是幂等操作。
         </p>
-        <div className="field wizard-narrow">
-          <label>评测名称</label>
-          <Input
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            placeholder={`留空自动命名：${summary.dataset.name} · ${summary.dataset.version}`}
-          />
-        </div>
         <div className="review-box">
+          <div className="summary-item">
+            <span className="summary-label">评测名称</span>
+            <span className="summary-value wizard-name-input">
+              <Input
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                placeholder={`留空自动命名：${summary.dataset.name} · ${summary.dataset.version}`}
+              />
+            </span>
+          </div>
           <div className="summary-item">
             <span className="summary-label">数据集</span>
             <span className="summary-value">
@@ -1404,7 +1553,7 @@ export function EvalWizardPage() {
             </span>
           </div>
           <div className="summary-item">
-            <span className="summary-label">Runtime</span>
+            <span className="summary-label">Agent</span>
             <span className="summary-value">
               {summary.runtime.key} {summary.runtime.version ?? ""}
             </span>
@@ -1479,39 +1628,21 @@ export function EvalWizardPage() {
             ))}
           </div>
         ) : null}
-        {costEstimate ? (
-          <div className="review-box wizard-estimate">
-            <div className="row-between">
-              <span className="small muted">预计模型费</span>
-              <strong>{formatUsd(costEstimate.model_usd)}</strong>
-            </div>
-            {costEstimate.runner_usd ? (
-              <div className="row-between" style={{ marginTop: 7 }}>
-                <span className="small muted">预计机时费</span>
-                <strong>{formatUsd(costEstimate.runner_usd)}</strong>
-              </div>
-            ) : null}
-            <div className="row-between" style={{ marginTop: 7 }}>
-              <span className="small muted">预计合计</span>
-              <strong>{formatUsd(costEstimate.total_usd)}</strong>
-            </div>
-            <div className="row-between" style={{ marginTop: 7 }}>
-              <span className="small muted">预计总耗时</span>
-              <strong>{formatDuration(costEstimate.estimated_duration_seconds)}</strong>
-            </div>
-            <div className="small muted" style={{ marginTop: 9 }}>
-              {costEstimate.basis}
-            </div>
+        <div className="banner warning" style={{ marginTop: 14 }}>
+          <Icon name="alert" size={15} />
+          <div>
+            <strong>这会占用资源池并产生模型费用。</strong>{" "}
+            {costEstimate ? (
+              <>
+                预计 {formatUsd(costEstimate.total_usd)}（{costEstimate.basis}）；预计总耗时{" "}
+                {formatDuration(costEstimate.estimated_duration_seconds)}。
+              </>
+            ) : (
+              <>该模型配置未填写定价，费用以模型网关实际记账为准。</>
+            )}{" "}
+            启动后仍可取消排队和执行中的用例。
           </div>
-        ) : (
-          <Alert
-            type="info"
-            showIcon
-            style={{ marginTop: 14 }}
-            message="该模型配置未填写定价，无法给出费用区间"
-            description="费用以模型网关实际记账为准；可先在「模型凭据」页补充 pricing。"
-          />
-        )}
+        </div>
       </div>
     );
   }
@@ -1522,11 +1653,7 @@ export function EvalWizardPage() {
         eyebrow="New evaluation"
         title="发起评测"
         description="组合数据集、Agent 资产、模型、资源池与执行策略；准备快照会冻结全部输入，创建是幂等操作。"
-        actions={
-          <Button onClick={() => navigate("/evals")}>
-            <Icon name="list" size={14} /> 评测任务
-          </Button>
-        }
+        actions={<Button onClick={() => navigate("/evals")}>取消</Button>}
       />
       {renderStepBar()}
       <div className="wizard-layout">
