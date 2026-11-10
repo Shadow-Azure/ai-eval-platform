@@ -577,3 +577,17 @@ def test_capacity_rejection_releases_runner_binding(
     )
     assert runner.busy_case_attempt_id is None
     assert runner.status == "online"
+
+
+def test_pool_max_capacity_column_bounds_effective_concurrency(
+    seeded: Session, configure_settings
+) -> None:
+    """M4-03 column is the single source of truth for the scheduling gate."""
+
+    configure_settings(RUNNER_HEARTBEAT_TIMEOUT_SECONDS="90")
+    pool = _make_pool(seeded, runners=8, key="column-cap")
+    pool.max_capacity = 2
+    seeded.commit()
+    run = _create_run(seeded, pool=pool, requested=8, key="column-cap")
+
+    assert capacity.effective_concurrency(seeded, run, settings=get_settings()) == 2

@@ -50,19 +50,19 @@ def combine_effective_concurrency(
 
 
 def pool_max_capacity(pool: ResourcePool | None) -> int | None:
-    """Read the pool's max capacity.
+    """Read the pool's max capacity (M4-03 column).
 
-    M4-03 adds the real column; until then the value lives in
-    ``labels_json["max_capacity"]`` and a missing/invalid value means "no
-    platform-side pool bound", so the runner count is the binding limit.
+    Migration 0012 backfills legacy ``labels_json["max_capacity"]`` values into
+    this column, so scheduling has a single source of truth; a missing/invalid
+    value means "no platform-side pool bound" and the runner count binds.
     """
 
-    if pool is None or not isinstance(pool.labels_json, dict):
+    if pool is None:
         return None
-    raw = pool.labels_json.get("max_capacity")
-    if isinstance(raw, bool) or not isinstance(raw, int) or raw <= 0:
+    value = getattr(pool, "max_capacity", None)
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         return None
-    return raw
+    return value
 
 
 def pool_runner_capacity(

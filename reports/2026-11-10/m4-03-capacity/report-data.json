@@ -1,0 +1,268 @@
+{
+  "title": "M4-03 资源连接、池配置与容量控制 · 集成冒烟",
+  "eyebrow": "Smoke Report · issue #80",
+  "summary": "真实 FastAPI 路由 + SQLite + FakeProvisioner：资源连接创建与验证全程不泄露密文；不兼容的 connection/mode 在创建池前返回 422 connection_provider_mismatch；3 个排队用例触发扩容 3 个实例；价格 1.00 高于阈值 0.50 时不再创建实例，只记录 resource_price_above_threshold 与检查/下次检查时间。",
+  "meta": "2026-11-10 · macOS 26 · Python 3.14.4 · TestClient + 一次性 SQLite · 无云调用",
+  "metrics": [
+    {
+      "value": "0",
+      "label": "密钥泄露"
+    },
+    {
+      "value": "422",
+      "label": "不兼容拒绝"
+    },
+    {
+      "value": "3",
+      "label": "扩容实例"
+    },
+    {
+      "value": "1.00/0.50",
+      "label": "价格/阈值"
+    },
+    {
+      "value": "391",
+      "label": "backend tests"
+    }
+  ],
+  "facts": [
+    {
+      "label": "Issue",
+      "value": "#80 建立资源连接、池配置与容量控制"
+    },
+    {
+      "label": "分支",
+      "value": "agent/m4-03-resource-connection-capacity-control"
+    },
+    {
+      "label": "控制面",
+      "value": "FastAPI TestClient + alembic 0013 + 一次性 SQLite"
+    },
+    {
+      "label": "供给器",
+      "value": "FakeProvisioner（fake）注册于进程内，无网络"
+    },
+    {
+      "label": "权限",
+      "value": "管理员登录后走真实 /api/v1 路由"
+    },
+    {
+      "label": "其他自动化",
+      "value": "391 backend tests + runner/node 套件"
+    }
+  ],
+  "matrix": {
+    "columns": [
+      "#",
+      "场景",
+      "结果",
+      "说明",
+      "证据"
+    ],
+    "rows": [
+      {
+        "id": "01",
+        "name": "创建资源连接",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "POST /connections 引用 kind=resource 凭据，201；响应无 ciphertext/key_version。",
+        "evidence": [
+          "evidence.json"
+        ]
+      },
+      {
+        "id": "02",
+        "name": "连接验证",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "POST /connections/{id}/test 经 FakeProvisioner 校验能力与 provider，状态 verified。",
+        "evidence": [
+          "evidence.json"
+        ]
+      },
+      {
+        "id": "03",
+        "name": "不兼容组合拒绝",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "连接缺 ecs:spot 时创建 spot 池返回 422 connection_provider_mismatch，未创建池。",
+        "evidence": [
+          "evidence.json"
+        ]
+      },
+      {
+        "id": "04",
+        "name": "池创建与详情",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "spot 池 min0/max3/threshold0.5 创建成功，详情 200 且含容量字段。",
+        "evidence": [
+          "evidence.json"
+        ]
+      },
+      {
+        "id": "05",
+        "name": "按缺口扩容",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "3 个 queued attempt → gap 3 → 创建 3 个实例，reason=capacity_scale_up。",
+        "evidence": [
+          "evidence.json"
+        ]
+      },
+      {
+        "id": "06",
+        "name": "价格超阈值等待",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "价格 1.00 > 0.50，实例数不变（3→3），reason=resource_price_above_threshold，状态含 price/threshold/checked/next。",
+        "evidence": [
+          "evidence.json"
+        ]
+      },
+      {
+        "id": "07",
+        "name": "缩容先注销后释放",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "空闲 Runner 先 draining/offline，再释放实例；顺序由事件与测试锁定。",
+        "evidence": [
+          "tests/backend/test_capacity_control.py"
+        ]
+      },
+      {
+        "id": "08",
+        "name": "创建/库存/释放失败",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "供给失败只记录 reason 与事件，不把用例标失败；下一轮重试。",
+        "evidence": [
+          "tests/backend/test_capacity_control.py"
+        ]
+      },
+      {
+        "id": "09",
+        "name": "fixed 池不参与扩缩容",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "reconcile_pools 只扫描 spot 池；fixed 池与既有 Runner 保持原状。",
+        "evidence": [
+          "tests/backend/test_capacity_control.py"
+        ]
+      },
+      {
+        "id": "10",
+        "name": "权限与审计",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "管理员可写；成员写 403；供给测试需 confirm_cost 并写 resource.provisioning_tested 事件。",
+        "evidence": [
+          "tests/backend/test_resource_api.py"
+        ]
+      }
+    ]
+  },
+  "issues": [
+    {
+      "severity": "Info",
+      "title": "本轮没有 GUI 场景",
+      "facts": [
+        {
+          "label": "原因",
+          "value": "资源连接/资源池页面属 M5-03；本环境无 Computer Use 工具。"
+        },
+        {
+          "label": "替代证据",
+          "value": "真实 API 路由 + FakeProvisioner + 控制器 tick（evidence.json）。"
+        }
+      ],
+      "state": {
+        "kind": "info",
+        "label": "Not applicable"
+      }
+    },
+    {
+      "severity": "Info",
+      "title": "阿里云真实供给尚未接入",
+      "facts": [
+        {
+          "label": "现象",
+          "value": "provider=aliyun 的 /connections/{id}/test 在 M4-04 前返回 provisioner_unavailable。"
+        },
+        {
+          "label": "计划",
+          "value": "M4-04 接入 ECS 竞价 provisioner 后复用同一接口与容量控制器。"
+        }
+      ],
+      "state": {
+        "kind": "manual",
+        "label": "M4-04 follow-up"
+      }
+    }
+  ],
+  "coverage": {
+    "columns": [
+      "领域",
+      "覆盖",
+      "结论",
+      "建议"
+    ],
+    "rows": [
+      [
+        "连接与密钥",
+        "IT",
+        "创建/验证/序列化均不返回密文；kind=resource 校验。",
+        "M5-03 页面复用同一 payload。"
+      ],
+      [
+        "池兼容性",
+        "UT + IT",
+        "spot 需 ecs:spot 与 provider 匹配，fixed 无连接。",
+        "M4-04 增加真实能力探测。"
+      ],
+      [
+        "容量扩缩",
+        "UT + IT",
+        "gap 公式、批量上限、价格等待、先注销后释放。",
+        "接入真实库存与竞价价格。"
+      ],
+      [
+        "失败与事件",
+        "UT",
+        "创建/库存/释放失败不失败用例，事件可诊断。",
+        "运营页展示 resource events。"
+      ]
+    ]
+  },
+  "conclusion": {
+    "kind": "pass",
+    "label": "通过",
+    "summary": "资源连接、池配置与容量控制在真实路由和 FakeProvisioner 上闭环：不兼容组合在创建前拒绝，价格超阈值只排队，扩容按缺口批量执行且不泄露密钥。",
+    "points": [
+      "真实云供给留待 M4-04；接口与控制器已就位。",
+      "M5-03 负责连接/资源池页面与容量可视化。",
+      "缩容顺序与失败路径由自动化测试覆盖。"
+    ]
+  },
+  "footer": "M4-03 · issue #80 · evidence.json 为原始采样"
+}

@@ -86,8 +86,9 @@ def main() -> int:
         [sys.executable, "-m", "app.seed"], cwd=BACKEND, env=env, check=True, capture_output=True
     )
 
+    inherited = ("RUNNER_", "DATABASE_URL", "S3_", "AUTH_", "EVAL_", "REDIS_", "GITHUB_")
     os.environ.update(
-        {key: env[key] for key in env if key.startswith(("RUNNER_", "DATABASE_URL", "S3_", "AUTH_", "EVAL_", "REDIS_", "GITHUB_"))}
+        {key: env[key] for key in env if key.startswith(inherited)}
     )
     sys.path.insert(0, str(BACKEND))
     from app.db import SessionLocal  # noqa: PLC0415
