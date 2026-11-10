@@ -78,8 +78,13 @@ EVENT_PROVIDER_SYNC_FAILED = "resource.provider.sync_failed"
 PROVISIONING_MODE_SPOT = "spot"
 PROVISIONING_MODE_FIXED = "fixed"
 
-#: Shards in this attempt state still wait for a runner.
-QUEUED_ATTEMPT_STATUS = "queued"
+#: Shards in these attempt states still wait for a runner. ``pending`` is the
+#: state the dispatcher's capacity gate leaves an attempt in *before* it is
+#: sent, so counting only ``queued`` deadlocks an empty spot pool: the gate
+#: withholds the dispatch that would mark attempts queued, the controller sees
+#: no gap, and never creates the first instance. Treat every not-yet-started
+#: attempt as queue demand so the pool can bootstrap from zero.
+WAITING_ATTEMPT_STATUSES = ("pending", "dispatching", "queued")
 #: Provisioned instances that already reserve future runner capacity.
 STARTING_INSTANCE_STATUSES = ("requested", "creating", "registering")
 #: Runners that count towards the pool's current size.
@@ -181,7 +186,7 @@ def _queued_attempts(session: Session, pool: ResourcePool) -> int:
         )
         .where(
             EvalRun.resource_pool_id == pool.id,
-            EvalCaseAttempt.status == QUEUED_ATTEMPT_STATUS,
+            EvalCaseAttempt.status.in_(WAITING_ATTEMPT_STATUSES),
         )
     )
     return int(session.scalar(statement) or 0)
