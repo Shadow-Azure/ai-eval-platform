@@ -106,6 +106,19 @@ def _format_matches(format_name: str, value: str) -> bool:
     return True
 
 
+def _pattern_matches(pattern: str, value: str) -> bool:
+    """Match like ECMAScript ``RegExp.test`` for the v1 anchored patterns.
+
+    Python's ``re.search`` lets ``$`` match before a trailing newline, while
+    JavaScript's non-multiline ``$`` only matches at end of input. Full-match
+    anchored patterns keeps both mirrors aligned.
+    """
+
+    if pattern.startswith("^") and pattern.endswith("$"):
+        return re.fullmatch(pattern, value) is not None
+    return re.search(pattern, value) is not None
+
+
 def validate(schema: dict[str, Any], data: Any, path: str = "$") -> list[str]:
     errors: list[str] = []
 
@@ -116,13 +129,29 @@ def validate(schema: dict[str, Any], data: Any, path: str = "$") -> list[str]:
         errors.append(f"{path}: 必须等于 {json.dumps(schema['const'])}")
     if "enum" in schema and data not in schema["enum"]:
         errors.append(f"{path}: 必须是 {' / '.join(str(item) for item in schema['enum'])} 之一")
+    if "oneOf" in schema:
+        branches = schema["oneOf"]
+        if not isinstance(branches, list) or not branches:
+            errors.append(f"{path}: oneOf 必须是非空数组")
+        else:
+            branch_errors: list[str] = []
+            matched = 0
+            for index, branch in enumerate(branches):
+                result = validate(branch, data, path)
+                if not result:
+                    matched += 1
+                else:
+                    branch_errors.append(f"oneOf[{index}]: {'; '.join(result)}")
+            if matched != 1:
+                detail = f"：{' | '.join(branch_errors)}" if branch_errors else ""
+                errors.append(f"{path}: oneOf 必须恰好匹配一个分支（匹配 {matched} 个）{detail}")
 
     if isinstance(data, str):
         if "minLength" in schema and len(data) < schema["minLength"]:
             errors.append(f"{path}: 长度不能小于 {schema['minLength']}")
         if "maxLength" in schema and len(data) > schema["maxLength"]:
             errors.append(f"{path}: 长度不能大于 {schema['maxLength']}")
-        if "pattern" in schema and re.search(schema["pattern"], data) is None:
+        if "pattern" in schema and not _pattern_matches(schema["pattern"], data):
             errors.append(f"{path}: 不匹配 {schema['pattern']}")
         if "format" in schema and not _format_matches(schema["format"], data):
             errors.append(f"{path}: 不是合法的 {schema['format']}")

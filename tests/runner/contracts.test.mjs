@@ -33,6 +33,7 @@ const validFixtures = [
   ["upload", "upload.multifile.valid.json"],
   ["completion", "completion.valid.json"],
   ["completion", "completion.multitrace.valid.json"],
+  ["completion", "completion.trace-legacy.valid.json"],
   ["failure", "failure.valid.json"],
 ];
 
@@ -50,8 +51,14 @@ const invalidFixtures = [
   ["heartbeat", "heartbeat.invalid-sequence.json", /sequence/],
   ["upload", "upload.invalid-sha.json", /sha256/],
   ["upload", "upload.invalid-logical-path.json", /logical_path/],
+  ["upload", "upload.invalid-traversal-path.json", /logical_path/],
   ["completion", "completion.invalid-status.json", /execution_status/],
   ["completion", "completion.invalid-trace-object.json", /logical_path/],
+  ["completion", "completion.trace-empty-manifest.invalid.json", /oneOf/],
+  ["completion", "completion.trace-legacy-missing-digest.invalid.json", /sha256/],
+  ["completion", "completion.trace-mixed-shape.invalid.json", /oneOf/],
+  ["completion", "completion.trace-dotdot-path.invalid.json", /logical_path/],
+  ["completion", "completion.trace-newline-path.invalid.json", /logical_path/],
   ["failure", "failure.invalid-retryable.json", /retryable/],
 ];
 

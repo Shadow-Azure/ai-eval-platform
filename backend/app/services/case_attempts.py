@@ -26,6 +26,7 @@ Rules pinned by tests/backend/test_case_callbacks.py:
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 
 from sqlalchemy import func, select
@@ -47,6 +48,7 @@ from . import capacity, evaluations, lifecycle
 from .evaluations import refresh_run_progress
 from .object_store import ObjectMissing, ObjectSizeMismatch, object_store_from_settings
 from .trace_manifest import (
+    TRACE_ARTIFACT_KINDS,
     TraceManifestError,
     merge_manifest_objects,
     normalize_trace_manifest,
@@ -464,20 +466,54 @@ def handle_heartbeat(session: Session, *, payload: dict, now: datetime | None = 
 # ---------------------------------------------------------------------------
 
 
+def _expected_trace_object_key(ctx: CaseContext, item: dict) -> str:
+    return (
+        f"evaluations/{ctx.run.id}/{ctx.attempt.shard_id}"
+        f"/attempt{ctx.attempt.attempt_no}/{ctx.case_run.id}"
+        f"/{item['artifact_kind']}/{item['sha256']}"
+    )
+
+
+def _verify_trace_object_ownership(ctx: CaseContext, objects: list[dict]) -> None:
+    """Reject trace objects whose platform key belongs to another attempt."""
+
+    for item in objects:
+        if item.get("artifact_kind") not in TRACE_ARTIFACT_KINDS:
+            continue
+        expected = _expected_trace_object_key(ctx, item)
+        if item.get("object_key") != expected:
+            raise ManifestInvalid(
+                f"轨迹对象键不属于当前 attempt：{item.get('object_key')}"
+            )
+
+
 def _verify_objects(ctx: CaseContext, objects: list[dict], *, now: datetime, sequence: int = 0) -> None:
+    """Verify object existence/size, then trace-object attempt ownership."""
+
     settings = get_settings()
     store = object_store_from_settings(settings)
     if store is None:
-        # No object store configured (pure-dev): accept manifests as-is.
+        # No object store configured (pure-dev): still reject trace keys that
+        # claim another attempt's platform prefix.
+        _verify_trace_object_ownership(ctx, objects)
         return
+
+    def verify_one(item: dict) -> None:
+        try:
+            store.verify_object(item["object_key"], expected_size=item.get("size"))
+        except ObjectMissing as exc:
+            raise ArtifactMissing(f"对象不存在：{item['object_key']}") from exc
+        except ObjectSizeMismatch as exc:
+            raise ArtifactMissing(str(exc)) from exc
+
     try:
-        for item in objects:
-            try:
-                store.verify_object(item["object_key"], expected_size=item.get("size"))
-            except ObjectMissing as exc:
-                raise ArtifactMissing(f"对象不存在：{item['object_key']}") from exc
-            except ObjectSizeMismatch as exc:
-                raise ArtifactMissing(str(exc)) from exc
+        executor = ThreadPoolExecutor(max_workers=min(8, max(1, len(objects))))
+        try:
+            futures = [executor.submit(verify_one, item) for item in objects]
+            for future in as_completed(futures):
+                future.result()
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
     except ArtifactMissing:
         # 验收 4：对象缺失是可诊断失败态——attempt 落 artifact_missing、case 落
         # failed，绝不把用例标成完整成功。
@@ -496,6 +532,7 @@ def _verify_objects(ctx: CaseContext, objects: list[dict], *, now: datetime, seq
         refresh_run_progress(ctx.session, ctx.run, now=now)
         ctx.session.commit()
         raise
+    _verify_trace_object_ownership(ctx, objects)
 
 
 def handle_uploads(session: Session, *, payload: dict, now: datetime | None = None) -> dict:

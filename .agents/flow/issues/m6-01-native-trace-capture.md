@@ -13,7 +13,10 @@ scope:
   - runner/**
   - runner-contract/**
   - backend/**
+  - web/**
   - tests/**
+  - plans/**
+  - reports/**
   - docs/**
   - scripts/doc-budgets.manifest.json
 adr: []

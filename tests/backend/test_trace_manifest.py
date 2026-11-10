@@ -10,7 +10,10 @@ from __future__ import annotations
 
 from hashlib import sha256
 
+from app.models import EvalCaseAttempt
+from app.services.short_token import issue_short_token
 from case_helpers import (
+    SECRET,
     auth,
     case_url,
     completion_body,
@@ -23,14 +26,28 @@ from fastapi.testclient import TestClient
 
 def _trace_object(
     env: dict,
+    case_run_id: str,
     logical_path: str,
     content: bytes,
     *,
     kind: str = "trace",
     content_type: str = "application/x-ndjson",
+    attempt: int = 1,
 ) -> dict:
     digest = sha256(content).hexdigest()
-    object_key = f"evaluations/{env['run_id']}/attempt1/{digest}"
+    env["session"].expire_all()
+    shard_id = (
+        env["session"]
+        .query(EvalCaseAttempt)
+        .filter(EvalCaseAttempt.eval_case_run_id == case_run_id)
+        .filter(EvalCaseAttempt.attempt_no == attempt)
+        .one()
+        .shard_id
+    )
+    object_key = (
+        f"evaluations/{env['run_id']}/{shard_id}/attempt{attempt}/{case_run_id}"
+        f"/{kind}/{digest}"
+    )
     env["store"].add_bytes(object_key, content)
     return {
         "artifact_kind": kind,
@@ -80,14 +97,21 @@ def test_multifile_trace_upload_and_completion_link_every_object(eval_env, clien
     case_run_id = env["cases"]["case-a"]
     score = register_score_object(env, case_run_id)
     objects = [
-        _trace_object(env, "native/projects/-testbed/session-1.jsonl", b'{"type":"user"}\n'),
         _trace_object(
             env,
+            case_run_id,
+            "native/projects/-testbed/session-1.jsonl",
+            b'{"type":"user"}\n',
+        ),
+        _trace_object(
+            env,
+            case_run_id,
             "native/projects/-testbed/subagents/agent-a1.jsonl",
             b'{"agentId":"a1","isSidechain":true}\n',
         ),
         _trace_object(
             env,
+            case_run_id,
             "native/projects/-testbed/subagents/agent-a1.meta.json",
             b'{"agentId":"a1","toolUseId":"tool-1"}\n',
             kind="trace_metadata",
@@ -95,6 +119,7 @@ def test_multifile_trace_upload_and_completion_link_every_object(eval_env, clien
         ),
         _trace_object(
             env,
+            case_run_id,
             "diagnostics/stderr.log",
             b"gateway warning\n",
             kind="trace_diagnostic",
@@ -139,7 +164,9 @@ def test_repeated_digest_is_one_object_and_never_ambiguous(eval_env, client: Tes
     env = eval_env
     case_run_id = env["cases"]["case-a"]
     score = register_score_object(env, case_run_id)
-    first = _trace_object(env, "native/projects/-testbed/session-1.jsonl", b'{"same":true}\n')
+    first = _trace_object(
+        env, case_run_id, "native/projects/-testbed/session-1.jsonl", b'{"same":true}\n'
+    )
     repeated_same_path = dict(first)
     repeated_other_path = dict(first)
     repeated_other_path["logical_path"] = "native/projects/-testbed/session-copy.jsonl"
@@ -158,6 +185,14 @@ def test_repeated_digest_is_one_object_and_never_ambiguous(eval_env, client: Tes
     assert response.status_code == 200, response.text
     attempt = _attempt(env, case_run_id)
     assert len(attempt.artifact_manifest_json["objects"]) == 2
+    trace_objects = [
+        item
+        for item in attempt.artifact_manifest_json["objects"]
+        if item["artifact_kind"] == "trace"
+    ]
+    assert [item["logical_path"] for item in trace_objects] == [
+        "native/projects/-testbed/session-1.jsonl"
+    ]
 
     conflicting = dict(first)
     conflicting["sha256"] = "f" * 64
@@ -177,7 +212,7 @@ def test_illegal_logical_paths_are_rejected(eval_env, client: TestClient) -> Non
     env = eval_env
     case_run_id = env["cases"]["case-a"]
     score = register_score_object(env, case_run_id)
-    traverse = _trace_object(env, "native/safe.jsonl", b"{}\n")
+    traverse = _trace_object(env, case_run_id, "native/safe.jsonl", b"{}\n")
     traverse["logical_path"] = "../etc/passwd"
     body = {
         "schema_version": "1.0",
@@ -187,9 +222,9 @@ def test_illegal_logical_paths_are_rejected(eval_env, client: TestClient) -> Non
     }
     response = client.post(case_url(env, case_run_id, "uploads"), json=body, headers=auth(env))
     assert response.status_code == 422
-    assert response.json()["detail"]["error"]["code"] == "manifest_invalid"
+    assert response.json()["detail"]["error"]["code"] == "contract_invalid"
 
-    absolute = _trace_object(env, "native/safe.jsonl", b"{}\n")
+    absolute = _trace_object(env, case_run_id, "native/safe.jsonl", b"{}\n")
     absolute["logical_path"] = "/testbed/.claude/projects/session.jsonl"
     body["objects"] = [{"artifact_kind": "score", **score, "content_type": "application/json"}, absolute]
     rejected = client.post(case_url(env, case_run_id, "uploads"), json=body, headers=auth(env))
@@ -200,7 +235,9 @@ def test_illegal_logical_paths_are_rejected(eval_env, client: TestClient) -> Non
 def test_legacy_single_trace_manifest_is_still_readable(eval_env, client: TestClient) -> None:
     env = eval_env
     case_run_id = env["cases"]["case-a"]
-    legacy = _trace_object(env, "trace/claude-stream.jsonl", b'{"type":"result"}\n')
+    legacy = _trace_object(
+        env, case_run_id, "trace/claude-stream.jsonl", b'{"type":"result"}\n'
+    )
     body = completion_body(env, case_run_id)
     body["trace_manifest"] = {
         "object_key": legacy["object_key"],
@@ -224,6 +261,7 @@ def test_stdout_only_capture_is_incomplete_never_ready(eval_env, client: TestCli
     case_run_id = env["cases"]["case-a"]
     stdout = _trace_object(
         env,
+        case_run_id,
         "diagnostics/stdout.jsonl",
         b'{"type":"system","session_id":"s1"}\n',
         kind="trace_diagnostic",
@@ -275,7 +313,9 @@ def test_retry_attempt_keeps_its_own_trace_manifest(eval_env, client: TestClient
     env = eval_env
     case_run_id = env["cases"]["case-a"]
     client.post(case_url(env, case_run_id, "started"), json=started_body(env, case_run_id), headers=auth(env))
-    first_trace = _trace_object(env, "native/projects/-testbed/s1.jsonl", b'{"attempt":1}\n')
+    first_trace = _trace_object(
+        env, case_run_id, "native/projects/-testbed/s1.jsonl", b'{"attempt":1}\n'
+    )
     uploads = {
         "schema_version": "1.0",
         "case_run_id": case_run_id,
@@ -305,6 +345,7 @@ def test_complete_claim_without_native_session_is_downgraded(eval_env, client: T
     case_run_id = env["cases"]["case-a"]
     stdout = _trace_object(
         env,
+        case_run_id,
         "diagnostics/stdout.jsonl",
         b'{"type":"system","session_id":"s1"}\n',
         kind="trace_diagnostic",
@@ -326,3 +367,154 @@ def test_complete_claim_without_native_session_is_downgraded(eval_env, client: T
     env["session"].expire_all()
     case = env["session"].query(EvalCaseRun).filter(EvalCaseRun.id == case_run_id).one()
     assert case.trace_status == "incomplete"
+
+
+def _retry_token(env: dict, case_run_id: str, attempt: int) -> dict:
+    env["session"].expire_all()
+    shard_id = _attempt(env, case_run_id, attempt).shard_id
+    return {
+        "Authorization": "Bearer "
+        + issue_short_token(
+            {"eval_run_id": env["run_id"], "shard_id": shard_id, "attempt": attempt},
+            SECRET,
+            ttl_seconds=600,
+        )
+    }
+
+
+def test_trace_upload_rejects_object_key_from_another_attempt(
+    eval_env, client: TestClient
+) -> None:
+    env = eval_env
+    case_run_id = env["cases"]["case-a"]
+    client.post(
+        case_url(env, case_run_id, "started"), json=started_body(env, case_run_id), headers=auth(env)
+    )
+    first = _trace_object(
+        env, case_run_id, "native/projects/-testbed/s1.jsonl", b'{"attempt":1}\n'
+    )
+    uploads = {
+        "schema_version": "1.0",
+        "case_run_id": case_run_id,
+        "attempt": 1,
+        "objects": [first],
+    }
+    assert client.post(
+        case_url(env, case_run_id, "uploads"), json=uploads, headers=auth(env)
+    ).status_code == 200
+
+    failed = client.post(
+        case_url(env, case_run_id, "failed"),
+        json=failure_body(case_run_id, retryable=True, error_code="callback_retryable"),
+        headers=auth(env),
+    )
+    assert failed.json()["retry_queued"] is True
+
+    retry_body = {
+        "schema_version": "1.0",
+        "case_run_id": case_run_id,
+        "attempt": 2,
+        "objects": [first],
+    }
+    rejected = client.post(
+        case_url(env, case_run_id, "uploads"),
+        json=retry_body,
+        headers=_retry_token(env, case_run_id, 2),
+    )
+    assert rejected.status_code == 422, rejected.text
+    assert rejected.json()["detail"]["error"]["code"] == "manifest_invalid"
+    assert _attempt(env, case_run_id, 2).artifact_manifest_json == {}
+
+
+def test_trace_completion_rejects_object_key_from_another_attempt(
+    eval_env, client: TestClient
+) -> None:
+    env = eval_env
+    case_run_id = env["cases"]["case-a"]
+    client.post(
+        case_url(env, case_run_id, "started"), json=started_body(env, case_run_id), headers=auth(env)
+    )
+    first = _trace_object(
+        env, case_run_id, "native/projects/-testbed/s1.jsonl", b'{"attempt":1}\n'
+    )
+    failed = client.post(
+        case_url(env, case_run_id, "failed"),
+        json=failure_body(case_run_id, retryable=True, error_code="callback_retryable"),
+        headers=auth(env),
+    )
+    assert failed.json()["retry_queued"] is True
+
+    completion = completion_body(env, case_run_id, attempt=2)
+    completion["trace_manifest"] = _trace_manifest([first])
+    rejected = client.post(
+        case_url(env, case_run_id, "completed"),
+        json=completion,
+        headers=_retry_token(env, case_run_id, 2),
+    )
+    assert rejected.status_code == 422, rejected.text
+    assert rejected.json()["detail"]["error"]["code"] == "manifest_invalid"
+    attempt = _attempt(env, case_run_id, 2)
+    assert attempt.status not in {"succeeded", "failed", "artifact_missing"}
+
+
+def test_trace_object_key_with_foreign_case_is_rejected(eval_env, client: TestClient) -> None:
+    env = eval_env
+    case_run_id = env["cases"]["case-a"]
+    foreign = _trace_object(
+        env, env["cases"]["case-b"], "native/projects/-testbed/s1.jsonl", b'{"case":"b"}\n'
+    )
+    body = {
+        "schema_version": "1.0",
+        "case_run_id": case_run_id,
+        "attempt": 1,
+        "objects": [foreign],
+    }
+    rejected = client.post(
+        case_url(env, case_run_id, "uploads"), json=body, headers=auth(env)
+    )
+    assert rejected.status_code == 422, rejected.text
+    assert rejected.json()["detail"]["error"]["code"] == "manifest_invalid"
+
+
+def test_complete_claim_with_only_subagent_trace_is_downgraded(
+    eval_env, client: TestClient
+) -> None:
+    env = eval_env
+    case_run_id = env["cases"]["case-a"]
+    subagent = _trace_object(
+        env,
+        case_run_id,
+        "native/projects/-testbed/subagents/agent-a1.jsonl",
+        b'{"agentId":"a1"}\n',
+    )
+    response = client.post(
+        case_url(env, case_run_id, "completed"),
+        json=_completion_with_trace(env, case_run_id, _trace_manifest([subagent], status="complete")),
+        headers=auth(env),
+    )
+    assert response.status_code == 200, response.text
+    stored = _attempt(env, case_run_id).artifact_manifest_json["trace_manifest"]
+    assert stored["capture_status"] == "partial"
+    assert "native_session_missing" in stored["incomplete_reasons"]
+
+
+def test_complete_claim_with_only_metadata_is_downgraded(eval_env, client: TestClient) -> None:
+    env = eval_env
+    case_run_id = env["cases"]["case-a"]
+    metadata = _trace_object(
+        env,
+        case_run_id,
+        "native/projects/-testbed/subagents/agent-a1.meta.json",
+        b'{"agentId":"a1"}\n',
+        kind="trace_metadata",
+        content_type="application/json",
+    )
+    response = client.post(
+        case_url(env, case_run_id, "completed"),
+        json=_completion_with_trace(env, case_run_id, _trace_manifest([metadata], status="complete")),
+        headers=auth(env),
+    )
+    assert response.status_code == 200, response.text
+    stored = _attempt(env, case_run_id).artifact_manifest_json["trace_manifest"]
+    assert stored["capture_status"] == "partial"
+    assert "native_session_missing" in stored["incomplete_reasons"]

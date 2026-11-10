@@ -158,11 +158,22 @@ def _infer_capture_status(objects: list[dict]) -> str:
     return "complete" if kinds & {"trace", "trace_metadata"} else "partial"
 
 
+def _has_root_trace(objects: list[dict]) -> bool:
+    """A complete capture needs a trace file that is not a subagent session."""
+
+    return any(
+        item["artifact_kind"] == "trace" and "/subagents/" not in item.get("logical_path", "")
+        for item in objects
+    )
+
+
 def normalize_trace_manifest(raw: Any) -> dict:
     """Return the persisted form: legacy single object or multi-file bundle."""
 
     if not isinstance(raw, dict):
         raise TraceManifestError("trace_manifest 必须是对象")
+    if "objects" in raw and any(key in raw for key in ("object_key", "sha256", "size")):
+        raise TraceManifestError("trace_manifest 不能同时包含单文件字段与 objects")
     if "objects" in raw:
         objects = normalize_trace_objects(raw["objects"])
         status = raw.get("capture_status")
@@ -178,7 +189,7 @@ def normalize_trace_manifest(raw: Any) -> dict:
                 raise TraceManifestError("incomplete_reasons 每项必须是非空短字符串")
         # A runner may not claim a complete native capture from diagnostics
         # alone: stdout/stderr are fallbacks, not the authoritative session.
-        if status == "complete" and not any(item["artifact_kind"] == "trace" for item in objects):
+        if status == "complete" and not _has_root_trace(objects):
             status = "partial"
             if "native_session_missing" not in reasons:
                 reasons = [*reasons, "native_session_missing"]

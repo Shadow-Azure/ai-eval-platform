@@ -352,20 +352,44 @@ async function realCase(dispatch, item, task, { modelToken, runnerRoot }) {
       };
     }
 
-    writeFileSync(testPatchPath, task.test_patch || "");
-    dockerRun(datasetAdapter.applyTestPatchArgs(environmentImage, workdir, testPatchPath), { timeout: 120_000 });
-    const testResult = dockerRun(
-      datasetAdapter.testArgs(environmentImage, workdir, datasetAdapter.testIds(task)),
-      { allowFailure: true, timeout: 1_800_000 },
-    );
-    const report = datasetAdapter.parseReport(task, `${testResult.stdout}\n${testResult.stderr}`);
-    return {
-      score: report.score,
-      traceBundle: collectCapture(traceBytes.toString("utf8")),
-      executionStatus: "succeeded",
-      resultStatus: report.resultStatus,
-      durationMs: Date.now() - startedAt,
-    };
+    try {
+      writeFileSync(testPatchPath, task.test_patch || "");
+      dockerRun(datasetAdapter.applyTestPatchArgs(environmentImage, workdir, testPatchPath), { timeout: 120_000 });
+      const testResult = dockerRun(
+        datasetAdapter.testArgs(environmentImage, workdir, datasetAdapter.testIds(task)),
+        { allowFailure: true, timeout: 1_800_000 },
+      );
+      const report = datasetAdapter.parseReport(task, `${testResult.stdout}\n${testResult.stderr}`);
+      return {
+        score: report.score,
+        traceBundle: collectCapture(traceBytes.toString("utf8")),
+        executionStatus: "succeeded",
+        resultStatus: report.resultStatus,
+        durationMs: Date.now() - startedAt,
+      };
+    } catch (error) {
+      const message = error?.message || String(error);
+      console.error(`评分阶段失败：${message}`);
+      writeDiagnostic(
+        join(workdir, "trace"),
+        "scoring-failure.json",
+        `${JSON.stringify({ error: message })}\n`,
+      );
+      return {
+        score: {
+          [task.case_key]: {
+            resolved: false,
+            error: "scoring_failed",
+            message,
+            tests_status: { FAIL_TO_PASS: { success: [], failure: [] }, PASS_TO_PASS: { success: [], failure: [] } },
+          },
+        },
+        traceBundle: collectCapture(traceBytes.toString("utf8")),
+        executionStatus: "failed",
+        resultStatus: "not_scored",
+        durationMs: Date.now() - startedAt,
+      };
+    }
   } finally {
     try {
       rmSync(workdir, { recursive: true, force: true });
