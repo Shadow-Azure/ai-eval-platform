@@ -14,14 +14,9 @@ import { ModelsPage } from "../pages/ModelsPage";
 import { NotFoundPage } from "../pages/NotFoundPage";
 import { OperationsPage } from "../pages/OperationsPage";
 import { OverviewPage } from "../pages/OverviewPage";
+import { ResourcesPage } from "../pages/ResourcesPage";
 
 const placeholders = [
-  {
-    path: "resources",
-    eyebrow: "Configuration · Resource pools",
-    title: "资源池",
-    description: "管理资源连接、供给模式与 Runner 在线容量。",
-  },
   {
     path: "deployments",
     eyebrow: "Delivery · Deployments",
@@ -46,6 +41,7 @@ export function AppRoutes() {
           <Route path="/datasets/:datasetId" element={<DatasetDetailPage />} />
           <Route path="/models" element={<ModelsPage />} />
           <Route path="/assets" element={<AssetsPage />} />
+          <Route path="/resources" element={<ResourcesPage />} />
           <Route element={<RequireAdmin />}>
             <Route path="/operations" element={<OperationsPage />} />
           </Route>

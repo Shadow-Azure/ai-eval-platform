@@ -15,6 +15,8 @@ scope:
   - tests/**
   - docs/**
   - scripts/doc-budgets.manifest.json
+  - reports/**
+  - plans/**
 adr: []
 github:
   number: 85
