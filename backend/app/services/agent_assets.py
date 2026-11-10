@@ -286,10 +286,15 @@ def scan_repository(
     blobs = {entry.path: entry for entry in entries if entry.entry_type == "blob"}
     paths = _normalize_paths(scan_paths)
     scoped = [path for path in blobs if _in_scope(path, paths)]
+    root_skill = any(
+        PurePosixPath(path).name == "SKILL.md" and str(PurePosixPath(path).parent) == "."
+        for path in scoped
+    )
     skill_dirs = {
         str(PurePosixPath(path).parent)
         for path in scoped
         if PurePosixPath(path).name == "SKILL.md"
+        and str(PurePosixPath(path).parent) not in ("", ".")
     }
     blob_cache: dict[str, bytes] = {}
 
@@ -374,6 +379,8 @@ def scan_repository(
         unclassified.append({"path": path, "size": entry.size or 0})
 
     warnings: list[str] = []
+    if root_skill:
+        warnings.append("根目录 SKILL.md 不能作为独立 Skill；请放入子目录后再扫描")
     counts = asset_counts(assets)
     if not assets:
         warnings.append("未发现可识别的 Skill、Command 或 Subagent")

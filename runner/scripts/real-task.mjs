@@ -15,6 +15,7 @@ import { fetchManifest, sha256 } from "../lib/manifest-source.mjs";
 import { LocalObjectStore } from "../lib/object-store.mjs";
 import { getDatasetAdapter, getRuntimeAdapter } from "../lib/adapters.mjs";
 import { startHeartbeatSidecar, stopHeartbeatSidecar } from "./heartbeat-agent.mjs";
+import { buildCaseTasks } from "../lib/task-payload.mjs";
 
 function parseArgs(argv) {
   const args = { dispatch: null, stateDir: ".runner-state", objectRoot: ".runner-objects", token: null, caseRunId: null };
@@ -421,7 +422,7 @@ async function main() {
   }
   if (Date.parse(manifest.deadline) < Date.now()) fail("manifest 已过 deadline", "token_invalid");
 
-  const taskByCase = new Map();
+  let taskByCase = new Map();
   if (tasksUrl) {
     const tasksResponse = await fetch(tasksUrl, {
       headers: { authorization: `Bearer ${token}` },
@@ -429,17 +430,7 @@ async function main() {
     }).catch(() => null);
     if (tasksResponse?.ok) {
       const taskPayload = await tasksResponse.json().catch(() => null);
-      for (const task of taskPayload?.cases || []) {
-        taskByCase.set(task.case_run_id, {
-          ...task,
-          model: taskPayload.model,
-          execution_image_digest: taskPayload.execution_image_digest,
-          scoring_image_digest: taskPayload.scoring_image_digest,
-          environment_image: taskPayload.environment_image,
-          adapter_key: taskPayload.adapter_key || "swebench",
-          runtime_key: taskPayload.runtime?.key || "claude-code",
-        });
-      }
+      taskByCase = buildCaseTasks(taskPayload);
     }
   }
   const runnerRoot = resolve(process.env.RUNNER_ROOT || "runner");

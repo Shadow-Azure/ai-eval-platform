@@ -43,6 +43,7 @@ class FakeRepo:
                 ".claude/agents/test-runner.md": b"# Test runner\n",
                 "docs/readme.md": b"# docs\n",
                 "src/commands/deploy.md": b"# Not a runtime command\n",
+                "SKILL.md": b"# Root skill manifest\n",
             }
 
 
@@ -316,3 +317,17 @@ def test_object_store_missing_is_a_blocker(
     )
     assert response.status_code == 503
     assert response.json()["detail"]["error"]["code"] == "object_store_unavailable"
+
+
+def test_root_skill_manifest_is_reported_not_crashed(monkeypatch: pytest.MonkeyPatch, repo: FakeRepo) -> None:
+    monkeypatch.setattr(
+        agent_assets, "GitHubClient", lambda token=None, **_kwargs: FakeGitHubClient(repo, token)
+    )
+    result = agent_assets.scan_repository(
+        client=FakeGitHubClient(repo),
+        repo_url="https://github.com/obra/superpowers",
+        requested_ref="main",
+        scan_paths=[],
+    )
+    assert any("根目录 SKILL.md" in warning for warning in result.warnings)
+    assert all(asset.path != "." for asset in result.assets)

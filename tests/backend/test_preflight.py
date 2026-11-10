@@ -19,6 +19,7 @@ from app.models import (
 from app.runtimes.base import AssetSnapshot
 from app.seed import ensure_default_scope
 from app.services.preflight import check_preparation
+from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 
@@ -388,3 +389,27 @@ def test_asset_snapshot_runtime_mismatch_blocks(session: Session) -> None:
     snapshot = _seed_asset_snapshot(session, runtime_key="other-runtime")
     result = _check(session, ids, asset_snapshot_id=snapshot.id)
     assert "asset_runtime_mismatch" in _codes(result)
+
+
+def test_prepare_is_read_only_and_ignores_source_resolution_fields(
+    session: Session, client: TestClient
+) -> None:
+    ids = _seed(session)
+    before = session.query(AgentAssetSnapshot).count()
+    response = client.post(
+        "/api/v1/evaluations/prepare",
+        json={
+            **ids,
+            "runtime_key": "claude-code",
+            "requested_concurrency": 1,
+            "scoring_image_digest": "sha256:" + "a" * 64,
+            "execution_image_digest": "sha256:" + "c" * 64,
+            # Removed from PrepareRequest: a member must not be able to make
+            # prepare resolve a source and commit a snapshot as a side effect.
+            "asset_source_id": "missing-source",
+            "asset_paths": ["skills/brainstorming"],
+            "requested_ref": "main",
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert session.query(AgentAssetSnapshot).count() == before

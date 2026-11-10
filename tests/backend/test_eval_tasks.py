@@ -10,6 +10,7 @@ from app.models import (
     DatasetCase,
     DatasetVersion,
     EvalCaseRun,
+    EvalRun,
     Outbox,
     ResourcePool,
     Runner,
@@ -226,3 +227,35 @@ def test_create_real_evaluation_blocks_without_image(client, session: Session) -
     assert detail["code"] == "preparation_blocked"
     codes = {item["code"] for item in detail["details"]["blockers"]}
     assert {"scoring_image_missing", "execution_image_missing"} <= codes
+
+
+def test_shard_tasks_includes_frozen_asset_snapshot(eval_env, session: Session, client) -> None:
+    run = session.get(EvalRun, eval_env["run_id"])
+    assert run is not None
+    run.asset_snapshot_json = {
+        "snapshot_id": "snap-1",
+        "resolved_commit": "a" * 40,
+        "tree_digest": "sha256:" + "b" * 64,
+        "bundle_key": "agent-assets/default/snap-1/bundle.json.gz",
+        "bundle_digest": "sha256:" + "c" * 64,
+        "asset_count": 1,
+        "file_count": 1,
+        "assets": [{"asset_type": "skill", "name": "brainstorming", "path": "skills/brainstorming"}],
+    }
+    session.commit()
+    outbox = session.scalar(select(Outbox).where(Outbox.aggregate_id == eval_env["run_id"]))
+    assert outbox is not None
+    response = client.get(
+        f"/runner/v1/shards/{eval_env['shard']}/tasks",
+        params={
+            "eval_run_id": eval_env["run_id"],
+            "attempt": 1,
+            "dispatch_key": outbox.dispatch_key,
+        },
+        headers=auth(eval_env),
+    )
+    assert response.status_code == 200, response.text
+    snapshot = response.json()["asset_snapshot"]
+    assert snapshot["snapshot_id"] == "snap-1"
+    assert snapshot["resolved_commit"] == "a" * 40
+    assert snapshot["bundle_url"].startswith("http://")

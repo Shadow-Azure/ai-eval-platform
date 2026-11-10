@@ -24,7 +24,7 @@ from ..services import budget as budget_service
 from ..services import evaluations as evaluation_service
 from ..services import identity
 from ..services import preflight as preflight_service
-from .dependencies import require_admin, require_session
+from .dependencies import require_admin
 from .errors import error_detail
 
 router = APIRouter(tags=["evaluations"])
@@ -100,12 +100,10 @@ class PrepareRequest(BaseModel):
     scoring_image_digest: str | None = Field(default=None, max_length=128)
     execution_image_digest: str | None = Field(default=None, max_length=128)
     assets_resolved: bool = True
-    # M5-01: use a frozen snapshot directly, or resolve a source at Prepare.
+    # M5-01: Prepare is a read-only check. The wizard resolves a snapshot via
+    # the administrator-only /agent-assets/resolve endpoint first, then passes
+    # only this id here; no source/ref/path is resolved from this endpoint.
     asset_snapshot_id: str | None = Field(default=None, max_length=36)
-    asset_source_id: str | None = Field(default=None, max_length=36)
-    requested_ref: str | None = Field(default=None, max_length=200)
-    asset_paths: list[str] | None = None
-    asset_types: dict[str, str] = Field(default_factory=dict)
 
 
 class CreateEvaluationRequest(BaseModel):
@@ -152,22 +150,9 @@ class ResumeBudgetRequest(BaseModel):
 def prepare_evaluation(
     payload: PrepareRequest,
     session: Session = Depends(get_session),
-    settings: Settings = Depends(get_settings),
-    context: identity.AuthContext = Depends(require_session),
 ) -> dict:
     """Run the M3-03 blocking/warning consistency checks without creating a run."""
 
-    snapshot, _frozen = _resolve_asset_snapshot(
-        session,
-        asset_snapshot_id=payload.asset_snapshot_id,
-        asset_source_id=payload.asset_source_id,
-        requested_ref=payload.requested_ref,
-        asset_paths=payload.asset_paths,
-        asset_types=payload.asset_types,
-        runtime_key=payload.runtime_key,
-        created_by=context.user.email,
-        settings=settings,
-    )
     result = preflight_service.check_preparation(
         session,
         dataset_version_id=payload.dataset_version_id,
@@ -180,7 +165,7 @@ def prepare_evaluation(
         scoring_image_digest=payload.scoring_image_digest,
         execution_image_digest=payload.execution_image_digest,
         assets_resolved=payload.assets_resolved,
-        asset_snapshot_id=snapshot.id if snapshot is not None else payload.asset_snapshot_id,
+        asset_snapshot_id=payload.asset_snapshot_id,
     )
     return {"status": "ok", **result.payload()}
 
