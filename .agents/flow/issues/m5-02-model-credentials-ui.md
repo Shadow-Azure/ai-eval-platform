@@ -6,7 +6,7 @@
 kind: issue
 milestone: m5
 priority: P0
-status: ready
+status: done
 scope:
   - .agents/flow/issues/m5-02-model-credentials-ui.*
   - .agents/flow/milestones/m5-product-workflows.*
