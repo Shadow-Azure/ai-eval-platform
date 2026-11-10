@@ -6,7 +6,7 @@
 kind: issue
 milestone: m5
 priority: P0
-status: ready
+status: done
 scope:
   - .agents/flow/issues/m5-03-resource-pools-ui.*
   - .agents/flow/milestones/m5-product-workflows.*
