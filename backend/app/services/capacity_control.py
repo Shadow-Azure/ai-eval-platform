@@ -44,6 +44,7 @@ from ..models import (
     ResourcePool,
     Runner,
 )
+from ..money import Money, money_str
 from .provisioning import (
     InstanceSpec,
     PriceQuote,
@@ -263,11 +264,11 @@ def _capacity_reason(
     """Stable reason for the state, ordered by what blocks creation first."""
 
     if gap > 0:
-        threshold = pool.price_threshold_usd
+        threshold = pool.price_threshold_cny
         if quote is not None and threshold is not None:
-            # Provisioners must quote Decimals, but coerce defensively so a
+            # Provisioners quote Decimals, but coerce defensively so a
             # provider returning a str/float cannot turn into a swallowed error.
-            if Decimal(str(quote.price_usd)) > Decimal(str(threshold)):
+            if Money.of(quote.price_cny) > Money.of(threshold):
                 return REASON_PRICE_ABOVE_THRESHOLD
         if quote is not None and not quote.available:
             return REASON_INVENTORY_INSUFFICIENT
@@ -322,7 +323,7 @@ def _build_state(
     )
     if quote_error is not None:
         reason = _provisioning_reason(quote_error.code)
-    price = quote.price_usd if quote is not None else None
+    price = quote.price_cny if quote is not None else None
     return {
         "pool_id": pool.id,
         "provisioning_mode": pool.provisioning_mode,
@@ -337,8 +338,8 @@ def _build_state(
         "current_size": current_size,
         "desired_capacity": desired,
         "capacity_gap": gap,
-        "price_usd": _decimal_str(price),
-        "price_threshold_usd": _decimal_str(pool.price_threshold_usd),
+        "price_cny": money_str(price),
+        "price_threshold_cny": money_str(pool.price_threshold_cny),
         "price_available": quote.available if quote is not None else None,
         "provider_error": quote_error.code if quote_error is not None else None,
         "capacity_reason": reason,
@@ -423,7 +424,7 @@ def append_resource_event(
 
 def _state_dedupe_key(pool: ResourcePool, state: Mapping[str, Any], reason: str | None) -> str:
     return (
-        f"{pool.id}:capacity:{reason}:{state['capacity_gap']}:{state['price_usd']}"
+        f"{pool.id}:capacity:{reason}:{state['capacity_gap']}:{state['price_cny']}"
     )
 
 
@@ -462,11 +463,11 @@ def _record_provisioning_failure(
             "code": code,
             "message": message,
             "capacity_gap": state["capacity_gap"],
-            "price_usd": state["price_usd"],
+            "price_cny": state["price_cny"],
         },
         dedupe_key=(
             f"{pool.id}:provisioning_failed:{code}:"
-            f"{state['capacity_gap']}:{state['price_usd']}"
+            f"{state['capacity_gap']}:{state['price_cny']}"
         ),
     )
 
@@ -677,7 +678,7 @@ def _scale_down(
                 ),
                 "order": order,
                 "released": True,
-                "price_usd": state["price_usd"],
+                "price_cny": state["price_cny"],
             },
             dedupe_key=f"{pool.id}:scaled_down:{runner.id}",
         )
@@ -744,7 +745,7 @@ def reconcile_pool(
     )
 
     reason = state["capacity_reason"]
-    pool.price_usd = quote.price_usd if quote is not None else None
+    pool.price_cny = quote.price_cny if quote is not None else None
     pool.capacity_reason = reason
     pool.last_checked_at = now
     pool.next_check_at = now + timedelta(seconds=settings.eval_capacity_check_seconds)
@@ -806,8 +807,8 @@ def reconcile_pool(
             "starting_instances": state["starting_instances"],
             "current_size": state["current_size"],
             "desired_capacity": state["desired_capacity"],
-            "price_usd": state["price_usd"],
-            "price_threshold_usd": state["price_threshold_usd"],
+            "price_cny": state["price_cny"],
+            "price_threshold_cny": state["price_threshold_cny"],
             "checked_at": _iso(now),
             "next_check_at": _iso(pool.next_check_at),
         },

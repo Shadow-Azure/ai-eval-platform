@@ -116,7 +116,7 @@ def _add_usage(engine, config_id: str, *, cost: str = "0.020000") -> None:
                 prompt_tokens=10,
                 completion_tokens=5,
                 total_tokens=15,
-                cost_usd=Decimal(cost),
+                cost_cny=Decimal(cost),
                 created_at=datetime.now(UTC),
             )
         )
@@ -145,7 +145,7 @@ def test_list_returns_mask_pricing_and_recent_use_without_secret(
         "prompt_tokens": 10,
         "completion_tokens": 5,
         "total_tokens": 15,
-        "cost_usd": "0.020000",
+        "cost_cny": "0.020000",
     }
     assert item["last_used_at"] is not None
 

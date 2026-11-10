@@ -50,7 +50,7 @@ class FakeProvisioner:
         self,
         *,
         provider: str = "fake",
-        price_usd: Decimal | int | float | str = Decimal("0.1000"),
+        price_cny: Decimal | int | float | str = Decimal("0.1000"),
         available: bool = True,
         create_error: str | bool | None = None,
         release_error: str | bool | None = None,
@@ -61,7 +61,7 @@ class FakeProvisioner:
         sync_counts: dict[str, int] | None = None,
     ) -> None:
         self.provider = provider
-        self.price_usd = Decimal(str(price_usd))
+        self.price_cny = Decimal(str(price_cny))
         self.available = available
         self.create_error = create_error
         self.release_error = release_error
@@ -97,7 +97,7 @@ class FakeProvisioner:
                 instance_type = configured
         region = connection.region if connection is not None else self.region
         return PriceQuote(
-            price_usd=self.price_usd,
+            price_cny=self.price_cny,
             available=self.available,
             region=region or self.region,
             instance_type=instance_type,

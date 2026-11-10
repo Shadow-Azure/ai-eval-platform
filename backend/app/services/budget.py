@@ -1,7 +1,7 @@
 """Model-budget pause and resume (M4-05, design 06 §8).
 
 The gateway is the authority on model spend. When the authoritative sum of
-``model_usage.cost_usd`` reaches ``eval_run.model_budget_usd`` the platform
+``model_usage.cost_cny`` reaches ``eval_run.model_budget_cny`` the platform
 does not fail the evaluation:
 
 1. the run enters ``pausing_budget`` and the scheduler stops releasing new
@@ -32,11 +32,12 @@ from sqlalchemy.orm import Session
 
 from ..config import Settings, get_settings
 from ..models import EvalCaseAttempt, EvalCaseRun, EvalEvent, EvalRun, Outbox
+from ..money import Money, MoneyError, money_str
 from . import evaluations, identity, lifecycle
 
-# ``eval_run.model_budget_usd`` is Numeric(12, 6); refuse a resume that would
+# ``eval_run.model_budget_cny`` is Numeric(12, 6); refuse a resume that would
 # overflow the column instead of failing at commit time.
-MAX_BUDGET_USD = Decimal("999999.999999")
+MAX_BUDGET_CNY = Decimal("999999.999999")
 
 PAUSE_EVENT = "eval.budget_pausing"
 PAUSED_EVENT = "eval.budget_paused"
@@ -206,15 +207,15 @@ def pause_for_budget(
     run = locked
     if run.status not in ("queued", "running"):
         return False
-    if run.model_budget_usd is None:
+    if run.model_budget_cny is None:
         return False
-    spent = spent if spent is not None else evaluations.spent_usd(session, run.id)
-    if spent < Decimal(str(run.model_budget_usd)):
+    spent = spent if spent is not None else evaluations.spent_cny(session, run.id)
+    if Money.of(spent) < Money.of(run.model_budget_cny):
         return False
 
     run.status = "pausing_budget"
     run.pause_reason = evaluations.BUDGET_EXCEEDED
-    run.budget_spent_usd = spent
+    run.budget_spent_cny = spent
     run.queue_reason = None
     session.flush()
 
@@ -227,8 +228,8 @@ def pause_for_budget(
         {
             "reason": evaluations.BUDGET_EXCEEDED,
             "source": source,
-            "model_budget_usd": str(run.model_budget_usd),
-            "budget_spent_usd": str(spent),
+            "model_budget_cny": money_str(run.model_budget_cny),
+            "budget_spent_cny": money_str(spent),
             "budget_version": run.budget_version,
         },
     )
@@ -258,12 +259,8 @@ def finalize_paused(session: Session, run: EvalRun, *, now: datetime) -> bool:
         PAUSED_EVENT,
         {
             "reason": evaluations.BUDGET_EXCEEDED,
-            "model_budget_usd": (
-                str(run.model_budget_usd) if run.model_budget_usd is not None else None
-            ),
-            "budget_spent_usd": (
-                str(run.budget_spent_usd) if run.budget_spent_usd is not None else None
-            ),
+            "model_budget_cny": money_str(run.model_budget_cny),
+            "budget_spent_cny": money_str(run.budget_spent_cny),
             "budget_version": run.budget_version,
             "finished_count": max(
                 0, int(run.total_cases or 0) - int(run.queued_count or 0) - int(run.running_count or 0)
@@ -322,17 +319,17 @@ def reconcile_budget_pauses(
             select(EvalRun)
             .where(
                 EvalRun.status.in_(("queued", "running")),
-                EvalRun.model_budget_usd.is_not(None),
+                EvalRun.model_budget_cny.is_not(None),
             )
             .order_by(EvalRun.created_at, EvalRun.id)
             .limit(limit)
         )
     )
     for run in active:
-        spent = evaluations.spent_usd(session, run.id)
-        if run.budget_spent_usd != spent:
-            run.budget_spent_usd = spent
-        if spent >= Decimal(str(run.model_budget_usd or 0)):
+        spent = evaluations.spent_cny(session, run.id)
+        if run.budget_spent_cny != spent:
+            run.budget_spent_cny = spent
+        if Money.of(spent) >= Money.of(run.model_budget_cny or 0):
             if pause_for_budget(session, run, spent=spent, now=now, source="reconciler"):
                 counts["budget_paused"] += 1
     session.commit()
@@ -347,7 +344,7 @@ def reconcile_budget_pauses(
     )
     grace = int(settings.eval_budget_pause_grace_seconds)
     for run in pausing:
-        run.budget_spent_usd = evaluations.spent_usd(session, run.id)
+        run.budget_spent_cny = evaluations.spent_cny(session, run.id)
         if evaluations.active_attempts(session, run):
             if _pausing_since(session, run, now) + timedelta(seconds=grace) < now:
                 _force_settle_active(session, run, now=now)
@@ -368,7 +365,7 @@ def reconcile_budget_pauses(
     for run in paused:
         # Late usage can still land (a stream started before the pause). Keep
         # the snapshot honest without re-opening the pause.
-        run.budget_spent_usd = evaluations.spent_usd(session, run.id)
+        run.budget_spent_cny = evaluations.spent_cny(session, run.id)
         session.commit()
 
     return counts
@@ -391,7 +388,7 @@ def resume_budget(
     session: Session,
     *,
     run_id: str,
-    additional_budget_usd: Decimal | float | str,
+    additional_budget_cny: Decimal | float | str,
     expected_budget_version: int,
     actor_user_id: str | None,
     settings: Settings | None = None,
@@ -417,22 +414,22 @@ def resume_budget(
         raise BudgetVersionConflict(int(run.budget_version or 1))
 
     try:
-        additional = Decimal(str(additional_budget_usd))
-    except Exception as exc:  # noqa: BLE001 - pydantic guards the API, service is shared
-        raise BudgetInvalid("additional_budget_usd 必须是数字") from exc
+        additional = Money.of(additional_budget_cny)
+    except MoneyError as exc:
+        raise BudgetInvalid("additional_budget_cny 必须是数字") from exc
     if additional <= 0:
-        raise BudgetInvalid("additional_budget_usd 必须大于 0")
-    if run.model_budget_usd is None:
+        raise BudgetInvalid("additional_budget_cny 必须大于 0")
+    if run.model_budget_cny is None:
         raise BudgetInvalid("评测没有模型预算，无法增加")
-    if Decimal(str(run.model_budget_usd)) + additional > MAX_BUDGET_USD:
+    if Money.of(run.model_budget_cny) + additional > Money.of(MAX_BUDGET_CNY):
         raise BudgetInvalid("增加后的预算超过上限 999999.999999")
 
-    spent = evaluations.spent_usd(session, run.id)
-    previous_budget = Decimal(str(run.model_budget_usd))
+    spent = evaluations.spent_cny(session, run.id)
+    previous_budget = Money.of(run.model_budget_cny)
     previous_version = int(run.budget_version or 1)
 
-    run.model_budget_usd = previous_budget + additional
-    run.budget_spent_usd = spent
+    run.model_budget_cny = (previous_budget + additional).amount
+    run.budget_spent_cny = spent
     run.budget_version = previous_version + 1
     run.pause_reason = None
     run.status = "queued"
@@ -474,10 +471,10 @@ def resume_budget(
         target_type="eval_run",
         target_id=run.id,
         metadata={
-            "previous_budget_usd": str(previous_budget),
-            "additional_budget_usd": str(additional),
-            "model_budget_usd": str(run.model_budget_usd),
-            "budget_spent_usd": str(spent),
+            "previous_budget_cny": previous_budget.as_str(),
+            "additional_budget_cny": additional.as_str(),
+            "model_budget_cny": money_str(run.model_budget_cny),
+            "budget_spent_cny": money_str(spent),
             "budget_version": run.budget_version,
             "unfinished_cases": len(unfinished),
             "attempts_created": attempts_created,
@@ -488,10 +485,10 @@ def resume_budget(
         run,
         RESUMED_EVENT,
         {
-            "previous_budget_usd": str(previous_budget),
-            "additional_budget_usd": str(additional),
-            "model_budget_usd": str(run.model_budget_usd),
-            "budget_spent_usd": str(spent),
+            "previous_budget_cny": previous_budget.as_str(),
+            "additional_budget_cny": additional.as_str(),
+            "model_budget_cny": money_str(run.model_budget_cny),
+            "budget_spent_cny": money_str(spent),
             "budget_version": run.budget_version,
             "unfinished_cases": len(unfinished),
             "attempts_created": attempts_created,

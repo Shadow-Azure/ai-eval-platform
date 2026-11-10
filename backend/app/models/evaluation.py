@@ -74,12 +74,12 @@ class EvalRun(Base, TimestampMixin):
     # runner never sees the provider key. Synthetic runs leave these NULL.
     model_config_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     model_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
-    model_budget_usd: Mapped[Decimal | None] = mapped_column(Numeric(12, 6), nullable=True)
+    model_budget_cny: Mapped[Decimal | None] = mapped_column(Numeric(12, 6), nullable=True)
     # M4-05 budget pause/resume (design 05 §6.1 / 06 §8): the gateway is the
-    # authority on spend; ``budget_spent_usd`` is the last reconciled snapshot,
+    # authority on spend; ``budget_spent_cny`` is the last reconciled snapshot,
     # ``budget_version`` guards the atomic resume and ``pause_reason`` explains
     # a non-terminal budget pause (``budget_exceeded``).
-    budget_spent_usd: Mapped[Decimal | None] = mapped_column(Numeric(12, 6), nullable=True)
+    budget_spent_cny: Mapped[Decimal | None] = mapped_column(Numeric(12, 6), nullable=True)
     budget_version: Mapped[int] = mapped_column(
         Integer, nullable=False, default=1, server_default="1"
     )

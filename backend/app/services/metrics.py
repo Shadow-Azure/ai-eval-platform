@@ -51,7 +51,7 @@ def validate_metric_config(
             code="aggregator_not_allowed",
             field="aggregator_key",
         )
-    if display_kind not in ("number", "percentage", "histogram", "ms", "usd"):
+    if display_kind not in ("number", "percentage", "histogram", "ms", "cny"):
         raise MetricInvalid(f"展示类型 {display_kind!r} 不受支持", code="display_kind_invalid", field="display_kind")
     if direction not in ("higher_is_better", "lower_is_better"):
         raise MetricInvalid(f"方向 {direction!r} 不受支持", code="direction_invalid", field="direction")

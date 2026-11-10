@@ -112,7 +112,7 @@ def _pool_body(connection_id: str | None, **overrides: object) -> dict:
         "provisioning_mode": "spot",
         "min_capacity": 0,
         "max_capacity": 3,
-        "price_threshold_usd": "0.5000",
+        "price_threshold_cny": "0.5000",
         "instance_config": {
             "instance_type": "ecs.g7.large",
             "runners_per_instance": 1,
@@ -269,7 +269,7 @@ def test_admin_creates_spot_pool_with_capacity_policy(
     assert pool["connection_id"] == connection["id"]
     assert pool["min_capacity"] == 0
     assert pool["max_capacity"] == 3
-    assert pool["price_threshold_usd"] == "0.5000"
+    assert pool["price_threshold_cny"] == "0.5000"
     assert pool["instance_config"]["instance_type"] == "ecs.g7.large"
     assert pool["runner_group"] == "spot-linux"
     assert pool["labels"] == {"kind": "spot"}
@@ -322,7 +322,7 @@ def test_pool_creation_rejects_invalid_capacity_and_price(
 
     price = client.post(
         "/api/v1/resource-pools",
-        json=_pool_body(None, name="fixed-price", provisioning_mode="fixed", price_threshold_usd="0"),
+        json=_pool_body(None, name="fixed-price", provisioning_mode="fixed", price_threshold_cny="0"),
     )
     assert price.status_code == 422
     assert _error(price)["code"] == "price_threshold_invalid"
@@ -352,7 +352,7 @@ def test_fixed_pool_needs_no_connection(
         provisioning_mode="fixed",
         min_capacity=0,
         max_capacity=1,
-        price_threshold_usd=None,
+        price_threshold_cny=None,
         instance_config={},
         labels={"kind": "fixed"},
     )
@@ -368,7 +368,7 @@ def test_fixed_pool_needs_no_connection(
 def test_pool_list_and_detail_expose_capacity_state(
     client: TestClient, session: Session, scope: dict[str, str]
 ) -> None:
-    _register_fake(price_usd=Decimal("0.1000"))
+    _register_fake(price_cny=Decimal("0.1000"))
     connection = _create_connection(client, _credential(session, scope).id)
     pool = _create_pool(client, connection["id"])
 
@@ -409,7 +409,7 @@ def test_pool_list_and_detail_expose_capacity_state(
 def test_pool_detail_lists_recent_events_and_runners(
     client: TestClient, session: Session, scope: dict[str, str]
 ) -> None:
-    _register_fake(price_usd=Decimal("0.1000"))
+    _register_fake(price_cny=Decimal("0.1000"))
     connection = _create_connection(client, _credential(session, scope).id)
     pool = _create_pool(client, connection["id"])
     runner = _add_runner(session, scope, pool["id"], name="spot-runner-1", status="busy")
@@ -505,12 +505,12 @@ def test_pool_patch_updates_capacity_and_revalidates(
 
     updated = client.patch(
         f"/api/v1/resource-pools/{pool['id']}",
-        json={"max_capacity": 6, "price_threshold_usd": "0.2500"},
+        json={"max_capacity": 6, "price_threshold_cny": "0.2500"},
     )
     assert updated.status_code == 200, updated.text
     payload = updated.json()
     assert payload["max_capacity"] == 6
-    assert payload["price_threshold_usd"] == "0.2500"
+    assert payload["price_threshold_cny"] == "0.2500"
     assert payload["min_capacity"] == 0
     assert payload["connection_id"] == connection["id"]
 
@@ -540,9 +540,9 @@ def test_test_provisioning_requires_cost_confirmation(
 def test_test_provisioning_creates_one_instance_and_audit_event(
     client: TestClient, session: Session, scope: dict[str, str]
 ) -> None:
-    _register_fake(price_usd=Decimal("0.1000"))
+    _register_fake(price_cny=Decimal("0.1000"))
     connection = _create_connection(client, _credential(session, scope).id)
-    pool = _create_pool(client, connection["id"], price_threshold_usd="0.5000")
+    pool = _create_pool(client, connection["id"], price_threshold_cny="0.5000")
 
     response = client.post(
         f"/api/v1/resource-pools/{pool['id']}/test-provisioning",
@@ -553,8 +553,8 @@ def test_test_provisioning_creates_one_instance_and_audit_event(
     payload = response.json()
     assert payload["instance"]["status"] == "released"
     assert payload["instance"]["resource_pool_id"] == pool["id"]
-    assert payload["price_usd"] == "0.1000"
-    assert payload["price_threshold_usd"] == "0.5000"
+    assert payload["price_cny"] == "0.1000"
+    assert payload["price_threshold_cny"] == "0.5000"
     assert SECRET_CIPHERTEXT not in response.text
     assert SECRET_KEY_VERSION not in response.text
 
@@ -571,7 +571,7 @@ def test_test_provisioning_creates_one_instance_and_audit_event(
     )
     assert len(events) == 1
     assert events[0].payload_json["instance_id"] == instances[0].id
-    assert events[0].payload_json["price_usd"] == "0.1000"
+    assert events[0].payload_json["price_cny"] == "0.1000"
     assert events[0].payload_json["threshold"] == "0.5000"
 
     audits = list(
@@ -598,8 +598,8 @@ def test_test_provisioning_creates_one_instance_and_audit_event(
         "skipped",
         "passed",
     ]
-    assert steps[1]["detail"]["price_usd"] == "0.1000"
-    assert steps[1]["detail"]["price_threshold_usd"] == "0.5000"
+    assert steps[1]["detail"]["price_cny"] == "0.1000"
+    assert steps[1]["detail"]["price_threshold_cny"] == "0.5000"
     assert steps[2]["detail"]["provider_instance_id"]
     assert steps[3]["detail"]["reason"] == "test_instance_released_before_registration"
     assert payload["released"] is True
@@ -609,9 +609,9 @@ def test_test_provisioning_creates_one_instance_and_audit_event(
 def test_test_provisioning_retains_release_failure_for_diagnosis(
     client: TestClient, session: Session, scope: dict[str, str]
 ) -> None:
-    _register_fake(price_usd=Decimal("0.1000"), release_error="release_failed")
+    _register_fake(price_cny=Decimal("0.1000"), release_error="release_failed")
     connection = _create_connection(client, _credential(session, scope).id)
-    pool = _create_pool(client, connection["id"], price_threshold_usd="0.5000")
+    pool = _create_pool(client, connection["id"], price_threshold_cny="0.5000")
 
     response = client.post(
         f"/api/v1/resource-pools/{pool['id']}/test-provisioning",
@@ -658,7 +658,7 @@ def test_test_provisioning_rejects_fixed_pool(
         provisioning_mode="fixed",
         min_capacity=0,
         max_capacity=1,
-        price_threshold_usd=None,
+        price_threshold_cny=None,
         instance_config={},
     )
 

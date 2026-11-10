@@ -51,6 +51,7 @@ import { Icon } from "../components/Icon";
 import { PageHeading } from "../components/PageHeading";
 import { QueryError } from "../components/QueryError";
 import { StatusCard } from "../components/StatusCard";
+import { formatUnitPrice } from "../utils/money";
 
 type TabKey = "pools" | "connections";
 
@@ -105,8 +106,8 @@ const capacityReasonMeta: Record<
     tone: "warning",
     title: "当前竞价价格高于阈值",
     describe: (state) =>
-      `当前价格 ${formatPrice(state.price_usd)}，阈值 ${formatPrice(
-        state.price_threshold_usd,
+      `当前价格 ${formatUnitPrice(state.price_cny)}，阈值 ${formatUnitPrice(
+        state.price_threshold_cny,
       )}，平台暂不扩容，${state.queued_attempts} 个排队 Job 会保留并周期性重新询价。`,
   },
   resource_inventory_insufficient: {
@@ -160,10 +161,6 @@ const stepLabels: Record<string, string> = {
   runner_registration: "注册 Runner",
   instance_released: "自动释放",
 };
-
-function formatPrice(value: string | null | undefined): string {
-  return value ? `$${value}` : "—";
-}
 
 function formatDateTime(value: string | null | undefined): string {
   if (!value) return "—";
@@ -416,9 +413,9 @@ export function ResourcesPage() {
                     <PoolMeta label="容量区间" value={`${pool.min_capacity} – ${pool.max_capacity}`} />
                     <PoolMeta label="排队 Job" value={numberFormat.format(state.queued_attempts)} />
                     <PoolMeta
-                      label="当前价格 / 阈值"
-                      value={`${formatPrice(state.price_usd)} / ${formatPrice(
-                        state.price_threshold_usd ?? pool.price_threshold_usd,
+                      label="当前价格 / 阈值（CNY/小时）"
+                      value={`${formatUnitPrice(state.price_cny)} / ${formatUnitPrice(
+                        state.price_threshold_cny ?? pool.price_threshold_cny,
                       )}`}
                     />
                     <PoolMeta label="当前缺口" value={numberFormat.format(state.capacity_gap)} />
@@ -1146,7 +1143,7 @@ interface PoolFormValues {
   provisioning_mode: ProvisioningMode;
   min_capacity: number;
   max_capacity: number;
-  price_threshold_usd?: string | number;
+  price_threshold_cny?: string | number;
   instance_type?: string;
   runners_per_instance?: number;
   runner_group?: string;
@@ -1195,7 +1192,7 @@ function PoolModal({
       provisioning_mode: defaultMode,
       min_capacity: pool?.min_capacity ?? 0,
       max_capacity: pool?.max_capacity ?? 1,
-      price_threshold_usd: pool?.price_threshold_usd ?? "0.5000",
+      price_threshold_cny: pool?.price_threshold_cny ?? "3.6000",
       instance_type: String(pool?.instance_config?.instance_type ?? "ecs.g7.large"),
       runners_per_instance: Number(pool?.instance_config?.runners_per_instance ?? 1),
       runner_group: pool?.runner_group ?? "",
@@ -1232,9 +1229,9 @@ function PoolModal({
         provisioning_mode: values.provisioning_mode,
         min_capacity: Number(values.min_capacity ?? 0),
         max_capacity: Number(values.max_capacity ?? 1),
-        price_threshold_usd:
-          values.provisioning_mode === "spot" && values.price_threshold_usd !== undefined
-            ? String(values.price_threshold_usd)
+        price_threshold_cny:
+          values.provisioning_mode === "spot" && values.price_threshold_cny !== undefined
+            ? String(values.price_threshold_cny)
             : null,
         instance_config: instanceConfig,
         runner_group: values.runner_group?.trim() || null,
@@ -1404,8 +1401,8 @@ function PoolModal({
           </Form.Item>
           {mode === "spot" ? (
             <Form.Item
-              name="price_threshold_usd"
-              label="竞价价格阈值（USD/小时）"
+              name="price_threshold_cny"
+              label="竞价价格阈值（CNY/小时）"
               extra="当前价格高于阈值时停止扩容，排队 Job 保留。"
             >
               <InputNumber min={0.0001} step={0.01} style={{ width: "100%" }} />
@@ -1494,8 +1491,8 @@ function eventSummary(event: { event_type: string; payload: Record<string, unkno
   if (typeof payload.provider_instance_id === "string") {
     parts.push(`供应商实例 ${payload.provider_instance_id}`);
   }
-  if (typeof payload.price_usd === "string") parts.push(`价格 $${payload.price_usd}`);
-  if (typeof payload.threshold === "string") parts.push(`阈值 $${payload.threshold}`);
+  if (typeof payload.price_cny === "string") parts.push(`价格 ${formatUnitPrice(payload.price_cny)}`);
+  if (typeof payload.threshold === "string") parts.push(`阈值 ${formatUnitPrice(payload.threshold)}`);
   if (parts.length === 0) return "—";
   return parts.join(" · ");
 }
@@ -1613,9 +1610,9 @@ function PoolDetailDrawer({
           <div className="detail-meta-grid">
             <PoolMeta label="容量区间" value={`${detail.min_capacity} – ${detail.max_capacity}`} />
             <PoolMeta
-              label="当前价格 / 阈值"
-              value={`${formatPrice(state.price_usd)} / ${formatPrice(
-                state.price_threshold_usd ?? detail.price_threshold_usd,
+              label="当前价格 / 阈值（CNY/小时）"
+              value={`${formatUnitPrice(state.price_cny)} / ${formatUnitPrice(
+                state.price_threshold_cny ?? detail.price_threshold_cny,
               )}`}
             />
             <PoolMeta label="最近心跳" value={relativeTime(detail.runners.last_heartbeat_at)} />
@@ -1757,8 +1754,8 @@ function PoolDetailDrawer({
 function stepDetail(step: ProvisioningStep): string {
   const detail = step.detail;
   if (step.key === "quote") {
-    return `价格 ${formatPrice(String(detail.price_usd ?? ""))}，阈值 ${formatPrice(
-      String(detail.price_threshold_usd ?? ""),
+    return `价格 ${formatUnitPrice(String(detail.price_cny ?? ""))}，阈值 ${formatUnitPrice(
+      String(detail.price_threshold_cny ?? ""),
     )}；${detail.region ?? "—"} · ${detail.instance_type ?? "—"}`;
   }
   if (step.key === "instance_created") {
@@ -1887,10 +1884,10 @@ function ProvisioningTestModal({
               label="区域 / 规格"
               value={`按连接区域 / ${String(pool?.instance_config.instance_type ?? "ecs.g7.large")}`}
             />
-            <PoolMeta label="当前价格" value={formatPrice(state?.price_usd ?? pool?.price_usd)} />
+            <PoolMeta label="当前价格（CNY/小时）" value={formatUnitPrice(state?.price_cny ?? pool?.price_cny)} />
             <PoolMeta
-              label="价格阈值"
-              value={formatPrice(state?.price_threshold_usd ?? pool?.price_threshold_usd)}
+              label="价格阈值（CNY/小时）"
+              value={formatUnitPrice(state?.price_threshold_cny ?? pool?.price_threshold_cny)}
             />
             <PoolMeta label="最长存活" value="创建后立即释放" />
             <PoolMeta label="审计" value="管理员操作写入审计日志" />

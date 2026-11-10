@@ -35,7 +35,6 @@ import {
   prepareEvaluation,
   type CaseSelection,
   type CaseSelectionMode,
-  type CostRange,
   type ExecutionPolicy,
   type PrepareResponse,
   type PreflightIssue,
@@ -45,6 +44,7 @@ import { fetchResourcePools } from "../api/resources";
 import { fetchRuntimes } from "../api/runtimes";
 import { ApiError } from "../api/types";
 import { Icon } from "../components/Icon";
+import { formatMoney, formatMoneyRange } from "../utils/money";
 import { PageHeading } from "../components/PageHeading";
 
 const DRAFT_KEY = "ai-eval-platform:eval-wizard-draft:v1";
@@ -81,7 +81,7 @@ interface WizardDraft {
   concurrency: number;
   caseTimeoutSeconds: number;
   maxAttempts: number;
-  budgetUsd: number | null;
+  budgetCny: number | null;
   executionDigest: string;
   scoringDigest: string;
 }
@@ -106,7 +106,7 @@ function defaultDraft(): WizardDraft {
     concurrency: 8,
     caseTimeoutSeconds: 3600,
     maxAttempts: 2,
-    budgetUsd: null,
+    budgetCny: null,
     executionDigest: "",
     scoringDigest: "",
   };
@@ -153,8 +153,8 @@ function readDraft(): WizardDraft | null {
       concurrency: Math.max(1, numberOr(it.concurrency, base.concurrency)),
       caseTimeoutSeconds: Math.max(60, numberOr(it.caseTimeoutSeconds, base.caseTimeoutSeconds)),
       maxAttempts: Math.max(1, numberOr(it.maxAttempts, base.maxAttempts)),
-      budgetUsd:
-        typeof it.budgetUsd === "number" && Number.isFinite(it.budgetUsd) ? it.budgetUsd : null,
+      budgetCny:
+        typeof it.budgetCny === "number" && Number.isFinite(it.budgetCny) ? it.budgetCny : null,
       executionDigest: typeof it.executionDigest === "string" ? it.executionDigest : "",
       scoringDigest: typeof it.scoringDigest === "string" ? it.scoringDigest : "",
     };
@@ -184,17 +184,6 @@ function newIdempotencyKey(): string {
     return crypto.randomUUID();
   }
   return `idem-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-}
-
-function trimMoney(value: string): string {
-  const number = Number(value);
-  if (!Number.isFinite(number)) return value;
-  return number >= 1 ? number.toFixed(2) : number.toFixed(4);
-}
-
-function formatUsd(range: CostRange | null): string {
-  if (!range) return "—";
-  return `$${trimMoney(range.low)}–$${trimMoney(range.high)}`;
 }
 
 function formatMinutes(seconds: number): string {
@@ -648,7 +637,7 @@ export function EvalWizardPage() {
       concurrency: draft.concurrency,
       case_timeout_seconds: draft.caseTimeoutSeconds,
       max_attempts: draft.maxAttempts,
-      model_budget_usd: draft.budgetUsd ?? undefined,
+      model_budget_cny: draft.budgetCny ?? undefined,
     };
   }
 
@@ -824,7 +813,7 @@ export function EvalWizardPage() {
           <div className="review-box">
             <div className="row-between">
               <span className="small muted">预计模型费</span>
-              <strong>{costEstimate ? formatUsd(costEstimate.model_usd) : "确认后计算"}</strong>
+              <strong>{costEstimate ? formatMoneyRange(costEstimate.model_cny.low, costEstimate.model_cny.high) : "确认后计算"}</strong>
             </div>
             <div className="row-between" style={{ marginTop: 7 }}>
               <span className="small muted">预计峰值并发</span>
@@ -1470,19 +1459,19 @@ export function EvalWizardPage() {
             ) : null}
           </div>
           <div className="field">
-            <label>模型预算（USD，可选）</label>
+            <label>模型预算（CNY，可选）</label>
             <InputNumber
               id="wizard-budget"
               min={0}
               step={1}
-              value={draft.budgetUsd}
-              onChange={(value) => update({ budgetUsd: value === null ? null : Math.max(0, value) })}
+              value={draft.budgetCny}
+              onChange={(value) => update({ budgetCny: value === null ? null : Math.max(0, value) })}
               placeholder="不设置则不暂停"
               style={{ width: "100%" }}
             />
             <span className="hint">达到预算时评测暂停；确认追加预算后从未完成用例继续。</span>
-            {blockerFor("model_budget_usd") ? (
-              <span className="field-error">{blockerFor("model_budget_usd")?.message}</span>
+            {blockerFor("model_budget_cny") ? (
+              <span className="field-error">{blockerFor("model_budget_cny")?.message}</span>
             ) : null}
           </div>
         </div>
@@ -1612,8 +1601,8 @@ export function EvalWizardPage() {
               并发 {summary.execution.concurrency} · 超时{" "}
               {formatMinutes(summary.execution.case_timeout_seconds)} · 重试{" "}
               {summary.execution.max_attempts - 1} 次
-              {summary.execution.model_budget_usd !== null
-                ? ` · 预算 $${summary.execution.model_budget_usd}`
+              {summary.execution.model_budget_cny !== null
+                ? ` · 预算 ${formatMoney(summary.execution.model_budget_cny)}`
                 : ""}
             </span>
           </div>
@@ -1661,7 +1650,7 @@ export function EvalWizardPage() {
             <strong>这会占用资源池并产生模型费用。</strong>{" "}
             {costEstimate ? (
               <>
-                预计 {formatUsd(costEstimate.total_usd)}（{costEstimate.basis}）；预计总耗时{" "}
+                预计 {formatMoneyRange(costEstimate.total_cny.low, costEstimate.total_cny.high)}（{costEstimate.basis}）；预计总耗时{" "}
                 {formatDuration(costEstimate.estimated_duration_seconds)}。
               </>
             ) : (
