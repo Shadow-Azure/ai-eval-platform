@@ -60,6 +60,10 @@ Production deployment binds the Runner callback entry to the VPC private address
 
 `/assets` manages GitHub asset sources: it resolves the Ref, discovers Skills (directories with `SKILL.md`), Commands, and Subagents, and freezes the selected assets into an immutable OSS bundle recording the commit, tree digest, file digests, and manifest. Evaluations reference the frozen snapshot; without an asset source they use only runtime built-ins. The runner maps the snapshot to `.claude/` under an isolated HOME without re-fetching the branch or loading other repository or host assets. Git tokens are encrypted and the console only shows a mask.
 
+## Trace capture
+
+At case completion the runner archives native Claude Code files: the root and subagent session JSONL, `subagents/*.meta.json` relation metadata, and independent stdout/stderr diagnostics all enter an attempt-bound multi-file manifest; files produced before a failure are retained. Each entry records a safe logical path, artifact kind, sha256, size, content type, runtime version, and native format version, while object keys remain platform-generated. The backend verifies attempt ownership, paths, and digests, collapses repeated digests to one object, and keeps legacy single-file `trace_manifest` payloads readable. A missing root session or subagent metadata marks the case `incomplete`; degraded parsing marks it `degraded`, so partial capture is never presented as a complete trace.
+
 ## Extension points
 
 - After the product runtime lands, add its components, data flows, and external dependencies here.

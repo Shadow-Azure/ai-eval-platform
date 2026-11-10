@@ -30,7 +30,9 @@ const validFixtures = [
   ["started", "started.valid.json"],
   ["heartbeat", "heartbeat.valid.json"],
   ["upload", "upload.valid.json"],
+  ["upload", "upload.multifile.valid.json"],
   ["completion", "completion.valid.json"],
+  ["completion", "completion.multitrace.valid.json"],
   ["failure", "failure.valid.json"],
 ];
 
@@ -47,7 +49,9 @@ const invalidFixtures = [
   ["manifest", "manifest.invalid-attempt.json", /attempt/],
   ["heartbeat", "heartbeat.invalid-sequence.json", /sequence/],
   ["upload", "upload.invalid-sha.json", /sha256/],
+  ["upload", "upload.invalid-logical-path.json", /logical_path/],
   ["completion", "completion.invalid-status.json", /execution_status/],
+  ["completion", "completion.invalid-trace-object.json", /logical_path/],
   ["failure", "failure.invalid-retryable.json", /retryable/],
 ];
 

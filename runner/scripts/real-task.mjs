@@ -16,6 +16,12 @@ import { LocalObjectStore } from "../lib/object-store.mjs";
 import { getDatasetAdapter, getRuntimeAdapter } from "../lib/adapters.mjs";
 import { startHeartbeatSidecar, stopHeartbeatSidecar } from "./heartbeat-agent.mjs";
 import { buildCaseTasks } from "../lib/task-payload.mjs";
+import {
+  collectTraceBundle,
+  dedupeTraceObjects,
+  traceManifestFromBundle,
+  writeDiagnostic,
+} from "../lib/trace-capture.mjs";
 
 function parseArgs(argv) {
   const args = { dispatch: null, stateDir: ".runner-state", objectRoot: ".runner-objects", token: null, caseRunId: null };
@@ -165,6 +171,24 @@ async function realCase(dispatch, item, task, { modelToken, runnerRoot }) {
     }
     spawnSync("chmod", ["-R", "a+rwX", workdir], { encoding: "utf8", timeout: 120_000 });
     mkdirSync(join(workdir, ".runtime-home"), { recursive: true, mode: 0o777 });
+    mkdirSync(join(workdir, "trace"), { recursive: true });
+    let runtimeVersion = runtimeAdapter.runtimeVersion ?? null;
+    const collectCapture = (fallbackText = null) => {
+      const capture = () =>
+        collectTraceBundle({
+          runtimeHome: join(workdir, ".runtime-home"),
+          traceDir: join(workdir, "trace"),
+          runtimeKey: "claude-code",
+          runtimeVersion,
+          adapterVersion: runtimeAdapter.adapterVersion ?? "claude-code-1.0",
+        });
+      let bundle = capture();
+      if (bundle.files.length === 0) {
+        writeDiagnostic(join(workdir, "trace"), "execution.log", fallbackText ?? "no trace output\n");
+        bundle = capture();
+      }
+      return bundle;
+    };
     const checkout = spawnSync("git", ["-C", workdir, "checkout", task.base_commit], {
       encoding: "utf8",
       timeout: 120_000,
@@ -180,6 +204,11 @@ async function realCase(dispatch, item, task, { modelToken, runnerRoot }) {
     } catch (error) {
       const message = `资产快照加载失败：${error.message}`;
       console.error(message);
+      writeDiagnostic(
+        join(workdir, "trace"),
+        "asset-failure.json",
+        `${JSON.stringify({ type: "trace.failed", code: error.code || "asset_invalid", message })}\n`,
+      );
       return {
         score: {
           [task.case_key]: {
@@ -192,14 +221,7 @@ async function realCase(dispatch, item, task, { modelToken, runnerRoot }) {
             },
           },
         },
-        trace: Buffer.from(
-          JSON.stringify({
-            type: "asset.failed",
-            code: error.code || "asset_invalid",
-            message,
-          }) + "\n",
-          "utf8",
-        ),
+        traceBundle: collectCapture(),
         executionStatus: "failed",
         resultStatus: "not_scored",
         durationMs: Date.now() - startedAt,
@@ -254,6 +276,12 @@ async function realCase(dispatch, item, task, { modelToken, runnerRoot }) {
         allowFailure: true,
         timeout: Number(process.env.REAL_TASK_AGENT_TIMEOUT_MS || 1_000_000),
       });
+      const version = dockerRun(
+        ["exec", agentName, "bash", "-lc", "claude --version 2>/dev/null || true"],
+        { allowFailure: true, timeout: 15_000 },
+      );
+      const versionMatch = /(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)/.exec(version.stdout || "");
+      if (versionMatch) runtimeVersion = versionMatch[1];
       dockerRun(
         ["exec", "-u", "eval", agentName, "git", "-C", "/testbed", "add", "-A", "--", ".", ":(exclude).runtime-home", ":(exclude)trace", ":(exclude).claude"],
         { allowFailure: true, timeout: 60_000 },
@@ -269,7 +297,7 @@ async function realCase(dispatch, item, task, { modelToken, runnerRoot }) {
     }
 
     const tracePath = join(workdir, "trace", "claude-stream.jsonl");
-    const trace = existsSync(tracePath) ? readFileSync(tracePath) : Buffer.from("");
+    const traceBytes = existsSync(tracePath) ? readFileSync(tracePath) : Buffer.from("");
     // The workspace is chowned to the non-root agent user; host-side git
     // commands run as root and otherwise fail with "dubious ownership",
     // which silently produced empty patches even though the agent edited code.
@@ -302,7 +330,7 @@ async function realCase(dispatch, item, task, { modelToken, runnerRoot }) {
             tests_status: { FAIL_TO_PASS: { success: [], failure: [] }, PASS_TO_PASS: { success: [], failure: [] } },
           },
         },
-        trace: trace.length ? trace : Buffer.from(failureDetail, "utf8"),
+        traceBundle: collectCapture(failureDetail),
         executionStatus: "failed",
         resultStatus: "not_scored",
         durationMs: Date.now() - startedAt,
@@ -317,7 +345,7 @@ async function realCase(dispatch, item, task, { modelToken, runnerRoot }) {
             tests_status: { FAIL_TO_PASS: { success: [], failure: [] }, PASS_TO_PASS: { success: [], failure: [] } },
           },
         },
-        trace,
+        traceBundle: collectCapture(traceBytes.toString("utf8")),
         executionStatus: "succeeded",
         resultStatus: "unresolved",
         durationMs: Date.now() - startedAt,
@@ -333,7 +361,7 @@ async function realCase(dispatch, item, task, { modelToken, runnerRoot }) {
     const report = datasetAdapter.parseReport(task, `${testResult.stdout}\n${testResult.stderr}`);
     return {
       score: report.score,
-      trace,
+      traceBundle: collectCapture(traceBytes.toString("utf8")),
       executionStatus: "succeeded",
       resultStatus: report.resultStatus,
       durationMs: Date.now() - startedAt,
@@ -604,23 +632,57 @@ async function main() {
           // Best-effort liveness only.
         }
       }
-      const { score, trace } = caseResult;
+      const { score } = caseResult;
+      const caseBundle = caseResult.traceBundle ?? {
+        schema_version: "1.0",
+        runtime_key: "synthetic",
+        runtime_version: "1.0",
+        adapter_version: "synthetic-1.0",
+        capture_status: "partial",
+        incomplete_reasons: ["synthetic_trace"],
+        files: [
+          {
+            logical_path: "synthetic/case.jsonl",
+            artifact_kind: "trace",
+            content_type: "application/x-ndjson",
+            native_format: "synthetic.case+jsonl",
+            format_version: "1",
+            runtime_version: "1.0",
+            bytes: Buffer.from(caseResult.trace, "utf8"),
+          },
+        ],
+      };
+      const traceFiles = dedupeTraceObjects(caseBundle.files);
+      const uploadFields = (file) => ({
+        logical_path: file.logical_path,
+        native_format: file.native_format,
+        runtime_version: file.runtime_version ?? caseBundle.runtime_version ?? "unknown",
+        format_version: file.format_version ?? "1",
+      });
       const scoreObject = store.putJson(score);
-      const traceObject = store.putBytes(Buffer.from(trace, "utf8"), { contentType: "application/x-ndjson" });
       const pendingObjects = [
         { artifact_kind: "score", ...scoreObject },
-        { artifact_kind: "trace", ...traceObject },
+        ...traceFiles.map((file) => ({
+          artifact_kind: file.artifact_kind,
+          ...store.putBytes(file.bytes, { contentType: file.content_type }),
+          ...uploadFields(file),
+        })),
       ];
 
       let reportedObjects = pendingObjects;
       if (presignUploads) {
         const uploads = await requestUploadUrls(item, pendingObjects);
+        const keyOf = (kind, digest) => `${kind}\0${digest}`;
+        const pendingByKey = new Map(
+          pendingObjects.map((pending) => [keyOf(pending.artifact_kind, pending.sha256), pending]),
+        );
         for (const upload of uploads) {
-          const pending = pendingObjects.find((candidate) => candidate.artifact_kind === upload.artifact_kind);
+          const pending = pendingByKey.get(keyOf(upload.artifact_kind, upload.sha256));
           if (!pending) {
-            throw Object.assign(new Error(`upload-urls 返回未知 artifact_kind ${upload.artifact_kind}`), {
-              code: "upload_failed",
-            });
+            throw Object.assign(
+              new Error(`upload-urls 返回未知对象 ${upload.artifact_kind}/${upload.sha256}`),
+              { code: "upload_failed" },
+            );
           }
           const bytes = store.get(pending.object_key);
           let putError = null;
@@ -646,27 +708,44 @@ async function main() {
           }
           if (putError) throw putError;
         }
-        reportedObjects = uploads.map((upload) => ({
-          artifact_kind: upload.artifact_kind,
-          object_key: upload.object_key,
-          sha256: upload.sha256,
-          size: upload.size,
-          content_type: upload.headers?.["content-type"] ?? "application/octet-stream",
-        }));
+        reportedObjects = pendingObjects.map((pending) => {
+          const upload = uploads.find(
+            (candidate) =>
+              candidate.artifact_kind === pending.artifact_kind && candidate.sha256 === pending.sha256,
+          );
+          if (!upload) {
+            throw Object.assign(
+              new Error(`upload-urls 缺少对象 ${pending.artifact_kind}/${pending.sha256}`),
+              { code: "upload_failed" },
+            );
+          }
+          return {
+            ...pending,
+            object_key: upload.object_key,
+            sha256: upload.sha256,
+            size: upload.size,
+            content_type: upload.headers?.["content-type"] ?? pending.content_type,
+          };
+        });
       }
       objects.push(...reportedObjects);
 
+      const uploadObject = ({ artifact_kind, object_key, sha256: digest, size, content_type, logical_path, native_format, runtime_version, format_version }) => ({
+        artifact_kind,
+        object_key,
+        sha256: digest,
+        size,
+        content_type,
+        ...(logical_path ? { logical_path } : {}),
+        ...(native_format ? { native_format } : {}),
+        ...(runtime_version ? { runtime_version } : {}),
+        ...(format_version ? { format_version } : {}),
+      });
       const upload = requireValid("upload", {
         schema_version: "1.0",
         case_run_id: item.case_run_id,
         attempt: dispatch.attempt,
-        objects: reportedObjects.map(({ artifact_kind, object_key, sha256: digest, size, content_type }) => ({
-          artifact_kind,
-          object_key,
-          sha256: digest,
-          size,
-          content_type,
-        })),
+        objects: reportedObjects.map(uploadObject),
       });
       const uploadResult = await postCallback(
         `${manifest.callback_base_url}/runner/v1/case-runs/${item.case_run_id}/uploads`,
@@ -690,7 +769,7 @@ async function main() {
       }
 
       const scoreReport = reportedObjects.find((object) => object.artifact_kind === "score");
-      const traceReport = reportedObjects.find((object) => object.artifact_kind === "trace");
+      const traceManifest = traceManifestFromBundle(caseBundle, reportedObjects);
       const completion = requireValid("completion", {
         schema_version: "1.0",
         event_id: `evt_${dispatch.shard_id}_${item.case_run_id}_completed`,
@@ -704,15 +783,7 @@ async function main() {
           sha256: scoreReport.sha256,
           size: scoreReport.size,
         },
-        ...(traceReport
-          ? {
-              trace_manifest: {
-                object_key: traceReport.object_key,
-                sha256: traceReport.sha256,
-                size: traceReport.size,
-              },
-            }
-          : {}),
+        ...(traceManifest.objects.length > 0 ? { trace_manifest: traceManifest } : {}),
         summary: { duration_ms: caseResult.durationMs, input_tokens: 0, output_tokens: 0 },
       });
       const result = await postCallback(

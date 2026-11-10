@@ -100,7 +100,7 @@ def test_operations_status_reports_services_resources_and_database(
     database = payload["database"]
     assert database["status"] == "ok"
     assert database["dialect"] in {"sqlite", "postgresql"}
-    assert database["revision"] == "0018_billing_cny"
+    assert database["revision"] == "0019_trace_capture_status"
     assert database["size_bytes"] > 0
     capacity = database["capacity"]
     assert set(capacity) == {

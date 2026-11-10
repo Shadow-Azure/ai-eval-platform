@@ -238,14 +238,17 @@ export function consumeStreamLines(lines) {
   return events;
 }
 
-async function walkJsonl(root, base) {
+async function walkNative(root, base) {
   if (!existsSync(root)) return [];
   const files = [];
   async function visit(directory) {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
       const full = join(directory, entry.name);
       if (entry.isDirectory()) await visit(full);
-      else if (entry.isFile() && entry.name.endsWith(".jsonl")) {
+      else if (
+        entry.isFile() &&
+        (entry.name.endsWith(".jsonl") || entry.name.endsWith(".meta.json"))
+      ) {
         const info = await stat(full);
         const data = readFileSync(full);
         files.push({
@@ -262,7 +265,7 @@ async function walkJsonl(root, base) {
 
 /** Raw native session files are authoritative for the trace (decision D8). */
 export async function discoverTraceFiles(runtimeHome) {
-  return walkJsonl(join(runtimeHome, ".claude"), runtimeHome);
+  return walkNative(join(runtimeHome, ".claude"), runtimeHome);
 }
 
 /**

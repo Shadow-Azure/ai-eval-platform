@@ -130,14 +130,16 @@ test("runs a session and collects raw trace files", async () => {
   assert.ok(readFileSync(result.stdoutPath, "utf8").includes('"type":"system"'));
 });
 
-test("discovers only jsonl trace files", async () => {
+test("discovers native jsonl sessions and their meta files", async () => {
   const runtimeHome = mkdtempSync(join(tmpdir(), "claude-traces-"));
   const { mkdirSync } = await import("node:fs");
   const dir = join(runtimeHome, ".claude/projects/p");
-  mkdirSync(dir, { recursive: true });
+  mkdirSync(join(dir, "subagents"), { recursive: true });
   writeFileSync(join(dir, "s1.jsonl"), "line\n");
+  writeFileSync(join(dir, "subagents", "agent-a1.meta.json"), "{}\n");
   writeFileSync(join(dir, "debug.log"), "ignored\n");
   const traces = await discoverTraceFiles(runtimeHome);
-  assert.equal(traces.length, 1);
+  assert.equal(traces.length, 2);
   assert.equal(traces[0].path, ".claude/projects/p/s1.jsonl");
+  assert.equal(traces[1].path, ".claude/projects/p/subagents/agent-a1.meta.json");
 });

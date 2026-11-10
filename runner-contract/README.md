@@ -15,6 +15,10 @@ workflow --校验 dispatch--> 拉取 manifest --校验 sha256--> 执行用例
         --完成/失败回调--> 平台（Idempotency-Key = event_id）
 ```
 
+## 多文件轨迹清单
+
+`upload-manifest` 的每个对象可携带 `logical_path`（兼容别名 `path`）、`artifact_kind`、`native_format`、`runtime_version` 与 `format_version`；旧对象仍只需 `artifact_kind/object_key/sha256/size/content_type`。完成回调的 `trace_manifest` 兼容旧单文件三字段，也接受 `{manifest_version, capture_status, incomplete_reasons, objects[]}` 多文件包：`capture_status=complete` 只在对象包含原生会话文件时成立，只有 stdout/stderr 时 Runner 上报 `partial`，平台落 `incomplete`。对象键始终由平台生成，重复 digest 只保留一个对象，逻辑路径不得是绝对路径或包含 `..`。
+
 ## 安全边界
 
 - dispatch 只含 `eval_run_id`、`shard_id`、`attempt`、`dispatch_key`、`manifest_url`、`manifest_digest` 和过期时间。

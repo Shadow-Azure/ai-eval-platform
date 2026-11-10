@@ -1,0 +1,45 @@
+{
+  "schema_version": "1.0",
+  "case_run_id": "ecr_001",
+  "attempt": 1,
+  "objects": [
+    {
+      "artifact_kind": "score",
+      "object_key": "objects/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "size": 12,
+      "content_type": "application/json"
+    },
+    {
+      "artifact_kind": "trace",
+      "object_key": "objects/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "size": 210,
+      "content_type": "application/x-ndjson",
+      "logical_path": "native/projects/-testbed/session-1.jsonl",
+      "native_format": "claude-code.session+jsonl",
+      "runtime_version": "2.1.278",
+      "format_version": "1"
+    },
+    {
+      "artifact_kind": "trace_metadata",
+      "object_key": "objects/cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "size": 38,
+      "content_type": "application/json",
+      "logical_path": "native/projects/-testbed/subagents/agent-a1.meta.json",
+      "runtime_version": "2.1.278",
+      "format_version": "1"
+    },
+    {
+      "artifact_kind": "trace_diagnostic",
+      "object_key": "objects/dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "size": 90,
+      "content_type": "text/plain",
+      "logical_path": "diagnostics/stderr.log",
+      "runtime_version": "2.1.278",
+      "format_version": "1"
+    }
+  ]
+}
