@@ -278,6 +278,9 @@ class AliyunEcsClient:
         params: dict[str, object] = {
             "RegionId": region_id,
             "InstanceType": instance_type,
+            # Aliyun requires this even though the response is network-agnostic.
+            # The platform creates VPC instances only.
+            "NetworkType": "vpc",
         }
         if zone_id:
             params["ZoneId"] = zone_id

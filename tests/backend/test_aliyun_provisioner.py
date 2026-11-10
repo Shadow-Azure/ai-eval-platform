@@ -238,7 +238,8 @@ def test_quote_converts_cny_and_reports_inventory(
 ) -> None:
     connection = _connection(session, scope)
     pool = _pool(session, scope, connection)
-    quote = _provisioner().quote(
+    transport = FakeAliyun()
+    quote = _provisioner(transport=transport).quote(
         connection=connection, pool=pool, now=clock, session=session
     )
     assert quote.price_native == Decimal("0.5000")
@@ -246,6 +247,10 @@ def test_quote_converts_cny_and_reports_inventory(
     assert quote.price_usd == (Decimal("0.5") / Decimal("7.2")).quantize(Decimal("0.0001"))
     assert quote.available is True
     assert quote.zone_id == "cn-hangzhou-i"
+    price_call = next(
+        call for call in transport.calls if call[0] == "DescribeSpotPriceHistory"
+    )
+    assert price_call[1]["NetworkType"] == ["vpc"]
 
 
 def test_empty_spot_prices_mean_no_inventory(
