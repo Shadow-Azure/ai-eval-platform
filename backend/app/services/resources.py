@@ -10,12 +10,12 @@ without ever exposing credential ciphertext or key versions.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from sqlalchemy.orm import Session
 
 from ..models import Connection, Credential, ResourcePool
+from ..money import Money, MoneyError, money_str
 from .provisioning import CAPABILITY_ECS_SPOT, Provisioner, ProvisionerError
 
 PROVISIONING_MODE_FIXED = "fixed"
@@ -75,10 +75,6 @@ def _iso(value: datetime | None) -> str | None:
     return None if value is None else value.isoformat(timespec="microseconds")
 
 
-def _decimal_str(value: Decimal | None) -> str | None:
-    return None if value is None else str(value)
-
-
 def _display_credential_mask(mask: str | None) -> str | None:
     """Keep the mask readable when the secret is a JSON document.
 
@@ -100,14 +96,6 @@ def connection_capabilities(connection: Connection | None) -> set[str]:
     if not isinstance(declared, (list, tuple, set, frozenset)):
         return set()
     return {str(item) for item in declared if isinstance(item, str) and item}
-
-
-def _as_decimal(value: object) -> Decimal:
-    if isinstance(value, Decimal):
-        return value
-    if isinstance(value, bool):
-        raise InvalidOperation
-    return Decimal(str(value))
 
 
 def _credential_reason(credential: Credential | None, *, tenant_id: str) -> str | None:
@@ -178,7 +166,7 @@ def validate_pool_configuration(
     provisioning_mode: str,
     min_capacity: int,
     max_capacity: int,
-    price_threshold_usd: object | None,
+    price_threshold_cny: object | None,
     *,
     provider_key: str | None = None,
     session: Session | None = None,
@@ -247,22 +235,22 @@ def validate_pool_configuration(
             details={"min_capacity": min_value, "max_capacity": max_value},
         )
 
-    if price_threshold_usd is not None:
+    if price_threshold_cny is not None:
         try:
-            threshold = _as_decimal(price_threshold_usd)
-        except (InvalidOperation, TypeError, ValueError):
+            threshold = Money.of(price_threshold_cny)
+        except MoneyError:
             raise ResourceValidationError(
                 "price_threshold_invalid",
-                "price_threshold_usd must be a positive decimal",
-                field="price_threshold_usd",
-                details={"price_threshold_usd": price_threshold_usd},
+                "price_threshold_cny must be a positive decimal",
+                field="price_threshold_cny",
+                details={"price_threshold_cny": str(price_threshold_cny)},
             ) from None
         if threshold <= 0:
             raise ResourceValidationError(
                 "price_threshold_invalid",
-                "price_threshold_usd must be positive when set",
-                field="price_threshold_usd",
-                details={"price_threshold_usd": str(threshold)},
+                "price_threshold_cny must be positive when set",
+                field="price_threshold_cny",
+                details={"price_threshold_cny": threshold.as_str()},
             )
 
     if mode == PROVISIONING_MODE_FIXED:
@@ -320,8 +308,8 @@ def pool_payload(pool: ResourcePool) -> dict[str, Any]:
         "min_capacity": pool.min_capacity,
         "max_capacity": pool.max_capacity,
         "instance_config": dict(pool.instance_config_json or {}),
-        "price_threshold_usd": _decimal_str(pool.price_threshold_usd),
-        "price_usd": _decimal_str(pool.price_usd),
+        "price_threshold_cny": money_str(pool.price_threshold_cny),
+        "price_cny": money_str(pool.price_cny),
         "capacity_reason": pool.capacity_reason,
         "last_checked_at": _iso(pool.last_checked_at),
         "next_check_at": _iso(pool.next_check_at),

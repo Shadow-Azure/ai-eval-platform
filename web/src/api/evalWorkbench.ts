@@ -322,8 +322,8 @@ export interface EvalConfigSnapshot {
     provisioning_mode: string;
     min_capacity: number;
     max_capacity: number;
-    price_usd: string | null;
-    price_threshold_usd: string | null;
+    price_cny: string | null;
+    price_threshold_cny: string | null;
     capacity_reason: string | null;
     status: string;
   } | null;
@@ -344,9 +344,9 @@ export interface EvalConfigSnapshot {
     blockers: Array<Record<string, unknown>>;
   };
   budget: {
-    model_budget_usd: string | null;
-    budget_spent_usd: string | null;
-    budget_remaining_usd: string | null;
+    model_budget_cny: string | null;
+    budget_spent_cny: string | null;
+    budget_remaining_cny: string | null;
     budget_version: number;
     pause_reason: string | null;
   };
@@ -452,8 +452,8 @@ export async function fetchEvaluationConfig(
           provisioning_mode: str(pool.provisioning_mode),
           min_capacity: typeof pool.min_capacity === "number" ? pool.min_capacity : 0,
           max_capacity: typeof pool.max_capacity === "number" ? pool.max_capacity : 0,
-          price_usd: optStr(pool.price_usd),
-          price_threshold_usd: optStr(pool.price_threshold_usd),
+          price_cny: optStr(pool.price_cny),
+          price_threshold_cny: optStr(pool.price_threshold_cny),
           capacity_reason: optStr(pool.capacity_reason),
           status: str(pool.status),
         }
@@ -479,9 +479,9 @@ export async function fetchEvaluationConfig(
         : [],
     },
     budget: {
-      model_budget_usd: optStr(budget.model_budget_usd),
-      budget_spent_usd: optStr(budget.budget_spent_usd),
-      budget_remaining_usd: optStr(budget.budget_remaining_usd),
+      model_budget_cny: optStr(budget.model_budget_cny),
+      budget_spent_cny: optStr(budget.budget_spent_cny),
+      budget_remaining_cny: optStr(budget.budget_remaining_cny),
       budget_version:
         typeof budget.budget_version === "number" ? budget.budget_version : 1,
       pause_reason: optStr(budget.pause_reason),

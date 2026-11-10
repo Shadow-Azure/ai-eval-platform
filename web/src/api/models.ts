@@ -17,7 +17,7 @@ export interface ModelUsageSummary {
   prompt_tokens: number;
   completion_tokens: number;
   total_tokens: number;
-  cost_usd: string;
+  cost_cny: string;
 }
 
 export interface ModelConfig {
@@ -63,7 +63,7 @@ export const EMPTY_USAGE: ModelUsageSummary = {
   prompt_tokens: 0,
   completion_tokens: 0,
   total_tokens: 0,
-  cost_usd: "0.000000",
+  cost_cny: "0.000000",
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -107,7 +107,7 @@ function parseUsage(value: unknown): ModelUsageSummary {
     prompt_tokens: asNumber(value.prompt_tokens),
     completion_tokens: asNumber(value.completion_tokens),
     total_tokens: asNumber(value.total_tokens),
-    cost_usd: asString(value.cost_usd, "0.000000"),
+    cost_cny: asString(value.cost_cny, "0.000000"),
   };
 }
 

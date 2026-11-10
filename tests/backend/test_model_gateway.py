@@ -326,7 +326,7 @@ def test_gateway_forwards_and_records_usage(
     assert rows[0].status == "succeeded"
     assert rows[0].prompt_tokens == 10
     assert rows[0].completion_tokens == 5
-    assert rows[0].cost_usd == Decimal("0.020000")
+    assert rows[0].cost_cny == Decimal("0.020000")
     assert rows[0].eval_run_id == bound_eval["run_id"]
     assert rows[0].shard_id == bound_eval["shard_id"]
 
@@ -347,7 +347,7 @@ def test_gateway_pauses_when_budget_reached(
                 prompt_tokens=1,
                 completion_tokens=1,
                 total_tokens=2,
-                cost_usd=Decimal("0.500000"),
+                cost_cny=Decimal("0.500000"),
             )
         )
         session.commit()
@@ -357,7 +357,7 @@ def test_gateway_pauses_when_budget_reached(
         eval_run_id=bound_eval["run_id"],
         shard_id=bound_eval["shard_id"],
         attempt=1,
-        budget_usd=0.01,
+        budget_cny=0.01,
     )
     response = _gateway(client, token)
     assert response.status_code == 402
@@ -375,7 +375,7 @@ def test_gateway_budget_refusal_triggers_platform_pause(
     config = bound_eval["config"]
     with Session(engine) as session:
         run = session.get(EvalRun, bound_eval["run_id"])
-        run.model_budget_usd = Decimal("0.010000")
+        run.model_budget_cny = Decimal("0.010000")
         session.add(
             ModelUsage(
                 tenant_id=str(DEFAULT_TENANT_ID),
@@ -384,7 +384,7 @@ def test_gateway_budget_refusal_triggers_platform_pause(
                 shard_id=bound_eval["shard_id"],
                 attempt=1,
                 status="succeeded",
-                cost_usd=Decimal("0.500000"),
+                cost_cny=Decimal("0.500000"),
             )
         )
         session.commit()
@@ -394,7 +394,7 @@ def test_gateway_budget_refusal_triggers_platform_pause(
         eval_run_id=bound_eval["run_id"],
         shard_id=bound_eval["shard_id"],
         attempt=1,
-        budget_usd=0.01,
+        budget_cny=0.01,
     )
     refused = _gateway(client, token)
     assert refused.status_code == 402
@@ -405,7 +405,7 @@ def test_gateway_budget_refusal_triggers_platform_pause(
         run = session.get(EvalRun, bound_eval["run_id"])
         assert run.status == "pausing_budget"
         assert run.pause_reason == "budget_exceeded"
-        assert Decimal(str(run.budget_spent_usd)) == Decimal("0.5")
+        assert Decimal(str(run.budget_spent_cny)) == Decimal("0.5")
         events = list(
             session.scalars(
                 select(EvalEvent).where(
@@ -432,7 +432,7 @@ def test_gateway_budget_refusal_triggers_platform_pause(
         assert session.get(EvalRun, bound_eval["run_id"]).status == "paused_budget"
     resumed = client.post(
         f"/api/v1/evaluations/{bound_eval['run_id']}/resume-budget",
-        json={"additional_budget_usd": 1, "budget_version": 1},
+        json={"additional_budget_cny": 1, "budget_version": 1},
     )
     assert resumed.status_code == 200, resumed.text
     stale = _gateway(client, token)

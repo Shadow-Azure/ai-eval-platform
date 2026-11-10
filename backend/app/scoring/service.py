@@ -20,6 +20,7 @@ from ..models import (
     TestCaseResult,
     utcnow,
 )
+from ..money import Money
 from ..services.object_store import ObjectStore
 from .swebench import ParsedCase, ScoreParseError, parse_report
 
@@ -106,7 +107,7 @@ class EvaluationStats:
     execution_failed: int
     executed: int
     tokens: int
-    cost_usd: Decimal
+    cost_cny: Money
     durations: tuple[int, ...]
 
     @property
@@ -130,13 +131,13 @@ def collect_stats(session: Session, run: EvalRun) -> EvaluationStats:
         or case.execution_status in ("succeeded", "failed", "timeout", "cancelled")
     )
     tokens = 0
-    cost = Decimal("0")
+    cost = Money.zero()
     durations: list[int] = []
     for case in cases:
         metrics = case.metrics_json if isinstance(case.metrics_json, dict) else {}
         tokens += int(metrics.get("input_tokens", 0) or 0)
         tokens += int(metrics.get("output_tokens", 0) or 0)
-        cost += Decimal(str(metrics.get("cost_usd", 0) or 0))
+        cost += Money.of(metrics.get("cost_cny", 0) or 0)
         duration = case.duration_ms or metrics.get("duration_ms")
         if isinstance(duration, (int, float)) and duration >= 0:
             durations.append(int(duration))
@@ -147,7 +148,7 @@ def collect_stats(session: Session, run: EvalRun) -> EvaluationStats:
         execution_failed=execution_failed,
         executed=executed,
         tokens=tokens,
-        cost_usd=cost,
+        cost_cny=cost,
         durations=tuple(durations),
     )
 
@@ -186,9 +187,9 @@ def metric_value(
         return value, Decimal(stats.tokens), Decimal(stats.executed)
     if metric_key == "cost_per_case":
         value = (
-            float(stats.cost_usd / stats.executed) if stats.executed else None
+            float((stats.cost_cny / stats.executed).amount) if stats.executed else None
         )
-        return value, stats.cost_usd, Decimal(stats.executed)
+        return value, stats.cost_cny.amount, Decimal(stats.executed)
     if metric_key == "duration_percentiles":
         return (
             {

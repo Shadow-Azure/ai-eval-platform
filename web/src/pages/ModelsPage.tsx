@@ -38,6 +38,7 @@ import { EmptyState } from "../components/EmptyState";
 import { Icon } from "../components/Icon";
 import { PageHeading } from "../components/PageHeading";
 import { QueryError } from "../components/QueryError";
+import { formatMoney, formatUnitPrice } from "../utils/money";
 
 const PROVIDER_OPTIONS = [
   { value: "openai", label: "OpenAI" },
@@ -135,17 +136,13 @@ function readPrice(pricing: Record<string, unknown>, key: string): number | unde
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
-function formatAmount(value: number): string {
-  return Number(value.toFixed(6)).toString();
-}
-
 function pricingText(pricing: Record<string, unknown>): string | null {
   const input = readPrice(pricing, "input_per_1m");
   const output = readPrice(pricing, "output_per_1m");
   if (input === undefined && output === undefined) return null;
   const parts: string[] = [];
-  if (input !== undefined) parts.push(`入 $${formatAmount(input)}/M`);
-  if (output !== undefined) parts.push(`出 $${formatAmount(output)}/M`);
+  if (input !== undefined) parts.push(`入 ${formatUnitPrice(input)}/M`);
+  if (output !== undefined) parts.push(`出 ${formatUnitPrice(output)}/M`);
   return parts.join(" · ");
 }
 
@@ -392,10 +389,10 @@ function ModelConfigDrawer({
           <Select options={API_STYLE_OPTIONS} />
         </Form.Item>
         <div className="field-row">
-          <Form.Item name="input_price" label="输入价格（USD / 1M tokens）">
+          <Form.Item name="input_price" label="输入价格（CNY / 1M tokens）">
             <InputNumber min={0} step={0.1} style={{ width: "100%" }} placeholder="0" />
           </Form.Item>
-          <Form.Item name="output_price" label="输出价格（USD / 1M tokens）">
+          <Form.Item name="output_price" label="输出价格（CNY / 1M tokens）">
             <InputNumber min={0} step={0.1} style={{ width: "100%" }} placeholder="0" />
           </Form.Item>
         </div>
@@ -950,7 +947,7 @@ export function ModelsPage() {
               {detailConfig.usage.total_tokens}
             </Descriptions.Item>
             <Descriptions.Item label="累计成本">
-              <span className="mono">${detailConfig.usage.cost_usd}</span>
+              <span className="mono">{formatMoney(detailConfig.usage.cost_cny)}</span>
             </Descriptions.Item>
             <Descriptions.Item label="限制">
               <span className="mono small">

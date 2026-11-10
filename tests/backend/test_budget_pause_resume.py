@@ -78,7 +78,7 @@ def _create_run(
     *,
     key: str,
     case_keys: tuple[str, ...] = ("case-a", "case-b"),
-    budget_usd: str = "10",
+    budget_cny: str = "10",
     shard_size: int | None = None,
 ) -> tuple[EvalRun, dict]:
     config = _model_config(client)
@@ -90,7 +90,7 @@ def _create_run(
         idempotency_key=key,
         created_by="agent",
         model_config_id=config["id"],
-        model_budget_usd=Decimal(budget_usd),
+        model_budget_cny=Decimal(budget_cny),
         settings=get_settings(),
     )
     return run, config
@@ -103,7 +103,7 @@ def _add_usage(session: Session, run: EvalRun, config: dict, cost: str) -> None:
             model_config_id=config["id"],
             eval_run_id=run.id,
             status="succeeded",
-            cost_usd=Decimal(cost),
+            cost_cny=Decimal(cost),
         )
     )
     session.commit()
@@ -169,7 +169,7 @@ def test_over_budget_pauses_run_parks_dispatch_and_keeps_cases_unfinished(
     assert run.status == "paused_budget"
     assert run.status not in evaluations.TERMINAL_RUN_STATUSES
     assert run.pause_reason == "budget_exceeded"
-    assert run.budget_spent_usd == Decimal("10.5")
+    assert run.budget_spent_cny == Decimal("10.5")
     assert run.finished_at is None  # pause is not a terminal result
 
     for case in seeded.query(EvalCaseRun).filter(EvalCaseRun.eval_run_id == run.id):
@@ -186,11 +186,11 @@ def test_over_budget_pauses_run_parks_dispatch_and_keeps_cases_unfinished(
     assert len(_run_events(seeded, run.id, "eval.budget_paused")) == 1
 
     summary = evaluations.evaluation_summary(
-        run, spent_usd=evaluations.spent_usd(seeded, run.id)
+        run, spent_cny=evaluations.spent_cny(seeded, run.id)
     )
-    assert Decimal(summary["model_budget_usd"]) == Decimal("10")
-    assert Decimal(summary["budget_spent_usd"]) == Decimal("10.5")
-    assert Decimal(summary["budget_remaining_usd"]) == Decimal("0")
+    assert Decimal(summary["model_budget_cny"]) == Decimal("10")
+    assert Decimal(summary["budget_spent_cny"]) == Decimal("10.5")
+    assert Decimal(summary["budget_remaining_cny"]) == Decimal("0")
     assert summary["finished_count"] == 0
     assert summary["unfinished_count"] == 2
     assert summary["pause_reason"] == "budget_exceeded"
@@ -213,7 +213,7 @@ def test_pause_rejects_started_and_settles_budget_interrupted_attempt(
     session = eval_env["session"]
     now = datetime.now(UTC)
     run = session.get(EvalRun, eval_env["run_id"])
-    run.model_budget_usd = Decimal("10")
+    run.model_budget_cny = Decimal("10")
     session.commit()
 
     _start(client, eval_env, "case-a")
@@ -286,7 +286,7 @@ def test_pause_grace_force_settles_still_running_attempt(
     session = eval_env["session"]
     now = datetime.now(UTC)
     run = session.get(EvalRun, eval_env["run_id"])
-    run.model_budget_usd = Decimal("10")
+    run.model_budget_cny = Decimal("10")
     session.commit()
     _start(client, eval_env, "case-a")
 
@@ -348,15 +348,15 @@ def test_resume_adds_budget_and_only_reschedules_unfinished_cases(
 
     response = client.post(
         f"/api/v1/evaluations/{run.id}/resume-budget",
-        json={"additional_budget_usd": 5, "budget_version": 1},
+        json={"additional_budget_cny": 5, "budget_version": 1},
     )
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["resumed"] is True
     assert body["attempts_created"] == 1
     assert body["status"] == "queued"
-    assert Decimal(body["model_budget_usd"]) == Decimal("15")
-    assert Decimal(body["budget_spent_usd"]) == Decimal("10")
+    assert Decimal(body["model_budget_cny"]) == Decimal("15")
+    assert Decimal(body["budget_spent_cny"]) == Decimal("10")
     assert body["budget_version"] == 2
     assert body["pause_reason"] is None
     assert body["unfinished_count"] == 1
@@ -364,7 +364,7 @@ def test_resume_adds_budget_and_only_reschedules_unfinished_cases(
 
     seeded.expire_all()
     run = seeded.get(EvalRun, run.id)
-    assert run.model_budget_usd == Decimal("15")
+    assert run.model_budget_cny == Decimal("15")
     assert run.budget_version == 2
     assert run.status == "queued"
 
@@ -392,19 +392,19 @@ def test_resume_adds_budget_and_only_reschedules_unfinished_cases(
         select(AuditLog).where(AuditLog.action == "eval.budget_resumed")
     ).all()
     assert len(audit) == 1
-    assert audit[0].metadata_json["additional_budget_usd"] == "5"
+    assert audit[0].metadata_json["additional_budget_cny"] == "5"
     assert len(_run_events(seeded, run.id, "eval.budget_resumed")) == 1
 
     # A replayed/parallel request with the same version must NOT add twice.
     replay = client.post(
         f"/api/v1/evaluations/{run.id}/resume-budget",
-        json={"additional_budget_usd": 5, "budget_version": 1},
+        json={"additional_budget_cny": 5, "budget_version": 1},
     )
     assert replay.status_code == 409
     assert replay.json()["detail"]["error"]["code"] == "budget_version_conflict"
     seeded.expire_all()
     run = seeded.get(EvalRun, run.id)
-    assert run.model_budget_usd == Decimal("15")
+    assert run.model_budget_cny == Decimal("15")
     assert run.budget_version == 2
     assert len(seeded.scalars(select(Outbox)).all()) == 2  # old cancelled + new pending
 
@@ -415,7 +415,7 @@ def test_resume_rejects_stale_version_while_paused(
     run, _config = _paused_run(seeded, client, key="resume-version")
     response = client.post(
         f"/api/v1/evaluations/{run.id}/resume-budget",
-        json={"additional_budget_usd": 5, "budget_version": 9},
+        json={"additional_budget_cny": 5, "budget_version": 9},
     )
     assert response.status_code == 409
     error = response.json()["detail"]["error"]
@@ -423,7 +423,7 @@ def test_resume_rejects_stale_version_while_paused(
     assert error["details"]["current_budget_version"] == 1
     seeded.expire_all()
     run = seeded.get(EvalRun, run.id)
-    assert run.model_budget_usd == Decimal("10")
+    assert run.model_budget_cny == Decimal("10")
     assert run.budget_version == 1
 
 
@@ -433,7 +433,7 @@ def test_resume_rejects_non_paused_and_requires_positive_budget(
     run, _config = _create_run(seeded, client, key="resume-not-paused")
     response = client.post(
         f"/api/v1/evaluations/{run.id}/resume-budget",
-        json={"additional_budget_usd": 5, "budget_version": 1},
+        json={"additional_budget_cny": 5, "budget_version": 1},
     )
     assert response.status_code == 409
     assert response.json()["detail"]["error"]["code"] == "evaluation_not_budget_paused"
@@ -441,7 +441,7 @@ def test_resume_rejects_non_paused_and_requires_positive_budget(
     paused, _ = _paused_run(seeded, client, key="resume-invalid-amount")
     invalid = client.post(
         f"/api/v1/evaluations/{paused.id}/resume-budget",
-        json={"additional_budget_usd": 0, "budget_version": 1},
+        json={"additional_budget_cny": 0, "budget_version": 1},
     )
     assert invalid.status_code == 422
 
@@ -452,14 +452,14 @@ def test_resume_waits_for_pause_to_settle_active_attempts(
     session = eval_env["session"]
     now = datetime.now(UTC)
     run = session.get(EvalRun, eval_env["run_id"])
-    run.model_budget_usd = Decimal("10")
+    run.model_budget_cny = Decimal("10")
     session.commit()
     _start(client, eval_env, "case-a")
     assert budget.pause_for_budget(session, run, spent=Decimal("10"), now=now)
 
     response = client.post(
         f"/api/v1/evaluations/{run.id}/resume-budget",
-        json={"additional_budget_usd": 5, "budget_version": 1},
+        json={"additional_budget_cny": 5, "budget_version": 1},
     )
     assert response.status_code == 409
     assert response.json()["detail"]["error"]["code"] == "budget_pause_in_progress"
@@ -494,7 +494,7 @@ def test_no_final_metrics_are_written_while_paused(
     session = eval_env["session"]
     now = datetime.now(UTC)
     run = session.get(EvalRun, eval_env["run_id"])
-    run.model_budget_usd = Decimal("10")
+    run.model_budget_cny = Decimal("10")
     # Non-null dataset_version_id forces the metric recompute branch; no
     # definitions exist, so the spy only records the finality flag.
     run.dataset_version_id = "dsv-budget-test"
@@ -542,7 +542,7 @@ def test_no_final_metrics_are_written_while_paused(
     # metric: the pause must not suppress the true terminal result.
     resumed = client.post(
         f"/api/v1/evaluations/{run.id}/resume-budget",
-        json={"additional_budget_usd": 5, "budget_version": 1},
+        json={"additional_budget_cny": 5, "budget_version": 1},
     )
     assert resumed.status_code == 200, resumed.text
     session.expire_all()
@@ -597,7 +597,7 @@ def test_second_pause_cycle_records_new_events_and_grace_clock(
     run, config = _paused_run(seeded, client, key="repeat-pause")
     first = client.post(
         f"/api/v1/evaluations/{run.id}/resume-budget",
-        json={"additional_budget_usd": 5, "budget_version": 1},
+        json={"additional_budget_cny": 5, "budget_version": 1},
     )
     assert first.status_code == 200, first.text
     seeded.expire_all()
@@ -620,7 +620,7 @@ def test_second_pause_cycle_records_new_events_and_grace_clock(
 
     second = client.post(
         f"/api/v1/evaluations/{run.id}/resume-budget",
-        json={"additional_budget_usd": 1, "budget_version": 2},
+        json={"additional_budget_cny": 1, "budget_version": 2},
     )
     assert second.status_code == 200, second.text
     seeded.expire_all()

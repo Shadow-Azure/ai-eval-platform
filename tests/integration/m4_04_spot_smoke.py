@@ -149,11 +149,11 @@ def _build_report(evidence: dict) -> dict:
             "id": "01",
             "name": "阿里云竞价价格与库存查询",
             "status": {
-                "kind": "pass" if evidence.get("price_usd") is not None else "fail",
-                "label": "PASS" if evidence.get("price_usd") is not None else "FAIL",
+                "kind": "pass" if evidence.get("price_cny") is not None else "fail",
+                "label": "PASS" if evidence.get("price_cny") is not None else "FAIL",
             },
             "detail": (
-                f"CNY {evidence.get('price_cny')} / USD {evidence.get('price_usd')}，zone {evidence.get('zone_id')}。"
+                f"CNY {evidence.get('price_cny')}/小时，zone {evidence.get('zone_id')}。"
             ),
             "evidence": ["evidence.json"],
         },
@@ -211,7 +211,7 @@ def _build_report(evidence: dict) -> dict:
         ),
         "meta": f"{evidence.get('started_at')} · {evidence.get('region')} · 真实阿里云 + GitHub API",
         "metrics": [
-            {"value": str(evidence.get("price_usd")), "label": "USD/小时"},
+            {"value": str(evidence.get("price_cny")), "label": "CNY/小时"},
             {"value": str(evidence.get("runner_online_seconds")), "label": "Runner 上线秒数"},
             {"value": str(evidence.get("total_seconds")), "label": "总耗时秒数"},
             {"value": "0", "label": "密钥泄露"},
@@ -386,7 +386,6 @@ def main() -> int:
         "instance_id": None,
         "instance_type": None,
         "price_cny": None,
-        "price_usd": None,
         "zone_id": None,
         "runner_online": False,
         "runner_online_seconds": None,
@@ -495,7 +494,7 @@ def main() -> int:
                 "platform_base_url": "",
                 "runner_tarball_url": runner_tarball_url,
             },
-            price_threshold_usd=Decimal("10.0000"),
+            price_threshold_cny=Decimal("72.0000"),
             labels_json={"runs_on": ["self-hosted", label]},
             status="active",
         )
@@ -616,18 +615,17 @@ def main() -> int:
             return 1
         evidence.update(
             {
-                "price_cny": str(quote.price_native),
-                "price_usd": str(quote.price_usd),
+                "price_cny": str(quote.price_cny),
                 "zone_id": quote.zone_id,
             }
         )
-        if quote.price_usd > Decimal("1.0000"):
+        if quote.price_cny > Decimal("7.2000"):
             evidence["ok"] = False
             evidence["issues"].append(
                 {
                     "severity": "P1",
                     "title": "竞价价格超过冒烟预算",
-                    "facts": [{"label": "Price USD/h", "value": str(quote.price_usd)}],
+                    "facts": [{"label": "Price CNY/h", "value": str(quote.price_cny)}],
                     "state": {"kind": "fail", "label": "FAIL"},
                 }
             )

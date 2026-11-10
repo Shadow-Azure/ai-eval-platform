@@ -28,6 +28,7 @@ from ..models import (
     ResourcePool,
     TestCaseResult,
 )
+from ..money import money_str
 from . import datasets as dataset_service
 from . import evaluations
 
@@ -628,12 +629,8 @@ def config_snapshot(session: Session, run: EvalRun) -> dict[str, Any]:
                 "provisioning_mode": resource_pool.provisioning_mode,
                 "min_capacity": resource_pool.min_capacity,
                 "max_capacity": resource_pool.max_capacity,
-                "price_usd": str(resource_pool.price_usd) if resource_pool.price_usd is not None else None,
-                "price_threshold_usd": (
-                    str(resource_pool.price_threshold_usd)
-                    if resource_pool.price_threshold_usd is not None
-                    else None
-                ),
+                "price_cny": money_str(resource_pool.price_cny),
+                "price_threshold_cny": money_str(resource_pool.price_threshold_cny),
                 "capacity_reason": resource_pool.capacity_reason,
                 "status": resource_pool.status,
             }
@@ -643,9 +640,9 @@ def config_snapshot(session: Session, run: EvalRun) -> dict[str, Any]:
     # Keep the config snapshot consistent with the detail endpoint: gateway
     # usage rows are authoritative once a budget is bound.
     spent = (
-        evaluations.spent_usd(session, run.id)
-        if run.model_budget_usd is not None
-        else run.budget_spent_usd
+        evaluations.spent_cny(session, run.id)
+        if run.model_budget_cny is not None
+        else run.budget_spent_cny
     )
     return {
         "run_id": run.id,
@@ -692,11 +689,11 @@ def config_snapshot(session: Session, run: EvalRun) -> dict[str, Any]:
             "blockers": consistency.get("blockers") or [],
         },
         "budget": {
-            "model_budget_usd": str(run.model_budget_usd) if run.model_budget_usd is not None else None,
-            "budget_spent_usd": str(spent) if spent is not None else None,
-            "budget_remaining_usd": (
-                str(evaluations.budget_remaining_usd(run, spent))
-                if run.model_budget_usd is not None
+            "model_budget_cny": money_str(run.model_budget_cny),
+            "budget_spent_cny": money_str(spent),
+            "budget_remaining_cny": (
+                money_str(evaluations.budget_remaining_cny(run, spent))
+                if run.model_budget_cny is not None
                 else None
             ),
             "budget_version": run.budget_version,

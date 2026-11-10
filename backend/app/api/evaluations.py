@@ -105,7 +105,7 @@ class ExecutionPolicyRequest(BaseModel):
     concurrency: int | None = Field(default=None, ge=1, le=256)
     case_timeout_seconds: int | None = Field(default=None, ge=1, le=604800)
     max_attempts: int | None = Field(default=None, ge=1, le=10)
-    model_budget_usd: float | None = Field(default=None, ge=0)
+    model_budget_cny: float | None = Field(default=None, ge=0)
     shard_size: int | None = Field(default=None, ge=1, le=255)
 
 
@@ -128,7 +128,7 @@ class PrepareRequest(BaseModel):
     # the preparation snapshot. Create then only sends the preparation id.
     case_selection: CaseSelectionRequest | None = None
     execution: ExecutionPolicyRequest | None = None
-    model_budget_usd: float | None = Field(default=None, ge=0)
+    model_budget_cny: float | None = Field(default=None, ge=0)
     shard_size: int | None = Field(default=None, ge=1, le=255)
 
 
@@ -150,7 +150,7 @@ class CreateEvaluationRequest(BaseModel):
     # gateway token from the shard manifest.
     model_config_id: str | None = Field(default=None, max_length=36)
     model_name: str | None = Field(default=None, max_length=200)
-    model_budget_usd: float | None = Field(default=None, ge=0)
+    model_budget_cny: float | None = Field(default=None, ge=0)
     # M3-04: real evaluation from an immutable dataset version.
     dataset_version_id: str | None = Field(default=None, max_length=36)
     runtime_key: str | None = Field(default=None, max_length=64)
@@ -171,7 +171,7 @@ class CreateEvaluationRequest(BaseModel):
 class ResumeBudgetRequest(BaseModel):
     """M4-05: confirm adding budget to a paused evaluation."""
 
-    additional_budget_usd: Decimal = Field(gt=0, max_digits=12, decimal_places=6)
+    additional_budget_cny: Decimal = Field(gt=0, max_digits=12, decimal_places=6)
     # The version the operator saw in the confirmation dialog; a stale value
     # is rejected so a double click/parallel request cannot add budget twice.
     budget_version: int = Field(ge=1)
@@ -201,10 +201,10 @@ def prepare_evaluation(
         ),
         "case_timeout_seconds": execution.case_timeout_seconds if execution else None,
         "max_attempts": execution.max_attempts if execution else None,
-        "model_budget_usd": (
-            execution.model_budget_usd
-            if execution is not None and execution.model_budget_usd is not None
-            else payload.model_budget_usd
+        "model_budget_cny": (
+            execution.model_budget_cny
+            if execution is not None and execution.model_budget_cny is not None
+            else payload.model_budget_cny
         ),
         "shard_size": (
             execution.shard_size
@@ -350,7 +350,7 @@ def create_evaluation(
             asset_snapshot_id=asset_snapshot_id,
             case_timeout_seconds=payload.case_timeout_seconds,
             max_attempts=payload.max_attempts,
-            model_budget_usd=payload.model_budget_usd,
+            model_budget_cny=payload.model_budget_cny,
         )
         if check.blockers:
             raise HTTPException(
@@ -385,7 +385,7 @@ def create_evaluation(
             created_by=context.user.email,
             model_config_id=payload.model_config_id,
             model_name=payload.model_name,
-            model_budget_usd=payload.model_budget_usd,
+            model_budget_cny=payload.model_budget_cny,
             dataset_version_id=payload.dataset_version_id,
             runtime_key=payload.runtime_key,
             runtime_version=payload.runtime_version,
@@ -572,7 +572,7 @@ def resume_budget(
         run, attempts_created = budget_service.resume_budget(
             session,
             run_id=run_id,
-            additional_budget_usd=payload.additional_budget_usd,
+            additional_budget_cny=payload.additional_budget_cny,
             expected_budget_version=payload.budget_version,
             actor_user_id=context.user.id,
             settings=get_settings(),
@@ -619,11 +619,11 @@ def resume_budget(
                 details={"fields": {exc.field: "invalid"}} if exc.field else None,
             ),
         ) from exc
-    spent = evaluation_service.spent_usd(session, run.id)
+    spent = evaluation_service.spent_cny(session, run.id)
     return {
         "resumed": True,
         "attempts_created": attempts_created,
-        **evaluation_service.evaluation_summary(run, spent_usd=spent),
+        **evaluation_service.evaluation_summary(run, spent_cny=spent),
     }
 
 

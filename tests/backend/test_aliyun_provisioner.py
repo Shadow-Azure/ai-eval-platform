@@ -191,7 +191,7 @@ def _pool(session: Session, scope: dict[str, str], connection: Connection, **ove
         "min_capacity": 0,
         "max_capacity": 2,
         "instance_config_json": {"instance_type": "ecs.g7.large", "runners_per_instance": 1},
-        "price_threshold_usd": Decimal("0.2000"),
+        "price_threshold_cny": Decimal("0.2000"),
         "labels_json": {"runs_on": ["self-hosted", "linux", "eval"]},
         "status": "active",
     }
@@ -253,7 +253,7 @@ def test_signing_uses_sorted_rfc3986_params() -> None:
     assert SECRET_AK_SECRET not in json.dumps(params)
 
 
-def test_quote_converts_cny_and_reports_inventory(
+def test_quote_uses_native_cny_and_reports_inventory(
     session: Session, scope: dict[str, str], clock: datetime
 ) -> None:
     connection = _connection(session, scope)
@@ -262,9 +262,8 @@ def test_quote_converts_cny_and_reports_inventory(
     quote = _provisioner(transport=transport).quote(
         connection=connection, pool=pool, now=clock, session=session
     )
-    assert quote.price_native == Decimal("0.5000")
-    assert quote.currency == "CNY"
-    assert quote.price_usd == (Decimal("0.5") / Decimal("7.2")).quantize(Decimal("0.0001"))
+    # M5-10: the provider already quotes CNY/hour, so the sample is used as-is.
+    assert quote.price_cny == Decimal("0.5000")
     assert quote.available is True
     assert quote.zone_id == "cn-hangzhou-i"
     price_call = next(
@@ -284,7 +283,7 @@ def test_empty_spot_prices_mean_no_inventory(
         connection=connection, pool=pool, now=clock, session=session
     )
     assert quote.available is False
-    assert quote.price_usd == Decimal("0")
+    assert quote.price_cny == Decimal("0")
 
 
 def test_verify_is_read_only(

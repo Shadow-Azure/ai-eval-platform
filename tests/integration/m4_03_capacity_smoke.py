@@ -80,7 +80,7 @@ def main() -> int:
 
     reset_provisioners()
     reset_fake_instance_counter()
-    fake = FakeProvisioner(provider="fake", price_usd="0.20", available=True)
+    fake = FakeProvisioner(provider="fake", price_cny="1.44", available=True)
     register_provisioner(fake)
 
     with SessionLocal() as session:
@@ -139,7 +139,7 @@ def main() -> int:
                 "provisioning_mode": "spot",
                 "min_capacity": 0,
                 "max_capacity": 3,
-                "price_threshold_usd": "0.50",
+                "price_threshold_cny": "3.60",
                 "instance_config": {"instance_type": "ecs.g7.large"},
             },
         )
@@ -213,8 +213,8 @@ def main() -> int:
             "instances": session.query(ProvisionedInstance)
             .filter_by(resource_pool_id=pool_row.id)
             .count(),
-            "price": str(state.get("price_usd")),
-            "threshold": str(state.get("price_threshold_usd")),
+            "price": str(state.get("price_cny")),
+            "threshold": str(state.get("price_threshold_cny")),
         }
         events_after_up = [
             event.event_type
@@ -224,7 +224,7 @@ def main() -> int:
         assert instances is not None
 
         # Price above the threshold: no new instance, work stays queued.
-        fake.price_usd = Decimal("1.00")
+        fake.price_cny = Decimal("7.20")
         queued_run, _ = evaluations.create_synthetic_evaluation(
             session,
             name="M4-03 price wait",
@@ -270,8 +270,8 @@ def main() -> int:
             "reason": price_state["capacity_reason"],
             "instances_before": before,
             "instances_after": after,
-            "price": str(pool_row.price_usd),
-            "threshold": str(pool_row.price_threshold_usd),
+            "price": str(pool_row.price_cny),
+            "threshold": str(pool_row.price_threshold_cny),
             "checked_at": price_state.get("checked_at"),
             "next_check_at": price_state.get("next_check_at"),
         }

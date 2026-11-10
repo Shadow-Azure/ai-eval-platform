@@ -503,7 +503,7 @@ def shard_manifest(
             eval_run_id=run.id,
             shard_id=shard_id,
             attempt=attempt,
-            budget_usd=float(run.model_budget_usd) if run.model_budget_usd is not None else None,
+            budget_cny=float(run.model_budget_cny) if run.model_budget_cny is not None else None,
         )
         model_token = issue_gateway_token(
             model_claims,

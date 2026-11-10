@@ -37,6 +37,7 @@ from sqlalchemy.orm import Session
 
 from ...config import Settings
 from ...models import Connection, Credential, ProvisionedInstance, ResourcePool, Runner
+from ...money import UNIT_PRICE, Money
 from ...secrets import SecretBoxError, get_secret_box
 from ..runner_labels import pool_runner_labels
 from ..runner_registration import GitHubRunnerRegistrar
@@ -744,33 +745,23 @@ class AliyunEcsProvisioner:
             samples.append((price, row))
         if not samples:
             return PriceQuote(
-                price_usd=Decimal("0"),
+                price_cny=Decimal("0"),
                 available=False,
                 region=region,
                 instance_type=instance_type,
                 checked_at=now,
-                price_native=Decimal("0"),
-                currency="CNY",
                 zone_id=zone_id,
             )
         native, sample = min(samples, key=lambda item: item[0])
-        try:
-            rate = Decimal(str(self.settings.aliyun_cny_per_usd))
-            if rate <= 0:
-                raise InvalidOperation
-            price_usd = (native / rate).quantize(Decimal("0.0001"))
-        except (InvalidOperation, TypeError, ValueError) as exc:
-            raise ProvisionerError(
-                "price_conversion_invalid", "ALIYUN_CNY_PER_USD 必须是正数"
-            ) from exc
+        # Aliyun already quotes the platform billing currency (CNY/hour); keep
+        # the provider sample and only normalize the stored scale.
+        price_cny = Money.of(native).quantize(UNIT_PRICE).amount
         return PriceQuote(
-            price_usd=price_usd,
+            price_cny=price_cny,
             available=True,
             region=region,
             instance_type=instance_type,
             checked_at=now,
-            price_native=native,
-            currency="CNY",
             zone_id=str(sample.get("ZoneId") or zone_id or "") or None,
         )
 

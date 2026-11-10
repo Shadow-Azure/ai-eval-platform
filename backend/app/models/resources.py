@@ -87,10 +87,10 @@ class ResourcePool(Base, TimestampMixin):
     instance_config_json: Mapped[dict] = mapped_column(
         json_type(), default=dict, nullable=False
     )
-    price_threshold_usd: Mapped[Decimal | None] = mapped_column(
+    price_threshold_cny: Mapped[Decimal | None] = mapped_column(
         Numeric(10, 4), nullable=True
     )
-    price_usd: Mapped[Decimal | None] = mapped_column(Numeric(10, 4), nullable=True)
+    price_cny: Mapped[Decimal | None] = mapped_column(Numeric(10, 4), nullable=True)
     capacity_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
     last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     next_check_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

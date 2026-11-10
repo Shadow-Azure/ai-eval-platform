@@ -47,8 +47,8 @@ export interface CapacityState {
   current_size: number;
   desired_capacity: number;
   capacity_gap: number;
-  price_usd: string | null;
-  price_threshold_usd: string | null;
+  price_cny: string | null;
+  price_threshold_cny: string | null;
   price_available: boolean | null;
   provider_error: string | null;
   capacity_reason: string | null;
@@ -69,8 +69,8 @@ export interface ResourcePool {
   min_capacity: number;
   max_capacity: number;
   instance_config: Record<string, unknown>;
-  price_threshold_usd: string | null;
-  price_usd: string | null;
+  price_threshold_cny: string | null;
+  price_cny: string | null;
   capacity_reason: string | null;
   last_checked_at: string | null;
   next_check_at: string | null;
@@ -117,8 +117,8 @@ export interface ProvisioningTestResult {
     spot_strategy: string | null;
     created_at: string | null;
   };
-  price_usd: string | null;
-  price_threshold_usd: string | null;
+  price_cny: string | null;
+  price_threshold_cny: string | null;
   price_available: boolean;
   region: string | null;
   instance_type: string | null;
@@ -140,7 +140,7 @@ export interface PoolWriteInput {
   provisioning_mode: ProvisioningMode;
   min_capacity: number;
   max_capacity: number;
-  price_threshold_usd?: string | null;
+  price_threshold_cny?: string | null;
   instance_config?: Record<string, unknown>;
   runner_group?: string | null;
   labels?: Record<string, unknown>;
@@ -222,8 +222,8 @@ export function parseCapacityState(value: unknown): CapacityState {
     current_size: number(item.current_size),
     desired_capacity: number(item.desired_capacity),
     capacity_gap: number(item.capacity_gap),
-    price_usd: optionalText(item.price_usd),
-    price_threshold_usd: optionalText(item.price_threshold_usd),
+    price_cny: optionalText(item.price_cny),
+    price_threshold_cny: optionalText(item.price_threshold_cny),
     price_available: booleanOrNull(item.price_available),
     provider_error: optionalText(item.provider_error),
     capacity_reason: optionalText(item.capacity_reason),
@@ -259,8 +259,8 @@ function parsePool(value: Dictionary): ResourcePool {
     min_capacity: number(value.min_capacity),
     max_capacity: number(value.max_capacity),
     instance_config: dictionary(value.instance_config),
-    price_threshold_usd: optionalText(value.price_threshold_usd),
-    price_usd: optionalText(value.price_usd),
+    price_threshold_cny: optionalText(value.price_threshold_cny),
+    price_cny: optionalText(value.price_cny),
     capacity_reason: optionalText(value.capacity_reason),
     last_checked_at: optionalText(value.last_checked_at),
     next_check_at: optionalText(value.next_check_at),
@@ -449,8 +449,8 @@ export async function testProvisioning(
       spot_strategy: optionalText(instance.spot_strategy),
       created_at: optionalText(instance.created_at),
     },
-    price_usd: optionalText(item.price_usd),
-    price_threshold_usd: optionalText(item.price_threshold_usd),
+    price_cny: optionalText(item.price_cny),
+    price_threshold_cny: optionalText(item.price_threshold_cny),
     price_available: item.price_available === true,
     region: optionalText(item.region),
     instance_type: optionalText(item.instance_type),
