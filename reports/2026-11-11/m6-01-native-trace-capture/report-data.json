@@ -1,0 +1,218 @@
+{
+  "title": "M6-01 原生轨迹采集与多文件清单 · 集成冒烟报告",
+  "eyebrow": "Local stack · 真实 FastAPI 回调 / SQLite / Chrome",
+  "summary": "在本地开发栈上用真实 FastAPI 回调复测 M6-01：多文件原生轨迹上传与完成回调把 case 标为 ready，页面显示「可用 1」；只用 stdout 的降级轨迹被标为 incomplete，页面显示「采集不完整 1」，用例表与筛选器均为中文状态。首轮冒烟发现的英文原值/漏计问题已修复，本轮复测通过。",
+  "meta": "2026-11-11 · AI Eval Platform · M6-01 · PR #127",
+  "metrics": [
+    {
+      "label": "后端测试",
+      "value": "535 passed / 1 skipped"
+    },
+    {
+      "label": "Runner 测试",
+      "value": "157 passed"
+    },
+    {
+      "label": "冒烟场景",
+      "value": "4 通过 · 0 失败"
+    },
+    {
+      "label": "缺陷",
+      "value": "1 已修复"
+    }
+  ],
+  "facts": [
+    {
+      "label": "应用",
+      "value": "AI Eval Platform · M6-01"
+    },
+    {
+      "label": "提交",
+      "value": "5c93e58（含检视修复）"
+    },
+    {
+      "label": "栈",
+      "value": "本地 FastAPI + SQLite + Chrome dev server"
+    },
+    {
+      "label": "数据",
+      "value": "ready 与 incomplete 两组 case attempt"
+    },
+    {
+      "label": "缺陷来源",
+      "value": "Computer Use 观察页面状态展示"
+    },
+    {
+      "label": "修复范围",
+      "value": "web/src/pages/EvalDetailPage.tsx"
+    },
+    {
+      "label": "真实 Claude Code",
+      "value": "当前环境无 Docker/模型网络，转 #95 验收"
+    }
+  ],
+  "matrix": {
+    "columns": [
+      "#",
+      "场景",
+      "结果",
+      "说明",
+      "证据"
+    ],
+    "rows": [
+      {
+        "id": "01",
+        "name": "修复前：完整轨迹详情",
+        "status": {
+          "kind": "warn",
+          "label": "DEFECT"
+        },
+        "detail": "修复前：多文件上传与完成回调成功后 trace_status=ready，但状态条直接显示英文键「ready」，与页面其余中文标签不一致。",
+        "evidence": [
+          "01-before-fix-raw-status.png"
+        ]
+      },
+      {
+        "id": "02",
+        "name": "完整原生轨迹 → 可用",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "回调携带主会话、子 Agent 会话、子 Agent .meta.json 与 stderr 四项 trace 对象；case 为 ready，页面统计「可用 1 · 待处理 0」。",
+        "evidence": [
+          "02-after-fix-ready-status.png"
+        ]
+      },
+      {
+        "id": "03",
+        "name": "仅 stdout → 采集不完整",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "完成回调声明 capture_status=partial 且仅含 trace_diagnostic；后端落 incomplete，页面统计「采集不完整 1」，用例表标签同步为中文。",
+        "evidence": [
+          "03-after-fix-incomplete-status.png"
+        ]
+      },
+      {
+        "id": "04",
+        "name": "轨迹筛选覆盖新状态",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "轨迹状态下拉包含待处理、可用、采集不完整、已降级、失败、未关联，新增状态可被筛选。",
+        "evidence": [
+          "03-after-fix-incomplete-status.png"
+        ]
+      },
+      {
+        "id": "05",
+        "name": "失败保留 / 重复 digest / 旧契约",
+        "status": {
+          "kind": "manual",
+          "label": "AUTOMATED"
+        },
+        "detail": "真实 Claude Code 子 Agent 与 Docker 在当前环境不可用；由 fake claude、临时 .claude/projects fixture、重复 digest/非法路径/legacy manifest 的后端与 runner 测试覆盖，真实链路留给 #95。",
+        "evidence": []
+      }
+    ]
+  },
+  "issues": [
+    {
+      "severity": "P2",
+      "title": "轨迹状态在详情页显示英文原值且统计漏计新状态",
+      "facts": [
+        {
+          "label": "Actual",
+          "value": "详情页显示英文 ready/incomplete，顶部只统计可用/待处理。"
+        },
+        {
+          "label": "Expected",
+          "value": "状态以中文展示，并计入 incomplete/degraded 数量与筛选项。"
+        },
+        {
+          "label": "Root cause",
+          "value": "traceStatusMeta 与统计未覆盖迁移 0019 新增状态。"
+        },
+        {
+          "label": "Fix",
+          "value": "补充中文标签、警告色、计数与筛选，复测通过。"
+        }
+      ],
+      "state": {
+        "kind": "fixed",
+        "label": "Fixed · 5c93e58"
+      }
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "01-before-fix-raw-status.png",
+      "alt": "修复前详情页显示英文 trace status",
+      "label": "01 · Before fix",
+      "caption": "详情页直接展示英文原值 ready，顶部统计也未包含新状态。",
+      "variant": "issue"
+    },
+    {
+      "src": "02-after-fix-ready-status.png",
+      "alt": "完整轨迹详情显示可用计数",
+      "label": "02 · Ready",
+      "caption": "多文件轨迹完成回调后显示「可用 1 · 待处理 0」。",
+      "variant": "wide"
+    },
+    {
+      "src": "03-after-fix-incomplete-status.png",
+      "alt": "仅 stdout 轨迹显示采集不完整与筛选器",
+      "label": "03 · Incomplete",
+      "caption": "仅诊断文件落 incomplete，页面显示「采集不完整 1」，筛选项完整。",
+      "variant": "wide"
+    }
+  ],
+  "coverage": {
+    "columns": [
+      "领域",
+      "覆盖",
+      "结论",
+      "建议"
+    ],
+    "rows": [
+      {
+        "area": "多文件上传/完成契约",
+        "coverage": "API + pytest",
+        "conclusion": "真实回调请求覆盖主/子/meta/diagnostic 四类对象。",
+        "recommendation": "真实 OSS presign 留给部署环境复测。"
+      },
+      {
+        "area": "重复 digest / 非法路径 / legacy",
+        "coverage": "pytest + node",
+        "conclusion": "冲突返回 409，路径穿越与绝对路径拒绝，旧单文件仍可读。",
+        "recommendation": "保持为契约回归测试。"
+      },
+      {
+        "area": "失败保留与原生文件布局",
+        "coverage": "node fake claude",
+        "conclusion": "失败退出仍保留 native/stdout/stderr；真实 Claude Code 布局待 #95 验证。",
+        "recommendation": "在固定 Runner 上用真实子 Agent 复测。"
+      },
+      {
+        "area": "新增状态 UI",
+        "coverage": "GUI smoke",
+        "conclusion": "修复后中文标签、统计与筛选均可用。",
+        "recommendation": "#94 三栏查看器继续复用同一状态词表。"
+      }
+    ]
+  },
+  "conclusion": {
+    "kind": "pass",
+    "label": "通过 · 无未解决缺陷",
+    "summary": "复测后多文件轨迹、降级轨迹与状态筛选均符合预期，页面不再暴露英文状态原值。",
+    "points": [
+      "真实 Claude Code 子 Agent 与真实 OSS 链路留给 #95 端到端验收。",
+      "剩余自动化覆盖由 runner/backend 测试与 CI 把关。"
+    ]
+  },
+  "footer": "Evidence captured with Computer Use on the local development stack; no production credentials or private paths are included."
+}
