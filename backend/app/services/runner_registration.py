@@ -140,13 +140,17 @@ class GitHubRunnerRegistrar:
         *,
         name: str,
         labels: list[str],
-        runner_group_id: int | None = None,
+        runner_group_id: int | None = 1,
     ) -> JitRunner:
         """Create a single-use ephemeral runner registration for ``name``."""
 
-        payload: dict[str, object] = {"name": name, "labels": list(labels)}
-        if runner_group_id is not None:
-            payload["runner_group_id"] = runner_group_id
+        # GitHub's generate-jitconfig endpoint requires runner_group_id even
+        # for the repository default group (1); omitting it returns 422.
+        payload: dict[str, object] = {
+            "name": name,
+            "labels": list(labels),
+            "runner_group_id": runner_group_id if runner_group_id is not None else 1,
+        }
         status, text = self._request(
             "POST",
             f"/repos/{self.settings.github_repo}/actions/runners/generate-jitconfig",

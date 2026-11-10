@@ -723,9 +723,9 @@ class AliyunEcsProvisioner:
         labels = _runner_labels(self.settings, pool)
         group_id = config.get("runner_group_id", self.settings.runner_spot_runner_group_id)
         try:
-            group_id = int(group_id) if group_id is not None else None
+            group_id = int(group_id) if group_id is not None else 1
         except (TypeError, ValueError):
-            group_id = None
+            group_id = 1
         # GitHub adds ``self-hosted`` (plus OS/arch) itself and rejects it in
         # the explicit JIT label list. Keep it for the platform heartbeat and
         # runs-on matching, but strip it from the registration request.

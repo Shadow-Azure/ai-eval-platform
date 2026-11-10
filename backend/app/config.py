@@ -66,7 +66,7 @@ class Settings(BaseSettings):
     runner_admin_token: str | None = None
     runner_spot_labels: str = "self-hosted,linux,eval"
     runner_spot_runner_version: str = "2.329.0"
-    runner_spot_runner_group_id: int | None = None
+    runner_spot_runner_group_id: int | None = 1
 
     # M2-05 synthetic evaluation loop.
     # Short-term case-token secret (platform signs, runner verifies). When

@@ -60,7 +60,11 @@ def test_generate_jitconfig_posts_name_and_labels() -> None:
     call = transport.calls[0]
     assert call["url"].endswith("/repos/Shadow-Azure/ai-eval-platform/actions/runners/generate-jitconfig")
     assert call["method"] == "POST"
-    assert call["payload"] == {"name": "spot-abc", "labels": ["self-hosted", "spot"]}
+    assert call["payload"] == {
+        "name": "spot-abc",
+        "labels": ["self-hosted", "spot"],
+        "runner_group_id": 1,
+    }
     assert call["headers"]["Authorization"] == "Bearer admin-token"
 
 
