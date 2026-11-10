@@ -345,7 +345,7 @@ def test_create_embeds_jit_in_user_data_only(
     assert instance.status == "creating"
     assert instance.spot_strategy == "spot"
     assert instance.cost_json["runner_name"].startswith("spot-")
-    assert registrar.generated[0]["labels"] == ["linux", "eval"]
+    assert registrar.generated[0]["labels"] == ["self-hosted", "linux", "eval"]
     # JIT is embedded in the bootstrap cloud-init file and nowhere else.
     run_call = next(call for call in transport.calls if call[0] == "RunInstances")
     user_data = base64.b64decode(run_call[1]["UserData"][0]).decode()
