@@ -1,0 +1,185 @@
+{
+  "title": "M4-05 模型预算暂停与恢复 · 集成冒烟报告",
+  "eyebrow": "Browser smoke · 真实登录 / 详情 / 恢复 / 取消",
+  "summary": "对 M4-05 预算暂停与恢复做了一次端到端浏览器冒烟：从登录、评测列表状态、暂停详情、确认弹窗、恢复调度，到版本冲突与暂停后取消。9 个场景、26 项断言全部通过；未发现需要修复的产品缺陷。",
+  "meta": "2026-11-10 · AI Eval Platform · M4-05",
+  "metrics": [
+    { "value": "9", "label": "冒烟场景" },
+    { "value": "26", "label": "断言" },
+    { "value": "0", "label": "发现缺陷" },
+    { "value": "404", "label": "后端单测通过" }
+  ],
+  "facts": [
+    { "label": "应用", "value": "AI Eval Platform 本地开发栈（FastAPI + Vite React）" },
+    { "label": "Commit", "value": "664a1bf（代码 head 4a77705）" },
+    { "label": "分支", "value": "agent/complete-m4-05-9fcc5750edff" },
+    { "label": "数据库", "value": "SQLite 演示库 + 迁移 0014_budget_pause_resume" },
+    { "label": "浏览器", "value": "系统 Chrome headless · 1440×1000 · Playwright 驱动" },
+    { "label": "数据形态", "value": "合成评测 5 用例：2 已完成、3 未完成；预算 $10，已花费 $10.25，paused_budget" },
+    { "label": "账号", "value": "本地演示管理员（凭据不写入报告）" }
+  ],
+  "matrix": {
+    "columns": ["#", "场景", "结果", "说明", "证据"],
+    "rows": [
+      {
+        "id": "01",
+        "name": "登录页与登录",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "登录页渲染品牌与表单；使用本地演示管理员登录后进入工作台。",
+        "evidence": ["screenshots/01-login.png"]
+      },
+      {
+        "id": "02",
+        "name": "评测列表状态",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "列表行显示“预算已暂停”标签，未误显示为失败或部分成功。",
+        "evidence": ["screenshots/02-evals-list-paused.png"]
+      },
+      {
+        "id": "03",
+        "name": "暂停详情与预算信息",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "详情页展示预算 $10.00、已花费 $10.25、剩余 $0.00、版本 v1、已完成 2、未完成 3 与暂停原因；“评测尚未结束”告警出现。",
+        "evidence": ["screenshots/03-detail-paused.png"]
+      },
+      {
+        "id": "04",
+        "name": "确认弹窗输入校验",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "清空新增预算时“确认增加并恢复”禁用；输入 10 后恢复可用，弹窗展示只重跑未完成用例与恢复后总预算。",
+        "evidence": ["screenshots/04-resume-confirm.png"]
+      },
+      {
+        "id": "05",
+        "name": "恢复调度",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "确认后提示“已增加预算，重新调度 3 个未完成用例”；状态变为排队中，预算 $20.00，版本 v2。",
+        "evidence": ["screenshots/05-resumed.png"]
+      },
+      {
+        "id": "06",
+        "name": "恢复后的 API 不变量",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "GET 详情：status=queued、budget_version=2、model_budget_usd=20；3 个未完成用例 latest_attempt_no=2，2 个已完成用例仍为 attempt 1。",
+        "evidence": ["No screenshot; API assertions recorded in the smoke run."]
+      },
+      {
+        "id": "07",
+        "name": "重复恢复 / 版本冲突",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "用旧版本 1 再次 POST resume-budget 返回 409 budget_version_conflict；再次读取预算仍为 $20、版本仍为 2，没有重复加预算。",
+        "evidence": ["No screenshot; API assertions recorded in the smoke run."]
+      },
+      {
+        "id": "08",
+        "name": "未登录访问受保护页面",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "新浏览器上下文访问 /evals 被重定向到 /login?next=%2Fevals。",
+        "evidence": ["No screenshot; URL assertion recorded."]
+      },
+      {
+        "id": "09",
+        "name": "暂停后取消",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "暂停态点击取消后，run 进入 cancelled 且有 finished_at；页面显示“已取消”，事件时间线包含 eval.cancelled，没有卡在 cancelling。",
+        "evidence": ["screenshots/06-cancelled-after-pause.png"]
+      }
+    ]
+  },
+  "issues": [],
+  "screenshots": [
+    {
+      "src": "screenshots/01-login.png",
+      "alt": "登录页",
+      "label": "01 · 登录",
+      "caption": "本地演示栈的登录页；表单字段为空，未暴露凭据。",
+      "variant": "normal"
+    },
+    {
+      "src": "screenshots/02-evals-list-paused.png",
+      "alt": "评测列表出现预算已暂停",
+      "label": "02 · 列表状态",
+      "caption": "列表同时显示预算已暂停与排队中的评测，状态标签不再被误判为失败。",
+      "variant": "wide"
+    },
+    {
+      "src": "screenshots/03-detail-paused.png",
+      "alt": "预算暂停详情页",
+      "label": "03 · 暂停详情",
+      "caption": "预算卡片展示预算、花费、剩余、版本、已完成/未完成与暂停原因。",
+      "variant": "wide"
+    },
+    {
+      "src": "screenshots/04-resume-confirm.png",
+      "alt": "增加预算确认弹窗",
+      "label": "04 · 确认弹窗",
+      "caption": "弹窗展示当前预算、已花费、未完成数、版本，并要求输入新增预算。",
+      "variant": "wide"
+    },
+    {
+      "src": "screenshots/05-resumed.png",
+      "alt": "恢复后的评测详情",
+      "label": "05 · 恢复后",
+      "caption": "恢复后预算 $20、版本 v2；未完成用例 attempt 变为 2，已完成用例保持 attempt 1。",
+      "variant": "wide"
+    },
+    {
+      "src": "screenshots/06-cancelled-after-pause.png",
+      "alt": "暂停后取消的评测详情",
+      "label": "06 · 暂停后取消",
+      "caption": "暂停态取消后 run 正常终态，事件时间线包含 eval.cancelling / eval.cancelled。",
+      "variant": "wide"
+    }
+  ],
+  "coverage": {
+    "columns": ["领域", "覆盖方式", "结论", "建议"],
+    "rows": [
+      {
+        "area": "暂停入口 / 越界 / 宽限收口",
+        "coverage": "pytest（11 个场景）",
+        "conclusion": "gateway 触发、worker 兜底、未启动/活跃 attempt 收口均有确定性测试。",
+        "recommendation": "保持每次改动 budget.py 时运行这组测试。"
+      },
+      {
+        "area": "网关预算与旧 token 撤销",
+        "coverage": "pytest",
+        "conclusion": "暂停态 409 budget_paused；恢复后旧 attempt 409 stale_attempt。",
+        "recommendation": "接入真实 provider 的 smoke 不在常规 CI，作为发布前人工检查。"
+      },
+      {
+        "area": "恢复原子性 / 版本冲突 / 重复恢复",
+        "coverage": "pytest + 浏览器 API 断言",
+        "conclusion": "行锁 + budget_version 校验；重复请求 409 且不重复加预算。",
+        "recommendation": "并发压测可留到真实多副本环境。"
+      },
+      {
+        "area": "暂停 / 恢复 / 取消 UI",
+        "coverage": "浏览器 smoke",
+        "conclusion": "列表、详情、弹窗、恢复、取消路径均通过。",
+        "recommendation": "UI 变更时同步更新 reports 下的 Before/After 证据。"
+      },
+      {
+        "area": "最终指标 finality",
+        "coverage": "pytest",
+        "conclusion": "暂停期间 is_final=false；恢复并完成最后用例后 is_final=true。",
+        "recommendation": "保留 metric finality 的回归测试。"
+      },
+      {
+        "area": "真实模型花费",
+        "coverage": "未执行",
+        "conclusion": "本次用确定性 ModelUsage 数据验证状态机，没有调用真实 provider。",
+        "recommendation": "发布前用真实模型凭据做一次小额预算冒烟。"
+      }
+    ]
+  },
+  "conclusion": {
+    "kind": "pass",
+    "label": "通过，可进入人工验收",
+    "summary": "9 个浏览器场景与 26 项断言全部通过，未发现需要修复的产品缺陷；暂停、恢复、版本冲突与暂停后取消均按设计工作。",
+    "points": [
+      "真实模型 provider 未在本次冒烟中调用，费用路径由 ModelUsage 数据确定性构造。",
+      "CI 的 flow-online 依赖 PR 与 GitHub Project 关联，已由人工完成。"
+    ]
+  },
+  "footer": "由 Playwright 驱动系统 Chrome 采集 · 本地演示数据 · 不含凭据或令牌。"
+}
