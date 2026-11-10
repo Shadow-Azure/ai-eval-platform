@@ -108,3 +108,10 @@ def test_connection_verification_fails_on_provider_error(session: Session) -> No
         reset_provisioners()
     assert payload["status"] == "failed"
     assert payload["last_verified_at"] is not None
+
+
+def test_balance_error_maps_to_a_stable_pool_reason() -> None:
+    assert (
+        capacity_control._provisioning_reason("cloud_account_balance_insufficient")
+        == capacity_control.REASON_ACCOUNT_BALANCE_INSUFFICIENT
+    )

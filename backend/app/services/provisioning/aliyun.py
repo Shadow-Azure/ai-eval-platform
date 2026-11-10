@@ -95,6 +95,11 @@ TRANSIENT_ERROR_CODES = {
     "RequestTimeout",
 }
 NOT_FOUND_INSTANCE_CODES = {"InvalidInstanceId.NotFound", "InvalidInstanceId"}
+BILLING_ERROR_CODES = {
+    "InvalidAccountStatus.NotEnoughBalance",
+    "InvalidAccountStatus",
+    "InvalidAccountStatus.PaymentMethodNotFound",
+}
 
 INSTANCE_ACTIVE_STATUSES = ("requested", "creating", "registering", "online")
 SPOT_INTERRUPTION_LOCKS = ("recycl", "spot", "maintenance", "beingrecycled")
@@ -250,6 +255,10 @@ class AliyunEcsClient:
             return ProvisionerError("cloud_request_invalid", message or code, details=details)
         if code in TRANSIENT_ERROR_CODES:
             return ProvisionerError("provider_throttled", message or code, details=details)
+        if code in BILLING_ERROR_CODES:
+            return ProvisionerError(
+                "cloud_account_balance_insufficient", message or code, details=details
+            )
         return ProvisionerError("cloud_api_failed", message or code, details=details)
 
     # -- ECS actions --------------------------------------------------------

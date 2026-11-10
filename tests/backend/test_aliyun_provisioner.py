@@ -617,3 +617,28 @@ def test_configured_vswitch_drives_zone_vpc_and_instance(
     assert run_call[1]["ZoneId"] == ["cn-hangzhou-j"]
     sg_call = next(call for call in transport.calls if call[0] == "DescribeSecurityGroups")
     assert sg_call[1]["VpcId"] == ["vpc-2"]
+
+
+def test_run_instance_balance_error_is_a_stable_code(
+    session: Session, scope: dict[str, str], clock: datetime
+) -> None:
+    connection = _connection(session, scope)
+    pool = _pool(session, scope, connection)
+    transport = FakeAliyun()
+    transport.run_error = (
+        403,
+        {
+            "Code": "InvalidAccountStatus.NotEnoughBalance",
+            "Message": "Your account does not have enough balance",
+        },
+    )
+    with pytest.raises(ProvisionerError) as caught:
+        _provisioner(transport=transport).create(
+            session=session,
+            connection=connection,
+            pool=pool,
+            spec=InstanceSpec(instance_type="ecs.g7.large"),
+            now=clock,
+        )
+    assert caught.value.code == "cloud_account_balance_insufficient"
+    assert caught.value.details["provider_code"] == "InvalidAccountStatus.NotEnoughBalance"

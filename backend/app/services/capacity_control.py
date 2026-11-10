@@ -60,6 +60,7 @@ REASON_CAPACITY_SCALE_UP = "capacity_scale_up"
 REASON_CAPACITY_SCALE_DOWN = "capacity_scale_down"
 REASON_PROVISIONING_FAILED = "resource_provisioning_failed"
 REASON_PROVIDER_AUTH_FAILED = "resource_provider_auth_failed"
+REASON_ACCOUNT_BALANCE_INSUFFICIENT = "resource_account_balance_insufficient"
 REASON_RUNNER_REGISTRATION_UNAVAILABLE = "runner_registration_unavailable"
 
 EVENT_CAPACITY_UPDATED = "resource.capacity.updated"
@@ -426,6 +427,8 @@ def _provisioning_reason(code: str) -> str:
 
     if code == "runner_registration_unavailable":
         return REASON_RUNNER_REGISTRATION_UNAVAILABLE
+    if code == "cloud_account_balance_insufficient":
+        return REASON_ACCOUNT_BALANCE_INSUFFICIENT
     if code in ("aliyun_auth_failed", "connection_credential_invalid",
                 "connection_credential_unreadable"):
         return REASON_PROVIDER_AUTH_FAILED
