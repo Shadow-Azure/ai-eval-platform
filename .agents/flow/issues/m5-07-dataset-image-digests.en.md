@@ -5,8 +5,8 @@ English | [中文](m5-07-dataset-image-digests.md)
 ```yaml flow
 kind: issue
 milestone: m5
-priority: P1
-status: ready
+priority: P0
+status: done
 scope:
   - .agents/flow/issues/m5-07-dataset-image-digests.*
   - backend/**
