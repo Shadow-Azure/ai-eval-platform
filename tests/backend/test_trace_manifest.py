@@ -157,7 +157,7 @@ def test_multifile_trace_upload_and_completion_link_every_object(eval_env, clien
 
     env["session"].expire_all()
     case = env["session"].query(EvalCaseRun).filter(EvalCaseRun.id == case_run_id).one()
-    assert case.trace_status == "ready"
+    assert case.trace_status == "pending"
 
 
 def test_repeated_digest_is_one_object_and_never_ambiguous(eval_env, client: TestClient) -> None:
@@ -253,7 +253,7 @@ def test_legacy_single_trace_manifest_is_still_readable(eval_env, client: TestCl
 
     env["session"].expire_all()
     case = env["session"].query(EvalCaseRun).filter(EvalCaseRun.id == case_run_id).one()
-    assert case.trace_status == "ready"
+    assert case.trace_status == "pending"
 
 
 def test_stdout_only_capture_is_incomplete_never_ready(eval_env, client: TestClient) -> None:

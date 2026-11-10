@@ -374,7 +374,7 @@ def test_completion_backfill_finalizes_uploading_attempt(
         assert attempt.error_code is None
         assert case.execution_status == "succeeded"
         assert case.result_status == "resolved"
-        assert case.trace_status == "ready"
+        assert case.trace_status == "pending"
         assert run.status == "completed"
         assert run.succeeded_count == 1
         # No new attempt and no runner-reported completion event.

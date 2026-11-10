@@ -419,7 +419,6 @@ def _create_retry_attempt(
     session.add(outbox)
     case.execution_status = "queued"
     case.result_status = "not_scored"
-    case.trace_status = "pending"
     case.error_code = None
     case.error_summary = None
     session.add(
@@ -437,12 +436,19 @@ def _create_retry_attempt(
         )
     )
     session.flush()
-    return session.scalar(
+    attempt = session.scalar(
         select(EvalCaseAttempt).where(
             EvalCaseAttempt.eval_case_run_id == case.id,
             EvalCaseAttempt.attempt_no == new_attempt_no,
         )
     )
+    if attempt is not None:
+        from .trace_ingestion import set_case_trace_status
+
+        set_case_trace_status(
+            session, case_run=case, attempt=attempt, status="pending"
+        )
+    return attempt
 
 
 def retry_case(session: Session, *, case_run_id: str, actor: str, now: datetime | None = None) -> dict[str, Any]:

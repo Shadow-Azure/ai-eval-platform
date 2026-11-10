@@ -26,6 +26,7 @@ Rules pinned by tests/backend/test_case_callbacks.py:
 from __future__ import annotations
 
 import json
+import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 
@@ -58,6 +59,8 @@ from .trace_manifest import (
 )
 
 ACTIVE_ATTEMPT_STATUSES = evaluations.ACTIVE_ATTEMPT_STATUSES
+
+logger = logging.getLogger(__name__)
 
 COMPLETION_TO_ATTEMPT_STATUS = {
     "succeeded": "succeeded",
@@ -666,8 +669,29 @@ def finalize_completion(
         # 成功完成清掉旧失败 attempt 遗留在 case 行上的诊断字段。
         case_run.error_code = None
         case_run.error_summary = None
-    trace_status = trace_status_for(manifest_record) if trace_manifest is not None else "unlinked"
-    case_run.trace_status = trace_status
+    from .trace_ingestion import has_ingestible_trace_objects, set_case_trace_status
+
+    has_trace_objects = has_ingestible_trace_objects(attempt)
+    if trace_manifest is not None:
+        trace_status = trace_status_for(manifest_record)
+        if trace_status == "ready" and any(
+            item.get("artifact_kind") in ("trace", "trace_metadata")
+            for item in trace_objects(manifest_record)
+        ):
+            # Ingestion has not parsed the bytes yet; a fresh callback must not
+            # advertise ready before trace_file rows reach a terminal state.
+            trace_status = "pending"
+    elif has_trace_objects:
+        # The upload path can register trace objects in artifact_manifest_json
+        # without a separate trace_manifest; those are still ingestible.
+        trace_status = "pending"
+    else:
+        trace_status = "unlinked"
+    if trace_status == "unlinked" and has_trace_objects:
+        trace_status = "pending"
+    set_case_trace_status(
+        session, case_run=case_run, attempt=attempt, status=trace_status
+    )
 
     payload = dict(event_payload or {})
     payload.setdefault("execution_status", execution_status)
@@ -691,6 +715,17 @@ def finalize_completion(
         score_manifest=score_manifest,
         settings=settings,
     )
+    # M6-02: enqueue pending trace_file rows in the same completion
+    # transaction. Parsing itself is asynchronous and must never delay or
+    # fail the callback; a bad manifest only leaves the rows unqueued for the
+    # next reconciler pass.
+    try:
+        from .trace_ingestion import enqueue_attempt
+
+        with session.begin_nested():
+            enqueue_attempt(session, attempt, now=now)
+    except Exception:  # noqa: BLE001 - ingestion is post-completion work
+        logger.exception("enqueue trace ingestion failed for attempt %s", attempt.id)
     session.commit()
 
 

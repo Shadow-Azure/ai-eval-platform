@@ -48,6 +48,12 @@ class Settings(BaseSettings):
     worker_poll_seconds: float = 5.0
     worker_heartbeat_path: str = "/tmp/eval-worker-heartbeat"
 
+    # M6-02 trace ingestion: one worker pass claims at most this many pending
+    # files, and a claimed file is reclaimable after the lease expires. The
+    # lease is renewed between download and parse stages.
+    trace_ingestion_batch_size: int = 10
+    trace_ingestion_lease_seconds: float = 300.0
+
     # M3-06 operations status: provisioned database storage capacity, used to
     # show a usage watermark on the admin page. 0 means "not configured"; the
     # page then reports the current size without a percentage.

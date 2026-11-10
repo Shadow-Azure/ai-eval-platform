@@ -22,7 +22,14 @@ from sqlalchemy.orm import Session
 from ..config import get_settings
 from ..db import SessionLocal
 from ..models import Outbox
-from ..services import capacity_control, dispatcher, lifecycle, reaper, reconciler
+from ..services import (
+    capacity_control,
+    dispatcher,
+    lifecycle,
+    reaper,
+    reconciler,
+    trace_ingestion,
+)
 from ..services.operations import record_worker_heartbeat
 from ..services.provisioning import register_builtin_provisioners
 from ..services.runners import sweep_stale_runners
@@ -154,6 +161,49 @@ def main() -> int:
                 )
         except Exception as exc:  # pragma: no cover - retried on the next loop
             print(f"worker: reconcile failed: {exc}", flush=True)
+        try:
+            with SessionLocal() as session:
+                backfilled = trace_ingestion.backfill_missing(
+                    session, limit=settings.trace_ingestion_batch_size
+                )
+            if any(backfilled.values()):
+                print(
+                    "worker: trace backfill "
+                    f"attempts={backfilled['attempts']} files={backfilled['files']}",
+                    flush=True,
+                )
+        except Exception as exc:  # pragma: no cover - retried on the next loop
+            print(f"worker: trace backfill failed: {exc}", flush=True)
+        try:
+            with SessionLocal() as session:
+                ingestion = trace_ingestion.ingest_pending(
+                    session, limit=settings.trace_ingestion_batch_size
+                )
+            if any(ingestion.values()):
+                print(
+                    "worker: trace ingestion "
+                    f"attempts={ingestion['attempts']} files={ingestion['files']} "
+                    f"ready={ingestion['ready']} degraded={ingestion['degraded']} "
+                    f"failed={ingestion['failed']} skipped={ingestion['skipped']}",
+                    flush=True,
+                )
+        except Exception as exc:  # pragma: no cover - retried on the next loop
+            print(f"worker: trace ingestion failed: {exc}", flush=True)
+        try:
+            with SessionLocal() as session:
+                published = trace_ingestion.publish_stale_cases(
+                    session, limit=settings.trace_ingestion_batch_size
+                )
+            if any(published.values()):
+                print(
+                    "worker: trace publish "
+                    f"scanned={published['scanned']} "
+                    f"published={published['published']} "
+                    f"events={published['events']}",
+                    flush=True,
+                )
+        except Exception as exc:  # pragma: no cover - retried on the next loop
+            print(f"worker: trace publish failed: {exc}", flush=True)
         try:
             with SessionLocal() as session:
                 capacity_once(session)
