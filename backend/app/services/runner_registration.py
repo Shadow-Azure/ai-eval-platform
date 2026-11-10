@@ -125,7 +125,7 @@ class GitHubRunnerRegistrar:
         return ProvisionerError(
             "runner_registration_failed",
             f"GitHub Runner 注册失败：HTTP {status}",
-            details={"status": status, "body": body.strip()[:200]},
+            details={"status": status},
         )
 
     # -- API ----------------------------------------------------------------

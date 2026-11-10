@@ -53,6 +53,9 @@ class FakeAliyun:
         self.prices: list[dict] = [
             {"ZoneId": "cn-hangzhou-i", "InstanceType": "ecs.g7.large", "Price": "0.5000"}
         ]
+        self.vswitches: list[dict] = [
+            {"VSwitchId": "vsw-test", "VpcId": "vpc-test", "ZoneId": "cn-hangzhou-i"}
+        ]
         self.run_error: tuple[int, dict] | None = None
         self.delete_error: tuple[int, dict] | None = None
         self.delete_calls: list[str] = []
@@ -62,21 +65,15 @@ class FakeAliyun:
         action = params["Action"][0]
         self.calls.append((action, params))
         if action == "DescribeSpotPriceHistory":
-            return 200, json.dumps({"SpotPrices": {"SpotPriceType": self.prices}})
+            zone = params.get("ZoneId", [None])[0]
+            rows = [row for row in self.prices if zone is None or row.get("ZoneId") == zone]
+            return 200, json.dumps({"SpotPrices": {"SpotPriceType": rows}})
         if action == "DescribeImages":
             return 200, json.dumps(
                 {"Images": {"Image": [{"ImageId": "img-ubuntu", "OSName": "Ubuntu 22.04 64bit"}]}}
             )
         if action == "DescribeVSwitches":
-            return 200, json.dumps(
-                {
-                    "VSwitches": {
-                        "VSwitch": [
-                            {"VSwitchId": "vsw-test", "VpcId": "vpc-test", "ZoneId": "cn-hangzhou-i"}
-                        ]
-                    }
-                }
-            )
+            return 200, json.dumps({"VSwitches": {"VSwitch": self.vswitches}})
         if action == "DescribeSecurityGroups":
             return 200, json.dumps(
                 {"SecurityGroups": {"SecurityGroup": [{"SecurityGroupId": "sg-test"}]}}
@@ -575,3 +572,43 @@ def test_sync_failure_keeps_tick_running(
         event.event_type == capacity_control.EVENT_PROVISIONING_FAILED
         for event in session.scalars(select(ResourceEvent))
     )
+
+
+def test_configured_vswitch_drives_zone_vpc_and_instance(
+    session: Session, scope: dict[str, str], clock: datetime
+) -> None:
+    connection = _connection(session, scope)
+    pool = _pool(
+        session,
+        scope,
+        connection,
+        instance_config_json={
+            "instance_type": "ecs.g7.large",
+            "vswitch_id": "vsw-2",
+        },
+    )
+    transport = FakeAliyun()
+    transport.vswitches = [
+        {"VSwitchId": "vsw-1", "VpcId": "vpc-1", "ZoneId": "cn-hangzhou-i"},
+        {"VSwitchId": "vsw-2", "VpcId": "vpc-2", "ZoneId": "cn-hangzhou-j"},
+    ]
+    transport.prices = [
+        {"ZoneId": "cn-hangzhou-j", "InstanceType": "ecs.g7.large", "Price": "0.4000"}
+    ]
+    registrar = FakeRegistrar()
+    provisioner = _provisioner(transport=transport, registrar=registrar)
+
+    quote = provisioner.quote(connection=connection, pool=pool, now=clock, session=session)
+    assert quote.zone_id == "cn-hangzhou-j"
+    provisioner.create(
+        session=session,
+        connection=connection,
+        pool=pool,
+        spec=InstanceSpec(instance_type="ecs.g7.large"),
+        now=clock,
+    )
+    run_call = next(call for call in transport.calls if call[0] == "RunInstances")
+    assert run_call[1]["VSwitchId"] == ["vsw-2"]
+    assert run_call[1]["ZoneId"] == ["cn-hangzhou-j"]
+    sg_call = next(call for call in transport.calls if call[0] == "DescribeSecurityGroups")
+    assert sg_call[1]["VpcId"] == ["vpc-2"]

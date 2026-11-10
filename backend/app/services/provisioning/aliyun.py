@@ -474,7 +474,7 @@ class AliyunEcsProvisioner:
         self._now = now
         self._nonce = nonce
         self._image_cache: dict[tuple[str, str], str] = {}
-        self._zone_cache: dict[str, str | None] = {}
+        self._vswitch_cache: dict[str, list[dict[str, Any]]] = {}
 
     # -- helpers ------------------------------------------------------------
 
@@ -511,35 +511,61 @@ class AliyunEcsProvisioner:
             self._image_cache[key] = image_id
         return self._image_cache[key]
 
+    def _vswitches(self, client: AliyunEcsClient, region: str) -> list[dict[str, Any]]:
+        if region not in self._vswitch_cache:
+            self._vswitch_cache[region] = client.describe_vswitches(region)
+        return self._vswitch_cache[region]
+
+    def _vswitch_choice(
+        self, client: AliyunEcsClient, region: str, config: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Pick the configured vSwitch, or the first region vSwitch.
+
+        Resolving the vSwitch first keeps the quoted zone and the VPC used for
+        the security-group lookup consistent with the instance that
+        ``RunInstances`` will actually create.
+        """
+
+        configured = _config_str(config, "vswitch_id") or _config_str(config, "v_switch_id")
+        switches = self._vswitches(client, region)
+        if configured:
+            for switch in switches:
+                if str(switch.get("VSwitchId")) == configured:
+                    return switch
+            raise ProvisionerError(
+                "cloud_request_invalid",
+                "配置的 vSwitch 在区域内不存在",
+                details={"region": region, "vswitch_id": configured},
+            )
+        if not switches:
+            raise ProvisionerError(
+                "cloud_request_invalid",
+                "阿里云账号下没有可用 vSwitch，请在资源池 instance_config 中配置 vswitch_id",
+                details={"region": region},
+            )
+        return switches[0]
+
     def _zone_for(self, client: AliyunEcsClient, region: str, config: dict[str, Any]) -> str | None:
         configured = _config_str(config, "zone_id") or _config_str(config, "availability_zone")
         if configured:
             return configured
-        if region not in self._zone_cache:
-            switches = client.describe_vswitches(region)
-            self._zone_cache[region] = (
-                str(switches[0]["ZoneId"]) if switches and switches[0].get("ZoneId") else None
-            )
-        return self._zone_cache[region]
+        chosen = self._vswitch_choice(client, region, config)
+        zone_id = chosen.get("ZoneId")
+        return str(zone_id) if zone_id else None
 
     def _pick_network(
         self, client: AliyunEcsClient, region: str, config: dict[str, Any]
     ) -> tuple[str, str, str | None]:
+        chosen = self._vswitch_choice(client, region, config)
         vswitch_id = _config_str(config, "vswitch_id") or _config_str(config, "v_switch_id")
-        vpc_id = _config_str(config, "vpc_id")
-        zone_id = _config_str(config, "zone_id") or _config_str(config, "availability_zone")
         if not vswitch_id:
-            switches = client.describe_vswitches(region)
-            if not switches:
-                raise ProvisionerError(
-                    "cloud_request_invalid",
-                    "阿里云账号下没有可用 vSwitch，请在资源池 instance_config 中配置 vswitch_id",
-                    details={"region": region},
-                )
-            chosen = switches[0]
             vswitch_id = str(chosen["VSwitchId"])
-            vpc_id = vpc_id or (str(chosen["VpcId"]) if chosen.get("VpcId") else None)
-            zone_id = zone_id or (str(chosen["ZoneId"]) if chosen.get("ZoneId") else None)
+        vpc_id = _config_str(config, "vpc_id") or (
+            str(chosen["VpcId"]) if chosen.get("VpcId") else None
+        )
+        zone_id = _config_str(config, "zone_id") or _config_str(config, "availability_zone")
+        if not zone_id and chosen.get("ZoneId"):
+            zone_id = str(chosen["ZoneId"])
         security_group_id = _config_str(config, "security_group_id") or _config_str(
             config, "security_group"
         )
