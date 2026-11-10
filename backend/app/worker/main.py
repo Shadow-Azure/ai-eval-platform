@@ -24,6 +24,7 @@ from ..db import SessionLocal
 from ..models import Outbox
 from ..services import capacity_control, dispatcher, lifecycle, reaper, reconciler
 from ..services.operations import record_worker_heartbeat
+from ..services.provisioning import register_builtin_provisioners
 from ..services.runners import sweep_stale_runners
 
 _STOP = False
@@ -86,6 +87,9 @@ def _handle_signal(_signum: int, _frame: FrameType | None) -> None:
 
 def main() -> int:
     settings = get_settings()
+    # M4-04: the worker is the only process that creates/releases spot
+    # instances. Registration is lazy (no network) and idempotent.
+    register_builtin_provisioners(settings)
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
     heartbeat = Path(settings.worker_heartbeat_path)

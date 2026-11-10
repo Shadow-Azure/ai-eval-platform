@@ -16,7 +16,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from ..models import Connection, Credential, ResourcePool
-from .provisioning import CAPABILITY_ECS_SPOT, Provisioner
+from .provisioning import CAPABILITY_ECS_SPOT, Provisioner, ProvisionerError
 
 PROVISIONING_MODE_FIXED = "fixed"
 PROVISIONING_MODE_SPOT = "spot"
@@ -317,7 +317,13 @@ def verify_connection(
     provisioner: Provisioner,
     now: datetime | None = None,
 ) -> dict[str, Any]:
-    """Read-only verification: provider match + declared capabilities.
+    """Read-only verification: provider match + declared capabilities + API.
+
+    The provider's ``verify`` performs a read-only cloud call with the
+    decrypted connection credential (M4-04), so a syntactically valid but
+    unauthorized AccessKey is rejected before a pool can be used. Any
+    provider error marks the connection ``failed`` without leaking the
+    credential or request details.
 
     Sets ``status`` to verified/failed and always records
     ``last_verified_at`` so the UI can show "last checked". Flushes but does
@@ -327,9 +333,12 @@ def verify_connection(
     now = now or datetime.now(UTC)
     supported = set(provisioner.capabilities(connection))
     declared = connection_capabilities(connection)
-    verified = (
-        connection.provider == provisioner.provider and declared <= supported
-    )
+    verified = connection.provider == provisioner.provider and declared <= supported
+    if verified:
+        try:
+            provisioner.verify(session=session, connection=connection)
+        except ProvisionerError:
+            verified = False
     connection.status = (
         CONNECTION_STATUS_VERIFIED if verified else CONNECTION_STATUS_FAILED
     )

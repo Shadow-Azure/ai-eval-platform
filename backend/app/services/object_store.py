@@ -149,6 +149,48 @@ class ObjectStore:
         now = now or datetime.now(UTC)
         return self._presign("PUT", object_key, expires, now)
 
+    def presign_get_url(
+        self,
+        object_key: str,
+        *,
+        expires: int = 3600,
+        now: datetime | None = None,
+    ) -> str:
+        """Presigned GET URL for one platform-owned object key."""
+
+        now = now or datetime.now(UTC)
+        return self._presign("GET", object_key, expires, now)
+
+    def put_bytes(
+        self,
+        object_key: str,
+        data: bytes,
+        *,
+        content_type: str = "application/octet-stream",
+        timeout: float = 300,
+        now: datetime | None = None,
+    ) -> None:
+        """Upload bytes with a presigned PUT (used for the runner cache)."""
+
+        now = now or datetime.now(UTC)
+        url = self.presign_put_url(object_key, expires=900, now=now)
+        request = urllib.request.Request(
+            url,
+            data=data,
+            method="PUT",
+            headers={"Content-Type": content_type},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                if response.status not in (200, 201):
+                    raise ObjectStoreError(
+                        f"PUT {object_key} 返回 HTTP {response.status}"
+                    )
+        except urllib.error.HTTPError as exc:
+            raise ObjectStoreError(f"PUT {object_key} 返回 HTTP {exc.code}") from exc
+        except urllib.error.URLError as exc:
+            raise ObjectStoreError(f"PUT {object_key} 失败：{exc.reason}") from exc
+
     def get_bytes(self, object_key: str, *, now: datetime | None = None) -> bytes:
         """Download one object with a presigned GET (scoring ingestion)."""
 

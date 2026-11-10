@@ -29,6 +29,10 @@ npm run record:i18n -- docs/README.md
 
 `npm test` 运行 Node 原生测试；`lint:docs` 是无网络快速档；`verify:docs` 是 CI 使用的全量档；`route:gates` 根据当前工作树推荐最小组合。
 
+## 竞价资源冒烟
+
+真实阿里云冒烟需要 `ALIYUN_ACCESS_KEY_ID`、`ALIYUN_ACCESS_KEY_SECRET`、`RUNNER_ADMIN_TOKEN`（仓库管理员 PAT，`repo` scope）与 `SPOT_SMOKE_CONFIRM=1`。给 PR 加 `run-spot-smoke` label 触发 `spot-smoke` workflow；它创建一台竞价实例、执行 `runner-smoke` 作业后释放实例，证据上传为 artifact。常规 CI 不创建云资源。
+
 ## 修改文档
 
 1. 先在中文 base 修正事实，再按结构镜像最小修补英文侧。

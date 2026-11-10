@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 from app.config import get_settings
 from app.defaults import DEFAULT_PROJECT_ID, DEFAULT_TENANT_ID
-from app.models import EvalCaseRun, Runner
+from app.models import EvalCaseRun, ResourcePool, Runner
 from app.seed import ensure_default_scope
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
@@ -631,3 +631,51 @@ def test_heartbeat_adopts_runner_row_left_in_stale_pool(
     assert adopted.resource_pool_id == ensure_fixed_pool(seeded).id
     assert adopted.status == "online"
     assert json.loads(json.dumps(adopted.labels_json)) == ["self-hosted", "linux", "eval"]
+
+
+# ---------------------------------------------------------------------------
+# M4-04: spot runners join the pool that created them
+# ---------------------------------------------------------------------------
+
+
+def _spot_pool(seeded: Session) -> ResourcePool:
+    pool = ResourcePool(
+        tenant_id=str(DEFAULT_TENANT_ID),
+        project_id=str(DEFAULT_PROJECT_ID),
+        name="spot-heartbeat-pool",
+        provider_key="aliyun",
+        provisioning_mode="spot",
+        min_capacity=0,
+        max_capacity=2,
+        instance_config_json={"instance_type": "ecs.g7.large"},
+        labels_json={"runs_on": ["self-hosted", "linux", "eval"]},
+        status="active",
+    )
+    seeded.add(pool)
+    seeded.commit()
+    return pool
+
+
+def test_spot_runner_heartbeat_binds_to_its_pool(seeded: Session, client: TestClient) -> None:
+    pool = _spot_pool(seeded)
+    response = client.post(
+        "/runner/v1/runners/heartbeat",
+        json=agent_payload(
+            runner_id="spot-runner-1",
+            name="spot-runner-1",
+            resource_pool_id=pool.id,
+        ),
+    )
+    assert response.status_code == 200, response.text
+    seeded.expire_all()
+    runner = seeded.query(Runner).filter(Runner.provider_runner_id == "spot-runner-1").one()
+    assert runner.resource_pool_id == pool.id
+
+
+def test_spot_runner_heartbeat_rejects_unknown_pool(seeded: Session, client: TestClient) -> None:
+    response = client.post(
+        "/runner/v1/runners/heartbeat",
+        json=agent_payload(runner_id="spot-runner-x", resource_pool_id="missing-pool"),
+    )
+    assert response.status_code == 404
+    assert response.json()["detail"]["error"]["code"] == "resource_pool_not_found"

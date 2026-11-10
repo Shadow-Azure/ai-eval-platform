@@ -243,9 +243,9 @@ if [ "${RUNNER_INSTALL:-0}" = "1" ]; then
       exit 1
     fi
   done
-  RUNNER_VERSION="${RUNNER_VERSION:-2.329.0}"
+  RUNNER_VERSION="${RUNNER_VERSION:-2.338.2}"
   if [ ! -f "$RUNNER_DIR/config.sh" ]; then
-    TARBALL="actions-runner-linux-x64-${RUNNER_VERSION}-1.tar.gz"
+    TARBALL="actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz"
     curl -fsSL -o "$RUNNER_DIR/runner.tar.gz" \
       "https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/${TARBALL}"
     tar -xzf "$RUNNER_DIR/runner.tar.gz" -C "$RUNNER_DIR"

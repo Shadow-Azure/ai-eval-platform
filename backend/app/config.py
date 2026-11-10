@@ -60,6 +60,16 @@ class Settings(BaseSettings):
     runner_heartbeat_timeout_seconds: int = 90
     runner_fixed_pool_name: str = "fixed-linux"
     runner_fixed_pool_provider_key: str = "fixed"
+    # M4-04 ephemeral spot runners. RUNNER_ADMIN_TOKEN is a repository-admin
+    # PAT/App token used only for generate-jitconfig + runner deletion; the
+    # dispatch token (GITHUB_TOKEN) is intentionally not reused.
+    runner_admin_token: str | None = None
+    runner_spot_labels: str = "self-hosted,linux,eval"
+    runner_spot_runner_version: str = "2.338.2"
+    # Optional cached tarball URL (OSS/S3) for Aliyun regions where GitHub
+    # downloads are slow/blocked; cloud-init falls back to the GitHub URL.
+    runner_spot_runner_tarball_url: str | None = None
+    runner_spot_runner_group_id: int | None = 1
 
     # M2-05 synthetic evaluation loop.
     # Short-term case-token secret (platform signs, runner verifies). When
@@ -99,6 +109,19 @@ class Settings(BaseSettings):
     # cheap even when a large queue arrives at once).
     eval_capacity_check_seconds: int = 300
     eval_capacity_batch_size: int = 5
+    # M4-04 Aliyun ECS spot provisioner. Aliyun quotes CNY/hour; scheduling
+    # compares USD against ``price_threshold_usd`` using this rate. Credentials
+    # come from the encrypted resource connection, never from these settings.
+    aliyun_ecs_endpoint: str = "https://ecs.aliyuncs.com"
+    aliyun_default_region: str = "cn-hangzhou"
+    aliyun_cny_per_usd: float = 7.2
+    aliyun_default_instance_type: str = "ecs.g7.large"
+    # A spot instance is reclaimed when it never starts or never registers a
+    # runner; queued attempts stay queued and the next tick retries.
+    eval_spot_register_timeout_seconds: int = 1200
+    # Grace after the runner heartbeat timeout before an instance whose runner
+    # vanished is reclaimed (the lifecycle reaper retries the attempt first).
+    eval_spot_runner_lost_grace_seconds: int = 300
     # M4-02 execution lifecycle timeouts (design 06 §7). Five independent
     # clocks instead of one total timeout: platform queue, agent execution,
     # scoring, upload grace period and heartbeat. The agent execution timeout
