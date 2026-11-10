@@ -58,7 +58,7 @@ Production deployment binds the Runner callback entry to the VPC private address
 
 ## Agent asset snapshots
 
-`/assets` manages GitHub asset sources: it resolves the Ref, discovers Skills (directories with `SKILL.md`), Commands, and Subagents, and freezes the selected assets into an immutable OSS bundle recording the commit, tree digest, file digests, and manifest. Evaluations reference only the snapshot; the runner maps it to `.claude/` under an isolated HOME without re-fetching the branch or loading other repository or host assets. Git tokens are encrypted and the console only shows a mask.
+`/assets` manages GitHub asset sources: it resolves the Ref, discovers Skills (directories with `SKILL.md`), Commands, and Subagents, and freezes the selected assets into an immutable OSS bundle recording the commit, tree digest, file digests, and manifest. Evaluations reference the frozen snapshot; without an asset source they use only runtime built-ins. The runner maps the snapshot to `.claude/` under an isolated HOME without re-fetching the branch or loading other repository or host assets. Git tokens are encrypted and the console only shows a mask.
 
 ## Extension points
 
