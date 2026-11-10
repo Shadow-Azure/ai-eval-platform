@@ -47,6 +47,7 @@ services:
       # M2-05 dispatch loop: platform-issued short-term case tokens (runner
       # verifies) and the repository_dispatch credential (repo scope).
       RUNNER_TASK_SECRET: ${RUNNER_TASK_SECRET:-}
+      RUNNER_ADMIN_TOKEN: ${RUNNER_ADMIN_TOKEN:-}
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
       GITHUB_REPO: ${GITHUB_REPO:-Shadow-Azure/ai-eval-platform}
       DEPLOY_ENVIRONMENT: ${DEPLOY_ENVIRONMENT:-production}
@@ -96,6 +97,11 @@ services:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-eval}:${POSTGRES_PASSWORD:?}@postgres:5432/${POSTGRES_DB:-eval}
       REDIS_URL: redis://redis:6379/0
       WORKER_HEARTBEAT_PATH: /tmp/worker-heartbeat
+      # M4-04 capacity controller: decrypt the resource credential and render
+      # cloud-init (heartbeat token) / register the ephemeral runner.
+      SECRET_BOX_KEY: ${SECRET_BOX_KEY:-}
+      RUNNER_HEARTBEAT_TOKEN: ${RUNNER_HEARTBEAT_TOKEN:-}
+      RUNNER_ADMIN_TOKEN: ${RUNNER_ADMIN_TOKEN:-}
       # M2-05: the worker consumes the shard-dispatch outbox and needs the
       # same GitHub dispatch credential as the API.
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
