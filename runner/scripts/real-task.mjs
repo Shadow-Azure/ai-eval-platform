@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
+import { materializeSnapshot } from "../lib/asset-bundle.mjs";
 import { verifyToken } from "../lib/auth.mjs";
 import { postCallback } from "../lib/callback-client.mjs";
 import { requireValid, validateDispatch, validateManifest, validateStarted } from "../lib/contracts.mjs";
@@ -138,7 +139,7 @@ function dockerRun(args, { allowFailure = false, timeout = 1_200_000 } = {}) {
  * F2P/P2P tests inside the scoring image. Returns the official report payload
  * plus the trace bytes and terminal statuses.
  */
-function realCase(dispatch, item, task, { modelToken, runnerRoot }) {
+async function realCase(dispatch, item, task, { modelToken, runnerRoot }) {
   const datasetAdapter = getDatasetAdapter(task.adapter_key);
   const runtimeAdapter = getRuntimeAdapter(task.runtime_key);
   const startedAt = Date.now();
@@ -168,6 +169,50 @@ function realCase(dispatch, item, task, { modelToken, runnerRoot }) {
       timeout: 120_000,
     });
     if (checkout.status !== 0) throw new Error(`checkout 失败：${(checkout.stderr || "").slice(-500)}`);
+
+    // M5-01: apply exactly the frozen snapshot to <workspace>/.claude before
+    // the agent starts. A missing/invalid bundle fails the case explicitly;
+    // it never silently falls back to repository or host assets.
+    let assetsWritten = [];
+    try {
+      assetsWritten = await materializeSnapshot(task.asset_snapshot, workdir);
+    } catch (error) {
+      const message = `资产快照加载失败：${error.message}`;
+      console.error(message);
+      return {
+        score: {
+          [task.case_key]: {
+            resolved: false,
+            error: "asset_invalid",
+            message,
+            tests_status: {
+              FAIL_TO_PASS: { success: [], failure: [] },
+              PASS_TO_PASS: { success: [], failure: [] },
+            },
+          },
+        },
+        trace: Buffer.from(
+          JSON.stringify({
+            type: "asset.failed",
+            code: error.code || "asset_invalid",
+            message,
+          }) + "\n",
+          "utf8",
+        ),
+        executionStatus: "failed",
+        resultStatus: "not_scored",
+        durationMs: Date.now() - startedAt,
+      };
+    }
+    if (assetsWritten.length > 0) {
+      console.error(
+        JSON.stringify({
+          status: "assets_materialized",
+          snapshot_id: task.asset_snapshot?.snapshot_id,
+          files: assetsWritten.length,
+        }),
+      );
+    }
 
     const env = {
       WORKSPACE: "/testbed",
@@ -209,11 +254,11 @@ function realCase(dispatch, item, task, { modelToken, runnerRoot }) {
         timeout: Number(process.env.REAL_TASK_AGENT_TIMEOUT_MS || 1_000_000),
       });
       dockerRun(
-        ["exec", "-u", "eval", agentName, "git", "-C", "/testbed", "add", "-A", "--", ".", ":(exclude).runtime-home", ":(exclude)trace"],
+        ["exec", "-u", "eval", agentName, "git", "-C", "/testbed", "add", "-A", "--", ".", ":(exclude).runtime-home", ":(exclude)trace", ":(exclude).claude"],
         { allowFailure: true, timeout: 60_000 },
       );
       containerPatch = dockerRun(
-        ["exec", "-u", "eval", agentName, "git", "-C", "/testbed", "diff", "--cached", "--", ".", ":(exclude).runtime-home", ":(exclude)trace"],
+        ["exec", "-u", "eval", agentName, "git", "-C", "/testbed", "diff", "--cached", "--", ".", ":(exclude).runtime-home", ":(exclude)trace", ":(exclude).claude"],
         { allowFailure: true, timeout: 60_000 },
       ).stdout || "";
     } catch (error) {
@@ -232,13 +277,13 @@ function realCase(dispatch, item, task, { modelToken, runnerRoot }) {
     let patch = containerPatch.trim();
     if (!patch) {
       const safe = ["-c", `safe.directory=${workdir}`];
-      spawnSync("git", [...safe, "-C", workdir, "add", "-A", "--", ".", ":(exclude).runtime-home", ":(exclude)trace"], {
+      spawnSync("git", [...safe, "-C", workdir, "add", "-A", "--", ".", ":(exclude).runtime-home", ":(exclude)trace", ":(exclude).claude"], {
         encoding: "utf8",
         timeout: 60_000,
       });
       const diff = spawnSync(
         "git",
-        [...safe, "-C", workdir, "diff", "--cached", "--", ".", ":(exclude).runtime-home", ":(exclude)trace"],
+        [...safe, "-C", workdir, "diff", "--cached", "--", ".", ":(exclude).runtime-home", ":(exclude)trace", ":(exclude).claude"],
         { encoding: "utf8", timeout: 60_000 },
       );
       patch = (diff.stdout || "").trim();
@@ -558,7 +603,7 @@ async function main() {
       let caseResult;
       try {
         caseResult = task?.repo
-          ? realCase(dispatch, item, task, { modelToken, runnerRoot })
+          ? await realCase(dispatch, item, task, { modelToken, runnerRoot })
           : { ...deterministicCase(dispatch, item), executionStatus: "succeeded", resultStatus: "resolved", durationMs: 0 };
       } finally {
         // Stopped on both success and exception: SIGTERM, up to 5s, then SIGKILL.

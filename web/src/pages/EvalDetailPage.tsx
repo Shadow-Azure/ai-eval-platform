@@ -15,6 +15,7 @@ import {
   type CaseTestResult,
   type EvaluationCase,
   type EvaluationEvent,
+  type FrozenAsset,
 } from "../api/evaluations";
 import { PageHeading } from "../components/PageHeading";
 import { QueryError } from "../components/QueryError";
@@ -62,6 +63,18 @@ const caseColumns: TableColumnsType<EvaluationCase> = [
   { title: "attempt", dataIndex: "latest_attempt_no", key: "latest_attempt_no", width: 80 },
   { title: "耗时", dataIndex: "duration_ms", key: "duration_ms", render: (value: number | null) => (value ? `${(value / 1000).toFixed(1)}s` : "—") },
 ];
+
+const frozenAssetColumns: TableColumnsType<FrozenAsset> = [
+  { title: "类型", dataIndex: "asset_type", key: "asset_type", width: 100, render: (value: string) => <Tag>{value}</Tag> },
+  { title: "资产", dataIndex: "name", key: "name" },
+  { title: "路径", dataIndex: "path", key: "path", render: (value: string) => <span className="mono small">{value}</span> },
+  { title: "摘要", dataIndex: "content_digest", key: "content_digest", width: 150, render: (value: string | undefined) => <span className="mono small">{value ? value.replace(/^sha256:/, "").slice(0, 12) : "—"}</span> },
+];
+
+function shortDigest(value: string | null | undefined): string {
+  if (!value) return "—";
+  return value.replace(/^sha256:/, "").slice(0, 12);
+}
 
 const testColumns: TableColumnsType<CaseTestResult> = [
   { title: "组", dataIndex: "test_group", key: "test_group", width: 64 },
@@ -205,6 +218,43 @@ export function EvalDetailPage() {
           <Statistic title="运行中" value={detail.data?.running_count ?? 0} />
         </Space>
       </Card>
+
+      {detail.data?.asset_snapshot ? (
+        <Card
+          title="Agent 资产快照"
+          style={{ marginBottom: 16 }}
+          extra={
+            <span className="mono small muted">
+              {detail.data.asset_snapshot.snapshot_id ?? ""}
+            </span>
+          }
+        >
+          <Descriptions size="small" column={4} style={{ marginBottom: 12 }}>
+            <Descriptions.Item label="请求 Ref">{detail.data.asset_snapshot.requested_ref ?? "—"}</Descriptions.Item>
+            <Descriptions.Item label="解析 commit">
+              <span className="mono">{detail.data.asset_snapshot.resolved_commit ?? "—"}</span>
+            </Descriptions.Item>
+            <Descriptions.Item label="资产 / 文件">
+              {detail.data.asset_snapshot.asset_count ?? 0} / {detail.data.asset_snapshot.file_count ?? 0}
+            </Descriptions.Item>
+            <Descriptions.Item label="树摘要">
+              <span className="mono">{shortDigest(detail.data.asset_snapshot.tree_digest)}</span>
+            </Descriptions.Item>
+            <Descriptions.Item label="Runtime">{detail.data.asset_snapshot.runtime_key ?? "—"}</Descriptions.Item>
+            <Descriptions.Item label="包大小">{detail.data.asset_snapshot.bundle_size ?? 0} B</Descriptions.Item>
+            <Descriptions.Item label="包摘要">
+              <span className="mono">{shortDigest(detail.data.asset_snapshot.bundle_digest)}</span>
+            </Descriptions.Item>
+          </Descriptions>
+          <Table<FrozenAsset>
+            rowKey={(record) => `${record.asset_type}:${record.path}`}
+            size="small"
+            columns={frozenAssetColumns}
+            dataSource={detail.data.asset_snapshot.assets ?? []}
+            pagination={false}
+          />
+        </Card>
+      ) : null}
 
       {hasBudget ? (
         <Card title="模型预算" style={{ marginBottom: 16 }}>

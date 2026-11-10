@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { RequireAdmin, RequireAuth } from "./auth";
 import { AppShell } from "../components/AppShell";
+import { AssetsPage } from "../pages/AssetsPage";
 import { PlaceholderPage } from "../components/PlaceholderPage";
 import { DatasetDetailPage } from "../pages/DatasetDetailPage";
 import { DatasetImportPage } from "../pages/DatasetImportPage";
@@ -15,12 +16,6 @@ import { OperationsPage } from "../pages/OperationsPage";
 import { OverviewPage } from "../pages/OverviewPage";
 
 const placeholders = [
-  {
-    path: "assets",
-    eyebrow: "Configuration · Agent assets",
-    title: "Agent 资产",
-    description: "维护 Git 资产源、扫描路径与 Skill / Command / Subagent 清单。",
-  },
   {
     path: "resources",
     eyebrow: "Configuration · Resource pools",
@@ -50,6 +45,7 @@ export function AppRoutes() {
           <Route path="/datasets/import" element={<DatasetImportPage />} />
           <Route path="/datasets/:datasetId" element={<DatasetDetailPage />} />
           <Route path="/models" element={<ModelsPage />} />
+          <Route path="/assets" element={<AssetsPage />} />
           <Route element={<RequireAdmin />}>
             <Route path="/operations" element={<OperationsPage />} />
           </Route>
