@@ -2,7 +2,7 @@
 
 English | [中文](architecture.md)
 
-The repository is entering M5: the execution foundation and the real evaluation loop are in place, and model credentials, resource pools, and result browsing are being organized into complete Web product workflows.
+The repository is entering M5: the execution foundation and the real evaluation loop are in place, and model credentials, Git assets, resource pools, and result browsing are being organized into complete Web product workflows.
 
 ## Components
 
@@ -53,6 +53,10 @@ M2 decouples execution from datasets and agents: the platform sends eval_run, sh
 The platform keeps five timeouts (queueing, execution, scoring, upload, heartbeat); cancellation stops new dispatch, and the worker's reconciler backfills lost completions. Resource connections and spot pools scale from the queue gap; a price above the threshold only queues work.
 
 Spot pools are managed by a provisioner: the worker decrypts the tenant connection's Aliyun AccessKey, queries regional spot price and inventory, and creates Spot ECS instances for the queue gap. Each instance registers as an ephemeral runner through a one-time JIT config bound to the pool labels. Price, instance state, spot interruption, heartbeat loss, and creation timeout are recorded as resource events while the queue stays diagnosable; scale-down deregisters the runner before releasing the instance.
+
+## Agent asset snapshots
+
+`/assets` manages GitHub asset sources: it resolves the Ref, discovers Skills (directories with `SKILL.md`), Commands, and Subagents, and freezes the selected assets into an immutable OSS bundle recording the commit, tree digest, file digests, and manifest. Evaluations reference only the snapshot; the runner maps it to `.claude/` under an isolated HOME without re-fetching the branch or loading other repository or host assets. Git tokens are encrypted and the console only shows a mask.
 
 ## Extension points
 

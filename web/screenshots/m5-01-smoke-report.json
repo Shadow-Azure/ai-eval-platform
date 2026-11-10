@@ -1,0 +1,207 @@
+{
+  "title": "M5-01 Agent 资产源、不可变快照与 Runtime 注入 · 冒烟报告",
+  "eyebrow": "AI Eval Platform · M5-01",
+  "summary": "在真实运行的控制面上完成 Agent 资产源新增、Git 扫描、不可变快照冻结、发起评测引用快照，并用同一份 80 文件资产包验证 Runner 的隔离注入路径。两个界面问题在冒烟中发现并修复。",
+  "meta": "2026-11-10 · macOS · Chromium headless 1440×1000",
+  "metrics": [
+    { "value": "10", "label": "冒烟场景" },
+    { "value": "15", "label": "Skill 资产" },
+    { "value": "80", "label": "快照文件" },
+    { "value": "223 KB", "label": "资产包大小" }
+  ],
+  "facts": [
+    { "label": "分支", "value": "agent/complete-m5-01-e3786459ff50" },
+    { "label": "控制面", "value": "FastAPI @ 127.0.0.1:8100 · SQLite" },
+    { "label": "控制台", "value": "Vite @ 127.0.0.1:5273" },
+    { "label": "真实 Git 来源", "value": "github.com/obra/superpowers @ 22f0b463e7a5e579904dd6211a520321035526f7" },
+    { "label": "快照", "value": "5e3589e2-4975-4a2e-ab34-e68719e7ef35" },
+    { "label": "引用快照的评测", "value": "1adbe9ea-4de0-4aa1-83c9-6637e7ab93fa" }
+  ],
+  "matrix": {
+    "columns": ["#", "场景", "结果", "说明", "证据"],
+    "rows": [
+      {
+        "id": "01",
+        "name": "基线：/assets 占位页",
+        "status": { "kind": "pass", "label": "BASELINE" },
+        "detail": "改动前页面只有“该功能将在后续里程碑接入”的占位卡片。",
+        "evidence": ["m5-01-before-assets-placeholder.png"]
+      },
+      {
+        "id": "02",
+        "name": "Agent 资产控制台",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "资产源指标、Git 来源提示、资产源卡片与发现规则按原型渲染。",
+        "evidence": ["m5-01-after-assets-empty.png", "m5-01-after-assets-list.png"]
+      },
+      {
+        "id": "03",
+        "name": "新增 Git 资产源并扫描真实仓库",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "填写 obra/superpowers、main、skills/.claude 后扫描出 15 个 Skill；类型筛选与逐个选择可用。",
+        "evidence": ["m5-01-after-assets-scan.png"]
+      },
+      {
+        "id": "04",
+        "name": "冻结不可变快照",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "保存时解析到 commit 22f0b463，15 个资产 / 80 个文件 / 223177 B，写入 OSS 风格对象并展示摘要。",
+        "evidence": ["m5-01-after-assets-detail.png"]
+      },
+      {
+        "id": "05",
+        "name": "重复解析的幂等性",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "同一 commit + 选择再次 resolve 返回 200 和原快照 id，未新增第二个快照。",
+        "evidence": []
+      },
+      {
+        "id": "06",
+        "name": "发起评测：资产步骤",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "向导展示资产源、评测 Ref、已选资产与解析结果；未解析时不能进入下一步，解析后固定 commit 与数量。",
+        "evidence": ["m5-01-after-wizard-assets.png"]
+      },
+      {
+        "id": "07",
+        "name": "评测冻结快照",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "通过运行中的控制面创建评测并回读：asset_snapshot_id、resolved_commit、15 个资产全部保留在评测详情。",
+        "evidence": ["m5-01-after-eval-detail.png"]
+      },
+      {
+        "id": "08",
+        "name": "Runner 物化真实资产包",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "下载同一份 223177 B 资产包，校验 bundle/tree digest 后在隔离工作区写出 80 个文件，brainstorming/SKILL.md 存在，旧 .claude 被清除。",
+        "evidence": []
+      },
+      {
+        "id": "09",
+        "name": "界面问题：选择态复选框",
+        "status": { "kind": "fixed", "label": "FIXED" },
+        "detail": "行 key 与选择 key 不一致导致 15/15 已选但复选框为空；改为 path key 后选择态一致。",
+        "evidence": ["m5-01-defect-wizard-checkbox-before.png", "m5-01-after-wizard-assets.png"]
+      },
+      {
+        "id": "10",
+        "name": "界面问题：详情状态标签",
+        "status": { "kind": "fixed", "label": "FIXED" },
+        "detail": "详情横幅的 flex 规则命中了状态 Tag，导致“可用”被拉满整行；限定文本容器后恢复为紧凑标签。",
+        "evidence": ["m5-01-defect-detail-tag-before.png", "m5-01-after-assets-detail.png"]
+      }
+    ]
+  },
+  "issues": [
+    {
+      "severity": "P2",
+      "title": "发起评测向导的资产复选框与选择状态不一致",
+      "facts": [
+        { "label": "实际", "value": "显示“已选择 15 / 15 项”，但每一行复选框都是空的。" },
+        { "label": "期望", "value": "选中行与复选框状态一致，点击行/复选框都能反映到快照解析。" },
+        { "label": "根因", "value": "Table rowKey 使用 type:path，rowSelection 的 selectedRowKeys 使用 path。" }
+      ],
+      "state": { "kind": "fixed", "label": "Fixed · working tree" }
+    },
+    {
+      "severity": "P3",
+      "title": "资产详情横幅中的状态标签被拉伸",
+      "facts": [
+        { "label": "实际", "value": "“可用”标签横向占满横幅剩余宽度。" },
+        { "label": "期望", "value": "标签保持内容宽度，只有仓库/扫描信息占剩余空间。" },
+        { "label": "根因", "value": ".asset-detail-banner > span 的 flex:1 同时命中了 Tag。" }
+      ],
+      "state": { "kind": "fixed", "label": "Fixed · working tree" }
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "m5-01-before-assets-placeholder.png",
+      "alt": "改动前的 Agent 资产占位页",
+      "label": "01 · 之前",
+      "caption": "基线 /assets 只有占位卡片，无法配置 Git 资产源。",
+      "variant": "wide"
+    },
+    {
+      "src": "m5-01-after-assets-empty.png",
+      "alt": "改动后的 Agent 资产页面空态",
+      "label": "02 · 之后",
+      "caption": "同一路由现在展示资产源指标、Git 来源提示、空态添加卡片与发现规则。",
+      "variant": "wide"
+    },
+    {
+      "src": "m5-01-after-assets-scan.png",
+      "alt": "扫描真实 GitHub 仓库的资产选择弹窗",
+      "label": "03 · 扫描",
+      "caption": "真实扫描 obra/superpowers，15 个 Skill 全部识别并默认选中。",
+      "variant": "wide"
+    },
+    {
+      "src": "m5-01-after-assets-list.png",
+      "alt": "资产源列表",
+      "label": "04 · 资产源",
+      "caption": "保存后展示解析 commit、扫描路径、选择方式与 Skill/Command/Subagent 计数。",
+      "variant": "wide"
+    },
+    {
+      "src": "m5-01-after-assets-detail.png",
+      "alt": "冻结快照详情",
+      "label": "05 · 快照",
+      "caption": "快照详情列出资产、运行时映射、前置依赖与内容摘要，并显示已解析 commit。",
+      "variant": "wide"
+    },
+    {
+      "src": "m5-01-after-wizard-assets.png",
+      "alt": "发起评测的 Agent 资产步骤",
+      "label": "06 · 发起评测",
+      "caption": "解析成功后固定 commit，选择态与复选框一致。",
+      "variant": "wide"
+    },
+    {
+      "src": "m5-01-after-eval-detail.png",
+      "alt": "评测详情中的 Agent 资产快照",
+      "label": "07 · 评测详情",
+      "caption": "评测绑定的快照、commit、文件数、包大小与 15 个资产均可追溯。",
+      "variant": "wide"
+    }
+  ],
+  "coverage": {
+    "columns": ["范围", "覆盖", "结论", "建议"],
+    "rows": [
+      {
+        "area": "后端 API / 快照服务",
+        "coverage": "UT",
+        "conclusion": "新增 9 个资产 API/服务测试与 2 个 preflight 快照测试；完整 pytest 通过。",
+        "recommendation": "保留 fake GitHub + 真实 S3 签名的组合。"
+      },
+      {
+        "area": "Runner 资产注入",
+        "coverage": "UT + smoke",
+        "conclusion": "Node 测试覆盖 digest/路径/清理；真实 80 文件包物化通过。",
+        "recommendation": "在真实 Runner 主机上补一次 Docker 容器内冒烟。"
+      },
+      {
+        "area": "Web 控制台",
+        "coverage": "build + smoke",
+        "conclusion": "typecheck/vite build 通过；headless Chromium 覆盖新增、扫描、保存、详情、向导与评测详情。",
+        "recommendation": "后续为向导增加浏览器自动化回归。"
+      },
+      {
+        "area": "对象存储",
+        "coverage": "stub",
+        "conclusion": "本机 Docker daemon 不可用，使用真实 HTTP presigned PUT/GET/HEAD 桩验证；未接阿里云 OSS。",
+        "recommendation": "部署环境已有 OSS，发布后在真实桶上复跑一次快照冻结。"
+      }
+    ]
+  },
+  "conclusion": {
+    "kind": "pass",
+    "label": "可交付，带环境限制说明",
+    "summary": "核心用户路径、快照冻结、评测引用和 Runner 物化均通过；两个界面问题已修复并有前后证据。",
+    "points": [
+      "本机无 Docker daemon，Runner 的容器内执行与阿里云 OSS 未在本轮直连验证。",
+      "真实 GitHub 扫描、对象存储 HTTP 签名路径与浏览器流程均已实测。"
+    ]
+  },
+  "footer": "由 dsh-superagent（ZTGolem）生成 · 证据来自 headless Chromium CDP 截图与真实控制面 API 调用"
+}

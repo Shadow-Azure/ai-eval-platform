@@ -87,6 +87,8 @@ class EvalRun(Base, TimestampMixin):
     # M3-04 real evaluation workbench: frozen dataset/runtime/assets and the
     # preflight decision snapshot shown by the launch wizard.
     dataset_version_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    # M5-01: the immutable Agent asset snapshot every case in this run shares.
+    asset_snapshot_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     runtime_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
     runtime_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
     execution_image_digest: Mapped[str | None] = mapped_column(String(128), nullable=True)
@@ -141,6 +143,12 @@ class EvalRun(Base, TimestampMixin):
             ["tenant_id", "resource_pool_id"],
             ["resource_pool.tenant_id", "resource_pool.id"],
             name="fk_eval_run_resource_pool_tenant",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "asset_snapshot_id"],
+            ["agent_asset_snapshot.tenant_id", "agent_asset_snapshot.id"],
+            name="fk_eval_run_asset_snapshot_tenant",
             ondelete="RESTRICT",
         ),
         CheckConstraint(_in_clause("status", EVAL_RUN_STATUSES), name="status"),

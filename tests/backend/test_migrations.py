@@ -66,6 +66,10 @@ EXPECTED_TABLES = {
     "metric_result",
     # M3-06 管理员运营状态：Worker 心跳
     "service_heartbeat",
+    # M5-01 Agent 资产源、不可变快照与快照资产
+    "agent_asset_source",
+    "agent_asset_snapshot",
+    "agent_asset",
 }
 
 

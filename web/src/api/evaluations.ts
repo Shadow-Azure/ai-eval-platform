@@ -46,6 +46,31 @@ export interface EvaluationSummary {
   budget_version?: number;
   pause_reason?: string | null;
   execution_image_digest?: string | null;
+  asset_snapshot_id?: string | null;
+  asset_resolved_commit?: string | null;
+  asset_count?: number | null;
+}
+
+export interface FrozenAsset {
+  asset_type: string;
+  name: string;
+  path: string;
+  content_digest?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface FrozenAssetSnapshot {
+  snapshot_id?: string | null;
+  source_id?: string | null;
+  requested_ref?: string | null;
+  resolved_commit?: string | null;
+  tree_digest?: string | null;
+  bundle_digest?: string | null;
+  bundle_size?: number | null;
+  file_count?: number | null;
+  asset_count?: number | null;
+  runtime_key?: string | null;
+  assets?: FrozenAsset[];
 }
 
 export interface EvaluationCase {
@@ -76,6 +101,7 @@ export interface EvaluationShard {
 export interface EvaluationDetail extends EvaluationSummary {
   cases: EvaluationCase[];
   shards: EvaluationShard[];
+  asset_snapshot?: FrozenAssetSnapshot | null;
 }
 
 export interface EvaluationEvent {
@@ -108,6 +134,11 @@ export interface CreateEvaluationRequest {
   scoring_image_digest?: string;
   execution_image_digest?: string;
   assets_resolved?: boolean;
+  asset_snapshot_id?: string;
+  asset_source_id?: string;
+  requested_ref?: string;
+  asset_paths?: string[];
+  asset_types?: Record<string, string>;
 }
 
 export interface PreflightIssue {
@@ -121,6 +152,7 @@ export interface PrepareResponse {
   ready: boolean;
   blockers: PreflightIssue[];
   warnings: PreflightIssue[];
+  asset_snapshot?: FrozenAssetSnapshot | null;
 }
 
 export interface PrepareRequest {
@@ -134,6 +166,11 @@ export interface PrepareRequest {
   scoring_image_digest?: string;
   execution_image_digest?: string;
   assets_resolved?: boolean;
+  asset_snapshot_id?: string;
+  asset_source_id?: string;
+  requested_ref?: string;
+  asset_paths?: string[];
+  asset_types?: Record<string, string>;
 }
 
 export interface MetricResult {
@@ -277,6 +314,9 @@ export function parseEvaluationSummary(payload: unknown): EvaluationSummary {
     finished_count: typeof payload.finished_count === "number" ? payload.finished_count : undefined,
     unfinished_count: typeof payload.unfinished_count === "number" ? payload.unfinished_count : undefined,
     execution_image_digest: readOptionalString(payload.execution_image_digest),
+    asset_snapshot_id: readOptionalString(payload.asset_snapshot_id),
+    asset_resolved_commit: readOptionalString(payload.asset_resolved_commit),
+    asset_count: typeof payload.asset_count === "number" ? payload.asset_count : undefined,
   };
 }
 
@@ -298,6 +338,9 @@ export function parseEvaluationDetail(payload: unknown): EvaluationDetail {
   const shards = Array.isArray(record.shards) ? record.shards : [];
   return {
     ...summary,
+    asset_snapshot: isRecord(record.asset_snapshot)
+      ? (record.asset_snapshot as unknown as FrozenAssetSnapshot)
+      : undefined,
     cases: cases.map((entry) => {
       const item = (entry ?? {}) as Record<string, unknown>;
       return {
@@ -433,6 +476,9 @@ export function parsePrepare(payload: unknown): PrepareResponse {
     ready: payload.ready,
     blockers: issues(payload.blockers),
     warnings: issues(payload.warnings),
+    asset_snapshot: isRecord(payload.asset_snapshot)
+      ? (payload.asset_snapshot as unknown as FrozenAssetSnapshot)
+      : null,
   };
 }
 

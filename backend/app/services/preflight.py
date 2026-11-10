@@ -19,6 +19,7 @@ from ..config import get_settings
 from ..datasets import AdapterNotFound, get_adapter
 from ..defaults import DEFAULT_TENANT_ID
 from ..models import (
+    AgentAssetSnapshot,
     Credential,
     Dataset,
     DatasetVersion,
@@ -57,6 +58,8 @@ class PreflightResult:
     # platform defaults were consulted; the create path freezes these values.
     execution_image_digest: str | None = None
     scoring_image_digest: str | None = None
+    # M5-01: the frozen asset snapshot selected for this preparation.
+    asset_snapshot: dict[str, Any] | None = None
 
     @property
     def ready(self) -> bool:
@@ -70,6 +73,7 @@ class PreflightResult:
             "effective_concurrency": self.effective_concurrency,
             "execution_image_digest": self.execution_image_digest,
             "scoring_image_digest": self.scoring_image_digest,
+            "asset_snapshot": self.asset_snapshot,
         }
 
 
@@ -111,6 +115,7 @@ def check_preparation(
     execution_image_digest: str | None = None,
     assets: AssetSnapshot | None = None,
     assets_resolved: bool = True,
+    asset_snapshot_id: str | None = None,
     model_name: str | None = None,
 ) -> PreflightResult:
     tenant_id = str(DEFAULT_TENANT_ID)
@@ -314,7 +319,64 @@ def check_preparation(
             )
         )
 
-    if not assets_resolved:
+    asset_snapshot = None
+    if asset_snapshot_id:
+        snapshot = session.get(AgentAssetSnapshot, asset_snapshot_id)
+        if snapshot is None or snapshot.tenant_id != tenant_id:
+            blockers.append(
+                PreflightIssue(
+                    "asset_snapshot_not_found",
+                    "Agent 资产快照不存在",
+                    "asset_snapshot_id",
+                )
+            )
+        elif snapshot.runtime_key != adapter.runtime_key:
+            blockers.append(
+                PreflightIssue(
+                    "asset_runtime_mismatch",
+                    f"资产快照按 {snapshot.runtime_key} 冻结，与所选 Runtime {adapter.runtime_key} 不兼容",
+                    "asset_snapshot_id",
+                    {"snapshot_runtime": snapshot.runtime_key},
+                )
+            )
+        elif not (snapshot.manifest_json or {}).get("validation", {}).get("ok"):
+            blockers.append(
+                PreflightIssue(
+                    "asset_invalid", "Agent 资产快照校验未通过", "asset_snapshot_id"
+                )
+            )
+        elif snapshot.asset_count <= 0:
+            warnings.append(
+                PreflightIssue(
+                    "assets_empty",
+                    "资产快照不包含选中资产，Runtime 将只使用内置能力",
+                    "asset_snapshot_id",
+                )
+            )
+        else:
+            asset_snapshot = {
+                "id": snapshot.id,
+                "source_id": snapshot.source_id,
+                "requested_ref": snapshot.requested_ref,
+                "resolved_commit": snapshot.resolved_commit,
+                "tree_digest": snapshot.tree_digest,
+                "bundle_digest": snapshot.bundle_digest,
+                "bundle_size": snapshot.bundle_size,
+                "file_count": snapshot.file_count,
+                "asset_count": snapshot.asset_count,
+                "runtime_key": snapshot.runtime_key,
+                "assets": [
+                    {
+                        "asset_type": asset.get("asset_type"),
+                        "name": asset.get("name"),
+                        "path": asset.get("path"),
+                        "content_digest": asset.get("content_digest"),
+                        "metadata": asset.get("metadata", {}),
+                    }
+                    for asset in (snapshot.manifest_json or {}).get("assets", [])
+                ],
+            }
+    elif not assets_resolved:
         blockers.append(
             PreflightIssue("asset_unresolved", "Agent 资产快照尚未解析", "assets")
         )
@@ -340,4 +402,5 @@ def check_preparation(
         effective_concurrency=effective,
         execution_image_digest=execution_image_digest,
         scoring_image_digest=scoring_image_digest,
+        asset_snapshot=asset_snapshot,
     )

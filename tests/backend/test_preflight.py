@@ -6,6 +6,8 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from app.models import (
+    AgentAssetSnapshot,
+    AgentAssetSource,
     Credential,
     Dataset,
     DatasetCase,
@@ -17,6 +19,7 @@ from app.models import (
 from app.runtimes.base import AssetSnapshot
 from app.seed import ensure_default_scope
 from app.services.preflight import check_preparation
+from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 
@@ -122,6 +125,58 @@ def _seed(
         "model_config_id": config.id,
         "resource_pool_id": pool.id,
     }
+
+
+def _seed_asset_snapshot(session: Session, *, runtime_key: str = "claude-code") -> AgentAssetSnapshot:
+    tenant, _workspace, project = ensure_default_scope(session)
+    suffix = uuid4().hex[:8]
+    source = AgentAssetSource(
+        tenant_id=tenant.id,
+        project_id=project.id,
+        name=f"assets-{suffix}",
+        repo_url="https://github.com/obra/superpowers",
+        default_ref="main",
+        scan_paths_json=["skills"],
+        selection_mode="explicit",
+        runtime_prerequisites_json={},
+        last_scan_json={},
+        status="ready",
+    )
+    session.add(source)
+    session.flush()
+    snapshot = AgentAssetSnapshot(
+        tenant_id=tenant.id,
+        source_id=source.id,
+        requested_ref="main",
+        resolved_commit="a" * 40,
+        selection_mode="explicit",
+        scan_paths_json=["skills"],
+        selection_json=[{"asset_type": "skill", "path": "skills/brainstorming", "name": "brainstorming"}],
+        selection_digest="sha256:" + "b" * 64,
+        tree_digest="sha256:" + "c" * 64,
+        bundle_key=f"agent-assets/{tenant.id}/{suffix}/bundle.json.gz",
+        bundle_digest="sha256:" + "d" * 64,
+        bundle_size=1024,
+        file_count=2,
+        asset_count=1,
+        runtime_key=runtime_key,
+        manifest_json={
+            "validation": {"ok": True, "runtime_key": runtime_key},
+            "assets": [
+                {
+                    "asset_type": "skill",
+                    "name": "brainstorming",
+                    "path": "skills/brainstorming",
+                    "content_digest": "sha256:" + "e" * 64,
+                    "metadata": {},
+                }
+            ],
+        },
+        created_by="tester",
+    )
+    session.add(snapshot)
+    session.commit()
+    return snapshot
 
 
 def _check(session: Session, ids: dict, **overrides):
@@ -316,3 +371,45 @@ def test_preflight_effective_concurrency_is_zero_without_runners(session: Sessio
     result = _check(session, ids)
     assert result.effective_concurrency == 0
     assert result.payload()["effective_concurrency"] == 0
+
+
+def test_asset_snapshot_is_included_in_preparation(session: Session) -> None:
+    ids = _seed(session)
+    snapshot = _seed_asset_snapshot(session)
+    result = _check(session, ids, asset_snapshot_id=snapshot.id)
+    assert result.ready
+    assert result.asset_snapshot is not None
+    assert result.asset_snapshot["id"] == snapshot.id
+    assert result.asset_snapshot["resolved_commit"] == "a" * 40
+    assert result.asset_snapshot["asset_count"] == 1
+
+
+def test_asset_snapshot_runtime_mismatch_blocks(session: Session) -> None:
+    ids = _seed(session)
+    snapshot = _seed_asset_snapshot(session, runtime_key="other-runtime")
+    result = _check(session, ids, asset_snapshot_id=snapshot.id)
+    assert "asset_runtime_mismatch" in _codes(result)
+
+
+def test_prepare_is_read_only_and_ignores_source_resolution_fields(
+    session: Session, client: TestClient
+) -> None:
+    ids = _seed(session)
+    before = session.query(AgentAssetSnapshot).count()
+    response = client.post(
+        "/api/v1/evaluations/prepare",
+        json={
+            **ids,
+            "runtime_key": "claude-code",
+            "requested_concurrency": 1,
+            "scoring_image_digest": "sha256:" + "a" * 64,
+            "execution_image_digest": "sha256:" + "c" * 64,
+            # Removed from PrepareRequest: a member must not be able to make
+            # prepare resolve a source and commit a snapshot as a side effect.
+            "asset_source_id": "missing-source",
+            "asset_paths": ["skills/brainstorming"],
+            "requested_ref": "main",
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert session.query(AgentAssetSnapshot).count() == before

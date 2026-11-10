@@ -2,7 +2,7 @@
 
 [English](architecture.en.md) | 中文
 
-当前仓库进入 M5：执行底座与真实评测闭环已落地，正在把模型凭据、资源池与结果浏览组织成完整 Web 产品流程。
+当前仓库进入 M5：执行底座与真实评测闭环已落地，正在把模型凭据、Git 资产、资源池与结果浏览组织成完整 Web 产品流程。
 
 ## 组成
 
@@ -53,6 +53,10 @@ M2 把执行与数据集、Agent 解耦：平台经 repository_dispatch 传 eval
 平台为排队、执行、评分、上传与心跳维护五类超时；取消停止新派发，Worker 对账补齐丢失完成事件。资源连接与竞价池按排队缺口扩缩容，价格超阈值只排队。
 
 竞价池由供给器管理：Worker 解密租户资源连接中的阿里云 AccessKey，查询区域竞价价格与库存，按排队缺口创建 Spot ECS；实例以一次性 JIT 配置注册为 ephemeral Runner 并绑定池标签。价格、实例状态、竞价中断、心跳丢失与创建超时写入资源事件，队列保持可诊断；缩容先注销 Runner 再释放实例。
+
+## Agent 资产快照
+
+`/assets` 管理 GitHub 资产源：解析 Ref、识别 Skill（`SKILL.md` 目录）、Command 与 Subagent，并把选中资产冻结为不可变 OSS 包，记录 commit、tree digest、文件摘要与清单。评测只引用快照；Runner 在隔离 HOME 中映射到 `.claude/`，不重新拉取分支，也不加载仓库或宿主其他资产。Git 令牌加密保存，页面只显示掩码。
 
 ## 扩展位置
 
