@@ -225,15 +225,27 @@ def test_api_events_cursor(seeded: Session, client: TestClient) -> None:
         )
     seeded.commit()
 
-    first = client.get(f"/api/v1/evaluations/{run_id}/events", params={"limit": 2}).json()
-    assert [item["sequence"] for item in first["items"]] == [0, 1]
-    assert first["next_cursor"] == first["items"][-1]["id"]
+    legacy = client.get(f"/api/v1/evaluations/{run_id}/events", params={"limit": 2}).json()
+    # M5-05: no cursor opens the newest window so long runs show their tail.
+    assert [item["sequence"] for item in legacy["items"]] == [2, 3]
+    assert legacy["direction"] == "older"
+    assert legacy["has_more"] is True
 
-    second = client.get(
-        f"/api/v1/evaluations/{run_id}/events", params={"after_id": first["next_cursor"], "limit": 2}
+    older = client.get(
+        f"/api/v1/evaluations/{run_id}/events",
+        params={"before_id": legacy["next_cursor"], "limit": 2},
     ).json()
-    assert [item["sequence"] for item in second["items"]] == [2, 3]
-    assert second["next_cursor"] is None
+    assert [item["sequence"] for item in older["items"]] == [0, 1]
+    assert older["next_cursor"] is None
+
+    # after_id stays the forward/SSE replay contract.
+    forward = client.get(
+        f"/api/v1/evaluations/{run_id}/events",
+        params={"after_id": older["items"][-1]["id"], "limit": 2},
+    ).json()
+    assert [item["sequence"] for item in forward["items"]] == [2, 3]
+    assert forward["direction"] == "newer"
+    assert forward["next_cursor"] is None
 
 
 # ---------------------------------------------------------------------------

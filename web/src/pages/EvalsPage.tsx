@@ -168,7 +168,7 @@ export function EvalsPage() {
   const runId = detailQuery.data?.id ?? null;
   const eventsQuery = useQuery({
     queryKey: [...evaluationsQueries.events, runId],
-    queryFn: ({ signal }) => fetchEvaluationEvents(runId as string, signal),
+    queryFn: ({ signal }) => fetchEvaluationEvents(runId as string, {}, signal),
     enabled: runId !== null,
     refetchInterval: 3000,
   });
