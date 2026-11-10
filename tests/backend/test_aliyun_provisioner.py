@@ -51,7 +51,7 @@ class FakeAliyun:
         self.calls: list[tuple[str, dict[str, list[str]]]] = []
         self.instances: dict[str, dict] = {}
         self.prices: list[dict] = [
-            {"ZoneId": "cn-hangzhou-i", "InstanceType": "ecs.g7.large", "Price": "0.5000"}
+            {"ZoneId": "cn-hangzhou-i", "InstanceType": "ecs.g7.large", "SpotPrice": "0.5000"}
         ]
         self.vswitches: list[dict] = [
             {"VSwitchId": "vsw-test", "VpcId": "vpc-test", "ZoneId": "cn-hangzhou-i"}
@@ -598,7 +598,7 @@ def test_configured_vswitch_drives_zone_vpc_and_instance(
         {"VSwitchId": "vsw-2", "VpcId": "vpc-2", "ZoneId": "cn-hangzhou-j"},
     ]
     transport.prices = [
-        {"ZoneId": "cn-hangzhou-j", "InstanceType": "ecs.g7.large", "Price": "0.4000"}
+        {"ZoneId": "cn-hangzhou-j", "InstanceType": "ecs.g7.large", "SpotPrice": "0.4000"}
     ]
     registrar = FakeRegistrar()
     provisioner = _provisioner(transport=transport, registrar=registrar)

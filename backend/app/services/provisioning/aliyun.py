@@ -661,8 +661,11 @@ class AliyunEcsProvisioner:
         prices = client.describe_spot_prices(region, instance_type, zone_id=zone_id)
         samples: list[tuple[Decimal, dict[str, Any]]] = []
         for row in prices:
+            # The ECS 2014-05-26 response names the hourly price ``SpotPrice``
+            # (with ``OriginPrice`` alongside); older fixtures used ``Price``.
+            raw_price = row.get("SpotPrice", row.get("Price"))
             try:
-                price = Decimal(str(row.get("Price")))
+                price = Decimal(str(raw_price))
             except (InvalidOperation, TypeError, ValueError):
                 continue
             samples.append((price, row))

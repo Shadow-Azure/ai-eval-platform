@@ -460,7 +460,7 @@ def main() -> int:
                         {
                             "instance_type": candidate,
                             "zone_id": sample.get("ZoneId"),
-                            "price_cny": sample.get("Price"),
+                            "price_cny": sample.get("SpotPrice") or sample.get("Price"),
                         }
                     )
                 if samples:
