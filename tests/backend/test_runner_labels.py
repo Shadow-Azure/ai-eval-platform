@@ -38,11 +38,11 @@ def test_accepts_string_and_list_forms() -> None:
 
 def test_instance_config_wins_and_truncates_to_contract_limit() -> None:
     pool = make_pool(
-        instance_config_json={"runs_on": [f"label-{index}" for index in range(20)]},
+        instance_config_json={"runs_on": [f"label-{index}" for index in range(80)]},
         labels_json={"runs_on": ["self-hosted", "ignored"]},
     )
     labels = pool_runner_labels(pool)
-    assert labels == [f"label-{index}" for index in range(16)]
+    assert labels == [f"label-{index}" for index in range(64)]
 
 
 def test_uses_fallback_when_pool_has_no_labels() -> None:

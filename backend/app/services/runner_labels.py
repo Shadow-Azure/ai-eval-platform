@@ -22,9 +22,10 @@ DEFAULT_RUNS_ON: tuple[str, ...] = ("self-hosted", "linux", "eval")
 #: legacy alias kept for pools created before ``runs_on`` was documented.
 LABEL_KEYS: tuple[str, ...] = ("runs_on", "runner_labels", "labels")
 
-#: GitHub Actions caps a job's label set in practice; keep dispatch payloads
-#: small and reject accidental pasted blobs by truncating here.
-MAX_LABELS = 16
+#: Bound the dispatch payload without changing registration semantics: shard
+#: execution and cloud-init share this list, so a pathological pasted blob is
+#: truncated identically on both sides instead of breaking the contract.
+MAX_LABELS = 64
 
 
 def _labels(value: Any) -> list[str]:
