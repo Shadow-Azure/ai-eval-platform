@@ -75,7 +75,7 @@ systemctl enable --now docker
 mkdir -p /opt/actions-runner /etc/eval
 cd /opt/actions-runner
 curl -fsSL -o runner.tar.gz \\
-  "https://github.com/actions/runner/releases/download/v{runner_version}/actions-runner-linux-x64-{runner_version}-1.tar.gz"
+  "https://github.com/actions/runner/releases/download/v{runner_version}/actions-runner-linux-x64-{runner_version}.tar.gz"
 tar -xzf runner.tar.gz
 rm -f runner.tar.gz
 
