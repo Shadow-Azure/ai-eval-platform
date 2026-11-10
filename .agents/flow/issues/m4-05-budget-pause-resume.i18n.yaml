@@ -1,5 +1,5 @@
 # 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
 # git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
 #   pnpm run record:i18n -- .agents/flow/issues/m4-05-budget-pause-resume.md
-m4-05-budget-pause-resume.md: 7c4fa7e9ea995b0059ab076a89401c559aa49277
-m4-05-budget-pause-resume.en.md: e741b8e5380898e51fff9f3efb3c63ae72a148da
+m4-05-budget-pause-resume.md: eda1a5fe411bd803c12a9bdbf1848939920dfc5e
+m4-05-budget-pause-resume.en.md: 2cf3499df532d64b052c916d2bd1bac19edb91ba

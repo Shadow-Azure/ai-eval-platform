@@ -11,7 +11,10 @@ scope:
   - .agents/flow/issues/m4-05-budget-pause-resume.*
   - .agents/flow/milestones/m4-concurrency-and-spot-pool.*
   - backend/**
+  - web/**
   - tests/**
+  - reports/**
+  - plans/**
   - docs/**
   - scripts/doc-budgets.manifest.json
 adr: []

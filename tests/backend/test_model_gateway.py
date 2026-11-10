@@ -30,8 +30,9 @@ from app.model_gateway.tokens import (
     issue_gateway_token,
     verify_gateway_token,
 )
-from app.models import EvalCaseAttempt, EvalCaseRun, EvalRun, ModelUsage, Outbox
+from app.models import EvalCaseAttempt, EvalCaseRun, EvalEvent, EvalRun, ModelUsage, Outbox
 from app.secrets import reset_secret_box_cache
+from app.services import budget
 from app.services.short_token import issue_short_token
 from cryptography.fernet import Fernet
 from sqlalchemy import select
@@ -360,6 +361,80 @@ def test_gateway_pauses_when_budget_reached(
     assert provider.calls == []
     rows = _usage_rows(engine)
     assert any(row.status == "budget_paused" for row in rows)
+
+
+def test_gateway_budget_refusal_triggers_platform_pause(
+    client, model_env, provider, engine, usage_factory, bound_eval
+) -> None:
+    """M4-05: the gateway refusal is the platform-level pause trigger."""
+
+    config = bound_eval["config"]
+    with Session(engine) as session:
+        run = session.get(EvalRun, bound_eval["run_id"])
+        run.model_budget_usd = Decimal("0.010000")
+        session.add(
+            ModelUsage(
+                tenant_id=str(DEFAULT_TENANT_ID),
+                model_config_id=config["id"],
+                eval_run_id=bound_eval["run_id"],
+                shard_id=bound_eval["shard_id"],
+                attempt=1,
+                status="succeeded",
+                cost_usd=Decimal("0.500000"),
+            )
+        )
+        session.commit()
+
+    token = _mint(
+        config["id"],
+        eval_run_id=bound_eval["run_id"],
+        shard_id=bound_eval["shard_id"],
+        attempt=1,
+        budget_usd=0.01,
+    )
+    refused = _gateway(client, token)
+    assert refused.status_code == 402
+    assert refused.json()["error"]["code"] == "budget_paused"
+    assert provider.calls == []
+
+    with Session(engine) as session:
+        run = session.get(EvalRun, bound_eval["run_id"])
+        assert run.status == "pausing_budget"
+        assert run.pause_reason == "budget_exceeded"
+        assert Decimal(str(run.budget_spent_usd)) == Decimal("0.5")
+        events = list(
+            session.scalars(
+                select(EvalEvent).where(
+                    EvalEvent.eval_run_id == bound_eval["run_id"],
+                    EvalEvent.event_type == "eval.budget_pausing",
+                )
+            )
+        )
+        assert len(events) == 1
+        assert events[0].payload_json["source"] == "model_gateway"
+
+    # The old token is still cryptographically valid, but the run state is the
+    # revocation point: no further model call may reach the provider.
+    rejected = _gateway(client, token)
+    assert rejected.status_code == 409
+    assert rejected.json()["error"]["code"] == "budget_paused"
+    assert provider.calls == []
+
+    # Resume raises the budget, but the interrupted attempt is terminal: its
+    # old token must stay revoked instead of becoming valid again.
+    with Session(engine) as session:
+        budget.reconcile_budget_pauses(session, settings=get_settings())
+    with Session(engine) as session:
+        assert session.get(EvalRun, bound_eval["run_id"]).status == "paused_budget"
+    resumed = client.post(
+        f"/api/v1/evaluations/{bound_eval['run_id']}/resume-budget",
+        json={"additional_budget_usd": 1, "budget_version": 1},
+    )
+    assert resumed.status_code == 200, resumed.text
+    stale = _gateway(client, token)
+    assert stale.status_code == 409
+    assert stale.json()["error"]["code"] == "stale_attempt"
+    assert provider.calls == []
 
 
 def test_gateway_normalizes_upstream_rate_limit(

@@ -22,6 +22,7 @@ from ..models import (
     ModelUsage,
 )
 from ..secrets import SecretBoxError, mask_secret
+from ..services.evaluations import TERMINAL_ATTEMPT_STATUSES
 from .tokens import GatewayClaims
 
 
@@ -100,9 +101,19 @@ def validate_claims_binding(session: Session, claims: GatewayClaims) -> None:
     ).first()
     if row is None:
         raise GatewayError(403, "token_binding_mismatch", "token 与评测/分片/attempt 不一致")
-    _attempt, run = row
+    attempt, run = row
     if run.status in ("cancelling", "cancelled"):
         raise GatewayError(409, "run_cancelled", "评测已取消，拒绝模型调用")
+    if run.status in ("pausing_budget", "paused_budget"):
+        # M4-05: a budget pause is the platform-level revocation point. Tokens
+        # cannot be revoked individually, so reject by run state.
+        raise GatewayError(409, "budget_paused", "模型预算已暂停，拒绝模型调用")
+    if attempt.status in TERMINAL_ATTEMPT_STATUSES:
+        # A paused/resumed run keeps old attempt tokens cryptographically valid
+        # for their TTL. The terminal attempt is the revocation point: an
+        # interrupted agent must not keep spending through a stale token while
+        # the resumed attempt runs.
+        raise GatewayError(409, "stale_attempt", "attempt 已结束，拒绝模型调用")
 
 
 def check_model_allowed(model: str, claims: GatewayClaims, config: ModelConfig) -> None:
@@ -121,10 +132,28 @@ def spent_usd(session: Session, claims: GatewayClaims) -> Decimal:
     return Decimal(str(value or 0))
 
 
-def ensure_budget(session: Session, claims: GatewayClaims) -> None:
+def budget_limit_usd(session: Session, claims: GatewayClaims) -> Decimal | None:
+    """Current authoritative budget for the token's run.
+
+    The token carries the budget snapshot from manifest time, but a resume can
+    raise it while an old token is still in use. Reading the run row keeps the
+    enforcement (and the budget pause) authoritative without reissuing tokens.
+    """
+
+    if claims.eval_run_id:
+        run = session.get(EvalRun, claims.eval_run_id)
+        if run is not None and run.model_budget_usd is not None:
+            return Decimal(str(run.model_budget_usd))
     if claims.budget_usd is None:
+        return None
+    return Decimal(str(claims.budget_usd))
+
+
+def ensure_budget(session: Session, claims: GatewayClaims) -> None:
+    limit = budget_limit_usd(session, claims)
+    if limit is None:
         return
-    if spent_usd(session, claims) >= Decimal(str(claims.budget_usd)):
+    if spent_usd(session, claims) >= limit:
         raise GatewayError(402, "budget_paused", "模型预算已用尽，评测暂停")
 
 

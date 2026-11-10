@@ -29,6 +29,8 @@ export interface EvaluationSummary {
   running_count: number;
   succeeded_count: number;
   failed_count: number;
+  finished_count?: number;
+  unfinished_count?: number;
   shard_size: number;
   created_at: string | null;
   started_at: string | null;
@@ -38,6 +40,11 @@ export interface EvaluationSummary {
   dataset_version_id?: string | null;
   runtime_key?: string | null;
   model_name?: string | null;
+  model_budget_usd?: string | null;
+  budget_spent_usd?: string | null;
+  budget_remaining_usd?: string | null;
+  budget_version?: number;
+  pause_reason?: string | null;
   execution_image_digest?: string | null;
 }
 
@@ -246,6 +253,13 @@ export function parseEvaluationSummary(payload: unknown): EvaluationSummary {
     dataset_version_id: readOptionalString(payload.dataset_version_id),
     runtime_key: readOptionalString(payload.runtime_key),
     model_name: readOptionalString(payload.model_name),
+    model_budget_usd: readOptionalString(payload.model_budget_usd),
+    budget_spent_usd: readOptionalString(payload.budget_spent_usd),
+    budget_remaining_usd: readOptionalString(payload.budget_remaining_usd),
+    budget_version: typeof payload.budget_version === "number" ? payload.budget_version : 1,
+    pause_reason: readOptionalString(payload.pause_reason),
+    finished_count: typeof payload.finished_count === "number" ? payload.finished_count : undefined,
+    unfinished_count: typeof payload.unfinished_count === "number" ? payload.unfinished_count : undefined,
     execution_image_digest: readOptionalString(payload.execution_image_digest),
   };
 }
@@ -352,6 +366,34 @@ export async function cancelEvaluation(runId: string): Promise<EvaluationSummary
   return parseEvaluationSummary(
     await request(`/api/v1/evaluations/${runId}/cancel`, { method: "POST" }),
   );
+}
+
+export interface ResumeBudgetRequest {
+  additional_budget_usd: number;
+  budget_version: number;
+}
+
+export interface ResumeBudgetResponse extends EvaluationSummary {
+  resumed: boolean;
+  attempts_created: number;
+}
+
+export async function resumeEvaluationBudget(
+  runId: string,
+  body: ResumeBudgetRequest,
+): Promise<ResumeBudgetResponse> {
+  const payload = await request(`/api/v1/evaluations/${runId}/resume-budget`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const summary = parseEvaluationSummary(payload);
+  const record = payload as Record<string, unknown>;
+  return {
+    ...summary,
+    resumed: Boolean(record.resumed),
+    attempts_created: typeof record.attempts_created === "number" ? record.attempts_created : 0,
+  };
 }
 
 

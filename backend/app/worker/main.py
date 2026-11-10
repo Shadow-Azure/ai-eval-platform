@@ -143,6 +143,8 @@ def main() -> int:
                     "worker: reconcile "
                     f"cancelled={reconciled.get('cancelled', 0)} "
                     f"reconciled={reconciled.get('reconciled', 0)} "
+                    f"budget_paused={reconciled.get('budget_paused', 0)} "
+                    f"budget_settled={reconciled.get('budget_settled', 0)} "
                     f"heartbeat_timeout={reconciled.get(lifecycle.HEARTBEAT_TIMEOUT, 0)}",
                     flush=True,
                 )

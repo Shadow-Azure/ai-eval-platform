@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Iterator
+from decimal import Decimal
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
@@ -18,6 +19,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from ..config import get_settings
 from ..db import get_session
+from ..services import budget as budget_service
 from ..services import evaluations as evaluation_service
 from ..services import identity
 from ..services import preflight as preflight_service
@@ -62,6 +64,15 @@ class CreateEvaluationRequest(BaseModel):
     scoring_image_digest: str | None = Field(default=None, max_length=128)
     execution_image_digest: str | None = Field(default=None, max_length=128)
     assets_resolved: bool = True
+
+
+class ResumeBudgetRequest(BaseModel):
+    """M4-05: confirm adding budget to a paused evaluation."""
+
+    additional_budget_usd: Decimal = Field(gt=0, max_digits=12, decimal_places=6)
+    # The version the operator saw in the confirmation dialog; a stale value
+    # is rejected so a double click/parallel request cannot add budget twice.
+    budget_version: int = Field(ge=1)
 
 
 @router.post("/api/v1/evaluations/prepare")
@@ -299,6 +310,74 @@ def cancel_evaluation(
             ),
         ) from exc
     return _run_body(evaluation_service.evaluation_summary(run), not replayed)
+
+
+@router.post("/api/v1/evaluations/{run_id}/resume-budget")
+def resume_budget(
+    run_id: str,
+    payload: ResumeBudgetRequest,
+    session: Session = Depends(get_session),
+    context: identity.AuthContext = Depends(require_admin),
+) -> dict:
+    """M4-05: add budget to a paused evaluation and re-dispatch unfinished cases."""
+
+    try:
+        run, attempts_created = budget_service.resume_budget(
+            session,
+            run_id=run_id,
+            additional_budget_usd=payload.additional_budget_usd,
+            expected_budget_version=payload.budget_version,
+            actor_user_id=context.user.id,
+            settings=get_settings(),
+        )
+    except evaluation_service.EvaluationNotFound as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=error_detail("evaluation_not_found", "评测不存在"),
+        ) from exc
+    except budget_service.BudgetPauseInProgress as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=error_detail("budget_pause_in_progress", str(exc)),
+        ) from exc
+    except budget_service.BudgetVersionConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=error_detail(
+                "budget_version_conflict",
+                str(exc),
+                details={"current_budget_version": exc.current_version},
+            ),
+        ) from exc
+    except budget_service.BudgetNotPaused as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=error_detail(
+                "evaluation_not_budget_paused",
+                str(exc),
+                details={"status": exc.status},
+            ),
+        ) from exc
+    except budget_service.BudgetInvalid as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=error_detail("evaluation_invalid", str(exc)),
+        ) from exc
+    except evaluation_service.EvaluationInvalid as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=error_detail(
+                "evaluation_invalid",
+                str(exc),
+                details={"fields": {exc.field: "invalid"}} if exc.field else None,
+            ),
+        ) from exc
+    spent = evaluation_service.spent_usd(session, run.id)
+    return {
+        "resumed": True,
+        "attempts_created": attempts_created,
+        **evaluation_service.evaluation_summary(run, spent_usd=spent),
+    }
 
 
 def _run_body(summary: dict, created: bool) -> dict:

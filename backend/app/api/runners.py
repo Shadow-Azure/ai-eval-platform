@@ -448,7 +448,7 @@ def shard_manifest(
     )
     not_dispatchable = (
         run is None
-        or run.status in ("cancelling", "cancelled")
+        or run.status in ("cancelling", "cancelled", "pausing_budget", "paused_budget")
         or (attempts and all(a.status in case_attempts.ACTIVE_ATTEMPT_STATUSES is False for a in attempts))
     )
     if not_dispatchable:
