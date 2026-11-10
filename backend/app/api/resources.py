@@ -553,7 +553,9 @@ def test_provisioning(
 
     now = _now()
     try:
-        quote = provisioner.quote(connection=connection, pool=pool, now=now)
+        quote = provisioner.quote(
+            connection=connection, pool=pool, now=now, session=session
+        )
         instance = provisioner.create(
             session=session,
             connection=connection,
@@ -564,6 +566,17 @@ def test_provisioning(
     except ProvisionerError as exc:
         raise _http_error(422, exc.code, exc.message, details=exc.details or None) from exc
 
+    if not quote.available:
+        raise _http_error(
+            422,
+            "inventory_unavailable",
+            "供给器当前没有可用库存，未创建实例",
+            details={
+                "region": quote.region,
+                "instance_type": quote.instance_type,
+                "zone_id": quote.zone_id,
+            },
+        )
     price_usd = _price_str(quote.price_usd)
     threshold = _price_str(pool.price_threshold_usd)
     # A provisioning test must not leave a billable instance behind: create,

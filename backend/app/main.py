@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -12,11 +14,21 @@ from .api.model_configs import router as model_configs_router
 from .api.model_gateway import router as model_gateway_router
 from .api.operations import router as operations_router
 from .api.overview import router as overview_router
-from .api.results import router as results_router
 from .api.resources import router as resources_router
+from .api.results import router as results_router
 from .api.runners import router as runners_router
 from .api.runtimes import router as runtimes_router
 from .config import get_settings
+from .services.provisioning import register_builtin_provisioners
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    # M4-04: the API process answers connection verification and the
+    # cost-confirmed provisioning test, so it needs the same provider registry
+    # as the worker. Registration performs no network call.
+    register_builtin_provisioners(get_settings())
+    yield
 
 
 def create_app() -> FastAPI:
@@ -31,7 +43,7 @@ def create_app() -> FastAPI:
             raise RuntimeError("SECRET_BOX_KEY is required in production")
         if not settings.gateway_token_secret:
             raise RuntimeError("GATEWAY_TOKEN_SECRET is required in production")
-    app = FastAPI(title=settings.app_name, version="0.1.0")
+    app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=_lifespan)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origin_list,

@@ -59,6 +59,8 @@ REASON_PROVISIONER_UNAVAILABLE = "provisioner_unavailable"
 REASON_CAPACITY_SCALE_UP = "capacity_scale_up"
 REASON_CAPACITY_SCALE_DOWN = "capacity_scale_down"
 REASON_PROVISIONING_FAILED = "resource_provisioning_failed"
+REASON_PROVIDER_AUTH_FAILED = "resource_provider_auth_failed"
+REASON_RUNNER_REGISTRATION_UNAVAILABLE = "runner_registration_unavailable"
 
 EVENT_CAPACITY_UPDATED = "resource.capacity.updated"
 EVENT_CAPACITY_SCALED_DOWN = "resource.capacity.scaled_down"
@@ -66,6 +68,10 @@ EVENT_CAPACITY_RELEASED = "resource.capacity.released"
 EVENT_PROVISIONING_FAILED = "resource.provisioning_failed"
 EVENT_RELEASE_FAILED = "resource.release_failed"
 EVENT_PROVISIONING_TESTED = "resource.provisioning_tested"
+EVENT_INSTANCE_REGISTERED = "resource.instance.registered"
+EVENT_INSTANCE_INTERRUPTED = "resource.instance.interrupted"
+EVENT_INSTANCE_CREATE_TIMEOUT = "resource.instance.create_timeout"
+EVENT_PROVIDER_SYNC_FAILED = "resource.provider.sync_failed"
 
 PROVISIONING_MODE_SPOT = "spot"
 PROVISIONING_MODE_FIXED = "fixed"
@@ -223,6 +229,7 @@ def _connection(session: Session, pool: ResourcePool) -> Connection | None:
 def _quote(
     pool: ResourcePool,
     *,
+    session: Session,
     provisioner: Provisioner | None,
     connection: Connection | None,
     now: datetime,
@@ -233,7 +240,9 @@ def _quote(
         return None
     if pool.provisioning_mode == PROVISIONING_MODE_SPOT and connection is None:
         return None
-    return provisioner.quote(connection=connection, pool=pool, now=now)
+    return provisioner.quote(
+        connection=connection, pool=pool, now=now, session=session
+    )
 
 
 def _capacity_reason(
@@ -275,6 +284,7 @@ def _build_state(
     provisioner: Provisioner | None,
     connection: Connection | None,
     quote: PriceQuote | None,
+    quote_error: ProvisionerError | None = None,
 ) -> dict[str, Any]:
     queued = _queued_attempts(session, pool)
     idle = _runner_count(
@@ -304,6 +314,8 @@ def _build_state(
         provisioner=provisioner,
         connection=connection,
     )
+    if quote_error is not None:
+        reason = _provisioning_reason(quote_error.code)
     price = quote.price_usd if quote is not None else None
     return {
         "pool_id": pool.id,
@@ -322,6 +334,7 @@ def _build_state(
         "price_usd": _decimal_str(price),
         "price_threshold_usd": _decimal_str(pool.price_threshold_usd),
         "price_available": quote.available if quote is not None else None,
+        "provider_error": quote_error.code if quote_error is not None else None,
         "capacity_reason": reason,
         "last_checked_at": _iso(pool.last_checked_at),
         "next_check_at": _iso(pool.next_check_at),
@@ -340,7 +353,14 @@ def pool_capacity_state(
 
     now = now or datetime.now(UTC)
     connection = _connection(session, pool)
-    quote = _quote(pool, provisioner=provisioner, connection=connection, now=now)
+    quote_error: ProvisionerError | None = None
+    try:
+        quote = _quote(
+            pool, session=session, provisioner=provisioner, connection=connection, now=now
+        )
+    except ProvisionerError as exc:
+        quote = None
+        quote_error = exc
     return _build_state(
         session,
         pool,
@@ -349,6 +369,7 @@ def pool_capacity_state(
         provisioner=provisioner,
         connection=connection,
         quote=quote,
+        quote_error=quote_error,
     )
 
 
@@ -398,6 +419,17 @@ def _state_dedupe_key(pool: ResourcePool, state: Mapping[str, Any], reason: str 
     return (
         f"{pool.id}:capacity:{reason}:{state['capacity_gap']}:{state['price_usd']}"
     )
+
+
+def _provisioning_reason(code: str) -> str:
+    """Map a provider error code to a stable user-facing pool reason."""
+
+    if code == "runner_registration_unavailable":
+        return REASON_RUNNER_REGISTRATION_UNAVAILABLE
+    if code in ("aliyun_auth_failed", "connection_credential_invalid",
+                "connection_credential_unreadable"):
+        return REASON_PROVIDER_AUTH_FAILED
+    return REASON_PROVISIONING_FAILED
 
 
 # ---------------------------------------------------------------------------
@@ -462,7 +494,7 @@ def _scale_up(
         except ProvisionerError as exc:
             # Provider failures never fail cases: record the reason and let the
             # next tick (after next_check_at) try again.
-            pool.capacity_reason = REASON_PROVISIONING_FAILED
+            pool.capacity_reason = _provisioning_reason(exc.code)
             _record_provisioning_failure(
                 session, pool, code=exc.code, state=state, message=exc.message
             )
@@ -668,9 +700,30 @@ def reconcile_pool(
 
     now = now or datetime.now(UTC)
     connection = _connection(session, pool)
+    synced: dict[str, int] = {}
     if provisioner is not None and connection is not None:
         _retry_pending_releases(session, pool, provisioner=provisioner, now=now)
-    quote = _quote(pool, provisioner=provisioner, connection=connection, now=now)
+        try:
+            synced = dict(
+                provisioner.sync(
+                    session=session, connection=connection, pool=pool, now=now
+                )
+            )
+        except ProvisionerError:
+            # The provider already recorded a deduped sync-failure event; the
+            # tick continues with the last known local state so one bad cloud
+            # call cannot stall price/scale-down bookkeeping.
+            synced = {}
+    quote_error: ProvisionerError | None = None
+    try:
+        quote = _quote(
+            pool, session=session, provisioner=provisioner, connection=connection, now=now
+        )
+    except ProvisionerError as exc:
+        # A broken credential/API must not crash the worker tick: record the
+        # stable reason, keep cases queued and retry on the next interval.
+        quote = None
+        quote_error = exc
     state = _build_state(
         session,
         pool,
@@ -679,6 +732,7 @@ def reconcile_pool(
         provisioner=provisioner,
         connection=connection,
         quote=quote,
+        quote_error=quote_error,
     )
 
     reason = state["capacity_reason"]
@@ -686,6 +740,14 @@ def reconcile_pool(
     pool.capacity_reason = reason
     pool.last_checked_at = now
     pool.next_check_at = now + timedelta(seconds=settings.eval_capacity_check_seconds)
+    if quote_error is not None:
+        _record_provisioning_failure(
+            session,
+            pool,
+            code=quote_error.code,
+            state=state,
+            message=quote_error.message,
+        )
 
     scaled_up = 0
     scaled_down = 0
@@ -751,6 +813,7 @@ def reconcile_pool(
             "next_check_at": _iso(pool.next_check_at),
             "scaled_up": scaled_up,
             "scaled_down": scaled_down,
+            "provider_sync": synced,
         }
     )
     return state

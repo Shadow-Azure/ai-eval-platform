@@ -44,6 +44,10 @@ class RunnerNotFound(Exception):
     pass
 
 
+class RunnerPoolNotFound(Exception):
+    """A spot runner heartbeat referenced an unknown/inactive pool id."""
+
+
 def _aware(value: datetime | None) -> datetime | None:
     """SQLite returns naive datetimes; treat them as UTC for arithmetic."""
 
@@ -115,14 +119,29 @@ def record_runner_heartbeat(
     labels: list[str],
     status: str,
     current_case_attempt_id: str | None,
+    resource_pool_id: str | None = None,
     now: datetime | None = None,
     settings: Settings | None = None,
 ) -> Runner:
-    """Upsert one runner from a heartbeat payload and apply the state machine."""
+    """Upsert one runner from a heartbeat payload and apply the state machine.
+
+    ``resource_pool_id`` is sent by spot ephemeral runners (M4-04) so they
+    join the pool that created them instead of the fixed pool. Fixed runners
+    omit it and keep the M2-04 behavior.
+    """
 
     now = now or datetime.now(UTC)
     settings = settings or get_settings()
-    pool = ensure_fixed_pool(session, settings)
+    if resource_pool_id:
+        pool = session.get(ResourcePool, resource_pool_id)
+        if (
+            pool is None
+            or pool.tenant_id != str(DEFAULT_TENANT_ID)
+            or pool.status != "active"
+        ):
+            raise RunnerPoolNotFound(resource_pool_id)
+    else:
+        pool = ensure_fixed_pool(session, settings)
 
     runner = _find_runner(session, pool, runner_id)
     if runner is None:

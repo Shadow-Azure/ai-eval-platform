@@ -7,7 +7,9 @@ every failure mode is a constructor/attribute knob:
 - ``available=False`` -> ``create`` raises ``inventory_unavailable``;
 - ``create_error`` -> ``create`` raises with that code;
 - ``release_error`` -> ``release`` raises with that code (state unchanged);
-- ``health_status`` -> value returned by ``health``.
+- ``health_status`` -> value returned by ``health``;
+- ``sync_error`` -> ``sync`` raises with that code (provider poll failure);
+- ``sync_counts`` -> value returned by ``sync`` (tests can inject counters).
 """
 
 from __future__ import annotations
@@ -55,6 +57,8 @@ class FakeProvisioner:
         health_status: str = "healthy",
         instance_type: str = "ecs.g7.large",
         region: str = "cn-hangzhou",
+        sync_error: str | bool | None = None,
+        sync_counts: dict[str, int] | None = None,
     ) -> None:
         self.provider = provider
         self.price_usd = Decimal(str(price_usd))
@@ -64,9 +68,19 @@ class FakeProvisioner:
         self.health_status = health_status
         self.instance_type = instance_type
         self.region = region
+        self.sync_error = sync_error
+        self.sync_counts = dict(sync_counts or {})
 
     def capabilities(self, connection: Connection | None) -> set[str]:
         return {CAPABILITY_ECS_SPOT, CAPABILITY_ECS_INVENTORY}
+
+    def verify(self, *, session: Session, connection: Connection) -> dict[str, object]:
+        return {
+            "ok": True,
+            "provider": self.provider,
+            "region": connection.region or self.region,
+            "capabilities": sorted(self.capabilities(connection)),
+        }
 
     def quote(
         self,
@@ -74,6 +88,7 @@ class FakeProvisioner:
         connection: Connection | None,
         pool: ResourcePool,
         now: datetime,
+        session: Session | None = None,
     ) -> PriceQuote:
         instance_type = self.instance_type
         if isinstance(pool.instance_config_json, dict):
@@ -129,6 +144,18 @@ class FakeProvisioner:
         instance.status = "released"
         instance.released_at = now
         session.flush()
+
+    def sync(
+        self,
+        *,
+        session: Session,
+        connection: Connection | None,
+        pool: ResourcePool,
+        now: datetime,
+    ) -> dict[str, int]:
+        if self.sync_error:
+            raise ProvisionerError(_error_code(self.sync_error, "provider_sync_failed"))
+        return dict(self.sync_counts)
 
     def health(self, *, instance: ProvisionedInstance) -> str:
         return self.health_status

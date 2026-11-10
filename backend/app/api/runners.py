@@ -44,6 +44,9 @@ class HeartbeatRequest(BaseModel):
     labels: list[str] = Field(default_factory=list, max_length=64)
     status: Literal["online", "busy", "offline"] = "online"
     current_case_attempt_id: str | None = Field(default=None, max_length=128)
+    # M4-04 spot runners join the pool that created them; fixed runners omit
+    # this field and keep joining the fixed pool.
+    resource_pool_id: str | None = Field(default=None, max_length=36)
 
     @model_validator(mode="after")
     def _validate_attempt_binding(self) -> HeartbeatRequest:
@@ -83,7 +86,17 @@ def runner_heartbeat(
             labels=payload.labels,
             status=payload.status,
             current_case_attempt_id=payload.current_case_attempt_id,
+            resource_pool_id=payload.resource_pool_id,
         )
+    except runner_service.RunnerPoolNotFound as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=error_detail(
+                "resource_pool_not_found",
+                "Runner 心跳引用的资源池不存在或未启用",
+                details={"resource_pool_id": str(exc)},
+            ),
+        ) from exc
     except runner_service.RunnerBusyConflict as exc:
         raise HTTPException(
             status_code=409,

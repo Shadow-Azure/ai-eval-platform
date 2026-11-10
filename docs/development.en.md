@@ -29,6 +29,10 @@ npm run record:i18n -- docs/README.md
 
 `npm test` runs native Node tests; `lint:docs` is the offline quick mode; `verify:docs` is the full CI mode; `route:gates` recommends the smallest combination for the current worktree.
 
+## Spot resource smoke
+
+The real Aliyun smoke needs `ALIYUN_ACCESS_KEY_ID`, `ALIYUN_ACCESS_KEY_SECRET`, `RUNNER_ADMIN_TOKEN` (repository-admin PAT with `repo` scope), and `SPOT_SMOKE_CONFIRM=1`. Add the `run-spot-smoke` label to a PR to trigger the `spot-smoke` workflow; it creates one spot instance, runs the `runner-smoke` job, releases the instance, and uploads evidence as an artifact. Regular CI never creates cloud resources.
+
 ## Editing documentation
 
 1. Correct facts on the Chinese base first, then make the minimal structurally mirrored update to the English side.

@@ -15,6 +15,12 @@
 # workflow_dispatch (manual) is a bootstrap: it asks the platform to create a
 # synthetic evaluation, and the platform's dispatch loop triggers the real
 # repository_dispatch run (this also re-verifies the GitHub queue pickup hop).
+#
+# M4-04 adds a `runner-smoke` mode: the spot provisioner smoke registers a
+# unique label, dispatches this workflow at the ticket branch with
+# mode=runner-smoke and runs_on=["self-hosted","<label>"], and the `smoke` job
+# proves the ephemeral instance picked up and executed a job. It never touches
+# the platform API or any credential.
 name: eval-shard
 
 # M4-02: the display title embeds the dispatch key, which starts with the
@@ -22,7 +28,7 @@ name: eval-shard
 # cancel it (a repository_dispatch's run title carries no other eval id).
 # workflow_dispatch falls back to the GitHub run id. dispatch_key is also the
 # only client_payload field this workflow is allowed to interpolate.
-run-name: "eval-shard ${{ github.event.client_payload.dispatch_key || github.run_id }}"
+run-name: "eval-shard ${{ github.event.client_payload.dispatch_key || github.run_id }}${{ github.event.inputs.smoke_id && format(' smoke-{0}', github.event.inputs.smoke_id) || '' }}"
 
 on:
   workflow_dispatch:
@@ -33,6 +39,17 @@ on:
       case_count:
         description: "Number of synthetic cases in the bootstrap evaluation"
         default: "2"
+      mode:
+        description: "eval = bootstrap an evaluation; runner-smoke = prove a spot runner executes a job"
+        type: choice
+        options: [eval, runner-smoke]
+        default: eval
+      smoke_id:
+        description: "Unique id embedded in the run title for the runner smoke"
+        default: ""
+      runs_on:
+        description: "JSON label array for mode=runner-smoke"
+        default: '["self-hosted","linux","eval"]'
   repository_dispatch:
     types: [eval-shard]
 
@@ -44,8 +61,25 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  smoke:
+    if: github.event_name == 'workflow_dispatch' && inputs.mode == 'runner-smoke'
+    runs-on: ${{ fromJson(inputs.runs_on || '["self-hosted","linux","eval"]') }}
+    timeout-minutes: 10
+    steps:
+      - name: Prove the ephemeral runner executes a job
+        env:
+          SMOKE_ID: ${{ inputs.smoke_id }}
+        run: |
+          set -euo pipefail
+          echo "runner_name=${RUNNER_NAME:-unknown}"
+          echo "smoke_id=${SMOKE_ID:-none}"
+          hostname
+          test -n "${RUNNER_NAME:-}"
+          docker version
+          echo "runner smoke job completed"
+
   bootstrap:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && inputs.mode != 'runner-smoke'
     runs-on: [self-hosted, linux, eval]
     timeout-minutes: 5
     steps:
