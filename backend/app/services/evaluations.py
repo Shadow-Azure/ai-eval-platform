@@ -130,6 +130,7 @@ def create_synthetic_evaluation(
     resource_pool_id: str | None = None,
     scoring_image_digest: str | None = None,
     execution_image_digest: str | None = None,
+    asset_snapshot_id: str | None = None,
     asset_snapshot_json: dict | None = None,
     consistency_json: dict | None = None,
     settings: Settings | None = None,
@@ -250,6 +251,7 @@ def create_synthetic_evaluation(
         resource_pool_id=resource_pool_id,
         scoring_image_digest=scoring_image_digest,
         execution_image_digest=execution_image_digest,
+        asset_snapshot_id=asset_snapshot_id,
         asset_snapshot_json=asset_snapshot_json or {},
         consistency_json=consistency_json or {},
         idempotency_key=idempotency_key[:128],
@@ -529,6 +531,9 @@ def evaluation_summary(run: EvalRun, *, spent_usd: Decimal | None = None) -> dic
         "runtime_version": run.runtime_version,
         "execution_image_digest": run.execution_image_digest,
         "scoring_image_digest": run.scoring_image_digest,
+        "asset_snapshot_id": run.asset_snapshot_id,
+        "asset_resolved_commit": (run.asset_snapshot_json or {}).get("resolved_commit"),
+        "asset_count": (run.asset_snapshot_json or {}).get("asset_count"),
         "created_at": _iso(run.created_at),
         "started_at": _iso(run.started_at),
         "finished_at": _iso(run.finished_at),
@@ -568,6 +573,7 @@ def evaluation_detail(session: Session, run: EvalRun) -> dict:
     ]
     return {
         **evaluation_summary(run, spent_usd=live_spent),
+        "asset_snapshot": run.asset_snapshot_json or {},
         "cases": [
             {
                 "id": case.id,

@@ -330,6 +330,18 @@ def test_pool_creation_rejects_invalid_capacity_and_price(
     assert session.scalar(select(func.count()).select_from(ResourcePool)) == 0
 
 
+def test_connection_payload_strips_json_punctuation_from_mask(
+    client: TestClient, session: Session, scope: dict[str, str]
+) -> None:
+    credential = _credential(session, scope)
+    credential.secret_mask = '****et"}'
+    session.commit()
+
+    connection = _create_connection(client, credential.id)
+
+    assert connection["credential_mask"] == "****et"
+
+
 def test_fixed_pool_needs_no_connection(
     client: TestClient, session: Session
 ) -> None:
@@ -369,6 +381,14 @@ def test_pool_list_and_detail_expose_capacity_state(
     assert state["queued_attempts"] == 0
     assert state["desired_capacity"] == 0
     assert state["checked_at"]
+    assert items[0]["runners"] == {
+        "total": 0,
+        "online": 0,
+        "busy": 0,
+        "draining": 0,
+        "offline": 0,
+        "last_heartbeat_at": None,
+    }
 
     detail = client.get(f"/api/v1/resource-pools/{pool['id']}")
     assert detail.status_code == 200, detail.text
@@ -382,6 +402,7 @@ def test_pool_list_and_detail_expose_capacity_state(
         "busy": 0,
         "draining": 0,
         "offline": 0,
+        "last_heartbeat_at": None,
     }
 
 
@@ -408,13 +429,17 @@ def test_pool_detail_lists_recent_events_and_runners(
         "resource.capacity.updated"
     ]
     assert detail["events"][0]["payload"] == {"reason": "capacity_scale_up"}
-    assert detail["runners"] == {
+    assert {
+        key: detail["runners"][key]
+        for key in ("total", "online", "busy", "draining", "offline")
+    } == {
         "total": 1,
         "online": 0,
         "busy": 1,
         "draining": 0,
         "offline": 0,
     }
+    assert detail["runners"]["last_heartbeat_at"]
 
     runners = client.get(f"/api/v1/resource-pools/{pool['id']}/runners")
     assert runners.status_code == 200
@@ -426,6 +451,31 @@ def test_pool_detail_lists_recent_events_and_runners(
     assert items[0]["labels"] == ["self-hosted", "spot"]
     assert items[0]["last_heartbeat_at"]
     assert items[0]["busy_case_attempt_id"] is None
+
+
+def test_pool_list_includes_runner_summary_and_last_heartbeat(
+    client: TestClient, session: Session, scope: dict[str, str]
+) -> None:
+    _register_fake()
+    connection = _create_connection(client, _credential(session, scope).id)
+    pool = _create_pool(client, connection["id"])
+    _add_runner(session, scope, pool["id"], name="online-1", status="online")
+    _add_runner(session, scope, pool["id"], name="busy-1", status="busy")
+    _add_runner(session, scope, pool["id"], name="offline-1", status="offline")
+
+    item = client.get("/api/v1/resource-pools").json()["items"][0]
+
+    assert {
+        key: item["runners"][key]
+        for key in ("total", "online", "busy", "draining", "offline")
+    } == {
+        "total": 3,
+        "online": 1,
+        "busy": 1,
+        "draining": 0,
+        "offline": 1,
+    }
+    assert item["runners"]["last_heartbeat_at"]
 
 
 def test_unknown_pool_is_404(client: TestClient) -> None:
@@ -533,6 +583,69 @@ def test_test_provisioning_creates_one_instance_and_audit_event(
     assert audits[0].target_type == "resource_pool"
     assert audits[0].target_id == pool["id"]
 
+    steps = payload["steps"]
+    assert [step["key"] for step in steps] == [
+        "cost_confirmed",
+        "quote",
+        "instance_created",
+        "runner_registration",
+        "instance_released",
+    ]
+    assert [step["status"] for step in steps] == [
+        "passed",
+        "passed",
+        "passed",
+        "skipped",
+        "passed",
+    ]
+    assert steps[1]["detail"]["price_usd"] == "0.1000"
+    assert steps[1]["detail"]["price_threshold_usd"] == "0.5000"
+    assert steps[2]["detail"]["provider_instance_id"]
+    assert steps[3]["detail"]["reason"] == "test_instance_released_before_registration"
+    assert payload["released"] is True
+    assert steps[-1]["detail"]["status"] == "released"
+
+
+def test_test_provisioning_retains_release_failure_for_diagnosis(
+    client: TestClient, session: Session, scope: dict[str, str]
+) -> None:
+    _register_fake(price_usd=Decimal("0.1000"), release_error="release_failed")
+    connection = _create_connection(client, _credential(session, scope).id)
+    pool = _create_pool(client, connection["id"], price_threshold_usd="0.5000")
+
+    response = client.post(
+        f"/api/v1/resource-pools/{pool['id']}/test-provisioning",
+        json={"confirm_cost": True},
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["released"] is False
+    assert payload["instance"]["status"] == "draining"
+    release_step = payload["steps"][-1]
+    assert release_step["key"] == "instance_released"
+    assert release_step["status"] == "failed"
+    assert release_step["detail"]["code"] == "release_failed"
+    assert release_step["detail"]["message"]
+
+    events = list(
+        session.scalars(
+            select(ResourceEvent).where(
+                ResourceEvent.event_type == "resource.release_failed"
+            )
+        )
+    )
+    assert len(events) == 1
+    assert events[0].payload_json["source"] == "test_provisioning"
+    assert events[0].payload_json["code"] == "release_failed"
+
+    # The failed release is still an administrative action: audit remains.
+    assert session.scalar(
+        select(func.count())
+        .select_from(AuditLog)
+        .where(AuditLog.action == "resource.provisioning_tested")
+    ) == 1
+
 
 def test_test_provisioning_rejects_fixed_pool(
     client: TestClient, session: Session
@@ -572,6 +685,41 @@ def test_test_provisioning_without_provisioner_is_rejected(
 
     assert response.status_code == 422
     assert _error(response)["code"] == "provisioner_unavailable"
+
+
+def test_admin_connection_and_pool_writes_are_audited(
+    client: TestClient, session: Session, scope: dict[str, str]
+) -> None:
+    _register_fake()
+    credential = _credential(session, scope)
+    connection = _create_connection(client, credential.id)
+
+    verified = client.post(f"/api/v1/connections/{connection['id']}/test")
+    assert verified.status_code == 200, verified.text
+
+    pool = _create_pool(client, connection["id"])
+    updated = client.patch(
+        f"/api/v1/resource-pools/{pool['id']}", json={"max_capacity": 5}
+    )
+    assert updated.status_code == 200, updated.text
+
+    actions = {entry.action for entry in session.scalars(select(AuditLog))}
+    assert {
+        "resource.connection.created",
+        "resource.connection.verified",
+        "resource.pool.created",
+        "resource.pool.updated",
+    } <= actions
+
+    created = session.scalar(
+        select(AuditLog).where(AuditLog.action == "resource.connection.created")
+    )
+    assert created is not None
+    assert created.actor_user_id
+    assert created.target_id == connection["id"]
+    serialized = str(created.metadata_json).lower()
+    assert "secret" not in serialized
+    assert "ciphertext" not in serialized
 
 
 # ---------------------------------------------------------------------------

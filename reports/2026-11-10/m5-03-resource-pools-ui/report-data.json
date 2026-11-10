@@ -1,0 +1,345 @@
+{
+  "title": "M5-03 资源连接与资源池产品页面 · 集成冒烟报告",
+  "eyebrow": "Browser smoke · 真实登录 / 建连接 / 建池 / 容量 / 供给测试 / 只读成员",
+  "summary": "在本地开发栈上用 Chrome headless 走通 M5-03 的完整主路径：从 /resources 占位页对比开始，管理员从页面创建阿里云资源连接和竞价资源池，看到容量上下限、在线/忙碌/离线/扩容中、价格与阈值、心跳、下次检查时间和排队原因；通过费用确认执行供给测试并展示从创建实例到 Runner 注册的流水线；最后以只读成员验证隐藏写操作且凭据只显示掩码。12 个功能场景全部通过（另附改动前基线），未发现需要修复的产品缺陷。",
+  "meta": "2026-11-10 · AI Eval Platform · M5-03",
+  "metrics": [
+    {
+      "value": "14",
+      "label": "检查点（含基线）"
+    },
+    {
+      "value": "0",
+      "label": "发现缺陷"
+    },
+    {
+      "value": "13",
+      "label": "证据截图"
+    },
+    {
+      "value": "全部通过",
+      "label": "后端 / 前端门禁"
+    }
+  ],
+  "facts": [
+    {
+      "label": "应用",
+      "value": "AI Eval Platform 本地开发栈（FastAPI + Vite React）"
+    },
+    {
+      "label": "分支",
+      "value": "agent/complete-m5-03-18a4abf63536"
+    },
+    {
+      "label": "数据库",
+      "value": "一次性 SQLite + 迁移 head + 演示管理员与只读成员"
+    },
+    {
+      "label": "浏览器",
+      "value": "系统 Chrome headless · 1440×1000 · CDP 驱动"
+    },
+    {
+      "label": "供给器",
+      "value": "FakeProvisioner(provider=aliyun, price=$0.1000)，无真实云调用"
+    },
+    {
+      "label": "数据形态",
+      "value": "1 个资源连接 / 1 个竞价池 / 3 台 Runner（在线、忙碌、离线）/ 1 个扩容中实例 / 3 个排队 Job"
+    },
+    {
+      "label": "账号",
+      "value": "本地演示管理员与只读成员（密码不写入报告）"
+    }
+  ],
+  "matrix": {
+    "columns": [
+      "#",
+      "场景",
+      "结果",
+      "说明",
+      "证据"
+    ],
+    "rows": [
+      {
+        "id": "01",
+        "name": "改动前 /resources 占位页",
+        "status": {
+          "kind": "info",
+          "label": "BASELINE"
+        },
+        "detail": "origin/main 上资源池路由仍显示“该功能将在后续里程碑接入”，没有连接、池或容量信息。",
+        "evidence": [
+          "before-01-resources-placeholder.png"
+        ]
+      },
+      {
+        "id": "02",
+        "name": "资源池空态",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "新页面展示四个容量指标、资源池/资源连接页签和明确的空态引导；管理员可见新建入口。",
+        "evidence": [
+          "after-01-pools-empty.png"
+        ]
+      },
+      {
+        "id": "03",
+        "name": "新建资源连接表单",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "表单填写连接名称、阿里云区域、能力清单与 Access Key；密钥为密码输入，不进入浏览器存储。",
+        "evidence": [
+          "after-02-connection-form.png"
+        ]
+      },
+      {
+        "id": "04",
+        "name": "连接创建与只读验证",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "保存后自动执行只读验证，连接卡片显示验证通过、能力标签、最近验证时间与脱敏凭据掩码。",
+        "evidence": [
+          "after-03-connections.png"
+        ]
+      },
+      {
+        "id": "05",
+        "name": "从连接创建竞价池",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "从连接卡片进入建池，系统默认选中竞价实例模式并展示连接能力与兼容性说明。",
+        "evidence": [
+          "after-04-pool-form.png"
+        ]
+      },
+      {
+        "id": "06",
+        "name": "资源池卡片",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "卡片展示容量区间、在线/忙碌/扩容中、当前价格与阈值、最近心跳、下次检查时间和排队原因入口。",
+        "evidence": [
+          "after-05-pool-card.png"
+        ]
+      },
+      {
+        "id": "07",
+        "name": "不兼容供给模式提前说明",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "未选择资源连接时竞价模式禁用，并明确说明“竞价实例需要先选择资源连接”，不等到提交后才报错。",
+        "evidence": [
+          "after-06-pool-incompatible.png"
+        ]
+      },
+      {
+        "id": "08",
+        "name": "容量状态与排队原因",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "在线 2/4、忙碌 1、离线 1、扩容中 1、排队 3；价格 $0.1000 高于阈值 $0.0500 时明确解释暂不扩容且排队 Job 保留。",
+        "evidence": [
+          "after-07-capacity-state.png"
+        ]
+      },
+      {
+        "id": "09",
+        "name": "资源池详情与 Runner 状态",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "详情抽屉列出在线/忙碌/离线 Runner、标签、最近心跳、当前 Job，并展示容量、价格、检查时间和资源事件。",
+        "evidence": [
+          "after-08-pool-detail.png"
+        ]
+      },
+      {
+        "id": "10",
+        "name": "供给测试费用提示与二次确认",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "弹窗明确提示会创建真实实例并产生费用，展示区域/规格、当前价格、阈值、立即释放和审计说明；未勾选确认时按钮禁用。",
+        "evidence": [
+          "after-09-provisioning-confirm.png"
+        ]
+      },
+      {
+        "id": "11",
+        "name": "供给测试生命周期",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "成功后展示从创建实例到 Runner 注册的流水线：费用确认、询价、创建实例、注册 Runner（测试实例跳过并说明原因）、自动释放。",
+        "evidence": [
+          "after-10-provisioning-result.png"
+        ]
+      },
+      {
+        "id": "12",
+        "name": "只读成员查看容量",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "只读成员能看到同样的容量与排队原因，但页面不出现新建、编辑、验证或测试供给入口。",
+        "evidence": [
+          "after-11-viewer-pools.png"
+        ]
+      },
+      {
+        "id": "13",
+        "name": "只读成员查看连接",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "连接页展示只读边界说明、能力和脱敏凭据，不提供验证或替换密钥操作。",
+        "evidence": [
+          "after-12-viewer-connections.png"
+        ]
+      },
+      {
+        "id": "14",
+        "name": "供给测试释放失败保留诊断",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "故意让假供给器释放失败：页面保留实例已创建上下文，自动释放步骤标记失败并显示 release_failed，同时提示已交给容量控制器重试。",
+        "evidence": [
+          "after-13-provisioning-release-failed.png"
+        ]
+      }
+    ]
+  },
+  "issues": [],
+  "screenshots": [
+    {
+      "src": "before-01-resources-placeholder.png",
+      "alt": "改动前资源池占位页",
+      "label": "01 · Before",
+      "caption": "origin/main 的 /resources 仍是占位页，没有连接或容量信息。",
+      "variant": "wide"
+    },
+    {
+      "src": "after-01-pools-empty.png",
+      "alt": "新资源池页面空态",
+      "label": "02 · After",
+      "caption": "新页面包含容量指标、双页签与空态引导。",
+      "variant": "wide"
+    },
+    {
+      "src": "after-04-pool-form.png",
+      "alt": "从连接创建竞价池",
+      "label": "05 · Pool form",
+      "caption": "连接能力决定可选供给模式；竞价模式默认选中并展示兼容性。",
+      "variant": "wide"
+    },
+    {
+      "src": "after-07-capacity-state.png",
+      "alt": "资源池容量与排队原因",
+      "label": "08 · Capacity",
+      "caption": "在线/忙碌/离线/扩容中、价格阈值与价格超限排队原因同屏展示。",
+      "variant": "wide"
+    },
+    {
+      "src": "after-08-pool-detail.png",
+      "alt": "资源池详情与 Runner 明细",
+      "label": "09 · Detail",
+      "caption": "Runner 状态、最近心跳、当前 Job 与资源事件均可诊断。",
+      "variant": "wide"
+    },
+    {
+      "src": "after-09-provisioning-confirm.png",
+      "alt": "供给测试费用确认",
+      "label": "10 · Cost confirm",
+      "caption": "费用提示、价格阈值、立即释放与审计说明；未确认时禁止提交。",
+      "variant": "wide"
+    },
+    {
+      "src": "after-10-provisioning-result.png",
+      "alt": "供给测试生命周期结果",
+      "label": "11 · Lifecycle",
+      "caption": "创建实例到 Runner 注册的流水线，注册步骤因测试实例立即释放而跳过并说明。",
+      "variant": "wide"
+    },
+    {
+      "src": "after-12-viewer-connections.png",
+      "alt": "只读成员查看资源连接",
+      "label": "13 · Read-only",
+      "caption": "只读成员可见脱敏凭据与能力，但没有验证或替换密钥入口。",
+      "variant": "wide"
+    },
+    {
+      "src": "after-13-provisioning-release-failed.png",
+      "alt": "供给测试释放失败诊断",
+      "label": "14 · Failure",
+      "caption": "释放失败步骤保留稳定错误码，页面不伪装成功并保留重试入口。",
+      "variant": "wide"
+    }
+  ],
+  "coverage": {
+    "columns": [
+      "区域",
+      "覆盖",
+      "结论",
+      "建议"
+    ],
+    "rows": [
+      {
+        "area": "连接与池写接口",
+        "coverage": "pytest",
+        "conclusion": "test_resource_api.py 覆盖创建、验证、能力不匹配、容量/价格校验、审计与供给测试步骤；test_resource_connections.py 覆盖凭据边界。",
+        "recommendation": "保留真实云验证为部署后手工冒烟，CI 使用假供给器。"
+      },
+      {
+        "area": "容量与排队原因",
+        "coverage": "pytest + browser",
+        "conclusion": "后端已有 capacity controller 测试；本次补充池列表 runner 汇总/心跳字段测试，浏览器验证价格超限原因。",
+        "recommendation": "后续接入真实供给器时补充价格/库存切换的浏览器场景。"
+      },
+      {
+        "area": "页面权限",
+        "coverage": "pytest + browser",
+        "conclusion": "API 读写边界由 require_admin 测试覆盖；浏览器验证只读成员看不到写入口。",
+        "recommendation": "无。"
+      },
+      {
+        "area": "供给测试",
+        "coverage": "pytest + browser",
+        "conclusion": "费用确认、实例创建、自动释放、审计与释放失败诊断均有测试；浏览器走通确认、成功生命周期与释放失败诊断。",
+        "recommendation": "真实云价格与 Runner 注册仍需部署后冒烟。"
+      }
+    ]
+  },
+  "conclusion": {
+    "kind": "pass",
+    "label": "主路径通过，未发现产品缺陷",
+    "summary": "资源连接与资源池页面在真实登录、真实 API 与真实浏览器下走通创建、容量解释、详情、费用确认供给测试和只读边界；没有需要修复的缺陷。",
+    "points": [
+      "供给测试按 M4-03 设计在注册 Runner 前立即释放，因此注册步骤显示为跳过并说明原因，不伪造注册成功。",
+      "本地冒烟用假供给器替代阿里云调用；真实云验证、价格与库存仍需部署环境冒烟。",
+      "Before 基线为 origin/main 的 /resources 占位页，不是修改后页面的回放。",
+      "释放失败路径用假供给器的 release_error 触发，验证页面保留错误码与“释放重试中”状态。"
+    ]
+  },
+  "footer": "M5-03 · 资源连接与资源池产品页面 · 本地开发栈浏览器冒烟"
+}

@@ -1,0 +1,16 @@
+shot before-01-resources-placeholder
+shot after-01-pools-empty
+shot after-02-connection-form
+shot after-03-connections
+shot after-04-pool-form
+shot after-05-pool-card
+shot after-06-pool-incompatible
+seeded pool=3149fc87-6663-4f63-8b9f-56e12fb7eec1 run=f52f8163-4e5a-4f44-8bfc-ea98d12565d8
+shot after-07-capacity-state
+shot after-08-pool-detail
+shot after-09-provisioning-confirm
+shot after-10-provisioning-result
+shot after-11-viewer-pools
+shot after-12-viewer-connections
+SMOKE_OK
+EXIT:0

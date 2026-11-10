@@ -22,6 +22,7 @@ from ..db import get_session
 from ..model_gateway.tokens import GatewayClaims, issue_gateway_token
 from ..models import Dataset, DatasetVersion, EvalCaseAttempt, EvalCaseRun, EvalRun, ModelConfig, Outbox
 from ..runner_contracts import ContractInvalid, validate_payload
+from ..services import agent_assets as asset_service
 from ..services import case_attempts
 from ..services import runners as runner_service
 from ..services.case_attempts import CaseCallbackError
@@ -624,7 +625,7 @@ def shard_tasks(
         "scoring_image_digest": run.scoring_image_digest,
         "environment_image": dataset_version.environment_image if dataset_version else None,
         "adapter_key": dataset.adapter_key if dataset else "swebench",
-        "asset_snapshot": run.asset_snapshot_json or {},
+        "asset_snapshot": asset_service.task_asset_payload(run.asset_snapshot_json, settings),
         "cases": [
             {
                 "case_run_id": case.id,

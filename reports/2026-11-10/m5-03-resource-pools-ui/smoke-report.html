@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>M5-03 资源连接与资源池产品页面 · 集成冒烟报告</title>
+  <style>
+    :root{
+      color-scheme:light;
+      --bg:#f4f7fb;--card:#fff;--ink:#16202f;--ink2:#55637a;--ink3:#7b869b;
+      --line:#dde4ee;--accent:#2563eb;--accent-wash:#e8efff;--good:#157347;
+      --good-wash:#e7f6ee;--warn:#b45309;--warn-wash:#fff2dd;--bad:#c9282e;
+      --bad-wash:#ffeded;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:radial-gradient(circle at 8% 0,#dbe9ff 0,transparent 32rem),radial-gradient(circle at 92% 4%,#e7f1ff 0,transparent 28rem),var(--bg);color:var(--ink);font:14px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Noto Sans CJK SC",sans-serif}
+    main{max-width:1220px;margin:auto;padding:36px 28px 72px}
+    .hero{padding:30px 34px;border:1px solid #dbe3ee;border-radius:24px;background:rgba(255,255,255,.92);box-shadow:0 18px 44px #17202f12}
+    .eyebrow{margin:0;color:var(--accent);font-size:12px;font-weight:800;letter-spacing:.16em;text-transform:uppercase}
+    h1{margin:10px 0 8px;font-size:clamp(28px,4vw,44px);letter-spacing:-.04em}
+    .summary{margin:0;max-width:850px;color:var(--ink2);font-size:15px}
+    .meta{display:block;margin-top:8px;color:var(--ink3);font-size:12px}
+    .metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-top:26px}
+    .metric{padding:16px 18px;border:1px solid var(--line);border-radius:16px;background:#fafbfd}
+    .metric b{display:block;font-size:30px;letter-spacing:-.04em}
+    .metric span{display:block;margin-top:2px;color:var(--ink3);font-size:12px}
+    section{margin-top:28px}
+    .head{display:flex;align-items:baseline;justify-content:space-between;gap:16px;margin:0 4px 14px}
+    h2{margin:0;font-size:21px;letter-spacing:-.03em}
+    .head small{color:var(--ink3);white-space:nowrap}
+    .card{padding:22px;border:1px solid var(--line);border-radius:20px;background:var(--card);box-shadow:0 5px 22px #17202f08}
+    .facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin:0}
+    .fact{padding:13px 16px;border:1px solid #eceff5;border-radius:12px;background:#fafbfd}
+    .fact dt{color:var(--ink3);font-size:11px;font-weight:700}
+    .fact dd{margin:3px 0 0;overflow-wrap:anywhere}
+    code{font-family:var(--mono);font-size:.9em;color:#29456d;overflow-wrap:anywhere}
+    .status{display:inline-flex;padding:3px 8px;border-radius:999px;font-size:11px;font-weight:800;white-space:nowrap;background:#eef1f6;color:var(--ink2)}
+    .status.pass,.status.fixed{background:var(--good-wash);color:var(--good)}
+    .status.warn,.status.manual{background:var(--warn-wash);color:var(--warn)}
+    .status.fail{background:var(--bad-wash);color:var(--bad)}
+    .tableWrap{overflow:auto;border:1px solid var(--line);border-radius:18px;background:var(--card);box-shadow:0 5px 22px #17202f08}
+    table{width:100%;min-width:920px;border-collapse:collapse}
+    th,td{padding:12px 15px;border-bottom:1px solid #edf0f5;text-align:left;vertical-align:top}
+    th{position:sticky;top:0;background:#fafbfe;color:var(--ink2);font-size:12px}
+    tr:last-child td{border-bottom:0}
+    tr:hover{background:#fcfdff}
+    .num{color:var(--ink3);font-family:var(--mono);font-size:12px}
+    .evidence{color:var(--ink3);font-size:12px}
+    .issues{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px}
+    .issueCard{padding:18px 21px;border:1px solid #ffcece;border-left:5px solid var(--bad);border-radius:16px;background:#fffbfb}
+    .issueCard h3{margin:0;color:#b91c1c;font-size:16px}
+    .issueCard p{margin:8px 0;color:var(--ink2)}
+    .issueCard dt{color:var(--ink3);font-size:11px;font-weight:700}
+    .issueCard dd{margin:2px 0 0;color:var(--ink2)}
+    .tag{float:right;padding:3px 8px;border-radius:999px;background:#fee4e4;color:#9a1b21;font-size:11px;font-weight:800}
+    .fixed{display:inline-flex;gap:5px;align-items:center;margin-top:11px;padding:6px 10px;border-radius:999px;background:var(--good-wash);color:var(--good);font-size:12px;font-weight:800}
+    .shots{display:grid;grid-template-columns:repeat(auto-fit,minmax(430px,1fr));gap:16px}
+    figure{margin:0;overflow:hidden;border:1px solid var(--line);border-radius:18px;background:#fff;box-shadow:0 6px 22px #17202f08}
+    figure.wide{grid-column:1/-1}
+    img{display:block;width:100%;max-height:500px;object-fit:contain;background:#eef2f7}
+    figcaption{display:flex;gap:9px;align-items:flex-start;padding:11px 14px;border-top:1px solid #edf0f5;background:#fafbfd;color:var(--ink2);font-size:12.5px}
+    figcaption b{flex:none;color:var(--ink)}
+    .issue-shot{border-color:#ffcece}
+    .conclusion{border:1px solid #c8e5d2;border-radius:20px;background:linear-gradient(135deg,#f2fbf6,white 54%)}
+    .conclusion.warn{border-color:#f1d9a4;background:linear-gradient(135deg,#fff8e8,white 54%)}
+    .conclusion.fail{border-color:#ffc9c9;background:linear-gradient(135deg,#fff5f5,white 54%)}
+    .conclusion ul{margin:12px 0 0;padding-left:20px;color:#344155}
+    .conclusion li+li{margin-top:7px}
+    .empty{padding:20px;text-align:center;color:var(--ink3);background:#fafbfd;border:1px dashed var(--line);border-radius:12px}
+    .foot{margin-top:24px;color:var(--ink3);font-size:12px;text-align:center}
+    @media(max-width:860px){main{padding:22px 14px 52px}.hero{padding:23px}.shots{grid-template-columns:1fr}.head{align-items:flex-start;flex-direction:column;gap:4px}}
+    @media print{body{background:white}main{max-width:none;padding:0}.card,.issueCard,figure,.tableWrap{box-shadow:none;break-inside:avoid}img{max-height:420px}}
+  </style>
+</head>
+<body>
+<main>
+  <header class="hero">
+    <p class="eyebrow">Browser smoke · 真实登录 / 建连接 / 建池 / 容量 / 供给测试 / 只读成员</p>
+    <h1>M5-03 资源连接与资源池产品页面 · 集成冒烟报告</h1>
+    <p class="summary">在本地开发栈上用 Chrome headless 走通 M5-03 的完整主路径：从 /resources 占位页对比开始，管理员从页面创建阿里云资源连接和竞价资源池，看到容量上下限、在线/忙碌/离线/扩容中、价格与阈值、心跳、下次检查时间和排队原因；通过费用确认执行供给测试并展示从创建实例到 Runner 注册的流水线；最后以只读成员验证隐藏写操作且凭据只显示掩码。12 个功能场景全部通过（另附改动前基线），未发现需要修复的产品缺陷。</p>
+    <span class="meta">2026-11-10 · AI Eval Platform · M5-03</span>
+    <div class="metrics"><div class="metric"><b>14</b><span>检查点（含基线）</span></div><div class="metric"><b>0</b><span>发现缺陷</span></div><div class="metric"><b>13</b><span>证据截图</span></div><div class="metric"><b>全部通过</b><span>后端 / 前端门禁</span></div></div>
+  </header>
+
+  <section>
+    <div class="head"><h2>Environment and Artifact</h2><small>2026-11-10 · AI Eval Platform · M5-03</small></div>
+    <article class="card"><dl class="facts"><div class="fact"><dt>应用</dt><dd>AI Eval Platform 本地开发栈（FastAPI + Vite React）</dd></div><div class="fact"><dt>分支</dt><dd>agent/complete-m5-03-18a4abf63536</dd></div><div class="fact"><dt>数据库</dt><dd>一次性 SQLite + 迁移 head + 演示管理员与只读成员</dd></div><div class="fact"><dt>浏览器</dt><dd>系统 Chrome headless · 1440×1000 · CDP 驱动</dd></div><div class="fact"><dt>供给器</dt><dd>FakeProvisioner(provider=aliyun, price=$0.1000)，无真实云调用</dd></div><div class="fact"><dt>数据形态</dt><dd>1 个资源连接 / 1 个竞价池 / 3 台 Runner（在线、忙碌、离线）/ 1 个扩容中实例 / 3 个排队 Job</dd></div><div class="fact"><dt>账号</dt><dd>本地演示管理员与只读成员（密码不写入报告）</dd></div></dl></article>
+  </section>
+
+  <section>
+    <div class="head"><h2>Scenario Matrix</h2><small>1 info · 13 pass</small></div>
+    <div class="tableWrap"><table><table><thead><tr><th>#</th><th>场景</th><th>结果</th><th>说明</th><th>证据</th></tr></thead><tbody><tr><td class="num">01</td><td>改动前 /resources 占位页</td><td><span class="status info">BASELINE</span></td><td>origin/main 上资源池路由仍显示“该功能将在后续里程碑接入”，没有连接、池或容量信息。</td><td class="evidence">before-01-resources-placeholder.png</td></tr><tr><td class="num">02</td><td>资源池空态</td><td><span class="status pass">PASS</span></td><td>新页面展示四个容量指标、资源池/资源连接页签和明确的空态引导；管理员可见新建入口。</td><td class="evidence">after-01-pools-empty.png</td></tr><tr><td class="num">03</td><td>新建资源连接表单</td><td><span class="status pass">PASS</span></td><td>表单填写连接名称、阿里云区域、能力清单与 Access Key；密钥为密码输入，不进入浏览器存储。</td><td class="evidence">after-02-connection-form.png</td></tr><tr><td class="num">04</td><td>连接创建与只读验证</td><td><span class="status pass">PASS</span></td><td>保存后自动执行只读验证，连接卡片显示验证通过、能力标签、最近验证时间与脱敏凭据掩码。</td><td class="evidence">after-03-connections.png</td></tr><tr><td class="num">05</td><td>从连接创建竞价池</td><td><span class="status pass">PASS</span></td><td>从连接卡片进入建池，系统默认选中竞价实例模式并展示连接能力与兼容性说明。</td><td class="evidence">after-04-pool-form.png</td></tr><tr><td class="num">06</td><td>资源池卡片</td><td><span class="status pass">PASS</span></td><td>卡片展示容量区间、在线/忙碌/扩容中、当前价格与阈值、最近心跳、下次检查时间和排队原因入口。</td><td class="evidence">after-05-pool-card.png</td></tr><tr><td class="num">07</td><td>不兼容供给模式提前说明</td><td><span class="status pass">PASS</span></td><td>未选择资源连接时竞价模式禁用，并明确说明“竞价实例需要先选择资源连接”，不等到提交后才报错。</td><td class="evidence">after-06-pool-incompatible.png</td></tr><tr><td class="num">08</td><td>容量状态与排队原因</td><td><span class="status pass">PASS</span></td><td>在线 2/4、忙碌 1、离线 1、扩容中 1、排队 3；价格 $0.1000 高于阈值 $0.0500 时明确解释暂不扩容且排队 Job 保留。</td><td class="evidence">after-07-capacity-state.png</td></tr><tr><td class="num">09</td><td>资源池详情与 Runner 状态</td><td><span class="status pass">PASS</span></td><td>详情抽屉列出在线/忙碌/离线 Runner、标签、最近心跳、当前 Job，并展示容量、价格、检查时间和资源事件。</td><td class="evidence">after-08-pool-detail.png</td></tr><tr><td class="num">10</td><td>供给测试费用提示与二次确认</td><td><span class="status pass">PASS</span></td><td>弹窗明确提示会创建真实实例并产生费用，展示区域/规格、当前价格、阈值、立即释放和审计说明；未勾选确认时按钮禁用。</td><td class="evidence">after-09-provisioning-confirm.png</td></tr><tr><td class="num">11</td><td>供给测试生命周期</td><td><span class="status pass">PASS</span></td><td>成功后展示从创建实例到 Runner 注册的流水线：费用确认、询价、创建实例、注册 Runner（测试实例跳过并说明原因）、自动释放。</td><td class="evidence">after-10-provisioning-result.png</td></tr><tr><td class="num">12</td><td>只读成员查看容量</td><td><span class="status pass">PASS</span></td><td>只读成员能看到同样的容量与排队原因，但页面不出现新建、编辑、验证或测试供给入口。</td><td class="evidence">after-11-viewer-pools.png</td></tr><tr><td class="num">13</td><td>只读成员查看连接</td><td><span class="status pass">PASS</span></td><td>连接页展示只读边界说明、能力和脱敏凭据，不提供验证或替换密钥操作。</td><td class="evidence">after-12-viewer-connections.png</td></tr><tr><td class="num">14</td><td>供给测试释放失败保留诊断</td><td><span class="status pass">PASS</span></td><td>故意让假供给器释放失败：页面保留实例已创建上下文，自动释放步骤标记失败并显示 release_failed，同时提示已交给容量控制器重试。</td><td class="evidence">after-13-provisioning-release-failed.png</td></tr></tbody></table></table></div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Issues and Observations</h2><small>No defects found</small></div>
+    <div class="empty">No defects were found.</div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Evidence</h2><small>9 screenshots</small></div>
+    <div class="shots"><figure class="wide"><img loading="lazy" src="before-01-resources-placeholder.png" alt="改动前资源池占位页"><figcaption><b>01 · Before</b><span>origin/main 的 /resources 仍是占位页，没有连接或容量信息。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="after-01-pools-empty.png" alt="新资源池页面空态"><figcaption><b>02 · After</b><span>新页面包含容量指标、双页签与空态引导。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="after-04-pool-form.png" alt="从连接创建竞价池"><figcaption><b>05 · Pool form</b><span>连接能力决定可选供给模式；竞价模式默认选中并展示兼容性。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="after-07-capacity-state.png" alt="资源池容量与排队原因"><figcaption><b>08 · Capacity</b><span>在线/忙碌/离线/扩容中、价格阈值与价格超限排队原因同屏展示。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="after-08-pool-detail.png" alt="资源池详情与 Runner 明细"><figcaption><b>09 · Detail</b><span>Runner 状态、最近心跳、当前 Job 与资源事件均可诊断。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="after-09-provisioning-confirm.png" alt="供给测试费用确认"><figcaption><b>10 · Cost confirm</b><span>费用提示、价格阈值、立即释放与审计说明；未确认时禁止提交。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="after-10-provisioning-result.png" alt="供给测试生命周期结果"><figcaption><b>11 · Lifecycle</b><span>创建实例到 Runner 注册的流水线，注册步骤因测试实例立即释放而跳过并说明。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="after-12-viewer-connections.png" alt="只读成员查看资源连接"><figcaption><b>13 · Read-only</b><span>只读成员可见脱敏凭据与能力，但没有验证或替换密钥入口。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="after-13-provisioning-release-failed.png" alt="供给测试释放失败诊断"><figcaption><b>14 · Failure</b><span>释放失败步骤保留稳定错误码，页面不伪装成功并保留重试入口。</span></figcaption></figure></div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Automated Coverage Assessment</h2><small>4 areas reviewed</small></div>
+    <div class="tableWrap"><table><table><thead><tr><th>区域</th><th>覆盖</th><th>结论</th><th>建议</th></tr></thead><tbody><tr><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td></tr></tbody></table></table></div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Conclusion</h2><small>主路径通过，未发现产品缺陷</small></div>
+    <article class="card conclusion pass"><p><strong>资源连接与资源池页面在真实登录、真实 API 与真实浏览器下走通创建、容量解释、详情、费用确认供给测试和只读边界；没有需要修复的缺陷。</strong></p><ul><li>供给测试按 M4-03 设计在注册 Runner 前立即释放，因此注册步骤显示为跳过并说明原因，不伪造注册成功。</li><li>本地冒烟用假供给器替代阿里云调用；真实云验证、价格与库存仍需部署环境冒烟。</li><li>Before 基线为 origin/main 的 /resources 占位页，不是修改后页面的回放。</li><li>释放失败路径用假供给器的 release_error 触发，验证页面保留错误码与“释放重试中”状态。</li></ul></article>
+  </section>
+
+  <p class="foot">M5-03 · 资源连接与资源池产品页面 · 本地开发栈浏览器冒烟</p>
+</main>
+</body>
+</html>

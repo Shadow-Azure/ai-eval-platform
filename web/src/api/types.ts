@@ -32,6 +32,10 @@ export class ApiError extends Error {
   readonly status: number | null;
   readonly code: string | null;
   readonly requestId: string | null;
+  /** Field-level validation messages from the API envelope, keyed by field. */
+  readonly fields: Record<string, string>;
+  /** Safe machine-readable diagnostics (``details``); never secret material. */
+  readonly details: Record<string, unknown> | null;
 
   constructor(
     message: string,
@@ -39,6 +43,8 @@ export class ApiError extends Error {
       status?: number | null;
       code?: string | null;
       requestId?: string | null;
+      fields?: Record<string, string>;
+      details?: Record<string, unknown> | null;
       cause?: unknown;
     } = {},
   ) {
@@ -47,6 +53,8 @@ export class ApiError extends Error {
     this.status = options.status ?? null;
     this.code = options.code ?? null;
     this.requestId = options.requestId ?? null;
+    this.fields = options.fields ?? {};
+    this.details = options.details ?? null;
   }
 }
 

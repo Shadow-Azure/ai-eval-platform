@@ -17,8 +17,9 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, sessionmaker
 
-from ..config import get_settings
+from ..config import Settings, get_settings
 from ..db import get_session
+from ..services import agent_assets as asset_service
 from ..services import budget as budget_service
 from ..services import evaluations as evaluation_service
 from ..services import identity
@@ -27,6 +28,65 @@ from .dependencies import require_admin
 from .errors import error_detail
 
 router = APIRouter(tags=["evaluations"])
+
+
+def _asset_http_error(error: Exception) -> HTTPException:
+    if isinstance(error, asset_service.AgentAssetError):
+        details: dict = {}
+        if error.field:
+            details["fields"] = {error.field: "invalid"}
+        if error.details:
+            details["context"] = error.details
+        return HTTPException(
+            status_code=error.status,
+            detail=error_detail(error.code, str(error), details=details or None),
+        )
+    status = getattr(error, "status", None) or 422
+    if status in (401, 403):
+        status = 422
+    return HTTPException(
+        status_code=status,
+        detail=error_detail(getattr(error, "code", "asset_resolve_failed"), str(error)),
+    )
+
+
+def _resolve_asset_snapshot(
+    session: Session,
+    *,
+    asset_snapshot_id: str | None,
+    asset_source_id: str | None,
+    requested_ref: str | None,
+    asset_paths: list[str] | None,
+    asset_types: dict[str, str] | None,
+    runtime_key: str,
+    created_by: str,
+    settings: Settings,
+):
+    """Return ``(snapshot, frozen_json)``; resolve a source when needed."""
+
+    if asset_snapshot_id:
+        try:
+            snapshot = asset_service.get_snapshot(session, asset_snapshot_id)
+        except asset_service.AgentAssetError as error:
+            raise _asset_http_error(error) from error
+        assets = asset_service.snapshot_assets(session, snapshot.id)
+        return snapshot, asset_service.asset_snapshot_json(snapshot, assets)
+    if asset_source_id and asset_paths:
+        try:
+            snapshot, assets, _created = asset_service.resolve_assets(
+                session,
+                source_id=asset_source_id,
+                requested_ref=requested_ref,
+                paths=asset_paths,
+                types=asset_types or {},
+                runtime_key=runtime_key,
+                created_by=created_by,
+                settings=settings,
+            )
+        except Exception as error:  # AgentAssetError | GitClientError
+            raise _asset_http_error(error) from error
+        return snapshot, asset_service.asset_snapshot_json(snapshot, assets)
+    return None, None
 
 
 class PrepareRequest(BaseModel):
@@ -40,6 +100,10 @@ class PrepareRequest(BaseModel):
     scoring_image_digest: str | None = Field(default=None, max_length=128)
     execution_image_digest: str | None = Field(default=None, max_length=128)
     assets_resolved: bool = True
+    # M5-01: Prepare is a read-only check. The wizard resolves a snapshot via
+    # the administrator-only /agent-assets/resolve endpoint first, then passes
+    # only this id here; no source/ref/path is resolved from this endpoint.
+    asset_snapshot_id: str | None = Field(default=None, max_length=36)
 
 
 class CreateEvaluationRequest(BaseModel):
@@ -64,6 +128,13 @@ class CreateEvaluationRequest(BaseModel):
     scoring_image_digest: str | None = Field(default=None, max_length=128)
     execution_image_digest: str | None = Field(default=None, max_length=128)
     assets_resolved: bool = True
+    # M5-01: the wizard resolves a snapshot before creating the run; a source
+    # + selection may still be sent so the server can freeze it itself.
+    asset_snapshot_id: str | None = Field(default=None, max_length=36)
+    asset_source_id: str | None = Field(default=None, max_length=36)
+    requested_ref: str | None = Field(default=None, max_length=200)
+    asset_paths: list[str] | None = None
+    asset_types: dict[str, str] = Field(default_factory=dict)
 
 
 class ResumeBudgetRequest(BaseModel):
@@ -94,6 +165,7 @@ def prepare_evaluation(
         scoring_image_digest=payload.scoring_image_digest,
         execution_image_digest=payload.execution_image_digest,
         assets_resolved=payload.assets_resolved,
+        asset_snapshot_id=payload.asset_snapshot_id,
     )
     return {"status": "ok", **result.payload()}
 
@@ -113,6 +185,18 @@ def create_evaluation(
     )
     scoring_image_digest = payload.scoring_image_digest
     execution_image_digest = payload.execution_image_digest
+    snapshot, frozen_assets = _resolve_asset_snapshot(
+        session,
+        asset_snapshot_id=payload.asset_snapshot_id,
+        asset_source_id=payload.asset_source_id,
+        requested_ref=payload.requested_ref,
+        asset_paths=payload.asset_paths,
+        asset_types=payload.asset_types,
+        runtime_key=payload.runtime_key or "claude-code",
+        created_by=context.user.email,
+        settings=settings,
+    )
+    asset_snapshot_id = snapshot.id if snapshot is not None else None
     if payload.dataset_version_id:
         if not (payload.model_config_id and payload.resource_pool_id):
             raise HTTPException(
@@ -135,6 +219,7 @@ def create_evaluation(
             scoring_image_digest=payload.scoring_image_digest,
             execution_image_digest=payload.execution_image_digest,
             assets_resolved=payload.assets_resolved,
+            asset_snapshot_id=asset_snapshot_id,
         )
         if check.blockers:
             raise HTTPException(
@@ -173,6 +258,8 @@ def create_evaluation(
             resource_pool_id=payload.resource_pool_id,
             scoring_image_digest=scoring_image_digest,
             execution_image_digest=execution_image_digest,
+            asset_snapshot_id=asset_snapshot_id,
+            asset_snapshot_json=frozen_assets,
             consistency_json=check.payload() if payload.dataset_version_id else {},
             settings=settings,
         )

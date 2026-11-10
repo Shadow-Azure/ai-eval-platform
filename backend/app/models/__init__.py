@@ -1,3 +1,11 @@
+from .agent_asset import (
+    ASSET_SOURCE_STATUSES,
+    ASSET_TYPES,
+    SELECTION_MODES,
+    AgentAsset,
+    AgentAssetSnapshot,
+    AgentAssetSource,
+)
 from .base import Base, CreatedAtMixin, TimestampMixin, json_type, new_id, tenant_fk, utcnow
 from .dataset import (
     AGGREGATOR_WHITELIST,
@@ -69,6 +77,12 @@ __all__ = [
     "AuditLog",
     "Outbox",
     "ServiceHeartbeat",
+    "AgentAssetSource",
+    "AgentAssetSnapshot",
+    "AgentAsset",
+    "ASSET_SOURCE_STATUSES",
+    "ASSET_TYPES",
+    "SELECTION_MODES",
     "Connection",
     "CONNECTION_STATUSES",
     "PROVISIONING_MODES",
