@@ -218,12 +218,28 @@ function errorObject(payload: unknown): unknown {
   return null;
 }
 
-function errorInfo(payload: unknown): { code: string | null; message: string | null } {
+function errorInfo(payload: unknown): {
+  code: string | null;
+  message: string | null;
+  fields: Record<string, string> | null;
+  details: Record<string, unknown> | null;
+} {
   const error = errorObject(payload);
-  if (!isRecord(error)) return { code: null, message: null };
+  if (!isRecord(error)) {
+    return { code: null, message: null, fields: null, details: null };
+  }
+  const fields = isRecord(error.fields)
+    ? Object.fromEntries(
+        Object.entries(error.fields).filter(
+          (entry): entry is [string, string] => typeof entry[1] === "string",
+        ),
+      )
+    : null;
   return {
     code: typeof error.code === "string" ? error.code : null,
     message: typeof error.message === "string" ? error.message : null,
+    fields: fields && Object.keys(fields).length > 0 ? fields : null,
+    details: isRecord(error.details) ? error.details : null,
   };
 }
 
@@ -264,6 +280,7 @@ export async function request(path: string, init?: RequestInit): Promise<unknown
       status: response.status,
       code: info.code,
       fields: errorFields(payload),
+      details: info.details,
     });
   }
   return payload;

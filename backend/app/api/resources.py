@@ -198,8 +198,15 @@ def _event_payload(event: ResourceEvent) -> dict[str, Any]:
     }
 
 
-def _runner_summary(session: Session, pool: ResourcePool) -> dict[str, int]:
-    summary = {"total": 0, "online": 0, "busy": 0, "draining": 0, "offline": 0}
+def _runner_summary(session: Session, pool: ResourcePool) -> dict[str, Any]:
+    summary: dict[str, Any] = {
+        "total": 0,
+        "online": 0,
+        "busy": 0,
+        "draining": 0,
+        "offline": 0,
+        "last_heartbeat_at": None,
+    }
     rows = session.execute(
         select(Runner.status, func.count())
         .where(Runner.resource_pool_id == pool.id)
@@ -209,6 +216,13 @@ def _runner_summary(session: Session, pool: ResourcePool) -> dict[str, int]:
         summary["total"] += int(count)
         if runner_status in summary:
             summary[runner_status] += int(count)
+    summary["last_heartbeat_at"] = _iso(
+        session.scalar(
+            select(func.max(Runner.last_heartbeat_at)).where(
+                Runner.resource_pool_id == pool.id
+            )
+        )
+    )
     return summary
 
 
@@ -255,6 +269,16 @@ def _provider_key(mode: str, connection: Connection | None) -> str | None:
 def _commit_or_conflict(session: Session, message: str) -> None:
     try:
         session.commit()
+    except IntegrityError as exc:
+        session.rollback()
+        raise _http_error(409, "resource_conflict", message) from exc
+
+
+def _flush_or_conflict(session: Session, message: str) -> None:
+    """Materialize a new row (and its id) before the audit entry is added."""
+
+    try:
+        session.flush()
     except IntegrityError as exc:
         session.rollback()
         raise _http_error(409, "resource_conflict", message) from exc
@@ -313,6 +337,20 @@ def create_connection(
         status="unverified",
     )
     session.add(connection)
+    _flush_or_conflict(session, "同名资源连接已存在")
+    identity.record_audit(
+        session,
+        tenant_id=tenant_id,
+        actor_user_id=context.user.id,
+        action="resource.connection.created",
+        target_type="connection",
+        target_id=connection.id,
+        metadata={
+            "provider": connection.provider,
+            "region": connection.region,
+            "capabilities": capabilities,
+        },
+    )
     _commit_or_conflict(session, "同名资源连接已存在")
     return connection_payload(connection, session=session)
 
@@ -337,6 +375,15 @@ def test_connection(
     payload = verify_connection(
         session, connection, provisioner=provisioner, now=_now()
     )
+    identity.record_audit(
+        session,
+        tenant_id=context.tenant.id,
+        actor_user_id=context.user.id,
+        action="resource.connection.verified",
+        target_type="connection",
+        target_id=connection.id,
+        metadata={"status": payload["status"]},
+    )
     session.commit()
     return payload
 
@@ -359,7 +406,18 @@ def list_resource_pools(
             .order_by(ResourcePool.name)
         )
     )
-    return {"items": [_pool_state_payload(session, pool, settings) for pool in pools]}
+    # The product page needs capacity plus runner state for every card. The
+    # detail endpoint repeats the same shape; keeping list and detail
+    # identical avoids a second request per pool and a divergent UI model.
+    return {
+        "items": [
+            {
+                **_pool_state_payload(session, pool, settings),
+                "runners": _runner_summary(session, pool),
+            }
+            for pool in pools
+        ]
+    }
 
 
 @router.post("/api/v1/resource-pools", status_code=status.HTTP_201_CREATED)
@@ -402,6 +460,22 @@ def create_resource_pool(
         status="active",
     )
     session.add(pool)
+    _flush_or_conflict(session, "同名资源池已存在")
+    identity.record_audit(
+        session,
+        tenant_id=tenant_id,
+        actor_user_id=context.user.id,
+        action="resource.pool.created",
+        target_type="resource_pool",
+        target_id=pool.id,
+        metadata={
+            "provisioning_mode": mode,
+            "provider_key": pool.provider_key,
+            "min_capacity": pool.min_capacity,
+            "max_capacity": pool.max_capacity,
+            "connection_id": pool.connection_id,
+        },
+    )
     _commit_or_conflict(session, "同名资源池已存在")
     return pool_payload(pool)
 
@@ -487,6 +561,22 @@ def update_resource_pool(
     if "labels" in fields:
         pool.labels_json = dict(fields["labels"] or {})
 
+    identity.record_audit(
+        session,
+        tenant_id=tenant_id,
+        actor_user_id=context.user.id,
+        action="resource.pool.updated",
+        target_type="resource_pool",
+        target_id=pool.id,
+        metadata={
+            "changed_fields": sorted(fields),
+            "provisioning_mode": mode,
+            "provider_key": pool.provider_key,
+            "min_capacity": pool.min_capacity,
+            "max_capacity": pool.max_capacity,
+            "connection_id": pool.connection_id,
+        },
+    )
     _commit_or_conflict(session, "资源池配置冲突")
     return pool_payload(pool)
 
@@ -583,6 +673,7 @@ def test_provisioning(
     # then release immediately. A failed release is parked as ``draining`` and
     # the capacity controller retries it every tick (M4-03).
     released = False
+    release_failure: dict[str, Any] | None = None
     try:
         provisioner.release(session=session, instance=instance, now=now)
         instance.status = "released"
@@ -590,6 +681,7 @@ def test_provisioning(
         released = True
     except ProvisionerError as exc:
         instance.status = "draining"
+        release_failure = {"code": exc.code, "message": exc.message}
         capacity_control.append_resource_event(
             session,
             pool,
@@ -631,6 +723,63 @@ def test_provisioning(
     )
     session.commit()
 
+    # A provisioning test is synchronous: the instance is created and released
+    # in one request, so runner registration never happens for the probe. The
+    # page renders these stages instead of guessing which steps occurred.
+    checked_at = _iso(now)
+    steps: list[dict[str, Any]] = [
+        {
+            "key": "cost_confirmed",
+            "status": "passed",
+            "at": checked_at,
+            "detail": {"confirm_cost": True},
+        },
+        {
+            "key": "quote",
+            "status": "passed",
+            "at": checked_at,
+            "detail": {
+                "price_usd": price_usd,
+                "price_threshold_usd": threshold,
+                "price_available": quote.available,
+                "region": quote.region,
+                "instance_type": quote.instance_type,
+            },
+        },
+        {
+            "key": "instance_created",
+            "status": "passed",
+            "at": checked_at,
+            "detail": {
+                "instance_id": instance.id,
+                "provider_instance_id": instance.provider_instance_id,
+                "status": "requested",
+            },
+        },
+        {
+            "key": "runner_registration",
+            "status": "skipped",
+            "at": None,
+            "detail": {
+                "reason": "test_instance_released_before_registration",
+                "note": (
+                    "供给测试实例立即释放，不注册 Runner；正式扩容时由供给器"
+                    "在实例就绪后注册带池标签的临时 Runner。"
+                ),
+            },
+        },
+        {
+            "key": "instance_released",
+            "status": "passed" if released else "failed",
+            "at": checked_at,
+            "detail": {
+                "instance_id": instance.id,
+                "status": instance.status,
+                **(release_failure or {}),
+            },
+        },
+    ]
+
     return {
         "instance": {
             "id": instance.id,
@@ -645,4 +794,6 @@ def test_provisioning(
         "price_available": quote.available,
         "region": quote.region,
         "instance_type": quote.instance_type,
+        "released": released,
+        "steps": steps,
     }

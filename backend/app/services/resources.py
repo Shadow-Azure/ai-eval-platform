@@ -26,6 +26,8 @@ CONNECTION_STATUS_UNVERIFIED = "unverified"
 CONNECTION_STATUS_VERIFIED = "verified"
 CONNECTION_STATUS_FAILED = "failed"
 
+#: Structural punctuation left over when a JSON secret is masked.
+CHARS_TO_STRIP = '"}'
 
 
 class ResourceValidationError(Exception):
@@ -75,6 +77,18 @@ def _iso(value: datetime | None) -> str | None:
 
 def _decimal_str(value: Decimal | None) -> str | None:
     return None if value is None else str(value)
+
+
+def _display_credential_mask(mask: str | None) -> str | None:
+    """Keep the mask readable when the secret is a JSON document.
+
+    Aliyun credentials are stored as ``{"access_key_id": ..., "access_key_secret": ...}``,
+    so ``mask_secret`` can end with ``"}``. Those structural characters are not
+    secret material but make the UI look broken; trim them without widening the
+    mask itself.
+    """
+
+    return None if mask is None else mask.rstrip(CHARS_TO_STRIP)
 
 
 def connection_capabilities(connection: Connection | None) -> set[str]:
@@ -282,7 +296,11 @@ def connection_payload(
         "capabilities": sorted(connection_capabilities(connection)),
         "status": connection.status,
         "last_verified_at": _iso(connection.last_verified_at),
-        "credential_mask": credential.secret_mask if credential is not None else None,
+        "credential_mask": (
+            _display_credential_mask(credential.secret_mask)
+            if credential is not None
+            else None
+        ),
     }
 
 
