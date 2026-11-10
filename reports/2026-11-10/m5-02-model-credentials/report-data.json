@@ -1,0 +1,428 @@
+{
+  "title": "M5-02 模型凭据与配置页 · 浏览器集成冒烟",
+  "eyebrow": "Browser smoke · 真实登录 / 列表 / 新建 / 测试 / 轮换 / 撤销 / 权限 / 预检",
+  "summary": "对 M5-02 模型凭据页做端到端浏览器冒烟：基线占位页对比、配置列表与详情、表单校验、新建凭据、刷新后的密钥卫生、端点连通性、搜索空态、轮换、撤销、只读权限、向导感知、预检阻塞与失败诊断。共 16 个场景、37 项断言全部通过，未发现产品缺陷。",
+  "meta": "2026-11-10 · AI Eval Platform · M5-02",
+  "metrics": [
+    {
+      "value": "16",
+      "label": "冒烟场景"
+    },
+    {
+      "value": "37",
+      "label": "断言"
+    },
+    {
+      "value": "0",
+      "label": "发现缺陷"
+    },
+    {
+      "value": "10",
+      "label": "新增 API 集成测试"
+    }
+  ],
+  "facts": [
+    {
+      "label": "应用",
+      "value": "AI Eval Platform 本地开发栈（FastAPI + Vite React）"
+    },
+    {
+      "label": "分支",
+      "value": "agent/complete-m5-02-3f0df081fb69（PR head）"
+    },
+    {
+      "label": "基线",
+      "value": "origin/main @ 5ae37df"
+    },
+    {
+      "label": "数据库",
+      "value": "SQLite 演示库 + 迁移 0015_dataset_image_digests"
+    },
+    {
+      "label": "浏览器",
+      "value": "Google Chrome headless · Playwright 1.65.0 · 1440×1000"
+    },
+    {
+      "label": "数据形态",
+      "value": "5 个模型配置（4 正常 / 1 撤销）+ 流程中新建 1 个、轮换 1 个、撤销 1 个"
+    },
+    {
+      "label": "模型端点",
+      "value": "本地假供应商（可达）与不可达端口各一个，确定性覆盖成功/失败"
+    },
+    {
+      "label": "账号",
+      "value": "本地演示管理员与只读成员（密码不写入报告）"
+    }
+  ],
+  "matrix": {
+    "columns": [
+      "#",
+      "场景",
+      "结果",
+      "说明",
+      "证据"
+    ],
+    "rows": [
+      {
+        "id": "01",
+        "name": "基线：模型凭据占位页",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "基线 `origin/main` 的 /models 只有“后续里程碑接入”占位，无列表、操作或凭据信息。",
+        "evidence": [
+          "before-01-models-placeholder.png"
+        ]
+      },
+      {
+        "id": "02",
+        "name": "基线：发起评测未标记撤销凭据",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "选择已撤销凭据的模型时，旧页面照常展示选项且没有警告。",
+        "evidence": [
+          "before-02-wizard-revoked-model.png"
+        ]
+      },
+      {
+        "id": "03",
+        "name": "模型配置列表与可用性",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "展示 5 个配置、4/5 可用、服务商、端点、模型名、协议、价格、掩码与最近使用；撤销项有独立状态。",
+        "evidence": [
+          "after-01-models-list.png"
+        ]
+      },
+      {
+        "id": "04",
+        "name": "模型配置详情",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "详情抽屉展示掩码、价格、最近轮换/使用、累计请求、Token、成本与限制。",
+        "evidence": [
+          "after-02-detail.png"
+        ]
+      },
+      {
+        "id": "05",
+        "name": "表单字段级校验",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "空表单提交时在服务商、名称、端点、模型名等字段就地报错，不发起写请求。",
+        "evidence": [
+          "after-03-validation.png"
+        ]
+      },
+      {
+        "id": "06",
+        "name": "新建模型配置",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "可新建凭据并保存；卡片只出现 `****1234` 掩码。流程同时断言写请求后列表立即出现新配置。",
+        "evidence": [
+          "after-04-create-drawer.png",
+          "after-05-created.png"
+        ]
+      },
+      {
+        "id": "07",
+        "name": "刷新与浏览器状态",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "刷新后配置仍在、密钥仍只显示掩码；DOM、localStorage、sessionStorage、URL 与资源请求 URL 均无明文 Key。",
+        "evidence": [
+          "after-05-created.png"
+        ]
+      },
+      {
+        "id": "08",
+        "name": "端点连通性批量测试",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "全部验证后 4 个可达端点显示“刚刚验证通过”，不可达端点显示“验证失败”；可用数保持 5/6。",
+        "evidence": [
+          "after-06-test-all.png"
+        ]
+      },
+      {
+        "id": "09",
+        "name": "搜索无结果空态",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "无匹配时展示空态与“清除搜索”，不伪造数据。",
+        "evidence": [
+          "after-07-search-empty.png"
+        ]
+      },
+      {
+        "id": "10",
+        "name": "轮换 Key",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "替换 Key 后掩码变为 `****9999`，旧 Key 立即失效，新 Key 自动复测。",
+        "evidence": [
+          "after-08-rotate-dialog.png",
+          "after-09-rotated.png"
+        ]
+      },
+      {
+        "id": "11",
+        "name": "撤销凭据",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "二次确认展示影响范围；撤销后卡片标“已撤销”、可用数降为 4/6。",
+        "evidence": [
+          "after-10-revoke-dialog.png",
+          "after-11-revoked.png"
+        ]
+      },
+      {
+        "id": "12",
+        "name": "只读成员权限边界",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "只读账号可读配置与掩码，页面没有新增/替换/撤销/测试入口；API 写请求返回 403 `forbidden`。",
+        "evidence": [
+          "after-12-viewer-readonly.png"
+        ]
+      },
+      {
+        "id": "13",
+        "name": "向导即时感知",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "新建的模型立即出现在发起评测选择中；已撤销凭据的选项带“凭据已撤销”，选中后出现阻塞说明。",
+        "evidence": [
+          "after-13-wizard-warning.png"
+        ]
+      },
+      {
+        "id": "14",
+        "name": "预检阻塞",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "对撤销凭据运行一致性检查，显示 `credential_unavailable` 阻塞项且“创建评测”禁用。",
+        "evidence": [
+          "after-14-preflight-blocked.png"
+        ]
+      },
+      {
+        "id": "15",
+        "name": "连通性失败诊断",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "失败弹窗展示稳定错误码 `provider_unavailable`、字段 `Base URL` 与失败原因，并给出修复建议。",
+        "evidence": [
+          "after-15-diagnostic.png"
+        ]
+      },
+      {
+        "id": "16",
+        "name": "API 预检不变量",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "直接调用 prepare：撤销配置返回 `credential_unavailable` 阻塞项；页面断言与 API 断言一致。",
+        "evidence": []
+      }
+    ]
+  },
+  "screenshots": [
+    {
+      "src": "before-01-models-placeholder.png",
+      "alt": "改动前模型凭据占位页",
+      "label": "Before · /models",
+      "caption": "基线只有占位说明，没有配置列表与凭据操作。",
+      "variant": "wide"
+    },
+    {
+      "src": "before-02-wizard-revoked-model.png",
+      "alt": "改动前向导选中撤销模型",
+      "label": "Before · 发起评测",
+      "caption": "旧页面允许选中已撤销凭据的模型，且没有任何警告。",
+      "variant": "wide"
+    },
+    {
+      "src": "after-01-models-list.png",
+      "alt": "模型凭据列表",
+      "label": "After · 列表",
+      "caption": "真实 API 数据驱动：服务商、端点、模型、协议、价格、掩码、最近使用与撤销状态。",
+      "variant": "wide"
+    },
+    {
+      "src": "after-02-detail.png",
+      "alt": "模型配置详情",
+      "label": "After · 详情",
+      "caption": "详情抽屉展示掩码、价格、最近使用与累计用量。",
+      "variant": "normal"
+    },
+    {
+      "src": "after-03-validation.png",
+      "alt": "表单字段校验",
+      "label": "After · 校验",
+      "caption": "空表单提交时字段就地报错。",
+      "variant": "normal"
+    },
+    {
+      "src": "after-04-create-drawer.png",
+      "alt": "新建模型凭据抽屉",
+      "label": "After · 新建",
+      "caption": "Key 输入为密码框，保存后只显示掩码；可选择已有凭据或本次新建。",
+      "variant": "normal"
+    },
+    {
+      "src": "after-05-created.png",
+      "alt": "新建后的列表",
+      "label": "After · 新建完成",
+      "caption": "新配置立即出现，凭据仅显示 `****1234`，浏览器刷新后仍只显示掩码。",
+      "variant": "wide"
+    },
+    {
+      "src": "after-06-test-all.png",
+      "alt": "全部验证结果",
+      "label": "After · 连通性",
+      "caption": "可达端点显示验证通过，不可达端点显示验证失败；可用数与撤销状态一致。",
+      "variant": "wide"
+    },
+    {
+      "src": "after-07-search-empty.png",
+      "alt": "搜索空态",
+      "label": "After · 空态",
+      "caption": "无匹配结果时展示空态与清除搜索入口。",
+      "variant": "wide"
+    },
+    {
+      "src": "after-08-rotate-dialog.png",
+      "alt": "替换 Key 弹窗",
+      "label": "After · 轮换",
+      "caption": "轮换需要输入新 Key，并说明旧 Key 失效与运行中评测使用短期凭据。",
+      "variant": "normal"
+    },
+    {
+      "src": "after-09-rotated.png",
+      "alt": "轮换后的列表",
+      "label": "After · 轮换完成",
+      "caption": "掩码更新为 `****9999`，页面无明文 Key。",
+      "variant": "wide"
+    },
+    {
+      "src": "after-10-revoke-dialog.png",
+      "alt": "撤销确认弹窗",
+      "label": "After · 撤销确认",
+      "caption": "确认弹窗说明影响范围与恢复方式。",
+      "variant": "normal"
+    },
+    {
+      "src": "after-11-revoked.png",
+      "alt": "撤销后的列表",
+      "label": "After · 撤销完成",
+      "caption": "卡片标“已撤销”，可用数降为 4/6；仍可替换 Key 恢复。",
+      "variant": "wide"
+    },
+    {
+      "src": "after-12-viewer-readonly.png",
+      "alt": "只读成员页面",
+      "label": "After · 只读",
+      "caption": "只读成员看不到新增、替换、撤销与测试入口；API 写请求返回 403。",
+      "variant": "wide"
+    },
+    {
+      "src": "after-13-wizard-warning.png",
+      "alt": "发起评测中的撤销警告",
+      "label": "After · 向导",
+      "caption": "新模型即时可见；撤销凭据选项带标记，选中后提示预检会阻塞。",
+      "variant": "wide"
+    },
+    {
+      "src": "after-14-preflight-blocked.png",
+      "alt": "预检阻塞",
+      "label": "After · 预检",
+      "caption": "一致性检查列出 `credential_unavailable`，创建按钮禁用。",
+      "variant": "wide"
+    },
+    {
+      "src": "after-15-diagnostic.png",
+      "alt": "连通性失败诊断",
+      "label": "After · 诊断",
+      "caption": "失败弹窗展示错误码、字段级原因与修复建议。",
+      "variant": "normal"
+    }
+  ],
+  "coverage": {
+    "columns": [
+      "区域",
+      "覆盖",
+      "结论",
+      "建议"
+    ],
+    "rows": [
+      {
+        "area": "模型配置/凭据 API",
+        "coverage": "API 集成测试",
+        "conclusion": "新增 10 个测试覆盖掩码、用量、权限、轮换、撤销、字段错误、临时配置与密钥不泄露；既有网关与预检回归通过。",
+        "recommendation": "保持 API 层为权限与秘密边界的唯一裁决。"
+      },
+      {
+        "area": "页面主路径与状态",
+        "coverage": "浏览器冒烟",
+        "conclusion": "34 项断言覆盖列表、详情、校验、新建、刷新、测试、空态、轮换、撤销、权限、向导与预检。",
+        "recommendation": "UI 大改时复用同一数据形态重跑。"
+      },
+      {
+        "area": "失败诊断",
+        "coverage": "浏览器冒烟",
+        "conclusion": "3 项断言验证错误码、字段与修复建议。",
+        "recommendation": "真实供应商上线前用真实 401/429 再抽查。"
+      },
+      {
+        "area": "真实供应商",
+        "coverage": "未覆盖",
+        "conclusion": "冒烟使用确定性假供应商与不可达端口，不消耗真实额度。",
+        "recommendation": "发布前由管理员用真实 Key 手动点一次连通性测试。"
+      }
+    ]
+  },
+  "conclusion": {
+    "kind": "pass",
+    "label": "Ready for review",
+    "summary": "16 个场景、37 项断言全部通过；页面、权限与预检行为符合 M5-02 验收。",
+    "points": [
+      "预期控制台噪声已排除：未登录 auth/me 401、故障端点 503、AntD 静态 message 提示，均非产品缺陷。",
+      "Before 截图来自独立 worktree 的 origin/main，使用同一数据库、账号、视口与假供应商。",
+      "真实供应商连通性与费用不在本次自动化范围内。"
+    ]
+  },
+  "footer": "Generated from report-data.json by computer-use-smoke-reporting; screenshots are unedited browser captures."
+}

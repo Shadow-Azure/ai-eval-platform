@@ -2,7 +2,7 @@
 
 English | [中文](architecture.md)
 
-The repository is entering M4: the execution foundation and the real evaluation loop are in place, and concurrency scheduling, timeouts and cancellation, budget pausing, and the elastic resource pool are being completed.
+The repository is entering M5: the execution foundation and the real evaluation loop are in place, and model credentials, resource pools, and result browsing are being organized into complete Web product workflows.
 
 ## Components
 
@@ -13,7 +13,7 @@ The repository is entering M4: the execution foundation and the real evaluation 
 | `scripts/` | Mechanical documentation and workflow gates | Not product runtime |
 | `.github/workflows/` | CI decisions for docs, flow, tests, and deployment | Not a local debugging substitute |
 | `backend/` | FastAPI control plane, worker, migrations, and identity/dataset/evaluation services | No agent execution and no plaintext secrets |
-| `web/` | React console: login, app shell, evaluation, and operations status pages | Reaches the control plane only through same-origin `/api` |
+| `web/` | React console: login, app shell, model credentials, evaluation, and operations status pages | Reaches the control plane only through same-origin `/api` |
 | `runner-contract/` | Runner dispatch, manifest, heartbeat, and callback schemas | Contract only |
 | `runner/` | Reusable workflow, synthetic task, and contract tests | No dataset- or agent-specific branches |
 
@@ -41,6 +41,10 @@ Login uses an account and password; passwords are stored as salted scrypt hashes
 ## Operations status
 
 An administrator can open `/operations` to see liveness results for the control-plane API, PostgreSQL, Redis, object storage, the Runner plane, the dispatch worker, and the model gateway, plus resource pools, Runners, datasets, model configurations, the dispatch queue, and database status. A read-only member does not see it in navigation; the page refreshes every 30 seconds.
+
+## Models and credentials
+
+An administrator maintains model configurations and encrypted credentials at `/models`: the list shows provider, endpoint, model name, API protocol, pricing, mask, and recent use; create and edit can bind an existing credential or write a new key; key replacement, credential revocation, and connectivity tests happen on the same page. Only administrators perform writes; ordinary members are read-only. Configuration changes appear immediately in the launch wizard's model choices, and an unusable credential becomes a blocking item in preflight.
 
 ## Runner contract
 
