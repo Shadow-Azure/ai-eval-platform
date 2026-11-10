@@ -405,6 +405,57 @@ class AliyunEcsClient:
         except (ValueError, TypeError):
             return ""
 
+    def run_shell_command(
+        self, region_id: str, instance_id: str, content: str, *, timeout: int = 120
+    ) -> str:
+        """Run one Cloud Assistant shell command; returns its invoke id."""
+
+        payload = self.call(
+            "RunCommand",
+            {
+                "RegionId": region_id,
+                "InstanceId.1": instance_id,
+                "Type": "RunShellScript",
+                "Name": "ai-eval-platform-diagnostic",
+                "CommandContent": content,
+                "Timeout": timeout,
+            },
+        )
+        invoke_id = payload.get("InvokeId")
+        if not isinstance(invoke_id, str) or not invoke_id:
+            raise ProvisionerError("cloud_api_unreadable", "RunCommand 未返回 InvokeId")
+        return invoke_id
+
+    def describe_invocation_result(
+        self, region_id: str, invoke_id: str, instance_id: str
+    ) -> str:
+        """Return the decoded output of a Cloud Assistant invocation, or ''."""
+
+        payload = self.call(
+            "DescribeInvocationResults",
+            {
+                "RegionId": region_id,
+                "InvokeId": invoke_id,
+                "InstanceId": instance_id,
+                "ContentEncoding": "Base64",
+            },
+        )
+        invocation = payload.get("Invocation") or {}
+        results = (invocation.get("InvocationResults") or {}).get("InvocationResult") or []
+        if isinstance(results, dict):
+            results = [results]
+        for row in results:
+            if not isinstance(row, dict) or row.get("InstanceId") != instance_id:
+                continue
+            output = row.get("Output")
+            if not isinstance(output, str) or not output:
+                continue
+            try:
+                return base64.b64decode(output).decode("utf-8", errors="replace")
+            except (ValueError, TypeError):
+                return output
+        return ""
+
     def delete_instance(self, region_id: str, instance_id: str) -> bool:
         try:
             self.call(

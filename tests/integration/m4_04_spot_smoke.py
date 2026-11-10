@@ -263,6 +263,37 @@ def _build_report(evidence: dict) -> dict:
     }
 
 
+def _diagnose_instance(client, region: str, instance_id: str, secret: str) -> str:
+    """Best-effort cloud-init/runner logs through Cloud Assistant, redacted."""
+
+    script = """#!/bin/bash
+set +e
+echo '== os =='; cat /etc/os-release 2>&1; uname -a
+echo '== cloud-init status =='; cloud-init status --long 2>&1
+echo '== cloud-init output tail =='; tail -n 160 /var/log/cloud-init-output.log 2>&1
+echo '== cloud-init log tail =='; tail -n 80 /var/log/cloud-init.log 2>&1
+echo '== github-runner unit =='; systemctl status github-runner.service --no-pager 2>&1 | tail -n 60
+echo '== github-runner journal =='; journalctl -u github-runner.service -n 80 --no-pager 2>&1
+echo '== docker unit =='; systemctl status docker --no-pager 2>&1 | tail -n 30
+"""
+    try:
+        invoke = client.run_shell_command(region, instance_id, script)
+    except Exception as exc:  # noqa: BLE001 - diagnostics must never mask the smoke
+        code = getattr(exc, "code", type(exc).__name__)
+        return f"cloud-assistant unavailable: {code}"
+    deadline = time.time() + 120
+    output = ""
+    while time.time() < deadline:
+        output = client.describe_invocation_result(region, invoke, instance_id)
+        if output:
+            break
+        time.sleep(5)
+    output = output.replace(secret, "<redacted>")
+    output = re.sub(r"--jitconfig\s+\S+", "--jitconfig <redacted>", output)
+    output = re.sub(r"JIT_CONFIG=\S+", "JIT_CONFIG=<redacted>", output)
+    return output[-6000:]
+
+
 def _write_outputs(evidence: dict, out: Path, *, render: bool) -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(evidence, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -606,8 +637,14 @@ def main() -> int:
         except Exception as exc:  # noqa: BLE001 - record the failure, then clean up
             evidence["ok"] = False
             # Bootstrap failures happen before the runner can report anything;
-            # keep the tail of the instance console output (redacted) so the
-            # next attempt can distinguish apt/network/JIT problems.
+            # keep Cloud Assistant and console output (redacted) so the next
+            # attempt can distinguish apt/network/JIT problems.
+            evidence["diagnostics"] = _diagnose_instance(
+                client,
+                region,
+                evidence.get("instance_id") or instance.provider_instance_id,
+                ak_secret,
+            )
             try:
                 console = client.get_instance_console_output(
                     region, evidence.get("instance_id") or instance.provider_instance_id

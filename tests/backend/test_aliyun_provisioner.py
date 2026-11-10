@@ -88,6 +88,24 @@ class FakeAliyun:
             return 200, json.dumps(
                 {"Instances": {"Instance": [self.instances[i] for i in ids if i in self.instances]}}
             )
+        if action == "RunCommand":
+            return 200, json.dumps({"InvokeId": "inv-test-1"})
+        if action == "DescribeInvocationResults":
+            return 200, json.dumps(
+                {
+                    "Invocation": {
+                        "InvocationResults": {
+                            "InvocationResult": [
+                                {
+                                    "InstanceId": "i-test-1",
+                                    "InvocationStatus": "Success",
+                                    "Output": base64.b64encode(b"diag output").decode(),
+                                }
+                            ]
+                        }
+                    }
+                }
+            )
         if action == "GetInstanceConsoleOutput":
             return 200, json.dumps({"Output": base64.b64encode(b"cloud-init boot log").decode()})
         if action == "DeleteInstance":
@@ -658,3 +676,19 @@ def test_console_output_is_decoded(
         transport=transport,
     )
     assert "cloud-init" in client.get_instance_console_output("cn-hangzhou", "i-test-1")
+
+
+def test_cloud_assistant_diagnostic_round_trip(
+    session: Session, scope: dict[str, str]
+) -> None:
+    _connection(session, scope)
+    transport = FakeAliyun()
+    client = AliyunEcsClient(
+        access_key_id=SECRET_AK_ID,
+        access_key_secret=SECRET_AK_SECRET,
+        endpoint="https://ecs.aliyuncs.com",
+        transport=transport,
+    )
+    invoke = client.run_shell_command("cn-hangzhou", "i-test-1", "cloud-init status")
+    assert invoke == "inv-test-1"
+    assert client.describe_invocation_result("cn-hangzhou", invoke, "i-test-1") == "diag output"
