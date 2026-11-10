@@ -227,7 +227,11 @@ def test_prepare_freezes_snapshot_with_ttl(client: TestClient, session: Session)
     assert preparation.status == "active"
     assert preparation.created_by
     assert preparation.snapshot_json["case_count"] == 2
-    assert preparation.expires_at > datetime.now(UTC).replace(tzinfo=None)
+    # SQLite returns naive timestamps and PostgreSQL aware ones; normalize.
+    expires_at = preparation.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=UTC)
+    assert expires_at > datetime.now(UTC)
 
 
 def test_create_from_preparation_uses_frozen_subset_and_policy(
