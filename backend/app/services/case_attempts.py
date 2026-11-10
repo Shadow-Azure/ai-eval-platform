@@ -672,7 +672,13 @@ def handle_completed(
 
 
 def build_retry_dispatch(
-    session: Session, ctx: CaseContext, *, new_attempt_no: int, settings: Settings, now: datetime
+    session: Session,
+    ctx: CaseContext,
+    *,
+    new_attempt_no: int,
+    settings: Settings,
+    now: datetime,
+    retry_reason: str = "runner_retryable_failure",
 ) -> Outbox:
     """One single-case shard dispatch for the retry attempt.
 
@@ -741,7 +747,7 @@ def build_retry_dispatch(
         shard_id=retry_shard_id,
         dispatch_key=f"{dispatch_key}:{ctx.case_run.id}",
         resource_pool_id=run.resource_pool_id,
-        retry_reason="runner_retryable_failure",
+        retry_reason=retry_reason,
     )
     session.add(retry_attempt)
     ctx.case_run.latest_attempt_no = new_attempt_no

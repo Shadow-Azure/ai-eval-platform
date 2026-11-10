@@ -32,6 +32,12 @@ export interface EvaluationSummary {
   finished_count?: number;
   unfinished_count?: number;
   shard_size: number;
+  requested_concurrency?: number;
+  effective_concurrency?: number | null;
+  queue_reason?: string | null;
+  resource_pool_id?: string | null;
+  case_timeout_seconds?: number;
+  max_attempts?: number;
   created_at: string | null;
   started_at: string | null;
   finished_at: string | null;
@@ -39,6 +45,7 @@ export interface EvaluationSummary {
   created_by: string;
   dataset_version_id?: string | null;
   runtime_key?: string | null;
+  runtime_version?: string | null;
   model_name?: string | null;
   model_budget_usd?: string | null;
   budget_spent_usd?: string | null;
@@ -73,16 +80,29 @@ export interface FrozenAssetSnapshot {
   assets?: FrozenAsset[];
 }
 
+export interface CaseTestSummary {
+  passed: number;
+  failed: number;
+  skipped: number;
+  error: number;
+  f2p_failed: number;
+  p2p_failed: number;
+}
+
 export interface EvaluationCase {
   id: string;
   case_key: string;
   ordinal: number;
+  repo?: string | null;
   execution_status: string;
   result_status: string;
+  trace_status?: string;
   latest_attempt_no: number;
   duration_ms: number | null;
   error_code: string | null;
   error_summary: string | null;
+  metrics?: Record<string, unknown>;
+  test_summary?: CaseTestSummary;
   updated_at: string | null;
 }
 
@@ -102,6 +122,10 @@ export interface EvaluationDetail extends EvaluationSummary {
   cases: EvaluationCase[];
   shards: EvaluationShard[];
   asset_snapshot?: FrozenAssetSnapshot | null;
+  consistency?: Record<string, unknown>;
+  case_counts?: Record<string, number>;
+  trace_counts?: Record<string, number>;
+  retryable_count?: number;
 }
 
 export interface EvaluationEvent {
@@ -139,6 +163,9 @@ export interface CreateEvaluationRequest {
   requested_ref?: string;
   asset_paths?: string[];
   asset_types?: Record<string, string>;
+  preparation_id?: string;
+  case_timeout_seconds?: number;
+  max_attempts?: number;
 }
 
 export interface PreflightIssue {
@@ -148,11 +175,115 @@ export interface PreflightIssue {
   details?: Record<string, unknown>;
 }
 
+export type CaseSelectionMode = "all" | "count" | "cases";
+
+export interface CaseSelection {
+  mode: CaseSelectionMode;
+  count?: number | null;
+  case_keys?: string[] | null;
+}
+
+export interface ExecutionPolicy {
+  concurrency?: number | null;
+  case_timeout_seconds?: number | null;
+  max_attempts?: number | null;
+  model_budget_usd?: number | null;
+  shard_size?: number | null;
+}
+
+export interface ResolvedExecutionPolicy {
+  concurrency: number;
+  case_timeout_seconds: number;
+  max_attempts: number;
+  model_budget_usd: number | null;
+  shard_size: number;
+  execution_image_digest: string | null;
+  scoring_image_digest: string | null;
+}
+
+export interface CostRange {
+  low: string;
+  high: string;
+}
+
+export interface CostEstimate {
+  currency: string;
+  model_usd: CostRange;
+  runner_usd: CostRange | null;
+  total_usd: CostRange;
+  estimated_duration_seconds: { low: number; high: number };
+  basis: string;
+  assumptions: Record<string, number>;
+}
+
+export interface PreparationDataset {
+  id: string;
+  name: string;
+  version: string;
+  adapter_key: string;
+  case_count: number;
+  source_revision: string;
+  execution_image_digest: string | null;
+  scoring_image_digest: string | null;
+}
+
+export interface PreparationAsset {
+  id: string;
+  source_id?: string | null;
+  requested_ref?: string | null;
+  resolved_commit?: string | null;
+  asset_count?: number | null;
+}
+
+export interface PreparationSummary {
+  dataset: PreparationDataset;
+  case_count: number;
+  estimated_job_count: number;
+  runtime: { key: string; version: string | null };
+  asset_snapshot: PreparationAsset | null;
+  model: {
+    config_id: string;
+    display_name: string | null;
+    provider: string | null;
+    model_name: string | null;
+  };
+  resource_pool: {
+    id: string;
+    name: string | null;
+    provider_key: string | null;
+    max_capacity: number | null;
+    online_runners: number;
+    price_usd: string | null;
+  };
+  execution: ResolvedExecutionPolicy;
+  resolved: {
+    effective_concurrency: number;
+    execution_image_digest: string | null;
+    scoring_image_digest: string | null;
+    estimated_job_count: number;
+  };
+  cost_estimate: CostEstimate | null;
+  warnings: PreflightIssue[];
+}
+
 export interface PrepareResponse {
   ready: boolean;
   blockers: PreflightIssue[];
   warnings: PreflightIssue[];
   asset_snapshot?: FrozenAssetSnapshot | null;
+  preparation_id: string | null;
+  expires_at: string | null;
+  snapshot_digest: string | null;
+  case_count: number;
+  estimated_job_count: number;
+  resolved_commit: string | null;
+  effective_concurrency: number;
+  execution_image_digest: string | null;
+  scoring_image_digest: string | null;
+  case_selection: CaseSelection | null;
+  execution: ResolvedExecutionPolicy | null;
+  cost_estimate: CostEstimate | null;
+  summary: PreparationSummary | null;
 }
 
 export interface PrepareRequest {
@@ -167,10 +298,10 @@ export interface PrepareRequest {
   execution_image_digest?: string;
   assets_resolved?: boolean;
   asset_snapshot_id?: string;
-  asset_source_id?: string;
-  requested_ref?: string;
-  asset_paths?: string[];
-  asset_types?: Record<string, string>;
+  case_selection?: CaseSelection;
+  execution?: ExecutionPolicy;
+  model_budget_usd?: number;
+  shard_size?: number;
 }
 
 export interface MetricResult {
@@ -315,6 +446,15 @@ export function parseEvaluationSummary(payload: unknown): EvaluationSummary {
     succeeded_count: readCount(payload.succeeded_count, "succeeded_count"),
     failed_count: readCount(payload.failed_count, "failed_count"),
     shard_size: readCount(payload.shard_size, "shard_size"),
+    requested_concurrency:
+      typeof payload.requested_concurrency === "number" ? payload.requested_concurrency : undefined,
+    effective_concurrency:
+      typeof payload.effective_concurrency === "number" ? payload.effective_concurrency : null,
+    queue_reason: readOptionalString(payload.queue_reason),
+    resource_pool_id: readOptionalString(payload.resource_pool_id),
+    case_timeout_seconds:
+      typeof payload.case_timeout_seconds === "number" ? payload.case_timeout_seconds : undefined,
+    max_attempts: typeof payload.max_attempts === "number" ? payload.max_attempts : undefined,
     created_at: readOptionalString(payload.created_at),
     started_at: readOptionalString(payload.started_at),
     finished_at: readOptionalString(payload.finished_at),
@@ -322,6 +462,7 @@ export function parseEvaluationSummary(payload: unknown): EvaluationSummary {
     created_by: readString(payload.created_by),
     dataset_version_id: readOptionalString(payload.dataset_version_id),
     runtime_key: readOptionalString(payload.runtime_key),
+    runtime_version: readOptionalString(payload.runtime_version),
     model_name: readOptionalString(payload.model_name),
     model_budget_usd: readOptionalString(payload.model_budget_usd),
     budget_spent_usd: readOptionalString(payload.budget_spent_usd),
@@ -358,14 +499,21 @@ export function parseEvaluationDetail(payload: unknown): EvaluationDetail {
     asset_snapshot: isRecord(record.asset_snapshot)
       ? (record.asset_snapshot as unknown as FrozenAssetSnapshot)
       : undefined,
+    consistency: isRecord(record.consistency) ? record.consistency : undefined,
+    case_counts: readNumberMap(record.case_counts),
+    trace_counts: readNumberMap(record.trace_counts),
+    retryable_count:
+      typeof record.retryable_count === "number" ? record.retryable_count : undefined,
     cases: cases.map((entry) => {
       const item = (entry ?? {}) as Record<string, unknown>;
       return {
         id: readString(item.id),
         case_key: readString(item.case_key),
         ordinal: readCount(item.ordinal, "ordinal"),
+        repo: readOptionalString(item.repo),
         execution_status: readString(item.execution_status),
         result_status: readString(item.result_status),
+        trace_status: readOptionalString(item.trace_status) ?? "pending",
         latest_attempt_no: readCount(item.latest_attempt_no, "latest_attempt_no"),
         duration_ms: typeof item.duration_ms === "number" ? item.duration_ms : null,
         error_code: readOptionalString(item.error_code),
@@ -390,6 +538,15 @@ export function parseEvaluationDetail(payload: unknown): EvaluationDetail {
   };
 }
 
+function readNumberMap(value: unknown): Record<string, number> | undefined {
+  if (!isRecord(value)) return undefined;
+  return Object.fromEntries(
+    Object.entries(value).filter(
+      (entry): entry is [string, number] => typeof entry[1] === "number",
+    ),
+  );
+}
+
 export async function fetchEvaluations(signal?: AbortSignal): Promise<EvaluationListResponse> {
   return parseEvaluationList(await request(`/api/v1/evaluations?limit=50`, { signal }));
 }
@@ -401,11 +558,31 @@ export async function fetchEvaluationDetail(
   return parseEvaluationDetail(await request(`/api/v1/evaluations/${runId}`, { signal }));
 }
 
+export interface EvaluationEventPage {
+  items: EvaluationEvent[];
+  next_cursor: number | null;
+  has_more: boolean;
+  direction: "older" | "newer";
+}
+
+export interface EvaluationEventQuery {
+  afterId?: number;
+  beforeId?: number;
+  limit?: number;
+}
+
 export async function fetchEvaluationEvents(
   runId: string,
+  query: EvaluationEventQuery = {},
   signal?: AbortSignal,
-): Promise<{ items: EvaluationEvent[]; next_cursor: number | null }> {
-  const payload = await request(`/api/v1/evaluations/${runId}/events?limit=100`, { signal });
+): Promise<EvaluationEventPage> {
+  const params = new URLSearchParams();
+  params.set("limit", String(query.limit ?? 100));
+  if (query.afterId !== undefined) params.set("after_id", String(query.afterId));
+  if (query.beforeId !== undefined) params.set("before_id", String(query.beforeId));
+  const payload = await request(`/api/v1/evaluations/${runId}/events?${params.toString()}`, {
+    signal,
+  });
   if (!isRecord(payload) || !Array.isArray(payload.items)) {
     throw new ApiError("控制面返回了无法识别的事件列表", { code: "invalid_response" });
   }
@@ -423,16 +600,23 @@ export async function fetchEvaluationEvents(
       };
     }),
     next_cursor: typeof payload.next_cursor === "number" ? payload.next_cursor : null,
+    has_more: Boolean(payload.has_more),
+    direction: payload.direction === "newer" ? "newer" : "older",
   };
 }
 
 export async function createEvaluation(
   body: CreateEvaluationRequest,
+  idempotencyKey?: string,
 ): Promise<EvaluationSummary> {
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  // The preparation contract requires the key to ride on the header; a body
+  // copy is kept for older synthetic-only callers.
+  if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
   return parseEvaluationSummary(
     await request(`/api/v1/evaluations`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers,
       body: JSON.stringify(body),
     }),
   );
@@ -473,29 +657,176 @@ export async function resumeEvaluationBudget(
 }
 
 
+function readFiniteNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function readCountOrZero(value: unknown): number {
+  const parsed = readFiniteNumber(value);
+  return parsed !== null && parsed >= 0 ? parsed : 0;
+}
+
+function parseIssues(value: unknown): PreflightIssue[] {
+  return Array.isArray(value)
+    ? value.map((entry) => {
+        const item = (entry ?? {}) as Record<string, unknown>;
+        return {
+          code: readString(item.code),
+          message: readString(item.message),
+          field: readOptionalString(item.field) ?? undefined,
+          details: isRecord(item.details) ? item.details : undefined,
+        };
+      })
+    : [];
+}
+
+function parseCostRange(value: unknown): CostRange | null {
+  if (!isRecord(value)) return null;
+  const low = typeof value.low === "string" ? value.low : null;
+  const high = typeof value.high === "string" ? value.high : null;
+  return low && high ? { low, high } : null;
+}
+
+function parseCostEstimate(value: unknown): CostEstimate | null {
+  if (!isRecord(value)) return null;
+  const model = parseCostRange(value.model_usd);
+  const total = parseCostRange(value.total_usd);
+  if (!model || !total) return null;
+  const duration = isRecord(value.estimated_duration_seconds)
+    ? value.estimated_duration_seconds
+    : {};
+  return {
+    currency: readString(value.currency) || "USD",
+    model_usd: model,
+    runner_usd: parseCostRange(value.runner_usd),
+    total_usd: total,
+    estimated_duration_seconds: {
+      low: readCountOrZero(duration.low),
+      high: readCountOrZero(duration.high),
+    },
+    basis: readString(value.basis),
+    assumptions: isRecord(value.assumptions)
+      ? Object.fromEntries(
+          Object.entries(value.assumptions).filter(
+            (entry): entry is [string, number] => typeof entry[1] === "number",
+          ),
+        )
+      : {},
+  };
+}
+
+function parseExecutionPolicy(value: unknown): ResolvedExecutionPolicy | null {
+  if (!isRecord(value)) return null;
+  return {
+    concurrency: readCountOrZero(value.concurrency),
+    case_timeout_seconds: readCountOrZero(value.case_timeout_seconds),
+    max_attempts: readCountOrZero(value.max_attempts),
+    model_budget_usd: readFiniteNumber(value.model_budget_usd),
+    shard_size: readCountOrZero(value.shard_size),
+    execution_image_digest: readOptionalString(value.execution_image_digest),
+    scoring_image_digest: readOptionalString(value.scoring_image_digest),
+  };
+}
+
+function parseCaseSelection(value: unknown): CaseSelection | null {
+  if (!isRecord(value)) return null;
+  const mode: CaseSelectionMode =
+    value.mode === "count" || value.mode === "cases" ? value.mode : "all";
+  return {
+    mode,
+    count: readFiniteNumber(value.count),
+    case_keys: Array.isArray(value.case_keys)
+      ? value.case_keys.filter((key): key is string => typeof key === "string")
+      : null,
+  };
+}
+
+function parsePreparationSummary(value: unknown): PreparationSummary | null {
+  if (!isRecord(value)) return null;
+  const dataset = isRecord(value.dataset) ? value.dataset : null;
+  const execution = parseExecutionPolicy(value.execution);
+  if (!dataset || !execution) return null;
+  const runtime = isRecord(value.runtime) ? value.runtime : {};
+  const model = isRecord(value.model) ? value.model : {};
+  const pool = isRecord(value.resource_pool) ? value.resource_pool : {};
+  const resolved = isRecord(value.resolved) ? value.resolved : {};
+  const assetSnapshot = isRecord(value.asset_snapshot) ? value.asset_snapshot : null;
+  return {
+    dataset: {
+      id: readString(dataset.id),
+      name: readString(dataset.name),
+      version: readString(dataset.version),
+      adapter_key: readString(dataset.adapter_key),
+      case_count: readCountOrZero(dataset.case_count),
+      source_revision: readString(dataset.source_revision),
+      execution_image_digest: readOptionalString(dataset.execution_image_digest),
+      scoring_image_digest: readOptionalString(dataset.scoring_image_digest),
+    },
+    case_count: readCountOrZero(value.case_count),
+    estimated_job_count: readCountOrZero(value.estimated_job_count),
+    runtime: {
+      key: readString(runtime.key),
+      version: readOptionalString(runtime.version),
+    },
+    asset_snapshot: assetSnapshot
+      ? {
+          id: readString(assetSnapshot.id),
+          source_id: readOptionalString(assetSnapshot.source_id),
+          requested_ref: readOptionalString(assetSnapshot.requested_ref),
+          resolved_commit: readOptionalString(assetSnapshot.resolved_commit),
+          asset_count: readFiniteNumber(assetSnapshot.asset_count),
+        }
+      : null,
+    model: {
+      config_id: readString(model.config_id),
+      display_name: readOptionalString(model.display_name),
+      provider: readOptionalString(model.provider),
+      model_name: readOptionalString(model.model_name),
+    },
+    resource_pool: {
+      id: readString(pool.id),
+      name: readOptionalString(pool.name),
+      provider_key: readOptionalString(pool.provider_key),
+      max_capacity: readFiniteNumber(pool.max_capacity),
+      online_runners: readCountOrZero(pool.online_runners),
+      price_usd: readOptionalString(pool.price_usd),
+    },
+    execution,
+    resolved: {
+      effective_concurrency: readCountOrZero(resolved.effective_concurrency),
+      execution_image_digest: readOptionalString(resolved.execution_image_digest),
+      scoring_image_digest: readOptionalString(resolved.scoring_image_digest),
+      estimated_job_count: readCountOrZero(resolved.estimated_job_count),
+    },
+    cost_estimate: parseCostEstimate(value.cost_estimate),
+    warnings: parseIssues(value.warnings),
+  };
+}
+
 export function parsePrepare(payload: unknown): PrepareResponse {
   if (!isRecord(payload) || typeof payload.ready !== "boolean") {
     throw new ApiError("控制面返回了无法识别的预检结果", { code: "invalid_response" });
   }
-  const issues = (value: unknown): PreflightIssue[] =>
-    Array.isArray(value)
-      ? value.map((entry) => {
-          const item = (entry ?? {}) as Record<string, unknown>;
-          return {
-            code: readString(item.code),
-            message: readString(item.message),
-            field: readOptionalString(item.field) ?? undefined,
-            details: isRecord(item.details) ? item.details : undefined,
-          };
-        })
-      : [];
   return {
     ready: payload.ready,
-    blockers: issues(payload.blockers),
-    warnings: issues(payload.warnings),
+    blockers: parseIssues(payload.blockers),
+    warnings: parseIssues(payload.warnings),
     asset_snapshot: isRecord(payload.asset_snapshot)
       ? (payload.asset_snapshot as unknown as FrozenAssetSnapshot)
       : null,
+    preparation_id: readOptionalString(payload.preparation_id),
+    expires_at: readOptionalString(payload.expires_at),
+    snapshot_digest: readOptionalString(payload.snapshot_digest),
+    case_count: readCountOrZero(payload.case_count),
+    estimated_job_count: readCountOrZero(payload.estimated_job_count),
+    resolved_commit: readOptionalString(payload.resolved_commit),
+    effective_concurrency: readCountOrZero(payload.effective_concurrency),
+    execution_image_digest: readOptionalString(payload.execution_image_digest),
+    scoring_image_digest: readOptionalString(payload.scoring_image_digest),
+    case_selection: parseCaseSelection(payload.case_selection),
+    execution: parseExecutionPolicy(payload.execution),
+    cost_estimate: parseCostEstimate(payload.cost_estimate),
+    summary: parsePreparationSummary(payload.summary),
   };
 }
 
@@ -543,9 +874,13 @@ export async function fetchEvaluationResults(
 
 export async function fetchCaseTests(
   caseRunId: string,
+  attempt?: number | null,
   signal?: AbortSignal,
 ): Promise<{ attempt: number | null; items: CaseTestResult[]; summary: Record<string, number> }> {
-  const payload = await request(`/api/v1/eval-case-runs/${caseRunId}/tests`, { signal });
+  const params = new URLSearchParams();
+  if (typeof attempt === "number") params.set("attempt", String(attempt));
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  const payload = await request(`/api/v1/eval-case-runs/${caseRunId}/tests${suffix}`, { signal });
   if (!isRecord(payload) || !Array.isArray(payload.items)) {
     throw new ApiError("控制面返回了无法识别的测试结果", { code: "invalid_response" });
   }

@@ -8,11 +8,12 @@ from __future__ import annotations
 
 import json
 import time
+import uuid
 from collections.abc import Iterator
 from decimal import Decimal
-from typing import Annotated
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, sessionmaker
@@ -24,7 +25,8 @@ from ..services import budget as budget_service
 from ..services import evaluations as evaluation_service
 from ..services import identity
 from ..services import preflight as preflight_service
-from .dependencies import require_admin
+from ..services import preparations as preparation_service
+from .dependencies import require_admin, require_session
 from .errors import error_detail
 
 router = APIRouter(tags=["evaluations"])
@@ -89,6 +91,24 @@ def _resolve_asset_snapshot(
     return None, None
 
 
+class CaseSelectionRequest(BaseModel):
+    """M5-04: all cases, the first N by ordinal, or an explicit case key list."""
+
+    mode: Literal["all", "count", "cases"] = "all"
+    count: int | None = Field(default=None, ge=1, le=100000)
+    case_keys: list[str] | None = None
+
+
+class ExecutionPolicyRequest(BaseModel):
+    """Advanced execution policy frozen into the preparation snapshot."""
+
+    concurrency: int | None = Field(default=None, ge=1, le=256)
+    case_timeout_seconds: int | None = Field(default=None, ge=1, le=604800)
+    max_attempts: int | None = Field(default=None, ge=1, le=10)
+    model_budget_usd: float | None = Field(default=None, ge=0)
+    shard_size: int | None = Field(default=None, ge=1, le=255)
+
+
 class PrepareRequest(BaseModel):
     dataset_version_id: str = Field(min_length=1, max_length=36)
     model_config_id: str = Field(min_length=1, max_length=36)
@@ -104,6 +124,12 @@ class PrepareRequest(BaseModel):
     # the administrator-only /agent-assets/resolve endpoint first, then passes
     # only this id here; no source/ref/path is resolved from this endpoint.
     asset_snapshot_id: str | None = Field(default=None, max_length=36)
+    # M5-04: case subset, execution policy and planning budget are frozen with
+    # the preparation snapshot. Create then only sends the preparation id.
+    case_selection: CaseSelectionRequest | None = None
+    execution: ExecutionPolicyRequest | None = None
+    model_budget_usd: float | None = Field(default=None, ge=0)
+    shard_size: int | None = Field(default=None, ge=1, le=255)
 
 
 class CreateEvaluationRequest(BaseModel):
@@ -115,6 +141,11 @@ class CreateEvaluationRequest(BaseModel):
     # M4-01: per-evaluation hard cap for simultaneously running cases.
     requested_concurrency: int | None = Field(default=None, ge=1, le=256)
     idempotency_key: str | None = Field(default=None, max_length=128)
+    # M5-04: create from a server-rendered preparation snapshot. The client
+    # sends it in the Idempotency-Key header, so a network retry is safe.
+    preparation_id: str | None = Field(default=None, max_length=36)
+    case_timeout_seconds: int | None = Field(default=None, ge=1)
+    max_attempts: int | None = Field(default=None, ge=1)
     # M3-02: optional model binding so the runner can obtain a short-lived
     # gateway token from the shard manifest.
     model_config_id: str | None = Field(default=None, max_length=36)
@@ -150,10 +181,40 @@ class ResumeBudgetRequest(BaseModel):
 def prepare_evaluation(
     payload: PrepareRequest,
     session: Session = Depends(get_session),
+    context: identity.AuthContext = Depends(require_session),
 ) -> dict:
-    """Run the M3-03 blocking/warning consistency checks without creating a run."""
+    """Freeze a launch configuration into a short-lived preparation snapshot.
 
-    result = preflight_service.check_preparation(
+    Still side-effect free with respect to runs/cloud instances: it resolves
+    the case subset, commit, credential and capacity, then stores a TTL-bound
+    snapshot the confirmation step can show and the create call can consume.
+    """
+
+    execution = payload.execution
+    execution_payload = {
+        # ``requested_concurrency`` stays for older clients; an execution
+        # policy, when present, wins.
+        "concurrency": (
+            execution.concurrency
+            if execution is not None and execution.concurrency is not None
+            else payload.requested_concurrency
+        ),
+        "case_timeout_seconds": execution.case_timeout_seconds if execution else None,
+        "max_attempts": execution.max_attempts if execution else None,
+        "model_budget_usd": (
+            execution.model_budget_usd
+            if execution is not None and execution.model_budget_usd is not None
+            else payload.model_budget_usd
+        ),
+        "shard_size": (
+            execution.shard_size
+            if execution is not None and execution.shard_size is not None
+            else payload.shard_size
+        ),
+        "execution_image_digest": payload.execution_image_digest,
+        "scoring_image_digest": payload.scoring_image_digest,
+    }
+    result = preparation_service.build_preparation(
         session,
         dataset_version_id=payload.dataset_version_id,
         model_config_id=payload.model_config_id,
@@ -161,23 +222,90 @@ def prepare_evaluation(
         runtime_key=payload.runtime_key,
         runtime_version=payload.runtime_version,
         resource_pool_id=payload.resource_pool_id,
-        requested_concurrency=payload.requested_concurrency,
-        scoring_image_digest=payload.scoring_image_digest,
-        execution_image_digest=payload.execution_image_digest,
-        assets_resolved=payload.assets_resolved,
         asset_snapshot_id=payload.asset_snapshot_id,
+        case_selection=(
+            payload.case_selection.model_dump() if payload.case_selection is not None else None
+        ),
+        execution=execution_payload,
+        assets_resolved=payload.assets_resolved,
+        created_by=context.user.email,
     )
-    return {"status": "ok", **result.payload()}
+    return {"status": "ok", **result}
+
+
+CAPACITY_FIELDS = (
+    "requested_concurrency",
+    "case_timeout_seconds",
+    "max_attempts",
+    "shard_size",
+)
+
+
+def _preparation_http_error(error: preparation_service.PreparationError) -> HTTPException:
+    details = dict(error.details or {})
+    if isinstance(error, preparation_service.PreparationBlocked):
+        # The wizard maps capacity/timeout/retry violations to field errors and
+        # everything else to the blocking-check panel (design 04 §3.2).
+        capacity_blocked = any(
+            blocker.get("code") == "capacity_invalid"
+            or blocker.get("field") in CAPACITY_FIELDS
+            for blocker in error.blockers
+        )
+        code = "capacity_invalid" if capacity_blocked else "preparation_blocked"
+        fields = {
+            blocker["field"]: "invalid"
+            for blocker in error.blockers
+            if blocker.get("field")
+        }
+        details["blockers"] = error.blockers
+        if fields:
+            details["fields"] = fields
+        return HTTPException(
+            status_code=422,
+            detail=error_detail(code, "启动前一致性检查未通过", details=details),
+        )
+    if isinstance(error, preparation_service.ConfigurationChanged):
+        details["changed"] = error.changed
+    return HTTPException(
+        status_code=error.status,
+        detail=error_detail(error.code, str(error), details=details or None),
+    )
 
 
 @router.post("/api/v1/evaluations")
 def create_evaluation(
     payload: CreateEvaluationRequest,
     response: Response,
+    idempotency_header: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
     session: Session = Depends(get_session),
     context: identity.AuthContext = Depends(require_admin),
 ) -> dict:
     settings = get_settings()
+    idempotency_key = (idempotency_header or payload.idempotency_key or "").strip() or None
+    if payload.preparation_id:
+        if idempotency_key is None:
+            raise HTTPException(
+                status_code=422,
+                detail=error_detail(
+                    "idempotency_key_required",
+                    "从准备快照创建评测必须提供 Idempotency-Key 请求头",
+                ),
+            )
+        try:
+            run, created = preparation_service.consume_preparation(
+                session,
+                preparation_id=payload.preparation_id,
+                idempotency_key=idempotency_key,
+                created_by=context.user.email,
+                name=payload.name,
+                settings=settings,
+            )
+        except preparation_service.PreparationError as error:
+            raise _preparation_http_error(error) from error
+        response.status_code = 201 if created else 200
+        return _run_body(evaluation_service.evaluation_summary(run), created)
+    if idempotency_key is None:
+        idempotency_key = str(uuid.uuid4())
     requested_concurrency = (
         payload.requested_concurrency
         if payload.requested_concurrency is not None
@@ -220,6 +348,9 @@ def create_evaluation(
             execution_image_digest=payload.execution_image_digest,
             assets_resolved=payload.assets_resolved,
             asset_snapshot_id=asset_snapshot_id,
+            case_timeout_seconds=payload.case_timeout_seconds,
+            max_attempts=payload.max_attempts,
+            model_budget_usd=payload.model_budget_usd,
         )
         if check.blockers:
             raise HTTPException(
@@ -245,9 +376,12 @@ def create_evaluation(
             session,
             name=payload.name or ("合成评测" if not payload.dataset_version_id else ""),
             case_keys=payload.case_keys or [],
+            selected_case_keys=(payload.case_keys if payload.dataset_version_id else None),
             shard_size=payload.shard_size,
             requested_concurrency=requested_concurrency,
-            idempotency_key=payload.idempotency_key,
+            case_timeout_seconds=payload.case_timeout_seconds,
+            max_attempts=payload.max_attempts,
+            idempotency_key=idempotency_key,
             created_by=context.user.email,
             model_config_id=payload.model_config_id,
             model_name=payload.model_name,
@@ -306,6 +440,7 @@ def get_evaluation(run_id: str, session: Session = Depends(get_session)) -> dict
 def list_evaluation_events(
     run_id: str,
     after_id: Annotated[int | None, Query(ge=0)] = None,
+    before_id: Annotated[int | None, Query(ge=0)] = None,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     session: Session = Depends(get_session),
 ) -> dict:
@@ -316,8 +451,20 @@ def list_evaluation_events(
             status_code=404,
             detail=error_detail("evaluation_not_found", "评测不存在"),
         ) from exc
-    items, next_cursor = evaluation_service.list_events(session, run_id, after_id=after_id, limit=limit)
-    return {"status": "ok", "items": items, "next_cursor": next_cursor}
+    items, next_cursor, has_more, direction = evaluation_service.list_events(
+        session,
+        run_id,
+        after_id=after_id,
+        before_id=before_id,
+        limit=limit,
+    )
+    return {
+        "status": "ok",
+        "items": items,
+        "next_cursor": next_cursor,
+        "has_more": has_more,
+        "direction": direction,
+    }
 
 
 @router.get("/api/v1/evaluations/{run_id}/events/stream")
@@ -350,15 +497,22 @@ def stream_evaluation_events(
             detail=error_detail("invalid_cursor", "Last-Event-ID 不是有效游标"),
         ) from exc
 
+    bind = session.get_bind()
+    # A long-lived SSE response must not pin the request-scoped connection for
+    # its whole lifetime: every open detail tab would otherwise hold one pool
+    # slot until it disconnects, and a handful of viewers can exhaust the
+    # QueuePool (making every console request fail with a 500). The generator
+    # opens its own short-lived session per poll below.
+    session.close()
     stream_factory = sessionmaker(
-        bind=session.get_bind(), autoflush=False, expire_on_commit=False, class_=Session
+        bind=bind, autoflush=False, expire_on_commit=False, class_=Session
     )
 
     def generate() -> Iterator[str]:
         position = cursor
         for _ in range(3600):
             with stream_factory() as stream_session:
-                items, _next = evaluation_service.list_events(
+                items, _next, _has_more, _direction = evaluation_service.list_events(
                     stream_session, run_id, after_id=position, limit=100
                 )
                 run = evaluation_service.get_evaluation(stream_session, run_id)
