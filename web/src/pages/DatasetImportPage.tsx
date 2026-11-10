@@ -1,7 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Alert, Button, Form, Input, Result, Select, Space, Steps } from "antd";
 import { useNavigate } from "react-router-dom";
 import { createDatasetImport, type ImportResult } from "../api/datasets";
+import { fetchRuntimes } from "../api/runtimes";
 import { PageHeading } from "../components/PageHeading";
 
 interface FormValues {
@@ -11,6 +13,8 @@ interface FormValues {
   version: string;
   source_revision: string;
   source_uri?: string;
+  execution_image_digest?: string;
+  scoring_image_digest?: string;
 }
 
 export function DatasetImportPage() {
@@ -21,6 +25,19 @@ export function DatasetImportPage() {
   const [importing, setImporting] = useState(false);
   const [result, setResult] = useState<ImportResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const runtimes = useQuery({ queryKey: ["runtimes"], queryFn: ({ signal }) => fetchRuntimes(signal) });
+
+  useEffect(() => {
+    const runtime = runtimes.data?.[0];
+    if (!runtime) return;
+    const current = form.getFieldsValue();
+    form.setFieldsValue({
+      execution_image_digest:
+        current.execution_image_digest || runtime.execution_image_digest || "",
+      scoring_image_digest:
+        current.scoring_image_digest || runtime.scoring_image_digest || "",
+    });
+  }, [form, runtimes.data]);
 
   const parsed = (() => {
     const lines = recordsText.split(/\r?\n/).filter((line) => line.trim());
@@ -48,6 +65,8 @@ export function DatasetImportPage() {
     try {
       const imported = await createDatasetImport({
         ...values,
+        execution_image_digest: values.execution_image_digest || undefined,
+        scoring_image_digest: values.scoring_image_digest || undefined,
         records: parsed.records,
       });
       setResult(imported);
@@ -97,6 +116,22 @@ export function DatasetImportPage() {
             </Form.Item>
             <Form.Item name="source_uri" label="来源 URI（可选）">
               <Input placeholder="https://…" style={{ width: 300 }} />
+            </Form.Item>
+          </Space>
+          <Space size="large" wrap>
+            <Form.Item
+              name="execution_image_digest"
+              label="执行镜像 digest"
+              extra="默认取平台配置，可覆盖"
+            >
+              <Input placeholder="sha256:…" style={{ width: 420 }} />
+            </Form.Item>
+            <Form.Item
+              name="scoring_image_digest"
+              label="评分镜像 digest"
+              extra="默认取平台配置，可覆盖"
+            >
+              <Input placeholder="sha256:…" style={{ width: 420 }} />
             </Form.Item>
           </Space>
           <Button type="primary" onClick={async () => { await form.validateFields(); setStep(1); }}>

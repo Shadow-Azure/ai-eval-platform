@@ -81,6 +81,35 @@ def test_dataset_catalog_rows_roundtrip(seeded: Session) -> None:
     assert dataset.adapter_key == "swebench"
 
 
+def test_import_records_image_digests(seeded: Session, configure_settings) -> None:
+    configure_settings(
+        DEFAULT_EXECUTION_IMAGE_DIGEST="sha256:" + "d" * 64,
+        DEFAULT_SCORING_IMAGE_DIGEST="sha256:" + "e" * 64,
+    )
+    outcome = do_import(seeded)
+    assert outcome.version is not None
+    assert outcome.version.execution_image_digest == "sha256:" + "d" * 64
+    assert outcome.version.scoring_image_digest == "sha256:" + "e" * 64
+
+
+def test_import_explicit_image_digests_override_platform_defaults(
+    seeded: Session, configure_settings
+) -> None:
+    configure_settings(
+        DEFAULT_EXECUTION_IMAGE_DIGEST="sha256:" + "d" * 64,
+        DEFAULT_SCORING_IMAGE_DIGEST="sha256:" + "e" * 64,
+    )
+    outcome = do_import(
+        seeded,
+        version="verified-images",
+        execution_image_digest="sha256:" + "1" * 64,
+        scoring_image_digest="sha256:" + "2" * 64,
+    )
+    assert outcome.version is not None
+    assert outcome.version.execution_image_digest == "sha256:" + "1" * 64
+    assert outcome.version.scoring_image_digest == "sha256:" + "2" * 64
+
+
 def test_duplicate_version_label_rejected_at_db_level(seeded: Session) -> None:
     from sqlalchemy.exc import IntegrityError
 

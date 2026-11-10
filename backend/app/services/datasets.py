@@ -24,6 +24,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from ..config import get_settings
 from ..datasets import AdapterNotFound, CaseIssue, DatasetAdapter, get_adapter
 from ..defaults import DEFAULT_PROJECT_ID, DEFAULT_TENANT_ID
 from ..models import Dataset, DatasetCase, DatasetImport, DatasetVersion, DatasetVersionMetric, MetricDefinition
@@ -168,6 +169,8 @@ def import_dataset_version(
     source_uri: str,
     source_revision: str,
     environment_image: str | None = None,
+    execution_image_digest: str | None = None,
+    scoring_image_digest: str | None = None,
     records: list[Mapping[str, Any]],
     created_by: str = "console",
     task_family: str | None = None,
@@ -178,6 +181,17 @@ def import_dataset_version(
 
     tenant_id = str(DEFAULT_TENANT_ID)
     project_id = str(DEFAULT_PROJECT_ID)
+    settings = get_settings()
+    execution_image_digest = (
+        (execution_image_digest or "").strip()
+        or (settings.default_execution_image_digest or "").strip()
+        or None
+    )
+    scoring_image_digest = (
+        (scoring_image_digest or "").strip()
+        or (settings.default_scoring_image_digest or "").strip()
+        or None
+    )
 
     def failed(errors: list[CaseIssue]) -> ImportValidationFailed:
         record = _record_failed_import(
@@ -301,6 +315,8 @@ def import_dataset_version(
         case_count=len(records),
         status="active",
         environment_image=environment_image,
+        execution_image_digest=execution_image_digest,
+        scoring_image_digest=scoring_image_digest,
     )
     session.add(dataset_version)
     session.flush()

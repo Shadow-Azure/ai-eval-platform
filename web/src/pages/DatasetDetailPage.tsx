@@ -89,6 +89,12 @@ export function DatasetDetailPage() {
             <Descriptions.Item label="来源">{version.data.source_uri || "—"}</Descriptions.Item>
             <Descriptions.Item label="修订">{version.data.source_revision || "—"}</Descriptions.Item>
             <Descriptions.Item label="适配器版本">{version.data.adapter_version}</Descriptions.Item>
+            <Descriptions.Item label="执行镜像 digest" span={3}>
+              <span className="mono">{version.data.execution_image_digest || "—"}</span>
+            </Descriptions.Item>
+            <Descriptions.Item label="评分镜像 digest" span={3}>
+              <span className="mono">{version.data.scoring_image_digest || "—"}</span>
+            </Descriptions.Item>
           </Descriptions>
           <Table<MetricDefinition>
             rowKey="id"

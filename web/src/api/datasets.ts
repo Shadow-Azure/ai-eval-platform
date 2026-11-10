@@ -21,6 +21,8 @@ export interface DatasetVersion {
   source_uri: string;
   source_revision: string;
   adapter_version: string;
+  execution_image_digest: string | null;
+  scoring_image_digest: string | null;
   created_at: string;
 }
 
@@ -105,6 +107,8 @@ function parseVersion(item: Record<string, unknown>): DatasetVersion {
     source_uri: text(item.source_uri),
     source_revision: text(item.source_revision),
     adapter_version: text(item.adapter_version),
+    execution_image_digest: optionalText(item.execution_image_digest),
+    scoring_image_digest: optionalText(item.scoring_image_digest),
     created_at: text(item.created_at),
   };
 }
@@ -194,6 +198,8 @@ export async function createDatasetImport(body: {
   version: string;
   source_uri?: string;
   source_revision: string;
+  execution_image_digest?: string;
+  scoring_image_digest?: string;
   records: Record<string, unknown>[];
 }): Promise<ImportResult> {
   const payload = await request("/api/v1/dataset-imports", {

@@ -81,6 +81,10 @@ class DatasetVersion(Base, CreatedAtMixin):
     task_manifest_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
     task_manifest_digest: Mapped[str | None] = mapped_column(String(128), nullable=True)
     environment_image: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    # M5-07: image digests frozen with the version so the launch wizard can
+    # inherit them instead of asking for the same values on every run.
+    execution_image_digest: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    scoring_image_digest: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     __table_args__ = (
         UniqueConstraint("dataset_id", "version", name="uq_dataset_version_dataset_version"),

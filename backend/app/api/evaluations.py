@@ -111,6 +111,8 @@ def create_evaluation(
         if payload.requested_concurrency is not None
         else settings.eval_default_requested_concurrency
     )
+    scoring_image_digest = payload.scoring_image_digest
+    execution_image_digest = payload.execution_image_digest
     if payload.dataset_version_id:
         if not (payload.model_config_id and payload.resource_pool_id):
             raise HTTPException(
@@ -143,6 +145,10 @@ def create_evaluation(
                     details={"blockers": check.payload()["blockers"], "warnings": check.payload()["warnings"]},
                 ),
             )
+        # M5-07: freeze the digests resolved from request, dataset version or
+        # platform defaults, not just the raw request payload.
+        scoring_image_digest = check.scoring_image_digest
+        execution_image_digest = check.execution_image_digest
     else:
         if not payload.case_keys:
             raise HTTPException(
@@ -165,8 +171,8 @@ def create_evaluation(
             runtime_key=payload.runtime_key,
             runtime_version=payload.runtime_version,
             resource_pool_id=payload.resource_pool_id,
-            scoring_image_digest=payload.scoring_image_digest,
-            execution_image_digest=payload.execution_image_digest,
+            scoring_image_digest=scoring_image_digest,
+            execution_image_digest=execution_image_digest,
             consistency_json=check.payload() if payload.dataset_version_id else {},
             settings=settings,
         )
