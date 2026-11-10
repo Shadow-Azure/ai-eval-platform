@@ -1,0 +1,32 @@
+{
+  "connection": {
+    "id": "bf935d9b-d4ca-4ee0-af17-9a718f13c77d",
+    "status": "unverified",
+    "secret_leaked": false,
+    "verified_status": "verified"
+  },
+  "incompatible_pool": {
+    "status": 422,
+    "code": "connection_provider_mismatch"
+  },
+  "pool_detail_status": 200,
+  "scale_up": {
+    "reason": "capacity_scale_up",
+    "scaled_up": 3,
+    "instances": 3,
+    "price": "0.20",
+    "threshold": "0.5000",
+    "eval_events": [
+      "eval.created"
+    ]
+  },
+  "price_wait": {
+    "reason": "resource_price_above_threshold",
+    "instances_before": 3,
+    "instances_after": 3,
+    "price": "1.0000",
+    "threshold": "0.5000",
+    "checked_at": "2026-11-10T00:37:13.010407+00:00",
+    "next_check_at": "2026-11-10T00:42:13.010407+00:00"
+  }
+}
