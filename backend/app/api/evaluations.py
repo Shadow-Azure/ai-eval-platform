@@ -306,6 +306,7 @@ def get_evaluation(run_id: str, session: Session = Depends(get_session)) -> dict
 def list_evaluation_events(
     run_id: str,
     after_id: Annotated[int | None, Query(ge=0)] = None,
+    before_id: Annotated[int | None, Query(ge=0)] = None,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     session: Session = Depends(get_session),
 ) -> dict:
@@ -316,8 +317,20 @@ def list_evaluation_events(
             status_code=404,
             detail=error_detail("evaluation_not_found", "评测不存在"),
         ) from exc
-    items, next_cursor = evaluation_service.list_events(session, run_id, after_id=after_id, limit=limit)
-    return {"status": "ok", "items": items, "next_cursor": next_cursor}
+    items, next_cursor, has_more, direction = evaluation_service.list_events(
+        session,
+        run_id,
+        after_id=after_id,
+        before_id=before_id,
+        limit=limit,
+    )
+    return {
+        "status": "ok",
+        "items": items,
+        "next_cursor": next_cursor,
+        "has_more": has_more,
+        "direction": direction,
+    }
 
 
 @router.get("/api/v1/evaluations/{run_id}/events/stream")
@@ -350,15 +363,22 @@ def stream_evaluation_events(
             detail=error_detail("invalid_cursor", "Last-Event-ID 不是有效游标"),
         ) from exc
 
+    bind = session.get_bind()
+    # A long-lived SSE response must not pin the request-scoped connection for
+    # its whole lifetime: every open detail tab would otherwise hold one pool
+    # slot until it disconnects, and a handful of viewers can exhaust the
+    # QueuePool (making every console request fail with a 500). The generator
+    # opens its own short-lived session per poll below.
+    session.close()
     stream_factory = sessionmaker(
-        bind=session.get_bind(), autoflush=False, expire_on_commit=False, class_=Session
+        bind=bind, autoflush=False, expire_on_commit=False, class_=Session
     )
 
     def generate() -> Iterator[str]:
         position = cursor
         for _ in range(3600):
             with stream_factory() as stream_session:
-                items, _next = evaluation_service.list_events(
+                items, _next, _has_more, _direction = evaluation_service.list_events(
                     stream_session, run_id, after_id=position, limit=100
                 )
                 run = evaluation_service.get_evaluation(stream_session, run_id)

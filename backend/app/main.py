@@ -9,6 +9,7 @@ from .api.agent_assets import router as agent_assets_router
 from .api.auth import router as auth_router
 from .api.datasets import router as datasets_router
 from .api.dependencies import require_session
+from .api.eval_workbench import router as eval_workbench_router
 from .api.evaluations import router as evaluations_router
 from .api.health import router as health_router
 from .api.model_configs import router as model_configs_router
@@ -63,6 +64,7 @@ def create_app() -> FastAPI:
     app.include_router(datasets_router, dependencies=[Depends(require_session)])
     app.include_router(agent_assets_router, dependencies=[Depends(require_session)])
     app.include_router(results_router, dependencies=[Depends(require_session)])
+    app.include_router(eval_workbench_router, dependencies=[Depends(require_session)])
     app.include_router(runtimes_router, dependencies=[Depends(require_session)])
     app.include_router(model_configs_router, dependencies=[Depends(require_session)])
     # Resource connections/pools: authenticated members may read, administrators

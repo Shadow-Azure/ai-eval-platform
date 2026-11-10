@@ -515,6 +515,9 @@ def evaluation_summary(run: EvalRun, *, spent_usd: Decimal | None = None) -> dic
         "requested_concurrency": run.requested_concurrency,
         "effective_concurrency": run.effective_concurrency,
         "queue_reason": run.queue_reason,
+        "resource_pool_id": run.resource_pool_id,
+        "case_timeout_seconds": run.case_timeout_seconds,
+        "max_attempts": run.max_attempts,
         "model_config_id": run.model_config_id,
         "model_name": run.model_name,
         "model_budget_usd": str(run.model_budget_usd) if run.model_budget_usd is not None else None,
@@ -571,16 +574,49 @@ def evaluation_detail(session: Session, run: EvalRun) -> dict:
             .order_by(Outbox.id)
         )
     ]
+    case_counts = {
+        "all": len(cases),
+        "resolved": 0,
+        "unresolved": 0,
+        "running": 0,
+        "failed": 0,
+        "queued": 0,
+    }
+    trace_counts: dict[str, int] = {}
+    retryable_count = 0
+    for case in cases:
+        if case.result_status == "resolved":
+            case_counts["resolved"] += 1
+        if case.result_status == "unresolved":
+            case_counts["unresolved"] += 1
+        if case.execution_status == "running":
+            case_counts["running"] += 1
+        if case.execution_status in ("failed", "timeout"):
+            case_counts["failed"] += 1
+        if case.execution_status == "queued":
+            case_counts["queued"] += 1
+        trace_counts[case.trace_status] = trace_counts.get(case.trace_status, 0) + 1
+        if (
+            run.status == "running"
+            and case.execution_status in ("failed", "timeout")
+            and case.latest_attempt_no < run.max_attempts
+        ):
+            retryable_count += 1
     return {
         **evaluation_summary(run, spent_usd=live_spent),
         "asset_snapshot": run.asset_snapshot_json or {},
+        "case_counts": case_counts,
+        "trace_counts": trace_counts,
+        "retryable_count": retryable_count,
         "cases": [
             {
                 "id": case.id,
                 "case_key": case.case_key,
                 "ordinal": case.ordinal,
+                "repo": (case.task_json or {}).get("repo"),
                 "execution_status": case.execution_status,
                 "result_status": case.result_status,
+                "trace_status": case.trace_status,
                 "latest_attempt_no": case.latest_attempt_no,
                 "duration_ms": case.duration_ms,
                 "error_code": case.error_code,
@@ -598,16 +634,36 @@ def list_events(
     run_id: str,
     *,
     after_id: int | None = None,
+    before_id: int | None = None,
     limit: int = 50,
-) -> tuple[list[dict], int | None]:
+) -> tuple[list[dict], int | None, bool, str]:
+    """One event window.
+
+    - ``after_id``: forward replay for SSE (ascending, cursor = last id);
+    - ``before_id``: older page for the timeline (ascending, cursor = first id);
+    - neither: the newest window (ascending), so the timeline opens at the end
+      even when the run emitted more than ``limit`` events.
+    """
+
     get_evaluation(session, run_id)
-    query = select(EvalEvent).where(EvalEvent.eval_run_id == run_id).order_by(EvalEvent.id)
+    base = select(EvalEvent).where(EvalEvent.eval_run_id == run_id)
     if after_id is not None:
-        query = query.where(EvalEvent.id > after_id)
-    rows = list(session.scalars(query.limit(limit + 1)))
-    has_more = len(rows) > limit
-    rows = rows[:limit]
-    next_cursor = rows[-1].id if has_more and rows else None
+        rows = list(
+            session.scalars(base.where(EvalEvent.id > after_id).order_by(EvalEvent.id).limit(limit + 1))
+        )
+        has_more = len(rows) > limit
+        rows = rows[:limit]
+        next_cursor = rows[-1].id if has_more and rows else None
+        direction = "newer"
+    else:
+        if before_id is not None:
+            base = base.where(EvalEvent.id < before_id)
+        rows = list(session.scalars(base.order_by(EvalEvent.id.desc()).limit(limit + 1)))
+        has_more = len(rows) > limit
+        rows = rows[:limit]
+        rows.reverse()
+        next_cursor = rows[0].id if has_more and rows else None
+        direction = "older"
     items = [
         {
             "id": row.id,
@@ -620,7 +676,7 @@ def list_events(
         }
         for row in rows
     ]
-    return items, next_cursor
+    return items, next_cursor, has_more, direction
 
 
 # ---------------------------------------------------------------------------
@@ -858,4 +914,8 @@ def refresh_run_progress(session: Session, run: EvalRun, *, now: datetime | None
 def _iso(value: datetime | None) -> str | None:
     if value is None:
         return None
+    # SQLite (local dev/tests) drops tzinfo; the API contract is UTC ISO-8601
+    # with an offset, so a naive timestamp must not be rendered as local time.
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
     return value.isoformat(timespec="microseconds")

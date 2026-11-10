@@ -8,6 +8,7 @@ from ..db import get_session
 from ..models import EvalCaseAttempt, EvalCaseRun, EvalRun, MetricDefinition, MetricResult, TestCaseResult
 from ..scoring.service import case_test_summary
 from ..seed import ensure_default_scope
+from ..services.evaluations import _iso
 
 router = APIRouter(tags=["results"])
 
@@ -70,7 +71,7 @@ def get_eval_results(
                 "numerator": result.numerator,
                 "denominator": result.denominator,
                 "is_final": result.is_final,
-                "generated_at": result.generated_at,
+                "generated_at": _iso(result.generated_at),
             }
         )
     return {

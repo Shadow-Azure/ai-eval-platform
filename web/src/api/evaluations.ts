@@ -32,6 +32,12 @@ export interface EvaluationSummary {
   finished_count?: number;
   unfinished_count?: number;
   shard_size: number;
+  requested_concurrency?: number;
+  effective_concurrency?: number | null;
+  queue_reason?: string | null;
+  resource_pool_id?: string | null;
+  case_timeout_seconds?: number;
+  max_attempts?: number;
   created_at: string | null;
   started_at: string | null;
   finished_at: string | null;
@@ -39,6 +45,7 @@ export interface EvaluationSummary {
   created_by: string;
   dataset_version_id?: string | null;
   runtime_key?: string | null;
+  runtime_version?: string | null;
   model_name?: string | null;
   model_budget_usd?: string | null;
   budget_spent_usd?: string | null;
@@ -73,16 +80,29 @@ export interface FrozenAssetSnapshot {
   assets?: FrozenAsset[];
 }
 
+export interface CaseTestSummary {
+  passed: number;
+  failed: number;
+  skipped: number;
+  error: number;
+  f2p_failed: number;
+  p2p_failed: number;
+}
+
 export interface EvaluationCase {
   id: string;
   case_key: string;
   ordinal: number;
+  repo?: string | null;
   execution_status: string;
   result_status: string;
+  trace_status?: string;
   latest_attempt_no: number;
   duration_ms: number | null;
   error_code: string | null;
   error_summary: string | null;
+  metrics?: Record<string, unknown>;
+  test_summary?: CaseTestSummary;
   updated_at: string | null;
 }
 
@@ -102,6 +122,9 @@ export interface EvaluationDetail extends EvaluationSummary {
   cases: EvaluationCase[];
   shards: EvaluationShard[];
   asset_snapshot?: FrozenAssetSnapshot | null;
+  case_counts?: Record<string, number>;
+  trace_counts?: Record<string, number>;
+  retryable_count?: number;
 }
 
 export interface EvaluationEvent {
@@ -315,6 +338,15 @@ export function parseEvaluationSummary(payload: unknown): EvaluationSummary {
     succeeded_count: readCount(payload.succeeded_count, "succeeded_count"),
     failed_count: readCount(payload.failed_count, "failed_count"),
     shard_size: readCount(payload.shard_size, "shard_size"),
+    requested_concurrency:
+      typeof payload.requested_concurrency === "number" ? payload.requested_concurrency : undefined,
+    effective_concurrency:
+      typeof payload.effective_concurrency === "number" ? payload.effective_concurrency : null,
+    queue_reason: readOptionalString(payload.queue_reason),
+    resource_pool_id: readOptionalString(payload.resource_pool_id),
+    case_timeout_seconds:
+      typeof payload.case_timeout_seconds === "number" ? payload.case_timeout_seconds : undefined,
+    max_attempts: typeof payload.max_attempts === "number" ? payload.max_attempts : undefined,
     created_at: readOptionalString(payload.created_at),
     started_at: readOptionalString(payload.started_at),
     finished_at: readOptionalString(payload.finished_at),
@@ -322,6 +354,7 @@ export function parseEvaluationSummary(payload: unknown): EvaluationSummary {
     created_by: readString(payload.created_by),
     dataset_version_id: readOptionalString(payload.dataset_version_id),
     runtime_key: readOptionalString(payload.runtime_key),
+    runtime_version: readOptionalString(payload.runtime_version),
     model_name: readOptionalString(payload.model_name),
     model_budget_usd: readOptionalString(payload.model_budget_usd),
     budget_spent_usd: readOptionalString(payload.budget_spent_usd),
@@ -358,14 +391,20 @@ export function parseEvaluationDetail(payload: unknown): EvaluationDetail {
     asset_snapshot: isRecord(record.asset_snapshot)
       ? (record.asset_snapshot as unknown as FrozenAssetSnapshot)
       : undefined,
+    case_counts: readNumberMap(record.case_counts),
+    trace_counts: readNumberMap(record.trace_counts),
+    retryable_count:
+      typeof record.retryable_count === "number" ? record.retryable_count : undefined,
     cases: cases.map((entry) => {
       const item = (entry ?? {}) as Record<string, unknown>;
       return {
         id: readString(item.id),
         case_key: readString(item.case_key),
         ordinal: readCount(item.ordinal, "ordinal"),
+        repo: readOptionalString(item.repo),
         execution_status: readString(item.execution_status),
         result_status: readString(item.result_status),
+        trace_status: readOptionalString(item.trace_status) ?? "pending",
         latest_attempt_no: readCount(item.latest_attempt_no, "latest_attempt_no"),
         duration_ms: typeof item.duration_ms === "number" ? item.duration_ms : null,
         error_code: readOptionalString(item.error_code),
@@ -390,6 +429,15 @@ export function parseEvaluationDetail(payload: unknown): EvaluationDetail {
   };
 }
 
+function readNumberMap(value: unknown): Record<string, number> | undefined {
+  if (!isRecord(value)) return undefined;
+  return Object.fromEntries(
+    Object.entries(value).filter(
+      (entry): entry is [string, number] => typeof entry[1] === "number",
+    ),
+  );
+}
+
 export async function fetchEvaluations(signal?: AbortSignal): Promise<EvaluationListResponse> {
   return parseEvaluationList(await request(`/api/v1/evaluations?limit=50`, { signal }));
 }
@@ -401,11 +449,31 @@ export async function fetchEvaluationDetail(
   return parseEvaluationDetail(await request(`/api/v1/evaluations/${runId}`, { signal }));
 }
 
+export interface EvaluationEventPage {
+  items: EvaluationEvent[];
+  next_cursor: number | null;
+  has_more: boolean;
+  direction: "older" | "newer";
+}
+
+export interface EvaluationEventQuery {
+  afterId?: number;
+  beforeId?: number;
+  limit?: number;
+}
+
 export async function fetchEvaluationEvents(
   runId: string,
+  query: EvaluationEventQuery = {},
   signal?: AbortSignal,
-): Promise<{ items: EvaluationEvent[]; next_cursor: number | null }> {
-  const payload = await request(`/api/v1/evaluations/${runId}/events?limit=100`, { signal });
+): Promise<EvaluationEventPage> {
+  const params = new URLSearchParams();
+  params.set("limit", String(query.limit ?? 100));
+  if (query.afterId !== undefined) params.set("after_id", String(query.afterId));
+  if (query.beforeId !== undefined) params.set("before_id", String(query.beforeId));
+  const payload = await request(`/api/v1/evaluations/${runId}/events?${params.toString()}`, {
+    signal,
+  });
   if (!isRecord(payload) || !Array.isArray(payload.items)) {
     throw new ApiError("控制面返回了无法识别的事件列表", { code: "invalid_response" });
   }
@@ -423,6 +491,8 @@ export async function fetchEvaluationEvents(
       };
     }),
     next_cursor: typeof payload.next_cursor === "number" ? payload.next_cursor : null,
+    has_more: Boolean(payload.has_more),
+    direction: payload.direction === "newer" ? "newer" : "older",
   };
 }
 
@@ -543,9 +613,13 @@ export async function fetchEvaluationResults(
 
 export async function fetchCaseTests(
   caseRunId: string,
+  attempt?: number | null,
   signal?: AbortSignal,
 ): Promise<{ attempt: number | null; items: CaseTestResult[]; summary: Record<string, number> }> {
-  const payload = await request(`/api/v1/eval-case-runs/${caseRunId}/tests`, { signal });
+  const params = new URLSearchParams();
+  if (typeof attempt === "number") params.set("attempt", String(attempt));
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  const payload = await request(`/api/v1/eval-case-runs/${caseRunId}/tests${suffix}`, { signal });
   if (!isRecord(payload) || !Array.isArray(payload.items)) {
     throw new ApiError("控制面返回了无法识别的测试结果", { code: "invalid_response" });
   }

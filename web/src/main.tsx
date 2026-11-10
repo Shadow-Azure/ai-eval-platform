@@ -9,6 +9,7 @@ import "./styles/operations.css";
 import "./styles/models.css";
 import "./styles/assets.css";
 import "./styles/resources.css";
+import "./styles/eval-detail.css";
 import "./styles/login.css";
 import App from "./app/App";
 
