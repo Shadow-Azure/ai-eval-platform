@@ -373,7 +373,7 @@ def main() -> int:
     from sqlalchemy import select  # noqa: PLC0415
 
     settings = get_settings()
-    settings.runner_spot_runner_version = os.environ.get("SPOT_RUNNER_VERSION", "2.329.0")
+    settings.runner_spot_runner_version = os.environ.get("SPOT_RUNNER_VERSION", "2.338.2")
     settings.aliyun_default_region = region
     settings.eval_spot_register_timeout_seconds = int(os.environ.get("SPOT_SMOKE_RUNNER_TIMEOUT", "1200"))
     label = f"spot-smoke-{smoke_id}"
