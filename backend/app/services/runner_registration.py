@@ -122,10 +122,15 @@ class GitHubRunnerRegistrar:
                 "GitHub 仓库不存在或 Token 无权访问",
                 details={"status": status},
             )
+        details: dict[str, object] = {"status": status}
+        # 422 is GitHub's validation response (e.g. a reserved label); its body
+        # contains field explanations, never the returned JIT blob.
+        if status == 422:
+            details["body"] = body.strip()[:500]
         return ProvisionerError(
             "runner_registration_failed",
             f"GitHub Runner 注册失败：HTTP {status}",
-            details={"status": status},
+            details=details,
         )
 
     # -- API ----------------------------------------------------------------

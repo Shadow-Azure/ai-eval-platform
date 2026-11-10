@@ -564,6 +564,10 @@ def main() -> int:
                     "facts": [
                         {"label": "阶段", "value": type(exc).__name__},
                         {"label": "详情", "value": str(exc)[:300]},
+                        {
+                            "label": "诊断",
+                            "value": str(getattr(exc, "details", {}))[:500],
+                        },
                     ],
                     "state": {"kind": "fail", "label": "FAIL"},
                 }
@@ -608,6 +612,10 @@ def main() -> int:
                     "facts": [
                         {"label": "阶段", "value": type(exc).__name__},
                         {"label": "详情", "value": str(exc)[:300]},
+                        {
+                            "label": "诊断",
+                            "value": str(getattr(exc, "details", {}))[:500],
+                        },
                     ],
                     "state": {"kind": "fail", "label": "FAIL"},
                 }
