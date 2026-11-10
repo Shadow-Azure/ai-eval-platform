@@ -66,6 +66,9 @@ class Settings(BaseSettings):
     runner_admin_token: str | None = None
     runner_spot_labels: str = "self-hosted,linux,eval"
     runner_spot_runner_version: str = "2.338.2"
+    # Optional cached tarball URL (OSS/S3) for Aliyun regions where GitHub
+    # downloads are slow/blocked; cloud-init falls back to the GitHub URL.
+    runner_spot_runner_tarball_url: str | None = None
     runner_spot_runner_group_id: int | None = 1
 
     # M2-05 synthetic evaluation loop.

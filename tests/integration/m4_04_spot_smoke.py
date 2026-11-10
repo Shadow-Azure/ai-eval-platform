@@ -339,6 +339,7 @@ def main() -> int:
             "RUNNER_ADMIN_TOKEN": admin_token,
             "GITHUB_REPO": repo,
             "ALIYUN_REGION": region,
+            "S3_REGION": f"oss-{region}",
             "SECRET_BOX_KEY": os.environ.get("SECRET_BOX_KEY", ""),
         }
     )
@@ -358,6 +359,11 @@ def main() -> int:
     from app.models import Credential, ResourceEvent  # noqa: PLC0415
     from app.secrets import get_secret_box  # noqa: PLC0415
     from app.seed import ensure_default_scope  # noqa: PLC0415
+    from app.services.object_store import (  # noqa: PLC0415
+        ObjectMissing,
+        ObjectStoreError,
+        object_store_from_settings,
+    )
     from app.services.provisioning import InstanceSpec, ProvisionerError  # noqa: PLC0415
     from app.services.provisioning.aliyun import (  # noqa: PLC0415
         AliyunEcsClient,
@@ -392,6 +398,51 @@ def main() -> int:
         "issues": [],
     }
     started = time.monotonic()
+
+    runner_tarball_url = None
+    store = object_store_from_settings(settings)
+    if store is None:
+        evidence["ok"] = False
+        evidence["issues"].append(
+            {
+                "severity": "P1",
+                "title": "缺少对象存储配置，无法缓存 Runner",
+                "facts": [{"label": "需要", "value": "OSS_ENDPOINT/OSS_BUCKET/S3_ACCESS_KEY/S3_SECRET_KEY"}],
+                "state": {"kind": "fail", "label": "FAIL"},
+            }
+        )
+        evidence["total_seconds"] = round(time.monotonic() - started, 1)
+        _write_outputs(evidence, Path(args.out), render=args.render)
+        return 1
+    version = settings.runner_spot_runner_version
+    runner_key = f"runner/actions-runner-linux-x64-{version}.tar.gz"
+    try:
+        try:
+            store.head_object(runner_key)
+            evidence["runner_tarball"] = "oss-cache"
+        except ObjectMissing:
+            github_url = (
+                "https://github.com/actions/runner/releases/download/"
+                f"v{version}/actions-runner-linux-x64-{version}.tar.gz"
+            )
+            with urllib.request.urlopen(github_url, timeout=300) as response:
+                payload = response.read()
+            store.put_bytes(runner_key, payload, content_type="application/gzip")
+            evidence["runner_tarball"] = "oss-upload"
+        runner_tarball_url = store.presign_get_url(runner_key, expires=7200)
+    except (ObjectStoreError, OSError) as exc:
+        evidence["ok"] = False
+        evidence["issues"].append(
+            {
+                "severity": "P1",
+                "title": "Runner 缓存准备失败",
+                "facts": [{"label": "错误", "value": type(exc).__name__}],
+                "state": {"kind": "fail", "label": "FAIL"},
+            }
+        )
+        evidence["total_seconds"] = round(time.monotonic() - started, 1)
+        _write_outputs(evidence, Path(args.out), render=args.render)
+        return 1
 
     with SessionLocal() as session:
         tenant, _workspace, project = ensure_default_scope(session)
@@ -437,6 +488,7 @@ def main() -> int:
                 "instance_type": instance_type_override or DEFAULT_TYPES[0],
                 "runners_per_instance": 1,
                 "platform_base_url": "",
+                "runner_tarball_url": runner_tarball_url,
             },
             price_threshold_usd=Decimal("10.0000"),
             labels_json={"runs_on": ["self-hosted", label]},

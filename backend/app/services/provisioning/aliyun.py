@@ -680,7 +680,15 @@ class AliyunEcsProvisioner:
             labels=_runner_labels(self.settings, pool),
             encoded_jit=encoded_jit,
             heartbeat_token=self.settings.runner_heartbeat_token,
-            runner_version=self.settings.runner_spot_runner_version,
+            runner_tarball_url=(
+                _config_str(config, "runner_tarball_url")
+                or self.settings.runner_spot_runner_tarball_url
+                or (
+                    "https://github.com/actions/runner/releases/download/"
+                    f"v{self.settings.runner_spot_runner_version}/"
+                    f"actions-runner-linux-x64-{self.settings.runner_spot_runner_version}.tar.gz"
+                )
+            ),
         )
 
     @staticmethod

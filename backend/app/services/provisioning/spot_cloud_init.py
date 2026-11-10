@@ -60,7 +60,7 @@ done
 def _bootstrap_script(
     *,
     encoded_jit: str,
-    runner_version: str,
+    runner_tarball_url: str,
 ) -> str:
     # The JIT blob is a single-use GitHub registration credential. It is
     # written 0600 and removed by the cleanup service after the runner reads
@@ -74,8 +74,8 @@ systemctl enable --now docker
 
 mkdir -p /opt/actions-runner /etc/eval
 cd /opt/actions-runner
-curl -fsSL -o runner.tar.gz \\
-  "https://github.com/actions/runner/releases/download/v{runner_version}/actions-runner-linux-x64-{runner_version}.tar.gz"
+curl -fsSL --max-time 600 --retry 3 -o runner.tar.gz \\
+  "{runner_tarball_url}"
 tar -xzf runner.tar.gz
 rm -f runner.tar.gz
 
@@ -152,7 +152,7 @@ def render_cloud_init(
     labels: Sequence[str],
     encoded_jit: str,
     heartbeat_token: str | None,
-    runner_version: str,
+    runner_tarball_url: str,
 ) -> str:
     """Return a cloud-config document (base64 payload + runcmd).
 
@@ -166,7 +166,7 @@ def render_cloud_init(
     )
     bootstrap = _bootstrap_script(
         encoded_jit=encoded_jit,
-        runner_version=runner_version,
+        runner_tarball_url=runner_tarball_url,
     )
     cleanup = _cleanup_script()
     # Cloud-init write_files runs as a single document; keep each file in a

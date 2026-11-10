@@ -28,7 +28,7 @@ def test_cloud_init_is_valid_yaml_and_bounded() -> None:
         labels=["self-hosted", "linux", "eval"],
         encoded_jit="jit-head+jit-body/jit-tail==",
         heartbeat_token="heartbeat-token",
-        runner_version="2.338.2",
+        runner_tarball_url="https://oss.example/actions-runner.tar.gz",
     )
     assert len(text.encode()) < 16 * 1024  # Aliyun UserData limit
     document = yaml.safe_load(text)
@@ -50,12 +50,12 @@ def test_bootstrap_contains_jit_and_installs_runner_once() -> None:
             labels=["self-hosted"],
             encoded_jit="single-use-jit-value",
             heartbeat_token="heartbeat-token",
-            runner_version="2.338.2",
+            runner_tarball_url="https://oss.example/actions-runner.tar.gz",
         )
     )
     bootstrap = _files(document)["/etc/eval/bootstrap.sh"]
     assert "single-use-jit-value" in bootstrap
-    assert "actions-runner-linux-x64-2.338.2.tar.gz" in bootstrap
+    assert "https://oss.example/actions-runner.tar.gz" in bootstrap
     assert "run.sh --jitconfig \"$JIT_CONFIG\"" in bootstrap
     assert "systemctl enable --now github-runner.service" in bootstrap
 
@@ -69,7 +69,7 @@ def test_cleanup_removes_jit_env_and_cloud_init_user_data() -> None:
             labels=["self-hosted"],
             encoded_jit="single-use-jit-value",
             heartbeat_token="heartbeat-token",
-            runner_version="2.338.2",
+            runner_tarball_url="https://oss.example/actions-runner.tar.gz",
         )
     )
     cleanup = _files(document)["/etc/eval/cleanup.sh"]
@@ -86,7 +86,7 @@ def test_heartbeat_payload_includes_pool_binding() -> None:
             labels=["self-hosted", "linux"],
             encoded_jit="jit",
             heartbeat_token=None,
-            runner_version="2.338.2",
+            runner_tarball_url="https://oss.example/actions-runner.tar.gz",
         )
     )
     heartbeat = _files(document)["/etc/eval/heartbeat.sh"]
