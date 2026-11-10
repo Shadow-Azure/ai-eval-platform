@@ -38,7 +38,15 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 BACKEND = REPO / "backend"
-DEFAULT_TYPES = ("ecs.g7.large", "ecs.g6.large", "ecs.c7.large", "ecs.u1-c1m2.large")
+DEFAULT_TYPES = (
+    "ecs.g7.large",
+    "ecs.g6.large",
+    "ecs.g5.large",
+    "ecs.c7.large",
+    "ecs.c6.large",
+    "ecs.u1-c1m2.large",
+    "ecs.e-c1m2.large",
+)
 
 
 def _iso(now: datetime) -> str:
@@ -145,8 +153,7 @@ def _build_report(evidence: dict) -> dict:
                 "label": "PASS" if evidence.get("price_usd") is not None else "FAIL",
             },
             "detail": (
-                f"CNY {evidence.get('price_cny')} / USD {evidence.get('price_usd')}，"
-                f"zone {evidence.get('zone_id')}。"
+                f"CNY {evidence.get('price_cny')} / USD {evidence.get('price_usd')}，zone {evidence.get('zone_id')}。"
             ),
             "evidence": ["evidence.json"],
         },
@@ -256,6 +263,21 @@ def _build_report(evidence: dict) -> dict:
     }
 
 
+def _write_outputs(evidence: dict, out: Path, *, render: bool) -> None:
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(evidence, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    report = _build_report(evidence)
+    report_path = out.parent / "report-data.json"
+    report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    renderer = REPO / ".agents/skills/computer-use-smoke-reporting/scripts/render-smoke-report.mjs"
+    if render and renderer.exists():
+        subprocess.run(
+            ["node", str(renderer), str(report_path), str(out.parent / "smoke-report.html")],
+            check=False,
+        )
+    print(json.dumps(evidence, indent=2, ensure_ascii=False))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", default="reports/2026-11-10/m4-04-spot/evidence.json")
@@ -305,8 +327,12 @@ def main() -> int:
     from app.models import Credential, ResourceEvent  # noqa: PLC0415
     from app.secrets import get_secret_box  # noqa: PLC0415
     from app.seed import ensure_default_scope  # noqa: PLC0415
-    from app.services.provisioning import InstanceSpec  # noqa: PLC0415
-    from app.services.provisioning.aliyun import AliyunEcsProvisioner  # noqa: PLC0415
+    from app.services.provisioning import InstanceSpec, ProvisionerError  # noqa: PLC0415
+    from app.services.provisioning.aliyun import (  # noqa: PLC0415
+        AliyunEcsClient,
+        AliyunEcsProvisioner,
+        resolve_aliyun_credentials,
+    )
     from app.services.runner_registration import GitHubRunnerRegistrar  # noqa: PLC0415
     from sqlalchemy import select  # noqa: PLC0415
 
@@ -392,26 +418,114 @@ def main() -> int:
         provisioner = AliyunEcsProvisioner(settings=settings, registrar=registrar)
         now = datetime.now(UTC)
         candidates = [instance_type_override] if instance_type_override else list(DEFAULT_TYPES)
-        quote = None
+        access_key_id, access_key_secret = resolve_aliyun_credentials(session, connection)
+        client = AliyunEcsClient(
+            access_key_id=access_key_id,
+            access_key_secret=access_key_secret,
+            endpoint=settings.aliyun_ecs_endpoint,
+        )
+        try:
+            switches = client.describe_vswitches(region)
+        except ProvisionerError as exc:
+            evidence["ok"] = False
+            evidence["issues"].append(
+                {
+                    "severity": "P1",
+                    "title": "无法读取 vSwitch（RAM 权限或网络）",
+                    "facts": [{"label": "错误", "value": exc.code}, {"label": "Region", "value": region}],
+                    "state": {"kind": "fail", "label": "FAIL"},
+                }
+            )
+            evidence["total_seconds"] = round(time.monotonic() - started, 1)
+            _write_outputs(evidence, Path(args.out), render=args.render)
+            return 1
+        diagnostics: list[dict] = []
+        pick = None
+        # A vSwitch in a zone without spot inventory would make every quote
+        # "unavailable"; the smoke deliberately tries every vSwitch zone so a
+        # working zone is used. The production pool pins its vSwitch, so this
+        # discovery lives in the smoke harness only.
         for candidate in candidates:
             if not candidate:
                 continue
-            pool.instance_config_json = {**pool.instance_config_json, "instance_type": candidate}
-            session.flush()
-            quote = provisioner.quote(connection=connection, pool=pool, now=now, session=session)
-            if quote.available:
-                evidence["instance_type"] = candidate
+            for switch in switches:
+                zone = str(switch.get("ZoneId") or "") or None
+                try:
+                    samples = client.describe_spot_prices(region, candidate, zone_id=zone)
+                except ProvisionerError as exc:
+                    diagnostics.append({"instance_type": candidate, "zone_id": zone, "error": exc.code})
+                    continue
+                for sample in samples:
+                    diagnostics.append(
+                        {
+                            "instance_type": candidate,
+                            "zone_id": sample.get("ZoneId"),
+                            "price_cny": sample.get("Price"),
+                        }
+                    )
+                if samples:
+                    pick = (candidate, switch, samples[0], zone)
+                    break
+            if pick:
                 break
-        if quote is None or not quote.available:
+        if pick is None:
+            evidence["ok"] = False
+            evidence["spot_diagnostics"] = diagnostics[:30]
             evidence["issues"].append(
                 {
                     "severity": "P1",
                     "title": "没有可用竞价库存",
-                    "facts": [{"label": "Region", "value": region}],
+                    "facts": [
+                        {"label": "Region", "value": region},
+                        {
+                            "label": "已尝试",
+                            "value": json.dumps(diagnostics[:10], ensure_ascii=False),
+                        },
+                    ],
                     "state": {"kind": "fail", "label": "FAIL"},
                 }
             )
-            raise RuntimeError("no spot inventory for any candidate instance type")
+            evidence["total_seconds"] = round(time.monotonic() - started, 1)
+            _write_outputs(evidence, Path(args.out), render=args.render)
+            return 1
+        candidate, switch, _sample, zone = pick
+        evidence["instance_type"] = candidate
+        pool.instance_config_json = {
+            **pool.instance_config_json,
+            "instance_type": candidate,
+            "vswitch_id": switch["VSwitchId"],
+            "zone_id": zone or switch.get("ZoneId"),
+        }
+        session.flush()
+        try:
+            quote = provisioner.quote(connection=connection, pool=pool, now=now, session=session)
+        except ProvisionerError as exc:
+            evidence["ok"] = False
+            evidence["issues"].append(
+                {
+                    "severity": "P1",
+                    "title": "竞价价格查询失败",
+                    "facts": [{"label": "错误", "value": exc.code}],
+                    "state": {"kind": "fail", "label": "FAIL"},
+                }
+            )
+            evidence["total_seconds"] = round(time.monotonic() - started, 1)
+            _write_outputs(evidence, Path(args.out), render=args.render)
+            return 1
+        if not quote.available:
+            evidence["ok"] = False
+            evidence["spot_diagnostics"] = diagnostics[:30]
+            evidence["issues"].append(
+                {
+                    "severity": "P1",
+                    "title": "竞价库存复查失败",
+                    "facts": [{"label": "Instance type", "value": candidate}],
+                    "state": {"kind": "fail", "label": "FAIL"},
+                }
+            )
+            evidence["total_seconds"] = round(time.monotonic() - started, 1)
+            _write_outputs(evidence, Path(args.out), render=args.render)
+            return 1
         evidence.update(
             {
                 "price_cny": str(quote.price_native),
@@ -420,15 +534,43 @@ def main() -> int:
             }
         )
         if quote.price_usd > Decimal("1.0000"):
-            raise RuntimeError(f"spot price {quote.price_usd} USD/h exceeds smoke budget")
+            evidence["ok"] = False
+            evidence["issues"].append(
+                {
+                    "severity": "P1",
+                    "title": "竞价价格超过冒烟预算",
+                    "facts": [{"label": "Price USD/h", "value": str(quote.price_usd)}],
+                    "state": {"kind": "fail", "label": "FAIL"},
+                }
+            )
+            evidence["total_seconds"] = round(time.monotonic() - started, 1)
+            _write_outputs(evidence, Path(args.out), render=args.render)
+            return 1
 
-        instance = provisioner.create(
-            session=session,
-            connection=connection,
-            pool=pool,
-            spec=InstanceSpec(instance_type=evidence["instance_type"]),
-            now=now,
-        )
+        try:
+            instance = provisioner.create(
+                session=session,
+                connection=connection,
+                pool=pool,
+                spec=InstanceSpec(instance_type=evidence["instance_type"]),
+                now=now,
+            )
+        except Exception as exc:  # noqa: BLE001 - capture the provider code, then exit
+            evidence["ok"] = False
+            evidence["issues"].append(
+                {
+                    "severity": "P1",
+                    "title": "竞价实例创建失败",
+                    "facts": [
+                        {"label": "阶段", "value": type(exc).__name__},
+                        {"label": "详情", "value": str(exc)[:300]},
+                    ],
+                    "state": {"kind": "fail", "label": "FAIL"},
+                }
+            )
+            evidence["total_seconds"] = round(time.monotonic() - started, 1)
+            _write_outputs(evidence, Path(args.out), render=args.render)
+            return 1
         session.commit()
         evidence["instance_id"] = instance.provider_instance_id
         evidence["runner_name"] = instance.cost_json.get("runner_name")
@@ -493,20 +635,7 @@ def main() -> int:
                 evidence["ok"] = False
 
     evidence["total_seconds"] = round(time.monotonic() - started, 1)
-    out = Path(args.out)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(evidence, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    report = _build_report(evidence)
-    report_path = out.parent / "report-data.json"
-    report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-
-    renderer = REPO / ".agents/skills/computer-use-smoke-reporting/scripts/render-smoke-report.mjs"
-    if args.render and renderer.exists():
-        subprocess.run(
-            ["node", str(renderer), str(report_path), str(out.parent / "smoke-report.html")],
-            check=False,
-        )
-    print(json.dumps(evidence, indent=2, ensure_ascii=False))
+    _write_outputs(evidence, Path(args.out), render=args.render)
     return 0 if evidence["ok"] else 1
 
 
