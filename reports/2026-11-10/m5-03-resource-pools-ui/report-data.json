@@ -5,7 +5,7 @@
   "meta": "2026-11-10 · AI Eval Platform · M5-03",
   "metrics": [
     {
-      "value": "13",
+      "value": "14",
       "label": "检查点（含基线）"
     },
     {
@@ -215,6 +215,18 @@
         "evidence": [
           "after-12-viewer-connections.png"
         ]
+      },
+      {
+        "id": "14",
+        "name": "供给测试释放失败保留诊断",
+        "status": {
+          "kind": "pass",
+          "label": "PASS"
+        },
+        "detail": "故意让假供给器释放失败：页面保留实例已创建上下文，自动释放步骤标记失败并显示 release_failed，同时提示已交给容量控制器重试。",
+        "evidence": [
+          "after-13-provisioning-release-failed.png"
+        ]
       }
     ]
   },
@@ -275,6 +287,13 @@
       "label": "13 · Read-only",
       "caption": "只读成员可见脱敏凭据与能力，但没有验证或替换密钥入口。",
       "variant": "wide"
+    },
+    {
+      "src": "after-13-provisioning-release-failed.png",
+      "alt": "供给测试释放失败诊断",
+      "label": "14 · Failure",
+      "caption": "释放失败步骤保留稳定错误码，页面不伪装成功并保留重试入口。",
+      "variant": "wide"
     }
   ],
   "coverage": {
@@ -306,7 +325,7 @@
       {
         "area": "供给测试",
         "coverage": "pytest + browser",
-        "conclusion": "费用确认、实例创建、自动释放、审计与释放失败诊断均有测试；浏览器走通确认与生命周期展示。",
+        "conclusion": "费用确认、实例创建、自动释放、审计与释放失败诊断均有测试；浏览器走通确认、成功生命周期与释放失败诊断。",
         "recommendation": "真实云价格与 Runner 注册仍需部署后冒烟。"
       }
     ]
@@ -318,7 +337,8 @@
     "points": [
       "供给测试按 M4-03 设计在注册 Runner 前立即释放，因此注册步骤显示为跳过并说明原因，不伪造注册成功。",
       "本地冒烟用假供给器替代阿里云调用；真实云验证、价格与库存仍需部署环境冒烟。",
-      "Before 基线为 origin/main 的 /resources 占位页，不是修改后页面的回放。"
+      "Before 基线为 origin/main 的 /resources 占位页，不是修改后页面的回放。",
+      "释放失败路径用假供给器的 release_error 触发，验证页面保留错误码与“释放重试中”状态。"
     ]
   },
   "footer": "M5-03 · 资源连接与资源池产品页面 · 本地开发栈浏览器冒烟"
