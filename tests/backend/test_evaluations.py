@@ -9,13 +9,15 @@ reconciled without regenerating anything (验收 2：事务 outbox 生成分片�
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from app.config import get_settings
 from app.defaults import DEFAULT_PROJECT_ID, DEFAULT_TENANT_ID
 from app.models import (
     ATTEMPT_STATUSES,
+    Dataset,
+    DatasetVersion,
     EvalCaseAttempt,
     EvalCaseRun,
     EvalEvent,
@@ -288,6 +290,189 @@ def test_api_lists_evaluations_with_counts(seeded: Session, client: TestClient) 
     assert len(body["items"]) == 2
     statuses = {item["status"] for item in body["items"]}
     assert statuses == {"queued"}
+    assert body["stats"]["total"] == 2
+    assert body["stats"]["active"] == 2
+    assert body["stats"]["avg_resolve_rate"] is None
+
+
+def test_api_list_filters_and_searches_on_server(seeded: Session, client: TestClient) -> None:
+    """M5-16: q/status/dataset filters and pagination run in the query."""
+
+    for index, name in enumerate(("Codex × SWE-bench", "Claude 合成", "Claude 合成")):
+        created = client.post(
+            "/api/v1/evaluations",
+            json={"name": name, "case_keys": [f"case-{index}"], "idempotency_key": f"filter-{index}"},
+        )
+        assert created.status_code == 201
+
+    by_name = client.get("/api/v1/evaluations", params={"q": "codex"}).json()
+    assert by_name["total"] == 1
+    assert by_name["items"][0]["name"] == "Codex × SWE-bench"
+    assert by_name["stats"]["total"] == 1
+
+    by_agent = client.get("/api/v1/evaluations", params={"q": "claude"}).json()
+    assert by_agent["total"] == 2
+    assert by_agent["stats"]["total"] == 2
+
+    empty = client.get("/api/v1/evaluations", params={"q": "missing"}).json()
+    assert empty["total"] == 0
+    assert empty["items"] == []
+    assert empty["stats"]["total"] == 0
+
+    queued = client.get("/api/v1/evaluations", params={"status": "queued"}).json()
+    assert queued["total"] == 3
+    assert {item["status"] for item in queued["items"]} == {"queued"}
+
+    completed = client.get("/api/v1/evaluations", params={"status": "completed"}).json()
+    assert completed["total"] == 0
+
+    paged = client.get("/api/v1/evaluations", params={"limit": 1, "offset": 1}).json()
+    assert paged["total"] == 3
+    assert len(paged["items"]) == 1
+    assert paged["items"][0]["id"] in {
+        item["id"] for item in client.get("/api/v1/evaluations").json()["items"]
+    }
+
+    invalid = client.get("/api/v1/evaluations", params={"status": "nope"})
+    assert invalid.status_code == 422
+    assert invalid.json()["detail"]["error"]["code"] == "evaluation_invalid"
+
+
+def test_api_list_exposes_dataset_agent_stats_and_resolve_rate(
+    seeded: Session, client: TestClient
+) -> None:
+    """M5-16: list columns and stat cards are server aggregates, partial included."""
+
+    tenant, _workspace, project = ensure_default_scope(seeded)
+    dataset = Dataset(
+        tenant_id=tenant.id,
+        project_id=project.id,
+        slug="swe-bench-verified",
+        name="SWE-bench Verified",
+        adapter_key="swebench",
+    )
+    seeded.add(dataset)
+    seeded.flush()
+    version = DatasetVersion(
+        tenant_id=tenant.id,
+        dataset_id=dataset.id,
+        version="v2026.10",
+        source_uri="fixture://swebench",
+        source_revision="abcdef123456",
+        adapter_version="1.0",
+        case_count=2,
+        status="active",
+    )
+    seeded.add(version)
+    seeded.flush()
+
+    now = datetime.now(UTC)
+    partial = EvalRun(
+        tenant_id=tenant.id,
+        project_id=project.id,
+        name="Codex × SWE-bench Verified",
+        status="partial",
+        dataset_version_id=version.id,
+        runtime_key="codex",
+        model_name="deepseek-v4.1",
+        idempotency_key="stats-partial",
+        created_by="tester",
+        total_cases=2,
+        succeeded_count=1,
+        failed_count=1,
+        started_at=now - timedelta(hours=4),
+        finished_at=now - timedelta(hours=2),
+    )
+    running = EvalRun(
+        tenant_id=tenant.id,
+        project_id=project.id,
+        name="Claude 实时评测",
+        status="running",
+        runtime_key="claude-code",
+        model_name="glm-5",
+        idempotency_key="stats-running",
+        created_by="tester",
+        total_cases=2,
+        running_count=2,
+        started_at=now - timedelta(minutes=30),
+    )
+    seeded.add_all([partial, running])
+    seeded.flush()
+    for ordinal, (case_key, result_status) in enumerate(
+        (("case-a", "resolved"), ("case-b", "unresolved")), start=1
+    ):
+        seeded.add(
+            EvalCaseRun(
+                tenant_id=tenant.id,
+                eval_run_id=partial.id,
+                dataset_case_id=f"{version.id}-{case_key}",
+                case_key=case_key,
+                ordinal=ordinal,
+                execution_status="succeeded",
+                result_status=result_status,
+            )
+        )
+    for ordinal, case_key in enumerate(("case-c", "case-d"), start=1):
+        seeded.add(
+            EvalCaseRun(
+                tenant_id=tenant.id,
+                eval_run_id=running.id,
+                dataset_case_id=f"{version.id}-{case_key}",
+                case_key=case_key,
+                ordinal=ordinal,
+                execution_status="running",
+                result_status="not_scored",
+            )
+        )
+    seeded.commit()
+
+    body = client.get("/api/v1/evaluations").json()
+    assert body["total"] == 2
+    by_id = {item["id"]: item for item in body["items"]}
+
+    partial_item = by_id[partial.id]
+    assert partial_item["status"] == "partial"
+    assert partial_item["dataset_name"] == "SWE-bench Verified"
+    assert partial_item["dataset_version"] == "v2026.10"
+    assert partial_item["runtime_key"] == "codex"
+    assert partial_item["model_name"] == "deepseek-v4.1"
+    assert partial_item["resolved_count"] == 1
+    assert partial_item["scored_count"] == 2
+    assert partial_item["resolve_rate"] == 50.0
+    assert partial_item["duration_seconds"] == 7200
+
+    running_item = by_id[running.id]
+    assert running_item["resolve_rate"] is None
+    assert running_item["duration_seconds"] >= 1700
+
+    assert body["stats"] == {
+        "total": 2,
+        "active": 1,
+        "running_cases": 2,
+        "resolved_cases": 1,
+        "scored_cases": 2,
+        "avg_resolve_rate": 50.0,
+        "avg_duration_seconds": 7200,
+    }
+
+    by_dataset = client.get("/api/v1/evaluations", params={"dataset_id": dataset.id}).json()
+    assert by_dataset["total"] == 1
+    assert by_dataset["items"][0]["id"] == partial.id
+    assert by_dataset["stats"]["total"] == 1
+
+    by_dataset_name = client.get("/api/v1/evaluations", params={"q": "Verified"}).json()
+    assert by_dataset_name["total"] == 1
+
+    by_model = client.get("/api/v1/evaluations", params={"q": "glm-5"}).json()
+    assert by_model["total"] == 1
+    assert by_model["items"][0]["id"] == running.id
+
+    by_runtime = client.get("/api/v1/evaluations", params={"q": "claude-code"}).json()
+    assert by_runtime["total"] == 1
+
+    partial_only = client.get("/api/v1/evaluations", params={"status": "partial"}).json()
+    assert partial_only["total"] == 1
+    assert partial_only["items"][0]["resolve_rate"] == 50.0
 
 
 def test_api_detail_includes_cases_and_shards(seeded: Session, client: TestClient) -> None:

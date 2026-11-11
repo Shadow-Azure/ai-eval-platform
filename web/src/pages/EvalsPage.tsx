@@ -1,10 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Button, Drawer, Form, Input, InputNumber, Modal, Space, Table, Tag, Timeline, message } from "antd";
+import { Button, Drawer, Form, Input, InputNumber, Modal, Select, Space, Table, Tag, Timeline, message } from "antd";
 import type { TableColumnsType } from "antd";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { EmptyState } from "../components/EmptyState";
 import { Icon } from "../components/Icon";
 import { PageHeading } from "../components/PageHeading";
 import { QueryError } from "../components/QueryError";
+import { StatusCard } from "../components/StatusCard";
+import { fetchDatasets } from "../api/datasets";
 import {
   TERMINAL_EVAL_STATUSES,
   cancelEvaluation,
@@ -14,25 +18,17 @@ import {
   fetchEvaluations,
   type EvaluationCase,
   type EvaluationEvent,
+  type EvaluationListQuery,
   type EvaluationShard,
   type EvaluationSummary,
 } from "../api/evaluations";
+import { EVAL_STATUS_OPTIONS, evalStatusMeta } from "../utils/evalStatus";
 
 const evaluationsQueries = {
-  list: ["evaluations"] as const,
+  all: ["evaluations"] as const,
+  list: (filters: EvaluationListQuery) => ["evaluations", "list", filters] as const,
   detail: ["evaluations", "detail"] as const,
   events: ["evaluations", "events"] as const,
-};
-
-const statusMeta: Record<string, { label: string; color: string }> = {
-  queued: { label: "排队中", color: "default" },
-  running: { label: "运行中", color: "processing" },
-  completed: { label: "已完成", color: "success" },
-  partial: { label: "部分成功", color: "warning" },
-  failed: { label: "失败", color: "error" },
-  cancelled: { label: "已取消", color: "default" },
-  pausing_budget: { label: "预算暂停中", color: "warning" },
-  paused_budget: { label: "预算已暂停", color: "warning" },
 };
 
 const caseStatusLabels: Record<string, string> = {
@@ -64,7 +60,7 @@ const eventTypeLabels: Record<string, string> = {
 };
 
 function StatusTag({ status }: { status: string }) {
-  const meta = statusMeta[status] ?? { label: status, color: "default" };
+  const meta = evalStatusMeta(status);
   return <Tag color={meta.color}>{meta.label}</Tag>;
 }
 
@@ -73,6 +69,62 @@ function timeLabel(value: string | null): string {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return value;
   return parsed.toLocaleTimeString("zh-CN", { hour12: false });
+}
+
+function dateTimeLabel(value: string | null): string {
+  if (!value) return "—";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  const now = new Date();
+  const time = parsed.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
+  const sameDay =
+    parsed.getFullYear() === now.getFullYear() &&
+    parsed.getMonth() === now.getMonth() &&
+    parsed.getDate() === now.getDate();
+  if (sameDay) return `今天 ${time}`;
+  return `${parsed.getMonth() + 1} 月 ${parsed.getDate()} 日 ${time}`;
+}
+
+const RUNTIME_LABELS: Record<string, string> = {
+  "claude-code": "Claude Code",
+  codex: "Codex CLI",
+  opencode: "OpenCode",
+  pi: "pi",
+};
+
+function runtimeLabel(key: string | null | undefined): string {
+  if (!key) return "—";
+  return RUNTIME_LABELS[key] ?? key;
+}
+
+function durationLabel(seconds: number | null | undefined): string {
+  if (seconds === null || seconds === undefined || seconds < 0) return "—";
+  const totalMinutes = Math.round(seconds / 60);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours > 0) return `${hours} 小时 ${minutes} 分`;
+  if (minutes > 0) return `${minutes} 分`;
+  return `${Math.max(1, Math.round(seconds))} 秒`;
+}
+
+function durationCompact(seconds: number | null | undefined): string {
+  if (seconds === null || seconds === undefined || seconds < 0) return "—";
+  const totalMinutes = Math.round(seconds / 60);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0) return `${minutes}m`;
+  return `${Math.max(1, Math.round(seconds))}s`;
+}
+
+function progressPercent(row: EvaluationSummary): number {
+  if (!row.total_cases) return 0;
+  const finished = row.finished_count ?? Math.max(0, row.total_cases - row.queued_count - row.running_count);
+  return Math.min(100, Math.round((finished / row.total_cases) * 100));
+}
+
+function rateLabel(value: number | null | undefined): string {
+  return value === null || value === undefined ? "—" : `${value.toFixed(1)}%`;
 }
 
 const caseColumns: TableColumnsType<EvaluationCase> = [
@@ -146,15 +198,43 @@ interface CreateFormValues {
 }
 
 export function EvalsPage() {
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [detailId, setDetailId] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [form] = Form.useForm<CreateFormValues>();
+  const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [datasetFilter, setDatasetFilter] = useState("all");
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedSearch(search.trim()), 250);
+    return () => window.clearTimeout(timer);
+  }, [search]);
 
   const listQuery = useQuery({
-    queryKey: evaluationsQueries.list,
-    queryFn: ({ signal }) => fetchEvaluations(signal),
+    queryKey: evaluationsQueries.list({
+      q: debouncedSearch,
+      status: statusFilter,
+      datasetId: datasetFilter,
+    }),
+    queryFn: ({ signal }) =>
+      fetchEvaluations(
+        {
+          q: debouncedSearch || undefined,
+          status: statusFilter === "all" ? undefined : statusFilter,
+          datasetId: datasetFilter === "all" ? undefined : datasetFilter,
+        },
+        signal,
+      ),
     refetchInterval: 3000,
+  });
+
+  const datasetsQuery = useQuery({
+    queryKey: ["datasets", "eval-filter"],
+    queryFn: ({ signal }) => fetchDatasets(signal),
+    staleTime: 60_000,
   });
 
   const detailQuery = useQuery({
@@ -186,7 +266,7 @@ export function EvalsPage() {
       message.success(`评测已创建：${created.id.slice(0, 8)}`);
       setCreateOpen(false);
       form.resetFields();
-      void queryClient.invalidateQueries({ queryKey: evaluationsQueries.list });
+      void queryClient.invalidateQueries({ queryKey: evaluationsQueries.all });
       setDetailId(created.id);
     },
     onError: (error) => message.error(error instanceof Error ? error.message : "创建失败"),
@@ -196,11 +276,36 @@ export function EvalsPage() {
     mutationFn: (runId: string) => cancelEvaluation(runId),
     onSuccess: () => {
       message.success("已取消");
-      void queryClient.invalidateQueries({ queryKey: evaluationsQueries.list });
+      void queryClient.invalidateQueries({ queryKey: evaluationsQueries.all });
       if (runId) void queryClient.invalidateQueries({ queryKey: [...evaluationsQueries.detail, runId] });
     },
     onError: (error) => message.error(error instanceof Error ? error.message : "取消失败"),
   });
+
+  const stats = listQuery.data?.stats;
+  const hasFilters = Boolean(debouncedSearch) || statusFilter !== "all" || datasetFilter !== "all";
+  const statsLoading = listQuery.isLoading && !listQuery.data;
+  const datasetOptions = [
+    { value: "all", label: "数据集：全部" },
+    ...(datasetsQuery.data ?? []).map((dataset) => ({
+      value: dataset.id,
+      label: `数据集：${dataset.name}`,
+    })),
+  ];
+  const statusOptions = [
+    { value: "all", label: "状态：全部" },
+    ...EVAL_STATUS_OPTIONS.map((option) => ({
+      value: option.value,
+      label: `状态：${option.label}`,
+    })),
+  ];
+
+  const resetFilters = () => {
+    setSearch("");
+    setDebouncedSearch("");
+    setStatusFilter("all");
+    setDatasetFilter("all");
+  };
 
   const columns: TableColumnsType<EvaluationSummary> = [
     {
@@ -210,7 +315,30 @@ export function EvalsPage() {
       render: (_value, row) => (
         <div>
           <div className="table-primary">{row.name}</div>
-          <div className="table-secondary">{row.id.slice(0, 8)}</div>
+          <div className="table-secondary">
+            {row.id.slice(0, 8)}
+            {row.resource_pool_id ? ` · ${row.resource_pool_id.slice(0, 8)}` : ""}
+          </div>
+        </div>
+      ),
+    },
+    {
+      title: "Agent / 模型",
+      key: "agent",
+      render: (_value, row) => (
+        <div>
+          <div>{runtimeLabel(row.runtime_key)}</div>
+          <div className="table-secondary">{row.model_name ?? "—"}</div>
+        </div>
+      ),
+    },
+    {
+      title: "数据集",
+      key: "dataset",
+      render: (_value, row) => (
+        <div>
+          <div>{row.dataset_name ?? "未绑定数据集"}</div>
+          <div className="table-secondary">{row.dataset_version ?? "—"}</div>
         </div>
       ),
     },
@@ -219,26 +347,36 @@ export function EvalsPage() {
       title: "进展",
       key: "progress",
       render: (_value, row) => {
-        const total = Math.max(1, row.total_cases);
-        const done = row.succeeded_count + row.failed_count;
-        const percent = Math.min(100, Math.round((done / total) * 100));
+        const percent = progressPercent(row);
         return (
           <div className="table-progress">
             <div className="progress">
               <span style={{ width: `${percent}%` }} />
             </div>
-            <span>
-              {row.succeeded_count}✓ {row.failed_count}✗ {row.running_count}● {row.queued_count}○
-            </span>
+            <span>{percent}%</span>
           </div>
         );
       },
     },
     {
-      title: "创建",
-      dataIndex: "created_at",
-      key: "created_at",
-      render: (value: string | null) => timeLabel(value),
+      title: "核心指标",
+      key: "metric",
+      render: (_value, row) => (
+        <div>
+          <strong>{rateLabel(row.resolve_rate)}</strong>
+          <div className="table-secondary">解决率</div>
+        </div>
+      ),
+    },
+    {
+      title: "开始时间",
+      key: "started_at",
+      render: (_value, row) => (
+        <div>
+          <div>{dateTimeLabel(row.started_at)}</div>
+          <div className="table-secondary">{durationLabel(row.duration_seconds)}</div>
+        </div>
+      ),
     },
     {
       title: "操作",
@@ -271,30 +409,101 @@ export function EvalsPage() {
       <PageHeading
         eyebrow="Evaluation · Eval runs"
         title="评测任务"
-        description="最小合成评测视图：从创建、GitHub 派发到 Runner 回调与终态持久化的全过程。"
+        description="一次评测由数据集版本、Agent 运行时、Git 资产源、模型凭据与资源池共同定义。"
         actions={
           <>
-            <Button icon={<Icon name="database" size={14} />} onClick={() => listQuery.refetch()}>
+            <Button icon={<Icon name="refresh" size={14} />} onClick={() => listQuery.refetch()}>
               刷新
             </Button>
-            <Button type="primary" icon={<Icon name="plus" size={14} />} onClick={() => setCreateOpen(true)}>
-              发起合成评测
+            <Button type="primary" icon={<Icon name="plus" size={14} />} onClick={() => navigate("/evals/new")}>
+              发起评测
             </Button>
           </>
         }
       />
 
-      {listQuery.isError ? (
-        <QueryError error={listQuery.error} onRetry={() => listQuery.refetch()} title="无法加载评测列表" endpoint="GET /api/v1/evaluations" />
+      {listQuery.isError && !listQuery.data ? (
+        <QueryError
+          error={listQuery.error}
+          onRetry={() => listQuery.refetch()}
+          title="无法加载评测列表"
+          endpoint="GET /api/v1/evaluations"
+        />
       ) : (
-        <section className="card">
-          <div className="card-header">
-            <div>
-              <h2>评测列表</h2>
-              <p className="table-secondary">共 {listQuery.data?.total ?? 0} 条 · 每 3 秒自动刷新</p>
-            </div>
+        <>
+          <div className="grid grid-4">
+            <StatusCard
+              label="全部任务"
+              value={stats?.total ?? 0}
+              icon="play"
+              meta={<span>筛选范围内</span>}
+              loading={statsLoading}
+            />
+            <StatusCard
+              label="运行中"
+              value={stats?.active ?? 0}
+              icon="cpu"
+              tone="success"
+              meta={<span>{stats?.running_cases ?? 0} 个用例正在执行</span>}
+              loading={statsLoading}
+            />
+            <StatusCard
+              label="平均解决率"
+              value={rateLabel(stats?.avg_resolve_rate)}
+              icon="sparkles"
+              tone="violet"
+              meta={
+                <span>
+                  {stats && stats.scored_cases > 0
+                    ? `${stats.resolved_cases} / ${stats.scored_cases} 已评分`
+                    : "暂无已评分用例"}
+                </span>
+              }
+              loading={statsLoading}
+            />
+            <StatusCard
+              label="平均耗时"
+              value={durationCompact(stats?.avg_duration_seconds)}
+              icon="clock"
+              tone="warning"
+              meta={<span>按终态任务平均</span>}
+              loading={statsLoading}
+            />
           </div>
-          <div className="card-body">
+
+          <section className="card section-gap">
+            <div className="eval-filter-bar">
+              <Input
+                allowClear
+                aria-label="搜索评测"
+                placeholder="搜索评测名称、Agent 或模型"
+                prefix={<Icon name="search" size={14} />}
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                style={{ width: 270 }}
+              />
+              <Select
+                aria-label="状态筛选"
+                value={statusFilter}
+                options={statusOptions}
+                onChange={(value) => setStatusFilter(value)}
+                style={{ width: 170 }}
+              />
+              <Select
+                aria-label="数据集筛选"
+                value={datasetFilter}
+                options={datasetOptions}
+                onChange={(value) => setDatasetFilter(value)}
+                loading={datasetsQuery.isLoading}
+                style={{ width: 260 }}
+              />
+              <span className="small muted" style={{ marginLeft: "auto" }}>
+                {listQuery.data?.total ?? 0} 个任务 · 自动刷新
+              </span>
+              <Button type="link" size="small" onClick={() => setCreateOpen(true)}>
+                合成评测
+              </Button>
+            </div>
             <Table
               rowKey="id"
               size="small"
@@ -302,9 +511,34 @@ export function EvalsPage() {
               columns={columns}
               dataSource={listQuery.data?.items ?? []}
               pagination={false}
+              locale={{
+                emptyText: hasFilters ? (
+                  <EmptyState
+                    icon="search"
+                    title="没有符合条件的评测"
+                    description="调整搜索词、状态或数据集筛选后再试。"
+                    action={
+                      <Button size="small" onClick={resetFilters}>
+                        清除筛选
+                      </Button>
+                    }
+                  />
+                ) : (
+                  <EmptyState
+                    icon="list"
+                    title="暂无评测任务"
+                    description="发起一次评测后，这里会显示进度、解决率与耗时。"
+                    action={
+                      <Button size="small" type="primary" onClick={() => navigate("/evals/new")}>
+                        发起评测
+                      </Button>
+                    }
+                  />
+                ),
+              }}
             />
-          </div>
-        </section>
+          </section>
+        </>
       )}
 
       <Drawer
@@ -315,7 +549,12 @@ export function EvalsPage() {
         extra={detail ? <StatusTag status={detail.status} /> : null}
       >
         {detailQuery.isError ? (
-          <QueryError error={detailQuery.error} onRetry={() => detailQuery.refetch()} title="无法加载评测详情" endpoint="GET /api/v1/evaluations/{id}" />
+          <QueryError
+            error={detailQuery.error}
+            onRetry={() => detailQuery.refetch()}
+            title="无法加载评测详情"
+            endpoint="GET /api/v1/evaluations/{id}"
+          />
         ) : detail ? (
           <>
             <Space size="large" wrap style={{ marginBottom: 16 }}>
@@ -335,7 +574,12 @@ export function EvalsPage() {
 
             <h4 style={{ marginTop: 16 }}>事件时间线</h4>
             {eventsQuery.isError ? (
-              <QueryError error={eventsQuery.error} onRetry={() => eventsQuery.refetch()} title="无法加载事件" endpoint="GET /api/v1/evaluations/{id}/events" />
+              <QueryError
+                error={eventsQuery.error}
+                onRetry={() => eventsQuery.refetch()}
+                title="无法加载事件"
+                endpoint="GET /api/v1/evaluations/{id}/events"
+              />
             ) : (
               <Timeline
                 items={(eventsQuery.data?.items ?? []).map((event) => ({
@@ -366,7 +610,12 @@ export function EvalsPage() {
         confirmLoading={createMutation.isPending}
         okText="创建并派发"
       >
-        <Form form={form} layout="vertical" initialValues={{ name: "合成评测", case_count: 2 }} onFinish={(values) => createMutation.mutate(values)}>
+        <Form
+          form={form}
+          layout="vertical"
+          initialValues={{ name: "合成评测", case_count: 2 }}
+          onFinish={(values) => createMutation.mutate(values)}
+        >
           <Form.Item name="name" label="名称" rules={[{ required: true, message: "请输入名称" }]}>
             <Input maxLength={200} />
           </Form.Item>

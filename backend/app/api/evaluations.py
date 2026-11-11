@@ -10,6 +10,7 @@ import json
 import time
 import uuid
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Annotated, Literal
 
@@ -20,6 +21,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from ..config import Settings, get_settings
 from ..db import get_session
+from ..models import EVAL_RUN_STATUSES
 from ..services import agent_assets as asset_service
 from ..services import budget as budget_service
 from ..services import evaluations as evaluation_service
@@ -414,13 +416,57 @@ def create_evaluation(
 @router.get("/api/v1/evaluations")
 def list_evaluations(
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    q: Annotated[str | None, Query(max_length=200)] = None,
+    status: Annotated[str | None, Query(max_length=32)] = None,
+    dataset_id: Annotated[str | None, Query(max_length=36)] = None,
     session: Session = Depends(get_session),
 ) -> dict:
-    runs, total = evaluation_service.list_evaluations(session, limit=limit)
+    """M5-16: the list page filters and aggregates on the server.
+
+    ``q`` matches run name/runtime/model and the dataset name/version;
+    ``status`` is an exact run-status enum value (partial included).
+    """
+
+    if status is not None and status not in EVAL_RUN_STATUSES:
+        raise HTTPException(
+            status_code=422,
+            detail=error_detail(
+                "evaluation_invalid",
+                f"未知评测状态：{status}",
+                details={"fields": {"status": "invalid"}},
+            ),
+        )
+    rows, total = evaluation_service.list_evaluations(
+        session,
+        limit=limit,
+        offset=offset,
+        search=q,
+        status=status,
+        dataset_id=dataset_id,
+    )
+    totals = evaluation_service.evaluation_case_totals(session, [row[0].id for row in rows])
+    now = datetime.now(UTC)
+    items = []
+    for run, dataset_name, dataset_version in rows:
+        resolved_count, scored_count = totals.get(run.id, (0, 0))
+        items.append(
+            evaluation_service.evaluation_summary(
+                run,
+                dataset_name=dataset_name,
+                dataset_version=dataset_version,
+                resolved_count=resolved_count,
+                scored_count=scored_count,
+                now=now,
+            )
+        )
     return {
         "status": "ok",
         "total": total,
-        "items": [evaluation_service.evaluation_summary(run) for run in runs],
+        "items": items,
+        "stats": evaluation_service.evaluation_list_stats(
+            session, search=q, status=status, dataset_id=dataset_id
+        ),
     }
 
 

@@ -16,12 +16,13 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from urllib.parse import urlencode
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session
 
 from ..config import Settings
 from ..defaults import DEFAULT_PROJECT_ID, DEFAULT_TENANT_ID
 from ..models import (
+    EVAL_RUN_STATUSES,
     Dataset,
     DatasetCase,
     DatasetVersion,
@@ -533,20 +534,233 @@ def get_evaluation(session: Session, run_id: str) -> EvalRun:
     return run
 
 
-def list_evaluations(session: Session, *, limit: int = 50) -> tuple[list[EvalRun], int]:
-    query = (
-        select(EvalRun)
+# M5-16: a run is "active" while it still owns queued/running work. Budget
+# pauses and cancellation are non-terminal too, so the list must keep showing
+# them as active instead of folding them into a finished bucket.
+ACTIVE_RUN_STATUSES = tuple(
+    status for status in EVAL_RUN_STATUSES if status not in TERMINAL_RUN_STATUSES
+)
+SCORED_RESULT_STATUSES = ("resolved", "unresolved")
+
+
+def _as_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
+def run_duration_seconds(run: EvalRun, *, now: datetime | None = None) -> float | None:
+    """Elapsed wall time: final duration, or time so far for an active run."""
+
+    started = _as_utc(run.started_at)
+    if started is None:
+        return None
+    finished = _as_utc(run.finished_at)
+    end = finished or _as_utc(now) or datetime.now(UTC)
+    return max(0.0, (end - started).total_seconds())
+
+
+def _run_search_pattern(search: str) -> str:
+    return f"%{search.strip()}%"
+
+
+def _run_filter_conditions(
+    *, search: str | None = None, status: str | None = None, dataset_id: str | None = None
+) -> list:
+    conditions = []
+    if status:
+        conditions.append(EvalRun.status == status)
+    if dataset_id:
+        conditions.append(Dataset.id == dataset_id)
+    if search and search.strip():
+        pattern = _run_search_pattern(search)
+        conditions.append(
+            or_(
+                EvalRun.name.ilike(pattern),
+                EvalRun.runtime_key.ilike(pattern),
+                EvalRun.model_name.ilike(pattern),
+                Dataset.name.ilike(pattern),
+                DatasetVersion.version.ilike(pattern),
+            )
+        )
+    return conditions
+
+
+def _run_select(*columns, joins: bool):
+    statement = select(*columns).select_from(EvalRun)
+    if joins:
+        statement = statement.outerjoin(
+            DatasetVersion, DatasetVersion.id == EvalRun.dataset_version_id
+        ).outerjoin(Dataset, Dataset.id == DatasetVersion.dataset_id)
+    return statement
+
+
+def _needs_dataset_join(*, search: str | None, dataset_id: str | None) -> bool:
+    return bool(dataset_id) or bool(search and search.strip())
+
+
+def list_evaluations(
+    session: Session,
+    *,
+    limit: int = 50,
+    offset: int = 0,
+    search: str | None = None,
+    status: str | None = None,
+    dataset_id: str | None = None,
+) -> tuple[list[tuple[EvalRun, str | None, str | None]], int]:
+    """Server-side filtered run list plus the dataset labels the table shows.
+
+    Search covers the visible identity fields (name, runtime, model, dataset
+    name/version) so the filter bar never needs client-side post-filtering.
+    """
+
+    conditions = _run_filter_conditions(search=search, status=status, dataset_id=dataset_id)
+    joins = True  # the page always renders dataset name/version
+    rows = session.execute(
+        _run_select(EvalRun, Dataset.name, DatasetVersion.version, joins=joins)
+        .where(*conditions)
         .order_by(EvalRun.created_at.desc(), EvalRun.id.desc())
+        .offset(max(0, offset))
         .limit(max(1, min(limit, 200)))
-    )
-    items = list(session.scalars(query))
+    ).all()
+    items = [(row[0], row[1], row[2]) for row in rows]
     total = int(
-        session.scalar(select(func.count()).select_from(EvalRun)) or 0
+        session.scalar(
+            _run_select(
+                func.count(),
+                joins=_needs_dataset_join(search=search, dataset_id=dataset_id),
+            ).where(*conditions)
+        )
+        or 0
     )
     return items, total
 
 
-def evaluation_summary(run: EvalRun, *, spent_cny: Decimal | None = None) -> dict:
+def evaluation_case_totals(
+    session: Session, run_ids: list[str]
+) -> dict[str, tuple[int, int]]:
+    """Map run id → (resolved cases, scored cases) for the visible page."""
+
+    if not run_ids:
+        return {}
+    rows = session.execute(
+        select(
+            EvalCaseRun.eval_run_id,
+            func.coalesce(
+                func.sum(case((EvalCaseRun.result_status == "resolved", 1), else_=0)), 0
+            ),
+            func.coalesce(
+                func.sum(
+                    case((EvalCaseRun.result_status.in_(SCORED_RESULT_STATUSES), 1), else_=0)
+                ),
+                0,
+            ),
+        )
+        .where(EvalCaseRun.eval_run_id.in_(run_ids))
+        .group_by(EvalCaseRun.eval_run_id)
+    ).all()
+    return {row[0]: (int(row[1]), int(row[2])) for row in rows}
+
+
+def evaluation_list_stats(
+    session: Session,
+    *,
+    search: str | None = None,
+    status: str | None = None,
+    dataset_id: str | None = None,
+) -> dict:
+    """Aggregates for the four stat cards, computed over the filtered set.
+
+    Resolve rate is case-weighted (resolved / scored) rather than an average of
+    per-run percentages, so a 3-case run cannot outweigh a 500-case run.
+    """
+
+    conditions = _run_filter_conditions(search=search, status=status, dataset_id=dataset_id)
+    joins = _needs_dataset_join(search=search, dataset_id=dataset_id)
+    total = int(
+        session.scalar(_run_select(func.count(), joins=joins).where(*conditions)) or 0
+    )
+    active = int(
+        session.scalar(
+            _run_select(func.count(), joins=joins).where(
+                *conditions, EvalRun.status.in_(ACTIVE_RUN_STATUSES)
+            )
+        )
+        or 0
+    )
+    running_cases = int(
+        session.scalar(
+            _run_select(func.coalesce(func.sum(EvalRun.running_count), 0), joins=joins).where(
+                *conditions
+            )
+        )
+        or 0
+    )
+
+    case_statement = (
+        select(
+            func.coalesce(
+                func.sum(case((EvalCaseRun.result_status == "resolved", 1), else_=0)), 0
+            ),
+            func.coalesce(
+                func.sum(
+                    case((EvalCaseRun.result_status.in_(SCORED_RESULT_STATUSES), 1), else_=0)
+                ),
+                0,
+            ),
+        )
+        .select_from(EvalCaseRun)
+        .join(EvalRun, EvalRun.id == EvalCaseRun.eval_run_id)
+    )
+    if joins:
+        case_statement = case_statement.outerjoin(
+            DatasetVersion, DatasetVersion.id == EvalRun.dataset_version_id
+        ).outerjoin(Dataset, Dataset.id == DatasetVersion.dataset_id)
+    resolved_cases, scored_cases = session.execute(
+        case_statement.where(*conditions)
+    ).one()
+    resolved_cases = int(resolved_cases or 0)
+    scored_cases = int(scored_cases or 0)
+
+    duration_rows = session.execute(
+        _run_select(EvalRun.started_at, EvalRun.finished_at, joins=joins).where(
+            *conditions,
+            EvalRun.started_at.is_not(None),
+            EvalRun.finished_at.is_not(None),
+        )
+    ).all()
+    durations = [
+        (_as_utc(finished) - _as_utc(started)).total_seconds()
+        for started, finished in duration_rows
+        if started is not None and finished is not None
+    ]
+    avg_duration = (
+        int(round(sum(durations) / len(durations))) if durations else None
+    )
+
+    return {
+        "total": total,
+        "active": active,
+        "running_cases": running_cases,
+        "resolved_cases": resolved_cases,
+        "scored_cases": scored_cases,
+        "avg_resolve_rate": (
+            round(resolved_cases / scored_cases * 100, 1) if scored_cases else None
+        ),
+        "avg_duration_seconds": avg_duration,
+    }
+
+
+def evaluation_summary(
+    run: EvalRun,
+    *,
+    spent_cny: Decimal | None = None,
+    dataset_name: str | None = None,
+    dataset_version: str | None = None,
+    resolved_count: int | None = None,
+    scored_count: int | None = None,
+    now: datetime | None = None,
+) -> dict:
     spent = spent_cny if spent_cny is not None else run.budget_spent_cny
     unfinished = int(run.queued_count or 0) + int(run.running_count or 0)
     return {
@@ -579,6 +793,18 @@ def evaluation_summary(run: EvalRun, *, spent_cny: Decimal | None = None) -> dic
         "budget_version": run.budget_version,
         "pause_reason": run.pause_reason,
         "dataset_version_id": run.dataset_version_id,
+        "dataset_name": dataset_name,
+        "dataset_version": dataset_version,
+        "resolved_count": resolved_count,
+        "scored_count": scored_count,
+        "resolve_rate": (
+            round(resolved_count / scored_count * 100, 1)
+            if resolved_count is not None and scored_count
+            else None
+        ),
+        "duration_seconds": (
+            int(duration) if (duration := run_duration_seconds(run, now=now)) is not None else None
+        ),
         "runtime_key": run.runtime_key,
         "runtime_version": run.runtime_version,
         "execution_image_digest": run.execution_image_digest,

@@ -9,6 +9,7 @@ import { Icon, type IconName } from "../components/Icon";
 import { PageHeading } from "../components/PageHeading";
 import { QueryError } from "../components/QueryError";
 import { StatusCard } from "../components/StatusCard";
+import { evalStatusMeta } from "../utils/evalStatus";
 
 interface RecentEvalRow {
   id: string;
@@ -22,16 +23,8 @@ interface RecentEvalRow {
   startedAt: string;
 }
 
-const statusMeta: Record<string, { label: string; tone: string }> = {
-  running: { label: "运行中", tone: "primary" },
-  queued: { label: "排队中", tone: "neutral" },
-  completed: { label: "已完成", tone: "success" },
-  partial: { label: "部分成功", tone: "warning" },
-  failed: { label: "失败", tone: "danger" },
-};
-
 function EvalStatusTag({ status }: { status: string }) {
-  const meta = statusMeta[status] ?? { label: status, tone: "neutral" };
+  const meta = evalStatusMeta(status);
   return (
     <span className={`tag tag-${meta.tone}`}>
       <span className="status-dot" aria-hidden="true" />
