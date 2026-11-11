@@ -13,6 +13,7 @@ from .base import ParsedFile, ParsedSession, ParsedSpan, ParseInput
 
 MAX_LINES = 5000
 MAX_PREVIEW_SOURCE = 2000
+SUPPORTED_FORMAT_VERSIONS = frozenset({"1"})
 
 _SESSION_KEYS = ("sessionId", "session_id", "conversation_id", "thread_id")
 _TOKEN_KEYS = {
@@ -161,6 +162,21 @@ class GenericJsonlParser:
     format_versions = ("*",)
 
     def parse(self, data: bytes, context: ParseInput) -> ParsedFile:
+        if (
+            context.format_version is not None
+            and context.format_version not in SUPPORTED_FORMAT_VERSIONS
+        ):
+            return ParsedFile(
+                status="degraded",
+                detected_format=context.detected_format,
+                error_code="unknown_format_version",
+                error_summary=(
+                    "未知原生格式版本："
+                    f"{redact_text(context.format_version, limit=80)}"
+                ),
+                line_no=1,
+            )
+
         # Subagent ``*.meta.json`` files are relation evidence, not an
         # execution context. The trace_file row is kept for provenance, but the
         # generic parser must not invent a synthetic session from metadata.

@@ -91,6 +91,49 @@ def test_backfill_limit_does_not_starve_manifest_attempts(trace_env) -> None:
     assert row.status == "pending"
 
 
+def test_backfill_limit_resumes_without_skipping_eligible_attempts(trace_env) -> None:
+    session = trace_env["session"]
+    first = trace_env["attempt"]
+    case = trace_env["case"]
+    now = datetime.now(UTC)
+    attempts = [first]
+    for offset in range(14):
+        attempt = EvalCaseAttempt(
+            tenant_id=first.tenant_id,
+            eval_case_run_id=case.id,
+            attempt_no=20 + offset,
+            status="succeeded",
+            shard_id=first.shard_id,
+            created_at=now + timedelta(seconds=offset),
+        )
+        session.add(attempt)
+        attempts.append(attempt)
+    first.status = "succeeded"
+    first.created_at = now + timedelta(seconds=20)
+    for index, attempt in enumerate(attempts):
+        obj = trace_object(
+            trace_env,
+            logical_path=f"native/backfill-{index}.jsonl",
+            content=jsonl(
+                [{"type": "message", "sessionId": f"backfill-{index}", "uuid": f"e{index}"}]
+            ),
+        )
+        attach_manifest(session, attempt, [obj])
+
+    assert trace_ingestion.backfill_missing(session, limit=10) == {
+        "attempts": 10,
+        "files": 10,
+    }
+    assert trace_ingestion.backfill_missing(session, limit=10) == {
+        "attempts": 5,
+        "files": 5,
+    }
+    assert trace_ingestion.backfill_missing(session, limit=10) == {
+        "attempts": 0,
+        "files": 0,
+    }
+
+
 def test_backfill_keyset_skips_diagnostics_beyond_old_window(trace_env) -> None:
     session = trace_env["session"]
     attempt = trace_env["attempt"]

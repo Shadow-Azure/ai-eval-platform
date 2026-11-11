@@ -839,7 +839,11 @@ def _load_and_parse(
     if not lease_ok:
         return lost()
     _validate_relation_evidence(parsed)
-    if not parsed.sessions and trace_file.artifact_kind != "trace_metadata":
+    if (
+        not parsed.sessions
+        and trace_file.artifact_kind != "trace_metadata"
+        and parsed.error_code != "unknown_format_version"
+    ):
         return failed(
             "empty_trace", "轨迹文件没有可用的 session", line_no=parsed.line_no
         )

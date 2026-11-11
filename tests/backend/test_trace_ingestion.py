@@ -260,6 +260,33 @@ def test_unknown_format_degrades_with_line_number(trace_env) -> None:
     assert len(spans) == 1
 
 
+def test_unknown_format_version_degrades_without_guessing(trace_env) -> None:
+    session = trace_env["session"]
+    attempt = trace_env["attempt"]
+    future = trace_object(
+        trace_env,
+        logical_path="native/future.jsonl",
+        content=jsonl([{"type": "message", "sessionId": "future", "uuid": "f1"}]),
+    )
+    future["format_version"] = "future-999"
+    good = trace_object(
+        trace_env,
+        logical_path="native/good.jsonl",
+        content=jsonl([{"type": "message", "sessionId": "good", "uuid": "g1"}]),
+    )
+    attach_manifest(session, attempt, [future, good])
+
+    result = trace_ingestion.ingest_attempt(session, attempt)
+
+    assert result["trace_status"] == "degraded"
+    files, sessions, _spans = _rows(session, attempt)
+    by_path = {row.logical_path: row for row in files}
+    assert by_path["native/future.jsonl"].status == "degraded"
+    assert by_path["native/future.jsonl"].error_code == "unknown_format_version"
+    assert by_path["native/good.jsonl"].status == "ready"
+    assert {row.trace_file_id for row in sessions} == {by_path["native/good.jsonl"].id}
+
+
 def test_corrupt_line_keeps_later_lines_and_hides_raw_content(trace_env) -> None:
     session = trace_env["session"]
     attempt = trace_env["attempt"]
