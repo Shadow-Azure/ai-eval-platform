@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>M6-04 轨迹查询 API 与受控原件访问 smoke</title>
+  <style>
+    :root{
+      color-scheme:light;
+      --bg:#f4f7fb;--card:#fff;--ink:#16202f;--ink2:#55637a;--ink3:#7b869b;
+      --line:#dde4ee;--accent:#2563eb;--accent-wash:#e8efff;--good:#157347;
+      --good-wash:#e7f6ee;--warn:#b45309;--warn-wash:#fff2dd;--bad:#c9282e;
+      --bad-wash:#ffeded;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:radial-gradient(circle at 8% 0,#dbe9ff 0,transparent 32rem),radial-gradient(circle at 92% 4%,#e7f1ff 0,transparent 28rem),var(--bg);color:var(--ink);font:14px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Noto Sans CJK SC",sans-serif}
+    main{max-width:1220px;margin:auto;padding:36px 28px 72px}
+    .hero{padding:30px 34px;border:1px solid #dbe3ee;border-radius:24px;background:rgba(255,255,255,.92);box-shadow:0 18px 44px #17202f12}
+    .eyebrow{margin:0;color:var(--accent);font-size:12px;font-weight:800;letter-spacing:.16em;text-transform:uppercase}
+    h1{margin:10px 0 8px;font-size:clamp(28px,4vw,44px);letter-spacing:-.04em}
+    .summary{margin:0;max-width:850px;color:var(--ink2);font-size:15px}
+    .meta{display:block;margin-top:8px;color:var(--ink3);font-size:12px}
+    .metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-top:26px}
+    .metric{padding:16px 18px;border:1px solid var(--line);border-radius:16px;background:#fafbfd}
+    .metric b{display:block;font-size:30px;letter-spacing:-.04em}
+    .metric span{display:block;margin-top:2px;color:var(--ink3);font-size:12px}
+    section{margin-top:28px}
+    .head{display:flex;align-items:baseline;justify-content:space-between;gap:16px;margin:0 4px 14px}
+    h2{margin:0;font-size:21px;letter-spacing:-.03em}
+    .head small{color:var(--ink3);white-space:nowrap}
+    .card{padding:22px;border:1px solid var(--line);border-radius:20px;background:var(--card);box-shadow:0 5px 22px #17202f08}
+    .facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin:0}
+    .fact{padding:13px 16px;border:1px solid #eceff5;border-radius:12px;background:#fafbfd}
+    .fact dt{color:var(--ink3);font-size:11px;font-weight:700}
+    .fact dd{margin:3px 0 0;overflow-wrap:anywhere}
+    code{font-family:var(--mono);font-size:.9em;color:#29456d;overflow-wrap:anywhere}
+    .status{display:inline-flex;padding:3px 8px;border-radius:999px;font-size:11px;font-weight:800;white-space:nowrap;background:#eef1f6;color:var(--ink2)}
+    .status.pass,.status.fixed{background:var(--good-wash);color:var(--good)}
+    .status.warn,.status.manual{background:var(--warn-wash);color:var(--warn)}
+    .status.fail{background:var(--bad-wash);color:var(--bad)}
+    .tableWrap{overflow:auto;border:1px solid var(--line);border-radius:18px;background:var(--card);box-shadow:0 5px 22px #17202f08}
+    table{width:100%;min-width:920px;border-collapse:collapse}
+    th,td{padding:12px 15px;border-bottom:1px solid #edf0f5;text-align:left;vertical-align:top}
+    th{position:sticky;top:0;background:#fafbfe;color:var(--ink2);font-size:12px}
+    tr:last-child td{border-bottom:0}
+    tr:hover{background:#fcfdff}
+    .num{color:var(--ink3);font-family:var(--mono);font-size:12px}
+    .evidence{color:var(--ink3);font-size:12px}
+    .issues{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px}
+    .issueCard{padding:18px 21px;border:1px solid #ffcece;border-left:5px solid var(--bad);border-radius:16px;background:#fffbfb}
+    .issueCard h3{margin:0;color:#b91c1c;font-size:16px}
+    .issueCard p{margin:8px 0;color:var(--ink2)}
+    .issueCard dt{color:var(--ink3);font-size:11px;font-weight:700}
+    .issueCard dd{margin:2px 0 0;color:var(--ink2)}
+    .tag{float:right;padding:3px 8px;border-radius:999px;background:#fee4e4;color:#9a1b21;font-size:11px;font-weight:800}
+    .fixed{display:inline-flex;gap:5px;align-items:center;margin-top:11px;padding:6px 10px;border-radius:999px;background:var(--good-wash);color:var(--good);font-size:12px;font-weight:800}
+    .shots{display:grid;grid-template-columns:repeat(auto-fit,minmax(430px,1fr));gap:16px}
+    figure{margin:0;overflow:hidden;border:1px solid var(--line);border-radius:18px;background:#fff;box-shadow:0 6px 22px #17202f08}
+    figure.wide{grid-column:1/-1}
+    img{display:block;width:100%;max-height:500px;object-fit:contain;background:#eef2f7}
+    figcaption{display:flex;gap:9px;align-items:flex-start;padding:11px 14px;border-top:1px solid #edf0f5;background:#fafbfd;color:var(--ink2);font-size:12.5px}
+    figcaption b{flex:none;color:var(--ink)}
+    .issue-shot{border-color:#ffcece}
+    .conclusion{border:1px solid #c8e5d2;border-radius:20px;background:linear-gradient(135deg,#f2fbf6,white 54%)}
+    .conclusion.warn{border-color:#f1d9a4;background:linear-gradient(135deg,#fff8e8,white 54%)}
+    .conclusion.fail{border-color:#ffc9c9;background:linear-gradient(135deg,#fff5f5,white 54%)}
+    .conclusion ul{margin:12px 0 0;padding-left:20px;color:#344155}
+    .conclusion li+li{margin-top:7px}
+    .empty{padding:20px;text-align:center;color:var(--ink3);background:#fafbfd;border:1px dashed var(--line);border-radius:12px}
+    .foot{margin-top:24px;color:var(--ink3);font-size:12px;text-align:center}
+    @media(max-width:860px){main{padding:22px 14px 52px}.hero{padding:23px}.shots{grid-template-columns:1fr}.head{align-items:flex-start;flex-direction:column;gap:4px}}
+    @media print{body{background:white}main{max-width:none;padding:0}.card,.issueCard,figure,.tableWrap{box-shadow:none;break-inside:avoid}img{max-height:420px}}
+  </style>
+</head>
+<body>
+<main>
+  <header class="hero">
+    <p class="eyebrow">Computer Use + API integration</p>
+    <h1>M6-04 轨迹查询 API 与受控原件访问 smoke</h1>
+    <p class="summary">在隔离 SQLite、真实 FastAPI 与本机对象存储链路上验证轨迹状态、attempt 树、游标分页、降级质量、管理员签名下载和 no-store 响应。现有前端尚未交付 #94 三栏查看器，因此 GUI 覆盖当前可达的评测详情与轨迹状态入口，查询契约由真实 API 补证。</p>
+    <span class="meta">2026-11-12 · macOS · Google Chrome</span>
+    <div class="metrics"><div class="metric"><b>3</b><span>GUI 截图</span></div><div class="metric"><b>15</b><span>定向 API 测试</span></div><div class="metric"><b>7</b><span>关键 API 场景</span></div><div class="metric"><b>0</b><span>新增 smoke 缺陷</span></div></div>
+  </header>
+
+  <section>
+    <div class="head"><h2>Environment and Artifact</h2><small>2026-11-12 · macOS · Google Chrome</small></div>
+    <article class="card"><dl class="facts"><div class="fact"><dt>Commit</dt><dd>e2a3ac7</dd></div><div class="fact"><dt>PR</dt><dd>#167</dd></div><div class="fact"><dt>Runtime</dt><dd>claude-code 2.1.278</dd></div><div class="fact"><dt>Database</dt><dd>isolated SQLite</dd></div><div class="fact"><dt>Object store</dt><dd>local SigV4 URL + HTTPServer</dd></div><div class="fact"><dt>Viewer</dt><dd>blocked by #94; current case detail used</dd></div></dl></article>
+  </section>
+
+  <section>
+    <div class="head"><h2>Scenario Matrix</h2><small>7 pass</small></div>
+    <div class="tableWrap"><table><table><thead><tr><th>#</th><th>场景</th><th>结果</th><th>断言</th><th>证据</th></tr></thead><tbody><tr><td class="num">01</td><td>登录与评测详情</td><td><span class="status pass">PASS</span></td><td>管理员登录后进入隔离评测，页面显示部分成功与轨迹处理计数。</td><td class="evidence">03-degraded-filter-results.jpeg</td></tr><tr><td class="num">02</td><td>降级状态可见</td><td><span class="status pass">PASS</span></td><td>用例详情显示轨迹状态“已降级”，不会伪装成可用轨迹。</td><td class="evidence">01-degraded-case-detail.jpeg</td></tr><tr><td class="num">03</td><td>降级筛选</td><td><span class="status pass">PASS</span></td><td>轨迹状态筛选返回 1/1 条 degraded 用例，未出现骨架或 422。</td><td class="evidence">03-degraded-filter-results.jpeg</td></tr><tr><td class="num">04</td><td>attempt 会话树</td><td><span class="status pass">PASS</span></td><td>真实 API 返回 1 个 root session 与 1 个 unlinked session，统计为 3 spans、12 input tokens、3 output tokens。</td><td class="evidence">API GET /eval-case-runs/:id/trace</td></tr><tr><td class="num">05</td><td>keyset 分页</td><td><span class="status pass">PASS</span></td><td>limit=1 返回首 span 与 next_cursor，total=2；游标绑定 session。</td><td class="evidence">API GET /trace-sessions/:id/spans</td></tr><tr><td class="num">06</td><td>raw 签名与 no-store</td><td><span class="status pass">PASS</span></td><td>管理员取得 X-Amz-Expires=300 URL，响应含 cache-control: no-store，URL 下载返回 HTTP 200。</td><td class="evidence">API POST /trace-files/:id/download-url</td></tr><tr><td class="num">07</td><td>脱敏与权限边界</td><td><span class="status pass">PASS</span></td><td>文件错误摘要中的 Bearer/Key 已遮蔽；viewer thinking、跨 tenant/project、任意 object key 与无审计下载由 15 个 API 测试覆盖。</td><td class="evidence">tests/backend/test_trace_api.py</td></tr></tbody></table></table></div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Issues and Observations</h2><small>No defects found</small></div>
+    <div class="empty">No defects were found.</div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Evidence</h2><small>3 screenshots</small></div>
+    <div class="shots"><figure class="wide"><img loading="lazy" src="01-degraded-case-detail.jpeg" alt="评测用例详情显示已降级轨迹状态"><figcaption><b>01 · Case detail</b><span>详情结论区显示“已降级”，没有把不完整轨迹标成可用。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="02-degraded-filter.jpeg" alt="选择已降级轨迹筛选后的详情"><figcaption><b>02 · Filter applied</b><span>筛选 URL 更新为 trace_status=degraded，当前详情仍保持降级语义。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="03-degraded-filter-results.jpeg" alt="已降级轨迹筛选结果页"><figcaption><b>03 · Results</b><span>筛选结果保留 1 条 degraded 用例，状态标签与计数一致。</span></figcaption></figure></div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Automated Coverage Assessment</h2><small>3 areas reviewed</small></div>
+    <div class="tableWrap"><table><table><thead><tr><th>区域</th><th>自动化覆盖</th><th>结论</th><th>建议</th></tr></thead><tbody><tr><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td></tr></tbody></table></table></div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Conclusion</h2><small>Ready for merge with #94 UI follow-up</small></div>
+    <article class="card conclusion pass"><p><strong>真实 API、当前可达 GUI 路径与自动化安全边界均通过；本次 smoke 未发现新的产品缺陷。</strong></p><ul><li>degraded 与 unlinked 状态在 API 和现有 UI 中一致可见。</li><li>raw 响应禁缓存，短时 URL 可实际读取登记对象。</li><li>三栏查看器消费完整响应留待 #94。</li></ul></article>
+  </section>
+
+  <p class="foot">Evidence generated from Computer Use screenshots and a live isolated FastAPI process.</p>
+</main>
+</body>
+</html>

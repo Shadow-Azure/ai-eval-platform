@@ -12,6 +12,8 @@ scope:
   - .agents/flow/milestones/m6-trace-diagnosis.*
   - backend/**
   - tests/**
+  - plans/**
+  - reports/**
   - docs/**
   - scripts/doc-budgets.manifest.json
 adr: []
