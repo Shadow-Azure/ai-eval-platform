@@ -1,7 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Button, Drawer, Form, Input, InputNumber, Modal, Space, Table, Tag, Timeline, message } from "antd";
+import { Button, Form, Input, InputNumber, Modal, Space, Table, Tag, message } from "antd";
 import type { TableColumnsType } from "antd";
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Icon } from "../components/Icon";
 import { PageHeading } from "../components/PageHeading";
 import { QueryError } from "../components/QueryError";
@@ -9,19 +10,12 @@ import {
   TERMINAL_EVAL_STATUSES,
   cancelEvaluation,
   createEvaluation,
-  fetchEvaluationDetail,
-  fetchEvaluationEvents,
   fetchEvaluations,
-  type EvaluationCase,
-  type EvaluationEvent,
-  type EvaluationShard,
   type EvaluationSummary,
 } from "../api/evaluations";
 
 const evaluationsQueries = {
   list: ["evaluations"] as const,
-  detail: ["evaluations", "detail"] as const,
-  events: ["evaluations", "events"] as const,
 };
 
 const statusMeta: Record<string, { label: string; color: string }> = {
@@ -33,34 +27,6 @@ const statusMeta: Record<string, { label: string; color: string }> = {
   cancelled: { label: "已取消", color: "default" },
   pausing_budget: { label: "预算暂停中", color: "warning" },
   paused_budget: { label: "预算已暂停", color: "warning" },
-};
-
-const caseStatusLabels: Record<string, string> = {
-  queued: "排队",
-  running: "运行中",
-  succeeded: "成功",
-  failed: "失败",
-  timeout: "超时",
-  cancelled: "已取消",
-};
-
-const eventTypeLabels: Record<string, string> = {
-  "eval.created": "评测已创建",
-  "eval.dispatched": "分片已派发 GitHub",
-  "eval.dispatch_failed": "分片派发失败",
-  "eval.cancelled": "评测已取消",
-  "eval.budget_pausing": "预算用尽，暂停收口",
-  "eval.budget_paused": "评测进入预算暂停",
-  "eval.budget_resumed": "增加预算并恢复调度",
-  "case.started": "用例开始执行",
-  "case.heartbeat": "用例心跳",
-  "case.uploaded": "对象上传清单",
-  "case.completed": "用例完成",
-  "case.failed": "用例失败",
-  "case.retry_queued": "重试已排队",
-  "case.artifact_missing": "结果对象缺失",
-  "case.started_late": "迟到 started（保留审计）",
-  "case.started_rejected": "启动被拒绝（预算暂停 / 已取消）",
 };
 
 function StatusTag({ status }: { status: string }) {
@@ -75,101 +41,20 @@ function timeLabel(value: string | null): string {
   return parsed.toLocaleTimeString("zh-CN", { hour12: false });
 }
 
-const caseColumns: TableColumnsType<EvaluationCase> = [
-  { title: "#", dataIndex: "ordinal", key: "ordinal", width: 48 },
-  { title: "用例", dataIndex: "case_key", key: "case_key" },
-  {
-    title: "执行状态",
-    dataIndex: "execution_status",
-    key: "execution_status",
-    render: (value: string) => caseStatusLabels[value] ?? value,
-  },
-  { title: "结果", dataIndex: "result_status", key: "result_status" },
-  { title: "最新 attempt", dataIndex: "latest_attempt_no", key: "latest_attempt_no", width: 96 },
-  {
-    title: "错误",
-    dataIndex: "error_code",
-    key: "error_code",
-    render: (value: string | null) => value ?? "—",
-  },
-];
-
-const shardColumns: TableColumnsType<EvaluationShard> = [
-  { title: "分片", dataIndex: "shard_id", key: "shard_id" },
-  { title: "attempt", dataIndex: "attempt", key: "attempt", width: 72 },
-  {
-    title: "outbox",
-    dataIndex: "status",
-    key: "status",
-    render: (value: string) => <Tag>{value}</Tag>,
-  },
-  {
-    title: "GitHub",
-    dataIndex: "github_status",
-    key: "github_status",
-    render: (value: number | null) => (value ? `HTTP ${value}` : "—"),
-  },
-  {
-    title: "派发时间",
-    dataIndex: "dispatched_at",
-    key: "dispatched_at",
-    render: (value: string | null) => (value ? timeLabel(value) : "—"),
-  },
-  {
-    title: "最近错误",
-    dataIndex: "last_error",
-    key: "last_error",
-    ellipsis: true,
-    render: (value: string | null) => value ?? "—",
-  },
-];
-
-function eventLabel(event: EvaluationEvent): string {
-  const base = eventTypeLabels[event.event_type] ?? event.event_type;
-  const caseSuffix = event.case_run_id ? ` · ${event.case_run_id.slice(0, 8)}` : "";
-  return `${base}${caseSuffix}`;
-}
-
-function eventDescription(event: EvaluationEvent): string {
-  const parts: string[] = [];
-  if (event.attempt_no !== null) parts.push(`attempt ${event.attempt_no}`);
-  const payload = event.payload;
-  if (typeof payload.error === "string") parts.push(String(payload.error).slice(0, 120));
-  if (typeof payload.dispatch_key === "string") parts.push(String(payload.dispatch_key));
-  if (typeof payload.new_attempt_no === "number") parts.push(`新 attempt ${payload.new_attempt_no}`);
-  return parts.join(" · ");
-}
-
 interface CreateFormValues {
   name: string;
   case_count: number;
 }
 
 export function EvalsPage() {
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [detailId, setDetailId] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [form] = Form.useForm<CreateFormValues>();
 
   const listQuery = useQuery({
     queryKey: evaluationsQueries.list,
     queryFn: ({ signal }) => fetchEvaluations(signal),
-    refetchInterval: 3000,
-  });
-
-  const detailQuery = useQuery({
-    queryKey: [...evaluationsQueries.detail, detailId],
-    queryFn: ({ signal }) => fetchEvaluationDetail(detailId as string, signal),
-    enabled: detailId !== null,
-    refetchInterval: (query) =>
-      query.state.data && !TERMINAL_EVAL_STATUSES.includes(query.state.data.status) ? 2000 : false,
-  });
-
-  const runId = detailQuery.data?.id ?? null;
-  const eventsQuery = useQuery({
-    queryKey: [...evaluationsQueries.events, runId],
-    queryFn: ({ signal }) => fetchEvaluationEvents(runId as string, {}, signal),
-    enabled: runId !== null,
     refetchInterval: 3000,
   });
 
@@ -187,7 +72,7 @@ export function EvalsPage() {
       setCreateOpen(false);
       form.resetFields();
       void queryClient.invalidateQueries({ queryKey: evaluationsQueries.list });
-      setDetailId(created.id);
+      navigate(`/evals/${created.id}`);
     },
     onError: (error) => message.error(error instanceof Error ? error.message : "创建失败"),
   });
@@ -197,7 +82,6 @@ export function EvalsPage() {
     onSuccess: () => {
       message.success("已取消");
       void queryClient.invalidateQueries({ queryKey: evaluationsQueries.list });
-      if (runId) void queryClient.invalidateQueries({ queryKey: [...evaluationsQueries.detail, runId] });
     },
     onError: (error) => message.error(error instanceof Error ? error.message : "取消失败"),
   });
@@ -245,7 +129,7 @@ export function EvalsPage() {
       key: "actions",
       render: (_value, row) => (
         <Space>
-          <Button type="link" size="small" onClick={() => setDetailId(row.id)}>
+          <Button type="link" size="small" onClick={() => navigate(`/evals/${row.id}`)}>
             详情
           </Button>
           {!TERMINAL_EVAL_STATUSES.includes(row.status) && (
@@ -263,8 +147,6 @@ export function EvalsPage() {
       ),
     },
   ];
-
-  const detail = detailQuery.data;
 
   return (
     <div className="page">
@@ -306,57 +188,6 @@ export function EvalsPage() {
           </div>
         </section>
       )}
-
-      <Drawer
-        title={detail ? `${detail.name} · ${detail.id.slice(0, 8)}` : "评测详情"}
-        open={detailId !== null}
-        width={720}
-        onClose={() => setDetailId(null)}
-        extra={detail ? <StatusTag status={detail.status} /> : null}
-      >
-        {detailQuery.isError ? (
-          <QueryError error={detailQuery.error} onRetry={() => detailQuery.refetch()} title="无法加载评测详情" endpoint="GET /api/v1/evaluations/{id}" />
-        ) : detail ? (
-          <>
-            <Space size="large" wrap style={{ marginBottom: 16 }}>
-              <span>用例 {detail.total_cases}</span>
-              <span>成功 {detail.succeeded_count}</span>
-              <span>失败 {detail.failed_count}</span>
-              <span>运行 {detail.running_count}</span>
-              <span>排队 {detail.queued_count}</span>
-              {detail.finished_at && <span>终态 {timeLabel(detail.finished_at)}</span>}
-            </Space>
-
-            <h4>分片派发对账</h4>
-            <Table rowKey="dispatch_key" size="small" columns={shardColumns} dataSource={detail.shards} pagination={false} />
-
-            <h4 style={{ marginTop: 16 }}>用例</h4>
-            <Table rowKey="id" size="small" columns={caseColumns} dataSource={detail.cases} pagination={false} />
-
-            <h4 style={{ marginTop: 16 }}>事件时间线</h4>
-            {eventsQuery.isError ? (
-              <QueryError error={eventsQuery.error} onRetry={() => eventsQuery.refetch()} title="无法加载事件" endpoint="GET /api/v1/evaluations/{id}/events" />
-            ) : (
-              <Timeline
-                items={(eventsQuery.data?.items ?? []).map((event) => ({
-                  key: event.id,
-                  children: (
-                    <div>
-                      <div>{eventLabel(event)}</div>
-                      {eventDescription(event) && (
-                        <div className="table-secondary">{eventDescription(event)}</div>
-                      )}
-                      <div className="table-secondary">{timeLabel(event.occurred_at)}</div>
-                    </div>
-                  ),
-                }))}
-              />
-            )}
-          </>
-        ) : (
-          <p className="table-secondary">加载中…</p>
-        )}
-      </Drawer>
 
       <Modal
         title="发起合成评测"

@@ -118,9 +118,20 @@ export interface EvaluationShard {
   last_error: string | null;
 }
 
+export interface EvaluationProgress {
+  total: number;
+  finished: number;
+  percent: number;
+  resolve_rate: number | null;
+  estimated_remaining_seconds: number | null;
+  estimated_finish_at: string | null;
+}
+
 export interface EvaluationDetail extends EvaluationSummary {
   cases: EvaluationCase[];
   shards: EvaluationShard[];
+  /** Server-side aggregate snapshot; the page must not recompute these. */
+  progress: EvaluationProgress;
   asset_snapshot?: FrozenAssetSnapshot | null;
   consistency?: Record<string, unknown>;
   case_counts?: Record<string, number>;
@@ -596,6 +607,7 @@ export function parseEvaluationDetail(payload: unknown): EvaluationDetail {
     consistency: isRecord(record.consistency) ? record.consistency : undefined,
     case_counts: readNumberMap(record.case_counts),
     trace_counts: readNumberMap(record.trace_counts),
+    progress: readProgress(record.progress),
     retryable_count:
       typeof record.retryable_count === "number" ? record.retryable_count : undefined,
     cases: cases.map((entry) => {
@@ -629,6 +641,23 @@ export function parseEvaluationDetail(payload: unknown): EvaluationDetail {
         last_error: readOptionalString(item.last_error),
       };
     }),
+  };
+}
+
+function readProgress(value: unknown): EvaluationProgress {
+  if (!isRecord(value)) {
+    throw new ApiError("控制面响应缺少 progress 聚合字段", { code: "invalid_response" });
+  }
+  return {
+    total: readCount(value.total, "progress.total"),
+    finished: readCount(value.finished, "progress.finished"),
+    percent: readCount(value.percent, "progress.percent"),
+    resolve_rate: typeof value.resolve_rate === "number" ? value.resolve_rate : null,
+    estimated_remaining_seconds:
+      typeof value.estimated_remaining_seconds === "number"
+        ? value.estimated_remaining_seconds
+        : null,
+    estimated_finish_at: readOptionalString(value.estimated_finish_at),
   };
 }
 
