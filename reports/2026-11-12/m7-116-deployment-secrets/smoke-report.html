@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>生产密钥注入与换机迁移 Smoke 报告</title>
+  <style>
+    :root{
+      color-scheme:light;
+      --bg:#f4f7fb;--card:#fff;--ink:#16202f;--ink2:#55637a;--ink3:#7b869b;
+      --line:#dde4ee;--accent:#2563eb;--accent-wash:#e8efff;--good:#157347;
+      --good-wash:#e7f6ee;--warn:#b45309;--warn-wash:#fff2dd;--bad:#c9282e;
+      --bad-wash:#ffeded;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:radial-gradient(circle at 8% 0,#dbe9ff 0,transparent 32rem),radial-gradient(circle at 92% 4%,#e7f1ff 0,transparent 28rem),var(--bg);color:var(--ink);font:14px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Noto Sans CJK SC",sans-serif}
+    main{max-width:1220px;margin:auto;padding:36px 28px 72px}
+    .hero{padding:30px 34px;border:1px solid #dbe3ee;border-radius:24px;background:rgba(255,255,255,.92);box-shadow:0 18px 44px #17202f12}
+    .eyebrow{margin:0;color:var(--accent);font-size:12px;font-weight:800;letter-spacing:.16em;text-transform:uppercase}
+    h1{margin:10px 0 8px;font-size:clamp(28px,4vw,44px);letter-spacing:-.04em}
+    .summary{margin:0;max-width:850px;color:var(--ink2);font-size:15px}
+    .meta{display:block;margin-top:8px;color:var(--ink3);font-size:12px}
+    .metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-top:26px}
+    .metric{padding:16px 18px;border:1px solid var(--line);border-radius:16px;background:#fafbfd}
+    .metric b{display:block;font-size:30px;letter-spacing:-.04em}
+    .metric span{display:block;margin-top:2px;color:var(--ink3);font-size:12px}
+    section{margin-top:28px}
+    .head{display:flex;align-items:baseline;justify-content:space-between;gap:16px;margin:0 4px 14px}
+    h2{margin:0;font-size:21px;letter-spacing:-.03em}
+    .head small{color:var(--ink3);white-space:nowrap}
+    .card{padding:22px;border:1px solid var(--line);border-radius:20px;background:var(--card);box-shadow:0 5px 22px #17202f08}
+    .facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin:0}
+    .fact{padding:13px 16px;border:1px solid #eceff5;border-radius:12px;background:#fafbfd}
+    .fact dt{color:var(--ink3);font-size:11px;font-weight:700}
+    .fact dd{margin:3px 0 0;overflow-wrap:anywhere}
+    code{font-family:var(--mono);font-size:.9em;color:#29456d;overflow-wrap:anywhere}
+    .status{display:inline-flex;padding:3px 8px;border-radius:999px;font-size:11px;font-weight:800;white-space:nowrap;background:#eef1f6;color:var(--ink2)}
+    .status.pass,.status.fixed{background:var(--good-wash);color:var(--good)}
+    .status.warn,.status.manual{background:var(--warn-wash);color:var(--warn)}
+    .status.fail{background:var(--bad-wash);color:var(--bad)}
+    .tableWrap{overflow:auto;border:1px solid var(--line);border-radius:18px;background:var(--card);box-shadow:0 5px 22px #17202f08}
+    table{width:100%;min-width:920px;border-collapse:collapse}
+    th,td{padding:12px 15px;border-bottom:1px solid #edf0f5;text-align:left;vertical-align:top}
+    th{position:sticky;top:0;background:#fafbfe;color:var(--ink2);font-size:12px}
+    tr:last-child td{border-bottom:0}
+    tr:hover{background:#fcfdff}
+    .num{color:var(--ink3);font-family:var(--mono);font-size:12px}
+    .evidence{color:var(--ink3);font-size:12px}
+    .issues{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px}
+    .issueCard{padding:18px 21px;border:1px solid #ffcece;border-left:5px solid var(--bad);border-radius:16px;background:#fffbfb}
+    .issueCard h3{margin:0;color:#b91c1c;font-size:16px}
+    .issueCard p{margin:8px 0;color:var(--ink2)}
+    .issueCard dt{color:var(--ink3);font-size:11px;font-weight:700}
+    .issueCard dd{margin:2px 0 0;color:var(--ink2)}
+    .tag{float:right;padding:3px 8px;border-radius:999px;background:#fee4e4;color:#9a1b21;font-size:11px;font-weight:800}
+    .fixed{display:inline-flex;gap:5px;align-items:center;margin-top:11px;padding:6px 10px;border-radius:999px;background:var(--good-wash);color:var(--good);font-size:12px;font-weight:800}
+    .shots{display:grid;grid-template-columns:repeat(auto-fit,minmax(430px,1fr));gap:16px}
+    figure{margin:0;overflow:hidden;border:1px solid var(--line);border-radius:18px;background:#fff;box-shadow:0 6px 22px #17202f08}
+    figure.wide{grid-column:1/-1}
+    img{display:block;width:100%;max-height:500px;object-fit:contain;background:#eef2f7}
+    figcaption{display:flex;gap:9px;align-items:flex-start;padding:11px 14px;border-top:1px solid #edf0f5;background:#fafbfd;color:var(--ink2);font-size:12.5px}
+    figcaption b{flex:none;color:var(--ink)}
+    .issue-shot{border-color:#ffcece}
+    .conclusion{border:1px solid #c8e5d2;border-radius:20px;background:linear-gradient(135deg,#f2fbf6,white 54%)}
+    .conclusion.warn{border-color:#f1d9a4;background:linear-gradient(135deg,#fff8e8,white 54%)}
+    .conclusion.fail{border-color:#ffc9c9;background:linear-gradient(135deg,#fff5f5,white 54%)}
+    .conclusion ul{margin:12px 0 0;padding-left:20px;color:#344155}
+    .conclusion li+li{margin-top:7px}
+    .empty{padding:20px;text-align:center;color:var(--ink3);background:#fafbfd;border:1px dashed var(--line);border-radius:12px}
+    .foot{margin-top:24px;color:var(--ink3);font-size:12px;text-align:center}
+    @media(max-width:860px){main{padding:22px 14px 52px}.hero{padding:23px}.shots{grid-template-columns:1fr}.head{align-items:flex-start;flex-direction:column;gap:4px}}
+    @media print{body{background:white}main{max-width:none;padding:0}.card,.issueCard,figure,.tableWrap{box-shadow:none;break-inside:avoid}img{max-height:420px}}
+  </style>
+</head>
+<body>
+<main>
+  <header class="hero">
+    <p class="eyebrow">M7-116 · DEPLOYMENT SECRETS</p>
+    <h1>生产密钥注入与换机迁移 Smoke 报告</h1>
+    <p class="summary">GitHub Secrets 注入、宿主机摘要一致性检查、原子 .env 替换、数据库迁移、ECS 滚动更新和部署页面健康检查均通过；未发现未解决缺陷。</p>
+    <span class="meta">2026-11-12 · macOS Chrome + 生产 ECS</span>
+    <div class="metrics"><div class="metric"><b>7/7</b><span>长期 Secret 名称</span></div><div class="metric"><b>27/27</b><span>部署行为/契约测试</span></div><div class="metric"><b>5/5</b><span>生产健康检查</span></div><div class="metric"><b>0</b><span>未解决缺陷</span></div></div>
+  </header>
+
+  <section>
+    <div class="head"><h2>Environment and Artifact</h2><small>2026-11-12 · macOS Chrome + 生产 ECS</small></div>
+    <article class="card"><dl class="facts"><div class="fact"><dt>功能 PR</dt><dd>#173</dd></div><div class="fact"><dt>生产提交</dt><dd>a9804164eda1209b61a5773244985fc1d19048a1</dd></div><div class="fact"><dt>Deploy run</dt><dd>43120745433 · success</dd></div><div class="fact"><dt>数据库版本</dt><dd>0021_trace_ingestion</dd></div><div class="fact"><dt>Secrets 核验</dt><dd>只核验名称存在，未读取或记录任何值</dd></div><div class="fact"><dt>写入策略</dt><dd>SHA-256 完整性校验 + 目标目录暂存 + 0600 原子 rename</dd></div></dl></article>
+  </section>
+
+  <section>
+    <div class="head"><h2>Scenario Matrix</h2><small>7 pass</small></div>
+    <div class="tableWrap"><table><table><thead><tr><th>#</th><th>场景</th><th>结果</th><th>说明</th><th>证据</th></tr></thead><tbody><tr><td class="num">01</td><td>Secrets 名称完整性</td><td><span class="status pass">PASS</span></td><td>SECRET_BOX_KEY、POSTGRES_PASSWORD、AUTH_SESSION_SECRET、GATEWAY_TOKEN_SECRET、RUNNER_TASK_SECRET、RUNNER_HEARTBEAT_TOKEN、RUNNER_ADMIN_TOKEN 均存在。</td><td class="evidence">GitHub Secrets name list<br>deploy workflow contract</td></tr><tr><td class="num">02</td><td>现有主机摘要一致性</td><td><span class="status pass">PASS</span></td><td>Deploy 在覆盖 .env 前通过 SHA-256 比较成功；不一致会在写入前终止。</td><td class="evidence">Deploy run 43120745433<br>Write object-store, dispatch and long-lived credentials</td></tr><tr><td class="num">03</td><td>空模板与部分密钥边界</td><td><span class="status pass">PASS</span></td><td>无 .env、空模板、仅未受管键均可初始化；部分长期密钥存在时安全拒绝。</td><td class="evidence">managed-env-writer 9 tests<br>deploy-contract 18 tests</td></tr><tr><td class="num">04</td><td>截断与原子替换</td><td><span class="status pass">PASS</span></td><td>截断或摘要错误不替换旧 env；成功路径保留未受管键并保持 0600。</td><td class="evidence">deploy/write-managed-env.sh<br>managed-env-writer behavior tests</td></tr><tr><td class="num">05</td><td>api/worker 环境矩阵</td><td><span class="status pass">PASS</span></td><td>api/worker 均获得所需长期密钥；database URL 强制使用 POSTGRES_PASSWORD。</td><td class="evidence">docker-compose.prod.yml<br>deployment contract</td></tr><tr><td class="num">06</td><td>自动部署与迁移</td><td><span class="status pass">PASS</span></td><td>镜像构建、PostgreSQL 迁移、ECS 滚动更新和健康检查完成。</td><td class="evidence">Deploy run 43120745433</td></tr><tr><td class="num">07</td><td>生产 GUI 健康状态</td><td><span class="status pass">PASS</span></td><td>生产版本 a980416，数据库版本一致，API/PostgreSQL/Redis/对象存储/Worker 5/5 健康。</td><td class="evidence">01-deployment-success-redacted.jpeg</td></tr></tbody></table></table></div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Issues and Observations</h2><small>No defects found</small></div>
+    <div class="empty">No defects were found.</div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Evidence</h2><small>1 screenshots</small></div>
+    <div class="shots"><figure class="wide"><img loading="lazy" src="screenshots/01-deployment-success-redacted.jpeg" alt="生产交付流水线显示部署成功和 5/5 健康检查"><figcaption><b>01 · 生产部署成功</b><span>当前部署 a980416 完成迁移和滚动更新，数据库版本一致，五个生产组件全部健康；用户标识已遮挡。</span></figcaption></figure></div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Automated Coverage Assessment</h2><small>4 areas reviewed</small></div>
+    <div class="tableWrap"><table><table><thead><tr><th>范围</th><th>自动化</th><th>结论</th><th>后续建议</th></tr></thead><tbody><tr><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td></tr></tbody></table></table></div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Conclusion</h2><small>可以合并并换机复现</small></div>
+    <article class="card conclusion pass"><p><strong>部署密钥已从 GitHub Secrets 可复现注入，现有主机值在覆盖前完成摘要校验，主机 .env 原子替换，生产部署与健康检查通过。</strong></p><ul><li>长期密钥值未在报告、日志、argv 或截图中暴露。</li><li>当前生产 .env 与 Secrets 的摘要比较在真实 Deploy 中成功。</li><li>主动轮换仍应按独立 runbook 处理历史密文迁移。</li></ul></article>
+  </section>
+
+  <p class="foot">AI Eval Platform · M7-116 deployment smoke · evidence generated from Computer Use and GitHub Actions</p>
+</main>
+</body>
+</html>

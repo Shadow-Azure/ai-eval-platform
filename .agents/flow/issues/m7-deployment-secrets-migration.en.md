@@ -6,7 +6,7 @@ English | [中文](m7-deployment-secrets-migration.md)
 kind: issue
 milestone: m7
 priority: P1
-status: in-progress
+status: done
 scope:
   - AGENTS.md
   - .agents/flow/issues/m7-deployment-secrets-migration.*
