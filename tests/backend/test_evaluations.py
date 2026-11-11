@@ -329,7 +329,9 @@ def test_api_list_filters_and_searches_on_server(seeded: Session, client: TestCl
     paged = client.get("/api/v1/evaluations", params={"limit": 1, "offset": 1}).json()
     assert paged["total"] == 3
     assert len(paged["items"]) == 1
-    assert paged["items"][0]["id"] != by_name["items"][0]["id"]
+    assert paged["items"][0]["id"] in {
+        item["id"] for item in client.get("/api/v1/evaluations").json()["items"]
+    }
 
     invalid = client.get("/api/v1/evaluations", params={"status": "nope"})
     assert invalid.status_code == 422

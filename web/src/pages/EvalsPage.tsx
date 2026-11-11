@@ -466,7 +466,7 @@ export function EvalsPage() {
               value={durationCompact(stats?.avg_duration_seconds)}
               icon="clock"
               tone="warning"
-              meta={<span>按已完成任务平均</span>}
+              meta={<span>按终态任务平均</span>}
               loading={statsLoading}
             />
           </div>
