@@ -287,6 +287,20 @@ function directionLabel(value: string): string {
   return directionLabels[value] ?? value;
 }
 
+const METRIC_CARD_PRIORITY: Record<string, number> = {
+  resolved_rate: 0,
+  resolved_rate_scored: 1,
+  resolved_count: 2,
+  execution_failure_rate: 3,
+  tokens_per_case: 4,
+  cost_per_case: 5,
+  duration_percentiles: 6,
+};
+
+function metricCardPriority(key: string): number {
+  return METRIC_CARD_PRIORITY[key] ?? 99;
+}
+
 function isKnownMetricKind(kind: string): boolean {
   return ["number", "percentage", "ms", "cny", "histogram"].includes(kind);
 }
@@ -1539,7 +1553,9 @@ function ResultsPanel(props: ResultsPanelProps) {
     return <Card><Skeleton active paragraph={{ rows: 8 }} /></Card>;
   }
   const metrics = results?.items ?? [];
-  const known = metrics.filter((metric) => isKnownMetricKind(metric.display_kind));
+  const known = metrics
+    .filter((metric) => isKnownMetricKind(metric.display_kind))
+    .sort((a, b) => metricCardPriority(a.metric_key) - metricCardPriority(b.metric_key));
   const unknown = metrics.filter((metric) => !isKnownMetricKind(metric.display_kind));
   const deltaByKey = new Map((comparison?.metric_deltas ?? []).map((item) => [item.metric_key, item]));
   return (
