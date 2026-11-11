@@ -904,11 +904,10 @@ def evaluation_detail(
     started_at = run.started_at
     if started_at is not None and started_at.tzinfo is None:
         started_at = started_at.replace(tzinfo=UTC)
-    if (
-        run.status not in TERMINAL_RUN_STATUSES
-        and started_at is not None
-        and 0 < finished < total
-    ):
+    # Only an actively running evaluation gets a moving ETA. Paused budget,
+    # cancelling and terminal runs keep the last progress snapshot but must not
+    # promise a completion time that the scheduler is not advancing toward.
+    if run.status == "running" and started_at is not None and 0 < finished < total:
         elapsed = max(0.0, (now - started_at).total_seconds())
         estimated_remaining_seconds = max(
             0, round(elapsed / finished * (total - finished))

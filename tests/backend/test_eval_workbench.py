@@ -515,7 +515,17 @@ def test_detail_progress_snapshot_is_aggregated_server_side(seeded: Session) -> 
         "estimated_finish_at": "2026-11-11T12:03:20.000000+00:00",
     }
 
+    # A paused budget run keeps its progress but must not advertise an ETA.
+    run.status = "paused_budget"
+    run.pause_reason = "budget_exceeded"
+    seeded.commit()
+    paused = evaluations.evaluation_detail(seeded, run, now=now)["progress"]
+    assert paused["percent"] == 75
+    assert paused["estimated_remaining_seconds"] is None
+    assert paused["estimated_finish_at"] is None
+
     # A terminal run returns a final snapshot without a moving ETA.
+    run.pause_reason = None
     for case in cases:
         case.execution_status = "succeeded"
         case.result_status = "resolved"

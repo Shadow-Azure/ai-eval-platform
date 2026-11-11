@@ -509,6 +509,12 @@ export function EvalDetailPage() {
     queryKey: ["evaluation", runId],
     queryFn: ({ signal }) => fetchEvaluationDetail(runId, signal),
     enabled: Boolean(runId),
+    // The server-side progress snapshot (percent, resolve rate, ETA) and shard
+    // reconciliation must stay fresh while the run is active.
+    refetchInterval: (query) =>
+      query.state.data && TERMINAL_EVAL_STATUSES.includes(query.state.data.status)
+        ? false
+        : 3000,
   });
   const results = useQuery({
     queryKey: ["evaluation", runId, "results"],
