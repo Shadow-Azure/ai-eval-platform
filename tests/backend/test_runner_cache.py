@@ -1,15 +1,17 @@
-"""Runner tarball cache (M5-08): reuse OSS, upload only when absent/corrupt."""
+"""Runner tarball cache (M5-08/M5-11): reuse OSS, upload only when absent/corrupt."""
 
 from __future__ import annotations
 
 import pytest
 from app.services.object_store import ObjectMissing, ObjectStoreError
 from app.services.runner_cache import (
-    MAX_PRESIGN_SECONDS,
     MIN_RUNNER_BYTES,
+    RUNNER_TARBALL_ROUTE,
     ensure_runner_cache,
     github_runner_url,
     runner_cache_key,
+    runner_tarball_path,
+    runner_tarball_url,
 )
 
 VALID = b"\x1f\x8b" + b"x" * MIN_RUNNER_BYTES
@@ -19,7 +21,6 @@ class FakeStore:
     def __init__(self, sizes: dict[str, int] | None = None) -> None:
         self.sizes = sizes or {}
         self.puts: list[tuple[str, bytes, str]] = []
-        self.presigned: list[tuple[str, int]] = []
 
     def head_object(self, key: str) -> int:
         if key not in self.sizes:
@@ -30,40 +31,33 @@ class FakeStore:
         self.puts.append((key, data, content_type))
         self.sizes[key] = len(data)
 
-    def presign_get_url(self, key: str, *, expires: int = 3600) -> str:
-        self.presigned.append((key, expires))
-        return f"https://oss.example/{key}?expires={expires}"
-
 
 def test_reuses_an_existing_archive_without_downloading() -> None:
     store = FakeStore({runner_cache_key("2.338.2"): MIN_RUNNER_BYTES + 1})
     calls: list[str] = []
 
-    url, uploaded = ensure_runner_cache(
+    uploaded = ensure_runner_cache(
         store, version="2.338.2", downloader=lambda version: calls.append(version) or VALID
     )
 
     assert uploaded is False
     assert calls == []
     assert store.puts == []
-    assert url.startswith("https://oss.example/runner/actions-runner-linux-x64-2.338.2.tar.gz")
-    assert store.presigned[0][1] == MAX_PRESIGN_SECONDS
 
 
-def test_uploads_when_missing_and_returns_presigned_url() -> None:
+def test_uploads_when_missing() -> None:
     store = FakeStore()
-    url, uploaded = ensure_runner_cache(store, version="2.338.2", downloader=lambda _v: VALID)
+    uploaded = ensure_runner_cache(store, version="2.338.2", downloader=lambda _v: VALID)
 
     assert uploaded is True
     assert store.puts and store.puts[0][1] == VALID
     assert store.puts[0][2] == "application/gzip"
-    assert "actions-runner-linux-x64-2.338.2.tar.gz" in url
 
 
 def test_replaces_a_truncated_cache_object() -> None:
     key = runner_cache_key("2.338.2")
     store = FakeStore({key: 1024})
-    _, uploaded = ensure_runner_cache(store, version="2.338.2", downloader=lambda _v: VALID)
+    uploaded = ensure_runner_cache(store, version="2.338.2", downloader=lambda _v: VALID)
 
     assert uploaded is True
     assert store.puts[0][0] == key
@@ -74,6 +68,14 @@ def test_rejects_an_invalid_archive() -> None:
     with pytest.raises(ObjectStoreError):
         ensure_runner_cache(store, version="2.338.2", downloader=lambda _v: b"not-a-gzip")
     assert store.puts == []
+
+
+def test_proxy_path_is_permanent_and_version_pinned() -> None:
+    assert RUNNER_TARBALL_ROUTE == "/runner/v1/runner-tarball/"
+    assert runner_tarball_path("2.338.2") == "/runner/v1/runner-tarball/2.338.2.tar.gz"
+    assert runner_tarball_url("http://10.0.0.5:8000/", "2.338.2") == (
+        "http://10.0.0.5:8000/runner/v1/runner-tarball/2.338.2.tar.gz"
+    )
 
 
 def test_github_url_is_version_pinned() -> None:

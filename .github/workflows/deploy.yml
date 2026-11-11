@@ -61,10 +61,11 @@ jobs:
           sbom: false
           tags: ${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/ai-eval-platform-web:${{ github.sha }}
 
-  # M5-08: keep one stable actions-runner archive in OSS and inject its URL into
-  # the deployment. Spot cloud-init cannot reliably pull ~10 MB from GitHub
-  # inside its timeout, so every deploy reuses (or uploads) the cached object
-  # and passes a presigned URL to api/worker via the host .env.
+  # M5-08/M5-11: keep one stable actions-runner archive in OSS. Spot cloud-init
+  # cannot reliably pull ~10 MB from GitHub inside its timeout, so every deploy
+  # reuses (or uploads) the cached object; the api serves it through the fixed
+  # /runner/v1/runner-tarball/<version>.tar.gz proxy, so no expiring presigned
+  # URL is injected into the deployment.
   runner-cache:
     name: cache runner tarball in OSS
     runs-on: ubuntu-latest
@@ -75,8 +76,6 @@ jobs:
       S3_ACCESS_KEY: ${{ secrets.S3_ACCESS_KEY }}
       S3_SECRET_KEY: ${{ secrets.S3_SECRET_KEY }}
       S3_ADDRESSING_STYLE: virtual
-    outputs:
-      url: ${{ steps.cache.outputs.url }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -94,7 +93,6 @@ jobs:
           esac
           echo "value=$region" >> "$GITHUB_OUTPUT"
       - name: Ensure the runner tarball exists in OSS
-        id: cache
         env:
           S3_REGION: ${{ steps.region.outputs.value }}
         run: python scripts/cache-runner-tarball.py
@@ -127,9 +125,10 @@ jobs:
       # production environment to let spot runners reach the API.
       API_BIND_ADDRESS: ${{ secrets.API_BIND_ADDRESS }}
       RUNNER_CALLBACK_BASE_URL: ${{ secrets.RUNNER_CALLBACK_BASE_URL }}
-      # M5-08: the runner-cache job presigns the OSS object; an explicit
-      # repository secret still overrides it (e.g. a public mirror).
-      RUNNER_SPOT_RUNNER_TARBALL_URL: ${{ needs.runner-cache.outputs.url || secrets.RUNNER_SPOT_RUNNER_TARBALL_URL }}
+      # M5-11: the api derives the permanent proxy URL from
+      # RUNNER_CALLBACK_BASE_URL; an explicit repository secret still overrides
+      # it (e.g. a public mirror), and then cloud-init sends no runner token.
+      RUNNER_SPOT_RUNNER_TARBALL_URL: ${{ secrets.RUNNER_SPOT_RUNNER_TARBALL_URL }}
     steps:
       - uses: actions/checkout@v4
       - name: Install SSH key

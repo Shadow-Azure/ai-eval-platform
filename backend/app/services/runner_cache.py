@@ -3,9 +3,10 @@
 Aliyun spot instances cannot reliably download the ~10 MB runner archive from
 GitHub: the transfer often exceeds cloud-init's timeout, so whole batches of
 instances fail to register. The deploy pipeline therefore ensures one stable
-object exists in the platform bucket and injects a presigned URL into the
-deployment environment; spot instances fetch it from OSS (fast, same region)
-instead of GitHub.
+object exists in the platform bucket, and the api serves it through the fixed
+``/runner/v1/runner-tarball/<version>.tar.gz`` endpoint (M5-11). That proxy URL
+never expires, so a deploy gap no longer breaks new instances, while the bucket
+stays private and downloads reuse the runner heartbeat token.
 
 The key is version-stable (no per-run suffix) so repeated deploys reuse the
 cached bytes, and a truncated/corrupt object is replaced instead of trusted.
@@ -22,12 +23,24 @@ from .object_store import ObjectMissing, ObjectStore, ObjectStoreError
 RUNNER_CACHE_PREFIX = "runner/actions-runner-linux-x64-"
 #: A real runner archive is ~10 MB; anything smaller is a failed/partial upload.
 MIN_RUNNER_BYTES = 10_000_000
-#: SigV4/OSS presigned URLs cap at 7 days; every deploy refreshes the value.
-MAX_PRESIGN_SECONDS = 7 * 24 * 3600
+#: Fixed api route that streams the cached archive without a presigned URL.
+RUNNER_TARBALL_ROUTE = "/runner/v1/runner-tarball/"
 
 
 def runner_cache_key(version: str) -> str:
     return f"{RUNNER_CACHE_PREFIX}{version}.tar.gz"
+
+
+def runner_tarball_path(version: str) -> str:
+    """Permanent api path for one cached archive version."""
+
+    return f"{RUNNER_TARBALL_ROUTE}{version}.tar.gz"
+
+
+def runner_tarball_url(base_url: str, version: str) -> str:
+    """Absolute proxy URL derived from the platform's callback base URL."""
+
+    return f"{base_url.rstrip('/')}{runner_tarball_path(version)}"
 
 
 def github_runner_url(version: str) -> str:
@@ -51,9 +64,8 @@ def ensure_runner_cache(
     *,
     version: str,
     downloader: Callable[[str], bytes] = download_runner,
-    expires: int = MAX_PRESIGN_SECONDS,
-) -> tuple[str, bool]:
-    """Return ``(download_url, uploaded)`` for the version's cached archive.
+) -> bool:
+    """Ensure the version's archive exists; return whether it was uploaded.
 
     An existing object with a plausible size is reused; a missing or truncated
     object triggers one download from GitHub, which must be a valid gzip
@@ -74,13 +86,16 @@ def ensure_runner_cache(
                 f"runner 包无效（期望 >= {MIN_RUNNER_BYTES} 字节的 gzip）：{len(payload)} 字节"
             )
         store.put_bytes(key, payload, content_type="application/gzip")
-    return store.presign_get_url(key, expires=expires), uploaded
+    return uploaded
 
 
 __all__ = [
-    "MAX_PRESIGN_SECONDS",
     "MIN_RUNNER_BYTES",
+    "RUNNER_CACHE_PREFIX",
+    "RUNNER_TARBALL_ROUTE",
     "ensure_runner_cache",
     "github_runner_url",
     "runner_cache_key",
+    "runner_tarball_path",
+    "runner_tarball_url",
 ]

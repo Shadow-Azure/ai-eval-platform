@@ -18,6 +18,7 @@ import hashlib
 import hmac
 import urllib.error
 import urllib.request
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from urllib.parse import quote, urlparse
 
@@ -200,6 +201,37 @@ class ObjectStore:
         try:
             with urllib.request.urlopen(request, timeout=30) as response:
                 return response.read()
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                raise ObjectMissing(object_key) from exc
+            raise ObjectStoreError(f"GET {object_key} 返回 HTTP {exc.code}") from exc
+        except urllib.error.URLError as exc:
+            raise ObjectStoreError(f"GET {object_key} 失败：{exc.reason}") from exc
+
+    def iter_object(
+        self,
+        object_key: str,
+        *,
+        chunk_size: int = 64 * 1024,
+        timeout: float = 300,
+        now: datetime | None = None,
+    ) -> Iterator[bytes]:
+        """Yield one object with a short-lived presigned GET (tarball proxy).
+
+        The runner archive is ~10 MB, so the proxy streams it instead of
+        buffering it in memory. Callers check ``head_object`` first for the
+        response headers; a missing object then raises ``ObjectMissing`` before
+        the first chunk, and a mid-stream failure surfaces as
+        ``ObjectStoreError``.
+        """
+
+        now = now or datetime.now(UTC)
+        url = self._presign("GET", object_key, 60, now)
+        request = urllib.request.Request(url, method="GET")
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                while chunk := response.read(chunk_size):
+                    yield chunk
         except urllib.error.HTTPError as exc:
             if exc.code == 404:
                 raise ObjectMissing(object_key) from exc

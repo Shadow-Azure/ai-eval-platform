@@ -2,14 +2,13 @@
 """Ensure the actions-runner tarball is cached in OSS (deploy pipeline).
 
 Reads the same S3 settings as the API, checks the version-stable object, and
-uploads it from GitHub only when missing or truncated. Writes the presigned
-download URL to ``GITHUB_OUTPUT`` as ``url`` without printing the credential to
-the (public) workflow log.
+uploads it from GitHub only when missing or truncated. The api serves the
+object through its permanent proxy endpoint (M5-11), so this script only keeps
+the cache warm and prints no credential-bearing URL to the workflow log.
 """
 
 from __future__ import annotations
 
-import os
 import sys
 
 from app.config import get_settings
@@ -24,12 +23,8 @@ def main() -> int:
         print("object storage is not configured (S3_ENDPOINT/S3_BUCKET/keys)", file=sys.stderr)
         return 1
     version = settings.runner_spot_runner_version
-    url, uploaded = ensure_runner_cache(store, version=version)
+    uploaded = ensure_runner_cache(store, version=version)
     print(f"runner cache: {'uploaded' if uploaded else 'hit'} version={version}")
-    output = os.environ.get("GITHUB_OUTPUT")
-    if output:
-        with open(output, "a", encoding="utf-8") as handle:
-            handle.write(f"url={url}\n")
     return 0
 
 

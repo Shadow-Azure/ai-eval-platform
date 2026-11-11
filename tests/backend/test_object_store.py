@@ -51,6 +51,20 @@ class StubObjectHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(size))
         self.end_headers()
 
+    def do_GET(self) -> None:  # noqa: N802
+        parsed = urlparse(self.path)
+        bodies = {"/eval-artifacts/objects/aaa": b"0123456789ab"}
+        body = bodies.get(parsed.path)
+        if body is None:
+            self.send_response(404)
+            self.end_headers()
+            return
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Content-Type", "application/octet-stream")
+        self.end_headers()
+        self.wfile.write(body)
+
     def log_message(self, *_args) -> None:  # keep test output clean
         return
 
@@ -192,3 +206,17 @@ def test_aliyun_oss_uses_virtual_hosted_addressing() -> None:
         region="oss-cn-hangzhou",
     )
     assert bare.presign_put_url("x").startswith("https://eval-artifacts.oss-cn-hangzhou.aliyuncs.com/x?")
+
+
+def test_iter_object_streams_chunks_from_a_presigned_get(endpoint: str) -> None:
+    store = make_store(endpoint)
+    chunks = list(store.iter_object("objects/aaa", chunk_size=5, now=now()))
+
+    assert b"".join(chunks) == b"0123456789ab"
+    assert [len(chunk) for chunk in chunks] == [5, 5, 2]
+
+
+def test_iter_object_raises_for_a_missing_object(endpoint: str) -> None:
+    store = make_store(endpoint)
+    with pytest.raises(ObjectMissing):
+        next(store.iter_object("objects/missing", now=now()))
