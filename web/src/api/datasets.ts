@@ -1,4 +1,4 @@
-import { ApiError } from "./types";
+import { ApiError, notifyUnauthorized } from "./types";
 import { request } from "./evaluations";
 
 export interface DatasetSummary {
@@ -57,22 +57,6 @@ export interface DatasetAdapterMetadata {
   metric_display_names: Record<string, string>;
   case_visibility: Record<string, string>;
   dataset_count: number;
-}
-
-export interface DatasetImportRecord {
-  id: string;
-  dataset_id: string | null;
-  dataset_slug: string;
-  adapter_key: string;
-  version: string;
-  source_uri: string;
-  source_revision: string | null;
-  status: string;
-  total_count: number;
-  valid_count: number;
-  invalid_count: number;
-  created_by: string;
-  created_at: string;
 }
 
 export interface DatasetVersion {
@@ -277,24 +261,6 @@ function parseAdapterMetadata(item: Record<string, unknown>): DatasetAdapterMeta
   };
 }
 
-function parseImportRecord(item: Record<string, unknown>): DatasetImportRecord {
-  return {
-    id: text(item.id),
-    dataset_id: optionalText(item.dataset_id),
-    dataset_slug: text(item.dataset_slug),
-    adapter_key: text(item.adapter_key),
-    version: text(item.version),
-    source_uri: text(item.source_uri),
-    source_revision: optionalText(item.source_revision),
-    status: text(item.status),
-    total_count: number(item.total_count),
-    valid_count: number(item.valid_count),
-    invalid_count: number(item.invalid_count),
-    created_by: text(item.created_by),
-    created_at: text(item.created_at),
-  };
-}
-
 /** 拉取全部目录条目：按 200/页翻页直到没有下一页，避免 >200 时统计与筛选静默缺数据。 */
 export async function fetchDatasetCatalog(signal?: AbortSignal): Promise<DatasetCatalogEntry[]> {
   const entries: DatasetCatalogEntry[] = [];
@@ -423,4 +389,194 @@ export async function createDatasetImport(body: {
     dataset: isRecord(payload.dataset) ? parseDataset(payload.dataset) : null,
     version: isRecord(payload.version) ? parseVersion(payload.version) : null,
   };
+}
+
+// ---------------------------------------------------------------------------
+// M5-15 uploaded imports
+// ---------------------------------------------------------------------------
+
+export interface ImportIssue {
+  code: string;
+  field: string | null;
+  message: string;
+  case_index: number | null;
+  case_key: string | null;
+}
+
+export interface FieldCompleteness {
+  present: number;
+  percent: number;
+}
+
+export interface ImportReport {
+  mode?: string;
+  total?: number;
+  valid?: number;
+  invalid?: number;
+  field_completeness?: Record<string, FieldCompleteness>;
+  error_codes?: Record<string, number>;
+  error_fields?: Record<string, number>;
+  errors?: ImportIssue[];
+  errors_truncated?: number;
+  warnings?: string[];
+  fatal?: boolean;
+  fatal_code?: string;
+  fatal_message?: string;
+  generated_at?: string;
+}
+
+export interface DatasetImportRecord {
+  id: string;
+  dataset_id: string | null;
+  dataset_slug: string;
+  adapter_key: string;
+  version: string;
+  source_uri: string;
+  source_revision: string | null;
+  status: string;
+  total_count: number;
+  valid_count: number;
+  invalid_count: number;
+  processed_count: number;
+  file_name: string | null;
+  file_size: number | null;
+  file_digest: string | null;
+  report: ImportReport;
+  error_report: ImportReport;
+  created_by: string;
+  created_at: string;
+  status_updated_at: string | null;
+  dataset?: DatasetSummary | null;
+  version_detail?: DatasetVersion | null;
+}
+
+function parseReport(value: unknown): ImportReport {
+  return isRecord(value) ? (value as unknown as ImportReport) : {};
+}
+
+function parseImportRecord(payload: unknown): DatasetImportRecord {
+  if (!isRecord(payload)) {
+    throw new ApiError("控制面返回了无法识别的导入数据", { code: "invalid_response" });
+  }
+  return {
+    id: text(payload.id),
+    dataset_id: optionalText(payload.dataset_id),
+    dataset_slug: text(payload.dataset_slug),
+    adapter_key: text(payload.adapter_key),
+    version: text(payload.version),
+    source_uri: text(payload.source_uri),
+    source_revision: optionalText(payload.source_revision),
+    status: text(payload.status),
+    total_count: number(payload.total_count),
+    valid_count: number(payload.valid_count),
+    invalid_count: number(payload.invalid_count),
+    processed_count: number(payload.processed_count),
+    file_name: optionalText(payload.file_name),
+    file_size: typeof payload.file_size === "number" ? payload.file_size : null,
+    file_digest: optionalText(payload.file_digest),
+    report: parseReport(payload.report),
+    error_report: parseReport(payload.error_report),
+    created_by: text(payload.created_by),
+    created_at: text(payload.created_at),
+    status_updated_at: optionalText(payload.status_updated_at),
+    dataset: isRecord(payload.dataset) ? parseDataset(payload.dataset) : null,
+    version_detail: isRecord(payload.version_detail) ? parseVersion(payload.version_detail) : null,
+  };
+}
+
+export async function fetchDatasetImport(
+  importId: string,
+  signal?: AbortSignal,
+): Promise<DatasetImportRecord> {
+  const payload = await request(`/api/v1/dataset-imports/${importId}`, { signal });
+  return parseImportRecord(payload);
+}
+
+function apiErrorFromBody(status: number, payload: unknown): ApiError {
+  const detail = isRecord(payload) && isRecord(payload.detail) ? payload.detail : null;
+  const error = detail && isRecord(detail.error) ? detail.error : null;
+  return new ApiError(
+    error && typeof error.message === "string" ? error.message : `导入请求失败（HTTP ${status}）`,
+    {
+      status,
+      code: error && typeof error.code === "string" ? error.code : null,
+      details:
+        error && isRecord(error.details) ? (error.details as Record<string, unknown>) : null,
+    },
+  );
+}
+
+export interface UploadImportMeta {
+  dataset_slug: string;
+  dataset_name: string;
+  adapter_key: string;
+  version: string;
+  source_revision: string;
+  execution_image_digest?: string;
+  scoring_image_digest?: string;
+}
+
+export function uploadDatasetImport(
+  meta: UploadImportMeta,
+  file: File,
+  options: { onProgress?: (ratio: number) => void; signal?: AbortSignal } = {},
+): Promise<DatasetImportRecord> {
+  return new Promise((resolve, reject) => {
+    const form = new FormData();
+    for (const [key, value] of Object.entries(meta)) {
+      if (typeof value === "string" && value.trim()) {
+        form.append(key, value);
+      }
+    }
+    form.append("file", file);
+
+    const xhr = new XMLHttpRequest();
+    let aborted = false;
+    xhr.open("POST", "/api/v1/dataset-imports/uploads");
+    xhr.withCredentials = true;
+    xhr.setRequestHeader("Accept", "application/json");
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable && event.total > 0) {
+        options.onProgress?.(Math.min(1, event.loaded / event.total));
+      }
+    };
+    xhr.onerror = () => {
+      reject(new ApiError("无法连接控制面 API，请确认后端服务已启动。", { code: "network_error" }));
+    };
+    xhr.onabort = () => {
+      aborted = true;
+      reject(new ApiError("已取消上传", { code: "aborted" }));
+    };
+    xhr.onload = () => {
+      let payload: unknown = null;
+      try {
+        payload = JSON.parse(xhr.responseText) as unknown;
+      } catch {
+        payload = null;
+      }
+      if (xhr.status >= 200 && xhr.status < 300 && isRecord(payload) && isRecord(payload.import)) {
+        resolve(parseImportRecord(payload.import));
+        return;
+      }
+      notifyUnauthorized(xhr.status);
+      reject(apiErrorFromBody(xhr.status, payload));
+    };
+    options.signal?.addEventListener("abort", () => {
+      if (!aborted) xhr.abort();
+    });
+    xhr.send(form);
+  });
+}
+
+export async function commitDatasetImport(importId: string): Promise<DatasetImportRecord> {
+  const payload = await request(`/api/v1/dataset-imports/${importId}/commit`, { method: "POST" });
+  if (!isRecord(payload) || !isRecord(payload.import)) {
+    throw new ApiError("提交响应无效", { code: "invalid_response" });
+  }
+  return parseImportRecord(payload.import);
+}
+
+export async function cancelDatasetImport(importId: string): Promise<DatasetImportRecord> {
+  const payload = await request(`/api/v1/dataset-imports/${importId}/cancel`, { method: "POST" });
+  return parseImportRecord(payload);
 }

@@ -27,6 +27,17 @@ ISSUE_CODES = (
     "duplicate_case_key",
     "adapter_not_found",
     "version_conflict",
+    # M5-15 upload pipeline
+    "invalid_json",
+    "invalid_record",
+    "invalid_file_format",
+    "empty_source",
+    "source_file_unreadable",
+    "source_changed",
+    "worker_timeout",
+    "worker_failed",
+    "worker_interrupted",
+    "materialize_failed",
 )
 
 
@@ -76,6 +87,9 @@ class DatasetAdapter(Protocol):
 
     key: str
     adapter_version: str
+    # Fields whose presence drives the upload validation report's completeness
+    # section; adapters may leave it empty when every field is optional.
+    required_fields: tuple[str, ...]
     # M5-13：平台适配器应声明以下自描述字段，目录卡片与导入默认值都读它。
     # 第三方/旧适配器缺失时 adapter_metadata() 用 getattr 兜底，不改变首选契约。
     display_name: str

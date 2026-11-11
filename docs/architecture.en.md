@@ -64,6 +64,10 @@ Production deployment binds the Runner callback entry to the VPC private address
 
 At case completion the runner archives native Claude Code files: root/subagent session JSONL, `subagents/*.meta.json` relation metadata, and stdout/stderr diagnostics enter an attempt-bound multi-file manifest; files produced before a failure are retained. Each entry records a safe logical path, artifact kind, digest, size, content type, runtime and format versions, while object keys stay platform-generated. The backend verifies the callback token's attempt binding, trace-object ownership, safe paths, and digest format, then merges and deduplicates by object key; content sha256 verification is part of later ingestion, and legacy single-file `trace_manifest` payloads stay readable. The runner marks capture incomplete when the root session or subagent metadata is missing, and the backend never lets diagnostics alone claim completeness; `degraded` is written by later parsing, so partial capture is never presented as complete.
 
+## Dataset import
+
+`/datasets/import` imports a dataset through a three-step wizard: choose an adapter and upload a JSON/JSONL source file (≤1 GB, drag-and-drop), with the version label and data commit submitted alongside the file. The control plane stages the file in a temporary directory, then a bounded subprocess with a wall-clock timeout and address-space limit streams, validates and persists a report (record count, field completeness, per-item errors, duplicate case keys); only after explicit confirmation does one transaction create the immutable version and its cases, so a failed or cancelled import leaves no partial version. The staged file is deleted after commit, validation failure or cancellation, and the worker marks imports whose heartbeat expired as failed instead of leaving the wizard waiting.
+
 ## Extension points
 
 - After the product runtime lands, add its components, data flows, and external dependencies here.

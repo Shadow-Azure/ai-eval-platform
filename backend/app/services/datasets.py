@@ -17,8 +17,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import func, select
@@ -60,6 +61,10 @@ class ImportValidationFailed(Exception):
     def __init__(self, outcome: ImportOutcome) -> None:
         self.outcome = outcome
         super().__init__(f"数据集导入校验失败：{len(outcome.errors)} 个错误，import_id={outcome.import_record.id}")
+
+
+class DatasetSourceChanged(Exception):
+    """The validated source no longer matches what is being materialized."""
 
 
 class DatasetVersionConflict(Exception):
@@ -166,6 +171,307 @@ def _validate_records(adapter: DatasetAdapter, records: list[Mapping[str, Any]])
     return errors
 
 
+def _effective_digests(
+    execution_image_digest: str | None, scoring_image_digest: str | None
+) -> tuple[str | None, str | None]:
+    settings = get_settings()
+    execution = (
+        (execution_image_digest or "").strip()
+        or (settings.default_execution_image_digest or "").strip()
+        or None
+    )
+    scoring = (
+        (scoring_image_digest or "").strip()
+        or (settings.default_scoring_image_digest or "").strip()
+        or None
+    )
+    return execution, scoring
+
+
+def _set_import_status(
+    record: DatasetImport,
+    *,
+    status: str,
+    total_count: int,
+    valid_count: int,
+    invalid_count: int,
+    errors: list[CaseIssue] | None = None,
+    adapter_key: str | None = None,
+) -> None:
+    record.status = status
+    record.total_count = total_count
+    record.valid_count = valid_count
+    record.invalid_count = invalid_count
+    record.status_updated_at = datetime.now(UTC)
+    if errors is not None:
+        record.error_report_json = _error_report(
+            adapter_key=adapter_key or record.adapter_key,
+            dataset_slug=record.dataset_slug,
+            version=record.version,
+            errors=errors,
+        )
+
+
+def materialize_dataset_version(
+    session: Session,
+    *,
+    dataset_slug: str,
+    dataset_name: str,
+    adapter_key: str,
+    version: str,
+    source_uri: str,
+    source_revision: str,
+    records: Iterable[Mapping[str, Any]],
+    total_count: int,
+    environment_image: str | None = None,
+    execution_image_digest: str | None = None,
+    scoring_image_digest: str | None = None,
+    created_by: str = "console",
+    task_family: str | None = None,
+    environment_kind: str | None = None,
+    metadata: dict[str, Any] | None = None,
+    import_record: DatasetImport | None = None,
+    source_digest: str | None = None,
+) -> ImportOutcome:
+    """Write one immutable version from already-validated records.
+
+    ``records`` is consumed lazily so the upload flow can stream a large file;
+    ``total_count`` is the validated record count recorded during validation.
+    Related history (version reuse / conflict) is resolved before any case is
+    written, and a mismatch between the validated count and the stream aborts
+    the transaction instead of silently creating a partial version.
+    """
+
+    tenant_id = str(DEFAULT_TENANT_ID)
+    project_id = str(DEFAULT_PROJECT_ID)
+    execution_image_digest, scoring_image_digest = _effective_digests(
+        execution_image_digest, scoring_image_digest
+    )
+    adapter: DatasetAdapter = get_adapter(adapter_key)
+
+    dataset = session.scalar(
+        select(Dataset).where(Dataset.project_id == project_id, Dataset.slug == dataset_slug)
+    )
+
+    if dataset is not None:
+        existing = session.scalar(
+            select(DatasetVersion).where(
+                DatasetVersion.dataset_id == dataset.id,
+                DatasetVersion.version == version,
+            )
+        )
+        if existing is not None:
+            same_source = (
+                existing.source_revision == source_revision
+                and existing.adapter_version == adapter.adapter_version
+                # Uploaded files carry a content digest. Legacy imports have
+                # none, so they keep the historical revision-only comparison.
+                and (
+                    source_digest is None
+                    or existing.task_manifest_digest in (None, source_digest)
+                )
+            )
+            if same_source:
+                if import_record is None:
+                    record = DatasetImport(
+                        tenant_id=tenant_id,
+                        dataset_id=dataset.id,
+                        dataset_slug=dataset_slug,
+                        adapter_key=adapter_key,
+                        version=version,
+                        source_uri=source_uri,
+                        source_revision=source_revision,
+                        status="duplicate",
+                        total_count=total_count,
+                        valid_count=total_count,
+                        invalid_count=0,
+                        created_by=created_by,
+                    )
+                    session.add(record)
+                else:
+                    record = import_record
+                    _set_import_status(
+                        record,
+                        status="duplicate",
+                        total_count=total_count,
+                        valid_count=total_count,
+                        invalid_count=0,
+                    )
+                record.dataset_id = dataset.id
+                session.commit()
+                return ImportOutcome(
+                    status="duplicate",
+                    created=False,
+                    import_record=record,
+                    dataset=dataset,
+                    version=existing,
+                )
+
+            conflict = CaseIssue(
+                code="version_conflict",
+                field="source_revision",
+                message=(
+                    f"版本 {version} 已存在且来源不一致：已有 revision="
+                    f"{existing.source_revision} adapter={existing.adapter_version}，"
+                    f"本次 revision={source_revision} adapter={adapter.adapter_version}"
+                ),
+            )
+            if import_record is None:
+                _record_failed_import(
+                    session,
+                    tenant_id=tenant_id,
+                    adapter_key=adapter_key,
+                    dataset_slug=dataset_slug,
+                    version=version,
+                    source_uri=source_uri,
+                    source_revision=source_revision,
+                    total=total_count,
+                    errors=[conflict],
+                    created_by=created_by,
+                )
+            else:
+                _set_import_status(
+                    import_record,
+                    status="failed",
+                    total_count=total_count,
+                    valid_count=0,
+                    invalid_count=1,
+                    errors=[conflict],
+                )
+                # The async wizard polls the validation report, so a conflict
+                # must be diagnosable there as well as in error_report_json.
+                report = dict(import_record.validation_report_json or {})
+                report.update(
+                    {
+                        "fatal": True,
+                        "fatal_code": "version_conflict",
+                        "fatal_message": conflict.message,
+                    }
+                )
+                import_record.validation_report_json = report
+                session.commit()
+            raise DatasetVersionConflict(
+                f"版本 {version} 已绑定 revision={existing.source_revision}，与本次 revision={source_revision} 冲突",
+                existing_version=existing,
+            )
+
+    # Success path: all validation happened before this call, so one
+    # transaction creates the dataset (if missing), metrics, version, cases
+    # and the succeeded import record (or finalizes the uploaded one).
+    if dataset is None:
+        # M5-13: fall back to the adapter registry for task family, environment
+        # shape and description so catalog cards and import defaults share one
+        # source of truth.
+        meta = adapter_metadata(adapter)
+        dataset_metadata = dict(metadata or {})
+        dataset_metadata.setdefault("description", meta["description"] or "")
+        dataset = Dataset(
+            tenant_id=tenant_id,
+            project_id=project_id,
+            slug=dataset_slug,
+            name=dataset_name,
+            adapter_key=adapter_key,
+            task_family=task_family or meta["task_family"],
+            environment_kind=environment_kind or meta["environment_kind"],
+            metadata_json=dataset_metadata,
+        )
+        session.add(dataset)
+        session.flush()
+
+    definitions = register_adapter_metrics(session, dataset=dataset, adapter=adapter)
+
+    dataset_version = DatasetVersion(
+        tenant_id=tenant_id,
+        dataset_id=dataset.id,
+        version=version,
+        source_uri=source_uri,
+        source_revision=source_revision,
+        adapter_version=adapter.adapter_version,
+        case_count=total_count,
+        status="active",
+        environment_image=environment_image,
+        execution_image_digest=execution_image_digest,
+        scoring_image_digest=scoring_image_digest,
+        task_manifest_digest=source_digest,
+    )
+    session.add(dataset_version)
+    session.flush()
+
+    written = 0
+    for index, raw in enumerate(records):
+        normalized = adapter.normalize_case(raw)
+        session.add(
+            DatasetCase(
+                tenant_id=tenant_id,
+                dataset_version_id=dataset_version.id,
+                case_key=normalized.case_key,
+                ordinal=index + 1,
+                repo=normalized.repo,
+                base_commit=normalized.base_commit,
+                problem_statement=normalized.problem_statement,
+                reference_patch=normalized.reference_patch,
+                test_patch=normalized.test_patch,
+                expected_metrics_json=normalized.expected_metrics,
+                extra_json=normalized.extra,
+            )
+        )
+        written += 1
+        if written % 500 == 0:
+            session.flush()
+
+    if written != total_count:
+        raise DatasetSourceChanged(
+            f"校验记录数 {total_count} 与实际读取记录数 {written} 不一致，拒绝生成部分版本"
+        )
+
+    for definition in definitions:
+        session.add(
+            DatasetVersionMetric(
+                tenant_id=tenant_id,
+                dataset_version_id=dataset_version.id,
+                metric_definition_id=definition.id,
+            )
+        )
+
+    if import_record is None:
+        record = DatasetImport(
+            tenant_id=tenant_id,
+            dataset_id=dataset.id,
+            dataset_slug=dataset_slug,
+            adapter_key=adapter_key,
+            version=version,
+            source_uri=source_uri,
+            source_revision=source_revision,
+            status="succeeded",
+            total_count=total_count,
+            valid_count=total_count,
+            invalid_count=0,
+            created_by=created_by,
+        )
+        session.add(record)
+    else:
+        record = import_record
+        record.dataset_id = dataset.id
+        _set_import_status(
+            record,
+            status="succeeded",
+            total_count=total_count,
+            valid_count=total_count,
+            invalid_count=0,
+        )
+        record.error_report_json = {}
+    record.status_updated_at = datetime.now(UTC)
+    session.commit()
+    return ImportOutcome(
+        status="succeeded",
+        created=True,
+        import_record=record,
+        dataset=dataset,
+        version=dataset_version,
+        errors=[],
+    )
+
+
 def import_dataset_version(
     session: Session,
     *,
@@ -184,21 +490,14 @@ def import_dataset_version(
     environment_kind: str | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> ImportOutcome:
-    """导入一个数据集版本：校验 → 入库；幂等可重放。"""
+    """导入一个数据集版本：校验 → 入库；幂等可重放。
+
+    The legacy JSON-body endpoint passes records in memory; the upload flow
+    validates the file first and calls :func:`materialize_dataset_version`
+    directly with a stream.
+    """
 
     tenant_id = str(DEFAULT_TENANT_ID)
-    project_id = str(DEFAULT_PROJECT_ID)
-    settings = get_settings()
-    execution_image_digest = (
-        (execution_image_digest or "").strip()
-        or (settings.default_execution_image_digest or "").strip()
-        or None
-    )
-    scoring_image_digest = (
-        (scoring_image_digest or "").strip()
-        or (settings.default_scoring_image_digest or "").strip()
-        or None
-    )
 
     def failed(errors: list[CaseIssue]) -> ImportValidationFailed:
         record = _record_failed_import(
@@ -231,157 +530,23 @@ def import_dataset_version(
     if errors:
         raise failed(errors)
 
-    dataset = session.scalar(select(Dataset).where(Dataset.project_id == project_id, Dataset.slug == dataset_slug))
-
-    if dataset is not None:
-        existing = session.scalar(
-            select(DatasetVersion).where(
-                DatasetVersion.dataset_id == dataset.id,
-                DatasetVersion.version == version,
-            )
-        )
-        if existing is not None:
-            same_source = (
-                existing.source_revision == source_revision and existing.adapter_version == adapter.adapter_version
-            )
-            if same_source:
-                record = DatasetImport(
-                    tenant_id=tenant_id,
-                    dataset_id=dataset.id,
-                    dataset_slug=dataset_slug,
-                    adapter_key=adapter_key,
-                    version=version,
-                    source_uri=source_uri,
-                    source_revision=source_revision,
-                    status="duplicate",
-                    total_count=len(records),
-                    valid_count=len(records),
-                    invalid_count=0,
-                    created_by=created_by,
-                )
-                session.add(record)
-                session.commit()
-                return ImportOutcome(
-                    status="duplicate",
-                    created=False,
-                    import_record=record,
-                    dataset=dataset,
-                    version=existing,
-                )
-            record = _record_failed_import(
-                session,
-                tenant_id=tenant_id,
-                adapter_key=adapter_key,
-                dataset_slug=dataset_slug,
-                version=version,
-                source_uri=source_uri,
-                source_revision=source_revision,
-                total=len(records),
-                errors=[
-                    CaseIssue(
-                        code="version_conflict",
-                        field="source_revision",
-                        message=(
-                            f"版本 {version} 已存在且来源不一致：已有 revision="
-                            f"{existing.source_revision} adapter={existing.adapter_version}，"
-                            f"本次 revision={source_revision} adapter={adapter.adapter_version}"
-                        ),
-                    )
-                ],
-                created_by=created_by,
-            )
-            raise DatasetVersionConflict(
-                f"版本 {version} 已绑定 revision={existing.source_revision}，与本次 revision={source_revision} 冲突",
-                existing_version=existing,
-            ) from ImportValidationFailed(ImportOutcome(status="failed", created=False, import_record=record))
-
-    # 成功路径：单事务。
-    if dataset is None:
-        # M5-13：未显式提供的任务族/环境形态/描述回落到适配器注册表元数据，
-        # 这样目录卡片与导入默认值只有一个事实源。
-        meta = adapter_metadata(adapter)
-        dataset_metadata = dict(metadata or {})
-        dataset_metadata.setdefault("description", meta["description"] or "")
-        dataset = Dataset(
-            tenant_id=tenant_id,
-            project_id=project_id,
-            slug=dataset_slug,
-            name=dataset_name,
-            adapter_key=adapter_key,
-            task_family=task_family or meta["task_family"],
-            environment_kind=environment_kind or meta["environment_kind"],
-            metadata_json=dataset_metadata,
-        )
-        session.add(dataset)
-        session.flush()
-
-    definitions = register_adapter_metrics(session, dataset=dataset, adapter=adapter)
-
-    dataset_version = DatasetVersion(
-        tenant_id=tenant_id,
-        dataset_id=dataset.id,
-        version=version,
-        source_uri=source_uri,
-        source_revision=source_revision,
-        adapter_version=adapter.adapter_version,
-        case_count=len(records),
-        status="active",
-        environment_image=environment_image,
-        execution_image_digest=execution_image_digest,
-        scoring_image_digest=scoring_image_digest,
-    )
-    session.add(dataset_version)
-    session.flush()
-
-    for index, raw in enumerate(records):
-        normalized = adapter.normalize_case(raw)
-        session.add(
-            DatasetCase(
-                tenant_id=tenant_id,
-                dataset_version_id=dataset_version.id,
-                case_key=normalized.case_key,
-                ordinal=index + 1,
-                repo=normalized.repo,
-                base_commit=normalized.base_commit,
-                problem_statement=normalized.problem_statement,
-                reference_patch=normalized.reference_patch,
-                test_patch=normalized.test_patch,
-                expected_metrics_json=normalized.expected_metrics,
-                extra_json=normalized.extra,
-            )
-        )
-    for definition in definitions:
-        session.add(
-            DatasetVersionMetric(
-                tenant_id=tenant_id,
-                dataset_version_id=dataset_version.id,
-                metric_definition_id=definition.id,
-            )
-        )
-
-    record = DatasetImport(
-        tenant_id=tenant_id,
-        dataset_id=dataset.id,
+    return materialize_dataset_version(
+        session,
         dataset_slug=dataset_slug,
+        dataset_name=dataset_name,
         adapter_key=adapter_key,
         version=version,
         source_uri=source_uri,
         source_revision=source_revision,
-        status="succeeded",
+        environment_image=environment_image,
+        execution_image_digest=execution_image_digest,
+        scoring_image_digest=scoring_image_digest,
+        records=records,
         total_count=len(records),
-        valid_count=len(records),
-        invalid_count=0,
         created_by=created_by,
-    )
-    session.add(record)
-    session.commit()
-    return ImportOutcome(
-        status="succeeded",
-        created=True,
-        import_record=record,
-        dataset=dataset,
-        version=dataset_version,
-        errors=[],
+        task_family=task_family,
+        environment_kind=environment_kind,
+        metadata=metadata,
     )
 
 

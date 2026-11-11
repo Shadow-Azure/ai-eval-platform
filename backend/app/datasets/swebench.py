@@ -123,6 +123,9 @@ class SWEBenchAdapter:
     primary_metric_key = "resolved_rate"
 
     REQUIRED_FIELDS = ("instance_id", "repo", "base_commit", "problem_statement", "patch")
+    # M5-15: field completeness in the upload validation report iterates this
+    # platform-facing alias (the uppercase tuple predates the report).
+    required_fields = REQUIRED_FIELDS
 
     # -- validation ---------------------------------------------------------
 
