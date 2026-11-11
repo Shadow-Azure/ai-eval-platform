@@ -112,7 +112,7 @@ jobs:
   prepare:
     if: github.event_name == 'repository_dispatch'
     runs-on: [self-hosted, linux, eval]
-    timeout-minutes: 5
+    timeout-minutes: 10
     outputs:
       cases: ${{ steps.plan.outputs.cases }}
       runs_on: ${{ steps.plan.outputs.runs_on }}
@@ -133,13 +133,9 @@ jobs:
 
           const dispatch = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
           const archive = process.argv[3];
-          const base = new URL(dispatch.manifest_url).origin;
-          const query = new URLSearchParams({
-            eval_run_id: dispatch.eval_run_id,
-            attempt: String(dispatch.attempt),
-            dispatch_key: dispatch.dispatch_key,
-          });
-          const metadataUrl = `${base}/runner/v1/shards/${encodeURIComponent(dispatch.shard_id)}/scripts?${query}`;
+          const manifestUrl = new URL(dispatch.manifest_url);
+          manifestUrl.pathname = manifestUrl.pathname.replace(/\/manifest$/, "/scripts");
+          const metadataUrl = manifestUrl.toString();
           const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
           async function get(url, options = {}, timeout = 15000) {
@@ -197,10 +193,17 @@ jobs:
             echo "ok=false" >> "$GITHUB_OUTPUT"
             echo "::warning title=scripts-bundle-fallback::脚本包不可用，回退 actions/checkout"
           fi
-      - uses: actions/checkout@v4
+      - name: Checkout (fallback)
+        id: fallback_checkout
         if: steps.bundle.outputs.ok != 'true'
+        uses: actions/checkout@v4
+        continue-on-error: true
+      - name: Checkout (fallback retry)
+        id: fallback_retry
+        if: steps.bundle.outputs.ok != 'true' && steps.fallback_checkout.outcome == 'failure'
+        uses: actions/checkout@v4
       - name: Use the checked-out repository scripts
-        if: steps.bundle.outputs.ok != 'true'
+        if: steps.bundle.outputs.ok != 'true' && (steps.fallback_checkout.outcome == 'success' || steps.fallback_retry.outcome == 'success')
         run: echo "EVAL_SCRIPTS_DIR=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
 
       - name: Materialize and validate the dispatch payload
@@ -263,13 +266,9 @@ jobs:
 
           const dispatch = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
           const archive = process.argv[3];
-          const base = new URL(dispatch.manifest_url).origin;
-          const query = new URLSearchParams({
-            eval_run_id: dispatch.eval_run_id,
-            attempt: String(dispatch.attempt),
-            dispatch_key: dispatch.dispatch_key,
-          });
-          const metadataUrl = `${base}/runner/v1/shards/${encodeURIComponent(dispatch.shard_id)}/scripts?${query}`;
+          const manifestUrl = new URL(dispatch.manifest_url);
+          manifestUrl.pathname = manifestUrl.pathname.replace(/\/manifest$/, "/scripts");
+          const metadataUrl = manifestUrl.toString();
           const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
           async function get(url, options = {}, timeout = 15000) {
@@ -327,10 +326,17 @@ jobs:
             echo "ok=false" >> "$GITHUB_OUTPUT"
             echo "::warning title=scripts-bundle-fallback::脚本包不可用，回退 actions/checkout"
           fi
-      - uses: actions/checkout@v4
+      - name: Checkout (fallback)
+        id: fallback_checkout
         if: steps.bundle.outputs.ok != 'true'
+        uses: actions/checkout@v4
+        continue-on-error: true
+      - name: Checkout (fallback retry)
+        id: fallback_retry
+        if: steps.bundle.outputs.ok != 'true' && steps.fallback_checkout.outcome == 'failure'
+        uses: actions/checkout@v4
       - name: Use the checked-out repository scripts
-        if: steps.bundle.outputs.ok != 'true'
+        if: steps.bundle.outputs.ok != 'true' && (steps.fallback_checkout.outcome == 'success' || steps.fallback_retry.outcome == 'success')
         run: echo "EVAL_SCRIPTS_DIR=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
 
       # runner.temp is per job: never read the prepare job's dispatch file.

@@ -185,6 +185,11 @@ def ensure_runner_scripts_bundle(
         needs_upload = True
     if needs_upload:
         store.put_bytes(key, payload, content_type="application/gzip")
+        stored = store.head_object(key)
+        if stored != len(payload):
+            raise ObjectStoreError(
+                f"runner scripts 包上传后大小不一致：远端 {stored}，本地 {len(payload)}"
+            )
     return needs_upload
 
 

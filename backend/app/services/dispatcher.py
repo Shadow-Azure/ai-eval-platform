@@ -27,6 +27,8 @@ from ..models import EvalCaseAttempt, EvalCaseRun, EvalEvent, EvalRun, Outbox
 from . import capacity, evaluations, lifecycle
 from .evaluations import SHARD_DISPATCH_TOPIC, refresh_run_progress
 from .github_dispatch import GitHubDispatchError, post_repository_dispatch
+from .object_store import ObjectMissing, ObjectStoreError, object_store_from_settings
+from .runner_scripts_cache import runner_scripts_key
 
 
 @dataclass
@@ -302,6 +304,43 @@ def _dispatch_row(
             },
         }
     session.commit()
+
+    # M5-12: fail the shard before GitHub dispatch when the configured bundle
+    # is absent or a different size. A missing artifact is a deploy error, not
+    # something the workflow should silently paper over with checkout.
+    pinned_bundle = row.payload_json.get("scripts_bundle") or {}
+    bundle_name = pinned_bundle.get("name")
+    if bundle_name:
+        store = object_store_from_settings(settings)
+        if store is not None:
+            try:
+                bundle_size = store.head_object(runner_scripts_key(bundle_name))
+            except ObjectMissing:
+                _exhaust_dispatch(
+                    session,
+                    row,
+                    run=run,
+                    attempts=attempts,
+                    now=now,
+                    last_error="runner_scripts_bundle_missing",
+                )
+                outcome.failed += 1
+                return
+            except ObjectStoreError:
+                pass
+            else:
+                expected_size = settings.runner_scripts_bundle_size
+                if expected_size and bundle_size != expected_size:
+                    _exhaust_dispatch(
+                        session,
+                        row,
+                        run=run,
+                        attempts=attempts,
+                        now=now,
+                        last_error="runner_scripts_bundle_size_mismatch",
+                    )
+                    outcome.failed += 1
+                    return
 
     try:
         result = post_repository_dispatch(

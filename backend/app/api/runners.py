@@ -282,6 +282,45 @@ def require_case_token(
             status_code=401,
             detail=error_detail("runner_token_invalid", f"短期 token 校验失败：{exc.reason}"),
         ) from exc
+    if claims.get("scope") not in (None, "case"):
+        raise HTTPException(
+            status_code=403,
+            detail=error_detail(
+                "runner_token_scope_invalid", "该 token 类型不能用于用例回调"
+            ),
+        )
+    return claims
+
+
+def require_scripts_token(
+    settings: Annotated[Settings, Depends(get_settings)],
+    authorization: Annotated[str | None, Header()] = None,
+) -> dict:
+    """Bearer scripts token for the private bundle proxy.
+
+    Unlike case callbacks this endpoint never opens in development when the
+    secret is unset: the dev fallback secret still signs and verifies tokens,
+    so a download always needs the metadata-issued capability.
+    """
+
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=401,
+            detail=error_detail("runner_token_invalid", "缺少脚本包下载 token"),
+        )
+    token = authorization.removeprefix("Bearer ").strip()
+    try:
+        claims = verify_short_token(token, effective_task_secret(settings))
+    except ShortTokenInvalid as exc:
+        raise HTTPException(
+            status_code=401,
+            detail=error_detail("runner_token_invalid", f"脚本包 token 校验失败：{exc.reason}"),
+        ) from exc
+    if claims.get("scope") != "runner_scripts":
+        raise HTTPException(
+            status_code=403,
+            detail=error_detail("runner_scripts_forbidden", "token 无权下载 Runner 脚本包"),
+        )
     return claims
 
 
@@ -533,7 +572,7 @@ def _load_shard_dispatch(
     not_dispatchable = (
         run is None
         or run.status in ("cancelling", "cancelled", "pausing_budget", "paused_budget")
-        or (attempts and all(a.status in case_attempts.ACTIVE_ATTEMPT_STATUSES is False for a in attempts))
+        or (attempts and all(a.status not in case_attempts.ACTIVE_ATTEMPT_STATUSES for a in attempts))
     )
     if not_dispatchable:
         raise HTTPException(
@@ -571,6 +610,7 @@ def shard_manifest(
         "shard_id": shard_id,
         "attempt": attempt,
         "pool_id": run.resource_pool_id or "default",
+        "scope": "case",
     }
     token = issue_short_token(claims, effective_task_secret(settings), ttl_seconds=300)
     model_headers: dict[str, str] = {}
@@ -734,7 +774,7 @@ def runner_scripts_proxy(
     shard_id: Annotated[str, Query()],
     attempt: Annotated[int, Query(ge=1)],
     settings: Annotated[Settings, Depends(get_settings)],
-    token_claims: Annotated[dict | None, Depends(require_case_token)],
+    token_claims: Annotated[dict, Depends(require_scripts_token)],
 ) -> StreamingResponse:
     """Stream one content-addressed runner scripts bundle from private OSS.
 
@@ -748,35 +788,29 @@ def runner_scripts_proxy(
             status_code=404,
             detail=error_detail("runner_scripts_not_found", "Runner 脚本包不存在"),
         )
-    if token_claims is not None:
-        if token_claims.get("scope") != "runner_scripts":
-            raise HTTPException(
-                status_code=403,
-                detail=error_detail("runner_scripts_forbidden", "token 无权下载 Runner 脚本包"),
-            )
-        if token_claims.get("bundle") != filename:
+    if token_claims.get("bundle") != filename:
+        raise HTTPException(
+            status_code=403,
+            detail=error_detail(
+                "runner_scripts_forbidden",
+                "token 与请求的脚本包不一致",
+                details={"mismatched": ["bundle"]},
+            ),
+        )
+    for key, expected in (
+        ("eval_run_id", eval_run_id),
+        ("shard_id", shard_id),
+        ("attempt", attempt),
+    ):
+        if token_claims.get(key) != expected:
             raise HTTPException(
                 status_code=403,
                 detail=error_detail(
                     "runner_scripts_forbidden",
-                    "token 与请求的脚本包不一致",
-                    details={"mismatched": ["bundle"]},
+                    "token 与请求的评测/分片/attempt 不一致",
+                    details={"mismatched": [key]},
                 ),
             )
-        for key, expected in (
-            ("eval_run_id", eval_run_id),
-            ("shard_id", shard_id),
-            ("attempt", attempt),
-        ):
-            if token_claims.get(key) != expected:
-                raise HTTPException(
-                    status_code=403,
-                    detail=error_detail(
-                        "runner_scripts_forbidden",
-                        "token 与请求的评测/分片/attempt 不一致",
-                        details={"mismatched": [key]},
-                    ),
-                )
     store = object_store_from_settings(settings)
     if store is None:
         raise HTTPException(
