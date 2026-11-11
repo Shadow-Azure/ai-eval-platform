@@ -12,6 +12,69 @@ export interface DatasetSummary {
   version_count?: number;
 }
 
+export interface DatasetLatestVersion {
+  id: string;
+  version: string;
+  status: string;
+  case_count: number;
+  created_at: string;
+}
+
+export interface DatasetPrimaryMetric {
+  metric_key: string;
+  version: number;
+  display_name: string;
+  display_kind: string;
+  unit: string | null;
+  direction: string;
+}
+
+export interface DatasetAdapterRef {
+  key: string;
+  display_name: string;
+  registered: boolean;
+}
+
+/** M5-13 目录卡片：数据集行 + 最新版本 + 主指标 + 适配器元数据。 */
+export interface DatasetCatalogEntry extends DatasetSummary {
+  description: string;
+  updated_at: string | null;
+  latest_version: DatasetLatestVersion | null;
+  primary_metric: DatasetPrimaryMetric | null;
+  adapter: DatasetAdapterRef;
+  status: string;
+}
+
+export interface DatasetAdapterMetadata {
+  key: string;
+  adapter_version: string;
+  display_name: string;
+  task_family: string | null;
+  environment_kind: string | null;
+  description: string;
+  primary_metric_key: string | null;
+  metric_keys: string[];
+  metric_display_names: Record<string, string>;
+  case_visibility: Record<string, string>;
+  dataset_count: number;
+}
+
+export interface DatasetImportRecord {
+  id: string;
+  dataset_id: string | null;
+  dataset_slug: string;
+  adapter_key: string;
+  version: string;
+  source_uri: string;
+  source_revision: string | null;
+  status: string;
+  total_count: number;
+  valid_count: number;
+  invalid_count: number;
+  created_by: string;
+  created_at: string;
+}
+
 export interface DatasetVersion {
   id: string;
   dataset_id: string;
@@ -144,6 +207,113 @@ function parseMetric(item: Record<string, unknown>): MetricDefinition {
 export async function fetchDatasets(signal?: AbortSignal): Promise<DatasetSummary[]> {
   const payload = await request("/api/v1/datasets?limit=50", { signal });
   return items(payload).records.map(parseDataset);
+}
+
+function parseLatestVersion(item: unknown): DatasetLatestVersion | null {
+  if (!isRecord(item)) return null;
+  return {
+    id: text(item.id),
+    version: text(item.version),
+    status: text(item.status),
+    case_count: number(item.case_count),
+    created_at: text(item.created_at),
+  };
+}
+
+function parsePrimaryMetric(item: unknown): DatasetPrimaryMetric | null {
+  if (!isRecord(item)) return null;
+  return {
+    metric_key: text(item.metric_key),
+    version: number(item.version),
+    display_name: text(item.display_name),
+    display_kind: text(item.display_kind),
+    unit: optionalText(item.unit),
+    direction: text(item.direction),
+  };
+}
+
+function parseCatalogEntry(item: Record<string, unknown>): DatasetCatalogEntry {
+  const base = parseDataset(item);
+  const adapter = isRecord(item.adapter)
+    ? {
+        key: text(item.adapter.key),
+        display_name: text(item.adapter.display_name),
+        registered: Boolean(item.adapter.registered),
+      }
+    : { key: base.adapter_key, display_name: base.adapter_key, registered: false };
+  return {
+    ...base,
+    description: text(item.description),
+    updated_at: optionalText(item.updated_at),
+    latest_version: parseLatestVersion(item.latest_version),
+    primary_metric: parsePrimaryMetric(item.primary_metric),
+    adapter,
+    status: text(item.status) || (item.latest_version ? "ready" : "draft"),
+  };
+}
+
+function parseAdapterMetadata(item: Record<string, unknown>): DatasetAdapterMetadata {
+  const names = isRecord(item.metric_display_names) ? item.metric_display_names : {};
+  const visibility = isRecord(item.case_visibility) ? item.case_visibility : {};
+  return {
+    key: text(item.key),
+    adapter_version: text(item.adapter_version),
+    display_name: text(item.display_name),
+    task_family: optionalText(item.task_family),
+    environment_kind: optionalText(item.environment_kind),
+    description: text(item.description),
+    primary_metric_key: optionalText(item.primary_metric_key),
+    metric_keys: Array.isArray(item.metric_keys)
+      ? item.metric_keys.filter((value): value is string => typeof value === "string")
+      : [],
+    metric_display_names: Object.fromEntries(
+      Object.entries(names).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+    ),
+    case_visibility: Object.fromEntries(
+      Object.entries(visibility).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+    ),
+    dataset_count: number(item.dataset_count),
+  };
+}
+
+function parseImportRecord(item: Record<string, unknown>): DatasetImportRecord {
+  return {
+    id: text(item.id),
+    dataset_id: optionalText(item.dataset_id),
+    dataset_slug: text(item.dataset_slug),
+    adapter_key: text(item.adapter_key),
+    version: text(item.version),
+    source_uri: text(item.source_uri),
+    source_revision: optionalText(item.source_revision),
+    status: text(item.status),
+    total_count: number(item.total_count),
+    valid_count: number(item.valid_count),
+    invalid_count: number(item.invalid_count),
+    created_by: text(item.created_by),
+    created_at: text(item.created_at),
+  };
+}
+
+/** 目录页一次拉取全部条目（<=200）后在客户端组合筛选与每页 6 卡分页。 */
+export async function fetchDatasetCatalog(signal?: AbortSignal): Promise<DatasetCatalogEntry[]> {
+  const payload = await request("/api/v1/datasets?limit=200", { signal });
+  return items(payload).records.map(parseCatalogEntry);
+}
+
+export async function fetchDatasetAdapters(signal?: AbortSignal): Promise<DatasetAdapterMetadata[]> {
+  const payload = await request("/api/v1/dataset-adapters", { signal });
+  if (!isRecord(payload) || !Array.isArray(payload.items)) {
+    throw new ApiError("控制面返回了无法识别的适配器注册表", { code: "invalid_response" });
+  }
+  return payload.items.filter(isRecord).map(parseAdapterMetadata);
+}
+
+export async function fetchDatasetImports(
+  limit = 3,
+  signal?: AbortSignal,
+): Promise<DatasetImportRecord[]> {
+  const payload = await request(`/api/v1/dataset-imports?limit=${limit}`, { signal });
+  return items(payload).records.map(parseImportRecord);
 }
 
 export async function fetchDataset(id: string, signal?: AbortSignal): Promise<DatasetSummary> {

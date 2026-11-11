@@ -25,7 +25,14 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..config import get_settings
-from ..datasets import AdapterNotFound, CaseIssue, DatasetAdapter, get_adapter
+from ..datasets import (
+    AdapterNotFound,
+    CaseIssue,
+    DatasetAdapter,
+    adapter_metadata,
+    get_adapter,
+    registered_adapter_keys,
+)
 from ..defaults import DEFAULT_PROJECT_ID, DEFAULT_TENANT_ID
 from ..models import Dataset, DatasetCase, DatasetImport, DatasetVersion, DatasetVersionMetric, MetricDefinition
 from .metrics import register_adapter_metrics
@@ -290,15 +297,20 @@ def import_dataset_version(
 
     # 成功路径：单事务。
     if dataset is None:
+        # M5-13：未显式提供的任务族/环境形态/描述回落到适配器注册表元数据，
+        # 这样目录卡片与导入默认值只有一个事实源。
+        meta = adapter_metadata(adapter)
+        dataset_metadata = dict(metadata or {})
+        dataset_metadata.setdefault("description", meta["description"] or "")
         dataset = Dataset(
             tenant_id=tenant_id,
             project_id=project_id,
             slug=dataset_slug,
             name=dataset_name,
             adapter_key=adapter_key,
-            task_family=task_family,
-            environment_kind=environment_kind,
-            metadata_json=metadata or {},
+            task_family=task_family or meta["task_family"],
+            environment_kind=environment_kind or meta["environment_kind"],
+            metadata_json=dataset_metadata,
         )
         session.add(dataset)
         session.flush()
@@ -456,7 +468,7 @@ def list_version_metrics(session: Session, version_id: str) -> list[MetricDefini
                 DatasetVersionMetric.metric_definition_id == MetricDefinition.id,
             )
             .where(DatasetVersionMetric.dataset_version_id == version_id)
-            .order_by(MetricDefinition.metric_key, MetricDefinition.version)
+            .order_by(MetricDefinition.metric_key, MetricDefinition.version.desc())
         )
     )
 
@@ -466,3 +478,123 @@ def get_import(session: Session, import_id: str) -> DatasetImport:
     if record is None:
         raise DatasetImportNotFound(import_id)
     return record
+
+
+def list_imports(session: Session, *, limit: int = 20, offset: int = 0) -> tuple[list[DatasetImport], int]:
+    query = select(DatasetImport).order_by(DatasetImport.created_at.desc(), DatasetImport.id.desc())
+    return paginate(session, query, limit=limit, offset=offset)
+
+
+# ---------------------------------------------------------------------------
+# Catalog（M5-13）：目录卡片 + 适配器注册表元数据
+# ---------------------------------------------------------------------------
+
+
+def _iso(value) -> str | None:
+    return value.isoformat(timespec="microseconds") if value is not None else None
+
+
+def _metric_card(definition: MetricDefinition) -> dict[str, Any]:
+    return {
+        "metric_key": definition.metric_key,
+        "version": definition.version,
+        "display_name": definition.display_name,
+        "display_kind": definition.display_kind,
+        "unit": definition.unit,
+        "direction": definition.direction,
+    }
+
+
+def dataset_catalog(session: Session, *, limit: int = 200, offset: int = 0) -> tuple[list[dict[str, Any]], int]:
+    """数据集目录条目：数据集行 + 最新版本 + 主指标 + 适配器元数据。
+
+    目录卡片所需字段全部来自数据库与适配器注册表，不在前端硬编码某个数据集。
+    版本/指标按当前页批量查询，避免逐卡片 N+1。
+    """
+
+    datasets, total = list_datasets(session, limit=limit, offset=offset)
+    ids = [dataset.id for dataset in datasets]
+    versions: dict[str, list[DatasetVersion]] = {}
+    metrics: dict[str, list[MetricDefinition]] = {}
+    if ids:
+        for version in session.scalars(
+            select(DatasetVersion)
+            .where(DatasetVersion.dataset_id.in_(ids))
+            .order_by(DatasetVersion.created_at.desc(), DatasetVersion.id.desc())
+        ):
+            versions.setdefault(version.dataset_id, []).append(version)
+        for definition in session.scalars(
+            select(MetricDefinition)
+            .where(MetricDefinition.dataset_id.in_(ids))
+            .order_by(MetricDefinition.metric_key, MetricDefinition.version.desc())
+        ):
+            metrics.setdefault(definition.dataset_id, []).append(definition)
+
+    items: list[dict[str, Any]] = []
+    for dataset in datasets:
+        try:
+            adapter = get_adapter(dataset.adapter_key)
+        except AdapterNotFound:
+            adapter = None
+        meta = adapter_metadata(adapter) if adapter is not None else {}
+        dataset_versions = versions.get(dataset.id, [])
+        latest = dataset_versions[0] if dataset_versions else None
+        definitions = metrics.get(dataset.id, [])
+        primary_key = meta.get("primary_metric_key")
+        primary = next((item for item in definitions if item.metric_key == primary_key), None)
+        if primary is None and definitions:
+            primary = definitions[0]
+        status = "ready" if latest is not None and latest.status == "active" else "draft"
+        items.append(
+            {
+                "id": dataset.id,
+                "slug": dataset.slug,
+                "name": dataset.name,
+                "adapter_key": dataset.adapter_key,
+                "task_family": dataset.task_family or meta.get("task_family"),
+                "environment_kind": dataset.environment_kind or meta.get("environment_kind"),
+                "description": (dataset.metadata_json or {}).get("description")
+                or meta.get("description")
+                or "",
+                "created_at": _iso(dataset.created_at),
+                "updated_at": _iso(latest.created_at if latest is not None else dataset.updated_at),
+                "version_count": len(dataset_versions),
+                "latest_version": (
+                    {
+                        "id": latest.id,
+                        "version": latest.version,
+                        "status": latest.status,
+                        "case_count": latest.case_count,
+                        "created_at": _iso(latest.created_at),
+                    }
+                    if latest is not None
+                    else None
+                ),
+                "primary_metric": _metric_card(primary) if primary is not None else None,
+                "adapter": {
+                    "key": dataset.adapter_key,
+                    "display_name": meta.get("display_name") or dataset.adapter_key,
+                    "registered": adapter is not None,
+                },
+                "status": status,
+            }
+        )
+    return items, total
+
+
+def adapter_catalog(session: Session) -> list[dict[str, Any]]:
+    """已注册适配器的自描述元数据 + 已挂在目录下的数据集数量。"""
+
+    counts = {
+        key: int(count)
+        for key, count in session.execute(
+            select(Dataset.adapter_key, func.count(Dataset.id)).group_by(Dataset.adapter_key)
+        ).all()
+    }
+    items: list[dict[str, Any]] = []
+    for key in registered_adapter_keys():
+        adapter = get_adapter(key)
+        metadata = adapter_metadata(adapter)
+        metadata["dataset_count"] = int(counts.get(key, 0))
+        items.append(metadata)
+    return items

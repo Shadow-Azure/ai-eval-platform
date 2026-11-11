@@ -7,6 +7,7 @@ import "./styles/shell.css";
 import "./styles/overview.css";
 import "./styles/operations.css";
 import "./styles/models.css";
+import "./styles/datasets.css";
 import "./styles/assets.css";
 import "./styles/resources.css";
 import "./styles/eval-detail.css";

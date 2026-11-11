@@ -10,6 +10,7 @@ status: ready
 scope:
   - .agents/flow/issues/m5-13-dataset-index-ui.*
   - .agents/flow/milestones/m5-product-workflows.*
+  - .agents/notes/**
   - backend/**
   - web/**
   - tests/**
@@ -18,7 +19,8 @@ scope:
   - plans/**
   - scripts/doc-budgets.manifest.json
   - .gitignore
-adr: []
+adr:
+  - ../../notes/adr-0001-dataset-index-navigation.md
 github:
   number: 141
   url: https://github.com/Shadow-Azure/ai-eval-platform/issues/141

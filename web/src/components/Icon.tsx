@@ -13,6 +13,7 @@ const iconPaths = {
   help: '<circle cx="12" cy="12" r="9"/><path d="M9.6 9a2.5 2.5 0 1 1 4.1 1.9c-1 .8-1.7 1.3-1.7 2.6M12 17.5h.01"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   arrowRight: '<path d="M5 12h14M14 7l5 5-5 5"/>',
+  arrowLeft: '<path d="M19 12H5M10 7l-5 5 5 5"/>',
   alert: '<path d="M10.3 4.1 2.6 18a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 4.1a2 2 0 0 0-3.4 0Z"/><path d="M12 9v5M12 17.5h.01"/>',
   check: '<path d="m5 12 4 4L19 6"/>',
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
