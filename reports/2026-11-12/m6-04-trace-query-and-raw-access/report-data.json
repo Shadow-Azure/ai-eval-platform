@@ -1,0 +1,132 @@
+{
+  "title": "M6-04 轨迹查询 API 与受控原件访问 smoke",
+  "eyebrow": "Computer Use + API integration",
+  "summary": "在隔离 SQLite、真实 FastAPI 与本机对象存储链路上验证轨迹状态、attempt 树、游标分页、降级质量、管理员签名下载和 no-store 响应。现有前端尚未交付 #94 三栏查看器，因此 GUI 覆盖当前可达的评测详情与轨迹状态入口，查询契约由真实 API 补证。",
+  "meta": "2026-11-12 · macOS · Google Chrome",
+  "metrics": [
+    { "value": "3", "label": "GUI 截图" },
+    { "value": "15", "label": "定向 API 测试" },
+    { "value": "7", "label": "关键 API 场景" },
+    { "value": "0", "label": "新增 smoke 缺陷" }
+  ],
+  "facts": [
+    { "label": "Commit", "value": "e2a3ac7" },
+    { "label": "PR", "value": "#167" },
+    { "label": "Runtime", "value": "claude-code 2.1.278" },
+    { "label": "Database", "value": "isolated SQLite" },
+    { "label": "Object store", "value": "local SigV4 URL + HTTPServer" },
+    { "label": "Viewer", "value": "blocked by #94; current case detail used" }
+  ],
+  "matrix": {
+    "columns": ["#", "场景", "结果", "断言", "证据"],
+    "rows": [
+      {
+        "id": "01",
+        "name": "登录与评测详情",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "管理员登录后进入隔离评测，页面显示部分成功与轨迹处理计数。",
+        "evidence": ["03-degraded-filter-results.jpeg"]
+      },
+      {
+        "id": "02",
+        "name": "降级状态可见",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "用例详情显示轨迹状态“已降级”，不会伪装成可用轨迹。",
+        "evidence": ["01-degraded-case-detail.jpeg"]
+      },
+      {
+        "id": "03",
+        "name": "降级筛选",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "轨迹状态筛选返回 1/1 条 degraded 用例，未出现骨架或 422。",
+        "evidence": ["03-degraded-filter-results.jpeg"]
+      },
+      {
+        "id": "04",
+        "name": "attempt 会话树",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "真实 API 返回 1 个 root session 与 1 个 unlinked session，统计为 3 spans、12 input tokens、3 output tokens。",
+        "evidence": ["API GET /eval-case-runs/:id/trace"]
+      },
+      {
+        "id": "05",
+        "name": "keyset 分页",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "limit=1 返回首 span 与 next_cursor，total=2；游标绑定 session。",
+        "evidence": ["API GET /trace-sessions/:id/spans"]
+      },
+      {
+        "id": "06",
+        "name": "raw 签名与 no-store",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "管理员取得 X-Amz-Expires=300 URL，响应含 cache-control: no-store，URL 下载返回 HTTP 200。",
+        "evidence": ["API POST /trace-files/:id/download-url"]
+      },
+      {
+        "id": "07",
+        "name": "脱敏与权限边界",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "文件错误摘要中的 Bearer/Key 已遮蔽；viewer thinking、跨 tenant/project、任意 object key 与无审计下载由 15 个 API 测试覆盖。",
+        "evidence": ["tests/backend/test_trace_api.py"]
+      }
+    ]
+  },
+  "issues": [],
+  "screenshots": [
+    {
+      "src": "01-degraded-case-detail.jpeg",
+      "alt": "评测用例详情显示已降级轨迹状态",
+      "label": "01 · Case detail",
+      "caption": "详情结论区显示“已降级”，没有把不完整轨迹标成可用。",
+      "variant": "wide"
+    },
+    {
+      "src": "02-degraded-filter.jpeg",
+      "alt": "选择已降级轨迹筛选后的详情",
+      "label": "02 · Filter applied",
+      "caption": "筛选 URL 更新为 trace_status=degraded，当前详情仍保持降级语义。",
+      "variant": "wide"
+    },
+    {
+      "src": "03-degraded-filter-results.jpeg",
+      "alt": "已降级轨迹筛选结果页",
+      "label": "03 · Results",
+      "caption": "筛选结果保留 1 条 degraded 用例，状态标签与计数一致。",
+      "variant": "wide"
+    }
+  ],
+  "coverage": {
+    "columns": ["区域", "自动化覆盖", "结论", "建议"],
+    "rows": [
+      {
+        "area": "tenant/project/case/attempt/session/span 归属",
+        "coverage": "15 API tests",
+        "conclusion": "跨边界深链统一 404，切换 attempt 不复用标识。",
+        "recommendation": "继续保持每个新读取端点复用归属链。"
+      },
+      {
+        "area": "raw/大内容 URL",
+        "coverage": "API + local object server",
+        "conclusion": "300 秒签名、管理员、审计、no-store 与可下载均已验证。",
+        "recommendation": "生产 OSS 的过期拒绝由 SigV4 与 #95 真链路补证。"
+      },
+      {
+        "area": "三栏轨迹查看器",
+        "coverage": "blocked by #94",
+        "conclusion": "本 PR 只交付查询契约，现有 UI 尚无消费树/waterfall 的页面。",
+        "recommendation": "#94 接入后重跑完整查看器 smoke。"
+      }
+    ]
+  },
+  "conclusion": {
+    "kind": "pass",
+    "label": "Ready for merge with #94 UI follow-up",
+    "summary": "真实 API、当前可达 GUI 路径与自动化安全边界均通过；本次 smoke 未发现新的产品缺陷。",
+    "points": [
+      "degraded 与 unlinked 状态在 API 和现有 UI 中一致可见。",
+      "raw 响应禁缓存，短时 URL 可实际读取登记对象。",
+      "三栏查看器消费完整响应留待 #94。"
+    ]
+  },
+  "footer": "Evidence generated from Computer Use screenshots and a live isolated FastAPI process."
+}

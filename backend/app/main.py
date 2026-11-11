@@ -21,6 +21,7 @@ from .api.resources import router as resources_router
 from .api.results import router as results_router
 from .api.runners import router as runners_router
 from .api.runtimes import router as runtimes_router
+from .api.traces import router as traces_router
 from .config import get_settings
 from .services.provisioning import register_builtin_provisioners
 
@@ -65,6 +66,7 @@ def create_app() -> FastAPI:
     app.include_router(datasets_router, dependencies=[Depends(require_session)])
     app.include_router(agent_assets_router, dependencies=[Depends(require_session)])
     app.include_router(results_router, dependencies=[Depends(require_session)])
+    app.include_router(traces_router, dependencies=[Depends(require_session)])
     app.include_router(eval_workbench_router, dependencies=[Depends(require_session)])
     app.include_router(runtimes_router, dependencies=[Depends(require_session)])
     app.include_router(model_configs_router, dependencies=[Depends(require_session)])
