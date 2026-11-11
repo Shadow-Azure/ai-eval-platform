@@ -76,6 +76,12 @@ services:
       AUTH_SESSION_SECRET: ${AUTH_SESSION_SECRET:-local-development-auth-secret}
       AUTH_BOOTSTRAP_ADMIN_EMAIL: ${AUTH_BOOTSTRAP_ADMIN_EMAIL:-admin@acme.local}
       AUTH_BOOTSTRAP_ADMIN_PASSWORD: ${AUTH_BOOTSTRAP_ADMIN_PASSWORD:-eval-demo}
+      # M5-15: uploaded dataset sources are staged in this container and
+      # parsed by a bounded subprocess (1 GB / 30 min / 1 GB address space).
+      DATASET_IMPORT_DIR: ${DATASET_IMPORT_DIR:-/tmp/eval-dataset-imports}
+      DATASET_IMPORT_MAX_BYTES: ${DATASET_IMPORT_MAX_BYTES:-1073741824}
+      DATASET_IMPORT_TIMEOUT_SECONDS: ${DATASET_IMPORT_TIMEOUT_SECONDS:-1800}
+      DATASET_IMPORT_MEMORY_LIMIT_MB: ${DATASET_IMPORT_MEMORY_LIMIT_MB:-1024}
     ports:
       - "8000:8000"
     depends_on:
@@ -107,6 +113,8 @@ services:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-eval}:${POSTGRES_PASSWORD:-eval}@postgres:5432/${POSTGRES_DB:-eval}
       REDIS_URL: redis://redis:6379/0
       WORKER_HEARTBEAT_PATH: /tmp/worker-heartbeat
+      # M5-15: fail imports whose worker vanished instead of spinning forever.
+      DATASET_IMPORT_STALE_SECONDS: ${DATASET_IMPORT_STALE_SECONDS:-7200}
     depends_on:
       api:
         condition: service_healthy

@@ -8,15 +8,22 @@
 
 from __future__ import annotations
 
+import hashlib
+import uuid
+from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Response, UploadFile
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ..config import get_settings
 from ..datasets import get_adapter
 from ..db import get_session
-from ..models import DatasetCase, DatasetImport, DatasetVersion, MetricDefinition
+from ..defaults import DEFAULT_TENANT_ID
+from ..models import Dataset, DatasetCase, DatasetImport, DatasetVersion, MetricDefinition
+from ..services import dataset_imports as import_service
 from ..services import datasets as dataset_service
 from ..services import identity
 from ..services import metrics as metric_service
@@ -125,8 +132,19 @@ def import_summary(record: DatasetImport) -> dict:
         "total_count": record.total_count,
         "valid_count": record.valid_count,
         "invalid_count": record.invalid_count,
+        "processed_count": record.processed_count,
+        "file_name": record.file_name,
+        "file_size": record.file_size,
+        "file_digest": record.file_digest,
+        "report": record.validation_report_json or {},
+        "error_report": record.error_report_json or {},
         "created_by": record.created_by,
         "created_at": record.created_at.isoformat(timespec="microseconds"),
+        "status_updated_at": (
+            record.status_updated_at.isoformat(timespec="microseconds")
+            if record.status_updated_at
+            else None
+        ),
     }
 
 
@@ -198,9 +216,196 @@ def get_dataset_import(import_id: str, session: Session = Depends(get_session)) 
     except dataset_service.DatasetImportNotFound as exc:
         raise _not_found("dataset_import_not_found", "导入记录不存在") from exc
     summary = import_summary(record)
-    if record.status == "failed":
-        summary["error_report"] = record.error_report_json
+    if record.dataset_id:
+        dataset = session.get(Dataset, record.dataset_id)
+        if dataset is not None:
+            summary["dataset"] = dataset_summary(dataset)
+            version = session.scalar(
+                select(DatasetVersion).where(
+                    DatasetVersion.dataset_id == dataset.id,
+                    DatasetVersion.version == record.version,
+                )
+            )
+            # Keep `version` as the import label; the full immutable version
+            # summary travels as `version_detail` and never overwrites it.
+            summary["version_detail"] = version_summary(version) if version else None
     return summary
+
+
+def _database_url(session: Session) -> str:
+    bind = session.get_bind()
+    url = bind.url if hasattr(bind, "url") else bind.engine.url
+    return url.render_as_string(hide_password=False)
+
+
+def _upload_error(code: str, message: str, status_code: int = 422, **details: Any) -> HTTPException:
+    return HTTPException(
+        status_code=status_code,
+        detail=error_detail(code, message, details=details or None),
+    )
+
+
+UPLOAD_SUFFIXES = (".json", ".jsonl", ".ndjson")
+
+
+@router.post("/api/v1/dataset-imports/uploads", status_code=201)
+async def upload_dataset_import(
+    background_tasks: BackgroundTasks,
+    file: Annotated[UploadFile, File()],
+    dataset_slug: Annotated[str, Form(min_length=1, max_length=128)],
+    dataset_name: Annotated[str, Form(min_length=1, max_length=200)],
+    adapter_key: Annotated[str, Form(min_length=1, max_length=64)],
+    version: Annotated[str, Form(min_length=1, max_length=64)],
+    source_revision: Annotated[str, Form(min_length=1, max_length=128)],
+    execution_image_digest: Annotated[str | None, Form()] = None,
+    scoring_image_digest: Annotated[str | None, Form()] = None,
+    source_uri: Annotated[str | None, Form()] = None,
+    session: Session = Depends(get_session),
+    context: identity.AuthContext = Depends(require_admin),
+) -> dict:
+    """Stage an uploaded JSON/JSONL file and start isolated validation."""
+
+    settings = get_settings()
+    try:
+        get_adapter(adapter_key)
+    except Exception as exc:
+        raise _upload_error("adapter_not_found", f"未注册的数据集适配器：{adapter_key}") from exc
+
+    original_name = Path(file.filename or "").name
+    if not original_name or len(original_name) > 255:
+        raise _upload_error("invalid_file_name", "请选择 JSON 或 JSONL 数据文件")
+    suffix = Path(original_name).suffix.lower()
+    if suffix not in UPLOAD_SUFFIXES:
+        raise _upload_error("unsupported_file_type", "仅支持 .json、.jsonl 或 .ndjson 数据文件")
+
+    max_bytes = int(settings.dataset_import_max_bytes)
+    root = import_service.import_root(settings)
+    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    storage_key = f"{uuid.uuid4()}{suffix}"
+    destination = root / storage_key
+
+    digest = hashlib.sha256()
+    size = 0
+    try:
+        with destination.open("wb") as handle:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > max_bytes:
+                    raise _upload_error(
+                        "dataset_import_too_large",
+                        f"数据文件超过 {max_bytes // (1024 * 1024)} MB 上限",
+                        status_code=413,
+                    )
+                digest.update(chunk)
+                handle.write(chunk)
+    except HTTPException:
+        destination.unlink(missing_ok=True)
+        raise
+    except OSError as exc:
+        destination.unlink(missing_ok=True)
+        raise _upload_error(
+            "dataset_import_storage_failed", "数据文件暂存失败，请稍后重试", status_code=503
+        ) from exc
+    finally:
+        await file.close()
+
+    if size == 0:
+        destination.unlink(missing_ok=True)
+        raise _upload_error("dataset_import_empty_file", "数据文件为空")
+
+    now = import_service._now()
+    record = DatasetImport(
+        # Console imports are scoped to the default project, matching the
+        # legacy JSON import service and the dataset foreign key.
+        tenant_id=str(DEFAULT_TENANT_ID),
+        dataset_slug=dataset_slug,
+        dataset_name=dataset_name,
+        adapter_key=adapter_key,
+        version=version,
+        source_uri=(source_uri or f"upload://{original_name}")[:500],
+        source_revision=source_revision,
+        status="queued",
+        total_count=0,
+        valid_count=0,
+        invalid_count=0,
+        file_name=original_name,
+        file_size=size,
+        file_digest="sha256:" + digest.hexdigest(),
+        storage_key=storage_key,
+        execution_image_digest=(execution_image_digest or "").strip() or None,
+        scoring_image_digest=(scoring_image_digest or "").strip() or None,
+        validation_report_json={},
+        processed_count=0,
+        status_updated_at=now,
+        error_report_json={},
+        created_by=context.user.email,
+    )
+    session.add(record)
+    session.commit()
+
+    database_url = _database_url(session)
+    background_tasks.add_task(
+        import_service.run_import_job,
+        record.id,
+        "validate",
+        database_url=database_url,
+    )
+    return {"import": import_summary(record)}
+
+
+@router.post("/api/v1/dataset-imports/{import_id}/commit", status_code=202)
+def commit_dataset_import(
+    import_id: str,
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_session),
+    context: identity.AuthContext = Depends(require_admin),
+) -> dict:
+    try:
+        record = import_service.begin_commit(session, import_id)
+    except import_service.DatasetImportNotFound as exc:
+        raise _not_found("dataset_import_not_found", "导入记录不存在") from exc
+    except import_service.DatasetImportStateConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=error_detail(
+                "dataset_import_state_conflict",
+                "只有校验通过的导入可以生成版本，请重新校验数据",
+            ),
+        ) from exc
+    database_url = _database_url(session)
+    background_tasks.add_task(
+        import_service.run_import_job,
+        record.id,
+        "materialize",
+        database_url=database_url,
+    )
+    return {"import": import_summary(record)}
+
+
+@router.post("/api/v1/dataset-imports/{import_id}/cancel")
+def cancel_dataset_import(
+    import_id: str,
+    session: Session = Depends(get_session),
+    context: identity.AuthContext = Depends(require_admin),
+) -> dict:
+    try:
+        record = dataset_service.get_import(session, import_id)
+    except dataset_service.DatasetImportNotFound as exc:
+        raise _not_found("dataset_import_not_found", "导入记录不存在") from exc
+    if record.status not in ("queued", "validated"):
+        raise HTTPException(
+            status_code=409,
+            detail=error_detail("dataset_import_state_conflict", "导入正在进行或已经结束，无法取消"),
+        )
+    import_service.delete_source_file(record)
+    record.status = "cancelled"
+    record.status_updated_at = import_service._now()
+    session.commit()
+    session.refresh(record)
+    return import_summary(record)
 
 
 # ---------------------------------------------------------------------------

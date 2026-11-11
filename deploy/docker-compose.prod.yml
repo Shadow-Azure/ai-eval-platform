@@ -86,6 +86,12 @@ services:
       GATEWAY_TOKEN_SECRET: ${GATEWAY_TOKEN_SECRET:-}
       GATEWAY_TOKEN_TTL_SECONDS: ${GATEWAY_TOKEN_TTL_SECONDS:-900}
       GATEWAY_TIMEOUT_SECONDS: ${GATEWAY_TIMEOUT_SECONDS:-120}
+      # M5-15: upload staging and the isolated validation subprocess. Files
+      # are temporary; completed imports keep only metadata and cases.
+      DATASET_IMPORT_DIR: ${DATASET_IMPORT_DIR:-/tmp/eval-dataset-imports}
+      DATASET_IMPORT_MAX_BYTES: ${DATASET_IMPORT_MAX_BYTES:-1073741824}
+      DATASET_IMPORT_TIMEOUT_SECONDS: ${DATASET_IMPORT_TIMEOUT_SECONDS:-1800}
+      DATASET_IMPORT_MEMORY_LIMIT_MB: ${DATASET_IMPORT_MEMORY_LIMIT_MB:-1024}
     # Fixed runners and the heartbeat agent run on the API host and reach the
     # platform via loopback (PLATFORM_BASE_URL=http://127.0.0.1:8000). The
     # optional docker-compose.vpc.yml override adds the VPC address used by
@@ -115,6 +121,8 @@ services:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-eval}:${POSTGRES_PASSWORD:?}@postgres:5432/${POSTGRES_DB:-eval}
       REDIS_URL: redis://redis:6379/0
       WORKER_HEARTBEAT_PATH: /tmp/worker-heartbeat
+      # M5-15: reap uploads abandoned by a crashed validation worker.
+      DATASET_IMPORT_STALE_SECONDS: ${DATASET_IMPORT_STALE_SECONDS:-7200}
       # M5-11: the cloud-init renderer chooses the permanent proxy endpoint
       # only when object storage is configured, so the worker sees the same
       # OSS settings as the api.
