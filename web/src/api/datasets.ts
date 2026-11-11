@@ -73,6 +73,8 @@ export interface DatasetVersion {
   created_at: string;
 }
 
+export type DatasetDifficultyLevel = "easy" | "medium" | "hard";
+
 export interface DatasetCaseSummary {
   id: string;
   dataset_version_id: string;
@@ -80,7 +82,36 @@ export interface DatasetCaseSummary {
   ordinal: number;
   repo: string | null;
   base_commit: string | null;
+  /** Display level normalized from the adapter difficulty label. */
+  difficulty: DatasetDifficultyLevel | null;
+  /** Raw adapter label (e.g. "15 min - 1 hour"), shown in a tooltip. */
+  difficulty_label: string | null;
+  expected_test_count: number;
   created_at: string;
+}
+
+export interface DatasetDifficultyFacet {
+  value: DatasetDifficultyLevel;
+  count: number;
+}
+
+export interface DatasetImportValidation {
+  import_id: string;
+  status: string;
+  passed: boolean;
+  total_count: number;
+  valid_count: number;
+  invalid_count: number;
+  field_completeness: Record<string, FieldCompleteness>;
+  completeness_percent: number | null;
+  report_available: boolean;
+  error_codes: Record<string, number>;
+  created_at: string | null;
+}
+
+export interface DatasetVersionDetail extends DatasetVersion {
+  metrics: MetricDefinition[];
+  validation: DatasetImportValidation | null;
 }
 
 export interface MetricDefinition {
@@ -161,6 +192,10 @@ function parseVersion(item: Record<string, unknown>): DatasetVersion {
   };
 }
 
+function parseDifficultyLevel(value: unknown): DatasetDifficultyLevel | null {
+  return value === "easy" || value === "medium" || value === "hard" ? value : null;
+}
+
 function parseCase(item: Record<string, unknown>): DatasetCaseSummary {
   return {
     id: text(item.id),
@@ -169,6 +204,9 @@ function parseCase(item: Record<string, unknown>): DatasetCaseSummary {
     ordinal: number(item.ordinal),
     repo: optionalText(item.repo),
     base_commit: optionalText(item.base_commit),
+    difficulty: parseDifficultyLevel(item.difficulty),
+    difficulty_label: optionalText(item.difficulty_label),
+    expected_test_count: number(item.expected_test_count),
     created_at: text(item.created_at),
   };
 }
@@ -306,15 +344,47 @@ export async function fetchDatasetVersions(
   return items(payload).records.map(parseVersion);
 }
 
+function parseValidation(value: unknown): DatasetImportValidation | null {
+  if (!isRecord(value)) return null;
+  const completeness: Record<string, FieldCompleteness> = {};
+  if (isRecord(value.field_completeness)) {
+    for (const [field, entry] of Object.entries(value.field_completeness)) {
+      if (!isRecord(entry)) continue;
+      completeness[field] = { present: number(entry.present), percent: number(entry.percent) };
+    }
+  }
+  const errorCodes: Record<string, number> = {};
+  if (isRecord(value.error_codes)) {
+    for (const [code, count] of Object.entries(value.error_codes)) {
+      if (typeof count === "number") errorCodes[code] = count;
+    }
+  }
+  return {
+    import_id: text(value.import_id),
+    status: text(value.status),
+    passed: Boolean(value.passed),
+    total_count: number(value.total_count),
+    valid_count: number(value.valid_count),
+    invalid_count: number(value.invalid_count),
+    field_completeness: completeness,
+    completeness_percent:
+      typeof value.completeness_percent === "number" ? value.completeness_percent : null,
+    report_available: Boolean(value.report_available),
+    error_codes: errorCodes,
+    created_at: optionalText(value.created_at),
+  };
+}
+
 export async function fetchDatasetVersion(
   versionId: string,
   signal?: AbortSignal,
-): Promise<DatasetVersion & { metrics: MetricDefinition[] }> {
+): Promise<DatasetVersionDetail> {
   const payload = await request(`/api/v1/dataset-versions/${versionId}`, { signal });
   if (!isRecord(payload)) throw new ApiError("数据集版本响应无效", { code: "invalid_response" });
   return {
     ...parseVersion(payload),
     metrics: Array.isArray(payload.metrics) ? payload.metrics.filter(isRecord).map(parseMetric) : [],
+    validation: parseValidation(payload.validation),
   };
 }
 
@@ -329,25 +399,88 @@ export async function fetchDatasetCases(
   return items(payload).records.map(parseCase);
 }
 
+export interface DatasetCaseDetail extends DatasetCaseSummary {
+  problem_statement: string;
+  reference_patch: string | null;
+  test_patch: string | null;
+  expected_metrics: Record<string, unknown>;
+  extra: Record<string, unknown>;
+  visibility: Record<string, string>;
+}
+
+export async function fetchDatasetCase(
+  caseId: string,
+  signal?: AbortSignal,
+): Promise<DatasetCaseDetail> {
+  const payload = await request(`/api/v1/dataset-cases/${caseId}`, { signal });
+  if (!isRecord(payload)) throw new ApiError("用例详情响应无效", { code: "invalid_response" });
+  const visibility: Record<string, string> = {};
+  if (isRecord(payload.visibility)) {
+    for (const [field, value] of Object.entries(payload.visibility)) {
+      if (typeof value === "string") visibility[field] = value;
+    }
+  }
+  return {
+    ...parseCase(payload),
+    problem_statement: text(payload.problem_statement),
+    reference_patch: optionalText(payload.reference_patch),
+    test_patch: optionalText(payload.test_patch),
+    expected_metrics: isRecord(payload.expected_metrics) ? payload.expected_metrics : {},
+    extra: isRecord(payload.extra) ? payload.extra : {},
+    visibility,
+  };
+}
+
 export interface DatasetCasePage {
   items: DatasetCaseSummary[];
   total: number;
+  difficulties: DatasetDifficultyFacet[];
 }
 
-/** Server-paginated case list used by the launch wizard's subset picker. */
+export interface DatasetCaseQuery {
+  limit?: number;
+  offset?: number;
+  q?: string;
+  difficulty?: DatasetDifficultyLevel;
+}
+
+/**
+ * Server-paginated case list used by the dataset detail browser and the launch
+ * wizard's subset picker. Search, difficulty and paging all run server-side.
+ */
 export async function fetchDatasetCasesPage(
   versionId: string,
-  params: { limit?: number; offset?: number },
+  params: DatasetCaseQuery,
   signal?: AbortSignal,
 ): Promise<DatasetCasePage> {
-  const limit = params.limit ?? 20;
-  const offset = params.offset ?? 0;
+  const search = new URLSearchParams({
+    limit: String(params.limit ?? 20),
+    offset: String(params.offset ?? 0),
+  });
+  const q = params.q?.trim();
+  if (q) search.set("q", q);
+  if (params.difficulty) search.set("difficulty", params.difficulty);
   const payload = await request(
-    `/api/v1/dataset-versions/${versionId}/cases?limit=${limit}&offset=${offset}`,
+    `/api/v1/dataset-versions/${versionId}/cases?${search.toString()}`,
     { signal },
   );
   const { records, page } = items(payload);
-  return { items: records.map(parseCase), total: page.total ?? records.length };
+  const rawFacets =
+    isRecord(payload) && isRecord(payload.facets) && Array.isArray(payload.facets.difficulties)
+      ? payload.facets.difficulties
+      : [];
+  const difficulties = rawFacets
+    .filter(isRecord)
+    .map((entry) => ({
+      value: parseDifficultyLevel(entry.value),
+      count: number(entry.count),
+    }))
+    .filter((entry): entry is DatasetDifficultyFacet => entry.value !== null);
+  return {
+    items: records.map(parseCase),
+    total: page.total ?? records.length,
+    difficulties,
+  };
 }
 
 export interface ImportResult {

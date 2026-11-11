@@ -6,7 +6,6 @@ import {
   Button,
   Card,
   Drawer,
-  Input,
   InputNumber,
   Modal,
   Segmented,
@@ -54,6 +53,7 @@ import {
   type EvalConfigSnapshot,
 } from "../api/evalWorkbench";
 import { useEvalEvents, mergeEvents, type EvalEventsState } from "../api/useEvalEvents";
+import { CaseBrowser } from "../components/CaseBrowser";
 import { EmptyState } from "../components/EmptyState";
 import { Icon } from "../components/Icon";
 import { PageHeading } from "../components/PageHeading";
@@ -871,19 +871,16 @@ export function EvalDetailPage() {
       ) : null}
 
       {tab === "cases" ? (
-        <Card className="eval-panel-card eval-panel-flush">
-          <div className="card-header eval-cases-head">
-            <div>
-              <h2 className="card-title">用例明细</h2>
-              <p className="card-subtitle">
-                共 {availableCounts.all} 个用例 · 状态计数不受当前页影响 · 点击行查看 attempt 与测试打点
-              </p>
-            </div>
-            <div className="card-actions">
-              <LiveBadge state={eventState} terminal={terminal} />
-            </div>
-          </div>
-          <div className="eval-filter-bar">
+        <CaseBrowser<EvalCaseRow>
+          className="eval-panel-card"
+          tableClassName="eval-case-table"
+          title="用例明细"
+          subtitle={`共 ${availableCounts.all} 个用例 · 状态计数不受当前页影响 · 点击行查看 attempt 与测试打点`}
+          actions={<LiveBadge state={eventState} terminal={terminal} />}
+          searchValue={searchDraft}
+          onSearchChange={setSearchDraft}
+          searchPlaceholder="搜索实例 ID 或仓库"
+          leading={
             <Segmented
               value={status}
               onChange={(value) =>
@@ -899,15 +896,9 @@ export function EvalDetailPage() {
                 ),
               }))}
             />
-            <div className="eval-filter-controls">
-              <Input
-                allowClear
-                value={searchDraft}
-                onChange={(event) => setSearchDraft(event.target.value)}
-                prefix={<Icon name="search" size={14} />}
-                placeholder="搜索实例 ID 或仓库"
-                style={{ width: 210 }}
-              />
+          }
+          filters={
+            <>
               <Select
                 allowClear
                 value={executionFilter || undefined}
@@ -932,58 +923,48 @@ export function EvalDetailPage() {
                 onChange={(value) => updateParams({ trace_status: value ?? null, page: null })}
                 style={{ width: 116 }}
               />
-            </div>
-          </div>
-          {cases.error ? (
-            <QueryError error={cases.error} onRetry={() => cases.refetch()} />
-          ) : (
-            <Table<EvalCaseRow>
-              className="eval-case-table"
-              rowKey="id"
-              size="small"
-              loading={cases.isLoading}
-              dataSource={cases.data?.items ?? []}
-              columns={caseColumns}
-              onRow={(record) => ({
-                onClick: () => openCase(record.id, record.latest_attempt_no),
-                onKeyDown: (event) => {
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    openCase(record.id, record.latest_attempt_no);
-                  }
-                },
-                tabIndex: 0,
-                role: "button",
-                style: { cursor: "pointer" },
-              })}
-              pagination={{
-                current: page,
-                pageSize,
-                total: cases.data?.total ?? 0,
-                showSizeChanger: true,
-                pageSizeOptions: [20, 50, 100],
-                showTotal: (total) => `共 ${total} 个用例`,
-                onChange: (nextPage, nextSize) =>
-                  updateParams({
-                    page: String(nextPage),
-                    pageSize: String(nextSize),
-                    case: null,
-                    attempt: null,
-                  }),
-              }}
-              locale={{
-                emptyText: (
-                  <EmptyState
-                    icon="search"
-                    title="当前筛选下没有用例"
-                    description="调整状态、执行/结果/轨迹筛选或搜索条件后再试。"
-                    compact
-                  />
-                ),
-              }}
+            </>
+          }
+          columns={caseColumns}
+          rows={cases.data?.items ?? []}
+          rowKey="id"
+          total={cases.data?.total ?? 0}
+          page={page}
+          pageSize={pageSize}
+          onPageChange={(nextPage, nextSize) =>
+            updateParams({
+              page: String(nextPage),
+              pageSize: String(nextSize),
+              case: null,
+              attempt: null,
+            })
+          }
+          loading={cases.isLoading || cases.isFetching}
+          error={cases.error}
+          errorTitle="无法加载评测用例"
+          errorEndpoint="GET /api/v1/eval-runs/:id/cases"
+          onRetry={() => cases.refetch()}
+          onRow={(record) => ({
+            onClick: () => openCase(record.id, record.latest_attempt_no),
+            onKeyDown: (event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                openCase(record.id, record.latest_attempt_no);
+              }
+            },
+            tabIndex: 0,
+            role: "button",
+            style: { cursor: "pointer" },
+          })}
+          empty={
+            <EmptyState
+              icon="search"
+              title="当前筛选下没有用例"
+              description="调整状态、执行/结果/轨迹筛选或搜索条件后再试。"
+              compact
             />
-          )}
-        </Card>
+          }
+        />
       ) : null}
 
       {tab === "results" ? (

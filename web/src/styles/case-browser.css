@@ -1,0 +1,79 @@
+/* Shared case browser (M5-14 dataset detail / M5-17 eval detail). */
+
+.case-browser-card > .ant-card-body {
+  padding: 0;
+}
+
+.case-browser-head {
+  gap: 12px;
+}
+
+.case-browser-leading {
+  padding: 12px 19px 0;
+}
+
+.case-browser-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 19px;
+  border-bottom: 1px solid var(--line);
+  background: #fbfcfe;
+}
+
+.case-browser-controls {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.case-browser-range {
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.case-browser-body > .ant-table-wrapper {
+  padding: 0 8px 12px;
+}
+
+.case-browser-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 16px 18px;
+}
+
+.case-browser-skeleton-row {
+  display: grid;
+  grid-template-columns: 2fr 1.5fr 0.7fr 1.1fr;
+  gap: 22px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.case-browser-skeleton-row .skeleton {
+  height: 13px;
+}
+
+.case-browser-skeleton > .small {
+  margin-top: 10px;
+}
+
+.case-browser-error {
+  padding: 14px;
+}
+
+@media (max-width: 760px) {
+  .case-browser-skeleton-row {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .case-browser-range {
+    width: 100%;
+    margin-left: 0;
+  }
+}
