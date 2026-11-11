@@ -193,3 +193,104 @@ test("deploy builds and injects the content-addressed runner scripts bundle", ()
   }
   assert.ok(!workflow.includes("presign_put_url"), "the deploy must not inject an expiring presigned URL");
 });
+
+const LONG_LIVED_SECRETS = [
+  "SECRET_BOX_KEY",
+  "POSTGRES_PASSWORD",
+  "AUTH_SESSION_SECRET",
+  "GATEWAY_TOKEN_SECRET",
+  "RUNNER_TASK_SECRET",
+  "RUNNER_HEARTBEAT_TOKEN",
+  "RUNNER_ADMIN_TOKEN",
+];
+
+test("deploy workflow requires and injects every long-lived secret", () => {
+  const workflow = read(".github/workflows/deploy.yml");
+  for (const name of LONG_LIVED_SECRETS) {
+    assert.ok(
+      workflow.includes(`${name}: \${{ secrets.${name} }}`),
+      `deploy workflow must read ${name} from GitHub Secrets`,
+    );
+    assert.ok(
+      workflow.includes(`: "\${${name}:?${name} secret is required}"`),
+      `deploy workflow must fail fast when ${name} is missing`,
+    );
+    assert.ok(
+      workflow.includes(`printf '${name}=%s\\n'`),
+      `deploy workflow must write ${name} to the host env`,
+    );
+  }
+});
+
+test("host deploy never generates or silently replaces long-lived secrets", () => {
+  const script = read("deploy/deploy.sh");
+  assert.equal(script.includes("openssl rand"), false);
+  assert.equal(script.includes("ensure_secret"), false);
+  assert.equal(script.includes("ensure_fernet_secret"), false);
+  for (const name of LONG_LIVED_SECRETS) {
+    assert.ok(
+      script.includes(`require_secret ${name}`),
+      `deploy.sh must require secret-backed ${name}`,
+    );
+  }
+});
+
+test("host env replacement is atomic and preserves unmanaged keys", () => {
+  const workflow = read(".github/workflows/deploy.yml");
+  assert.ok(workflow.includes("mktemp"), "the remote writer must stage a temporary env file");
+  assert.ok(workflow.includes('grep -Ev "^(S3_ENDPOINT|'), "managed keys must be filtered");
+  assert.ok(workflow.includes('>> "$tmp"'), "managed values must append to the staged env");
+  assert.ok(workflow.includes('chmod 600 "$tmp"'), "the staged env must be private");
+  assert.ok(workflow.includes('mv "$tmp" .env'), "the staged env must replace .env atomically");
+  assert.equal(
+    workflow.includes("cat .env.tmp > .env"),
+    false,
+    "truncating the live .env before all values are staged risks a partial file",
+  );
+});
+
+test("deploy refuses to rotate an existing host away from the GitHub secrets", () => {
+  const workflow = read(".github/workflows/deploy.yml");
+  assert.ok(workflow.includes("sha256sum"), "secret equality must be checked by digest");
+  assert.ok(workflow.includes("__NO_ENV__"), "a fresh host must be distinguishable from an existing host");
+  assert.ok(
+    workflow.includes("Existing host long-lived secrets do not match GitHub Secrets"),
+    "mismatches must fail before the host env is replaced",
+  );
+  assert.ok(workflow.includes("current_hashes"), "current host values must be compared without printing them");
+  assert.ok(workflow.includes("expected_hashes"), "GitHub-backed values must be compared without printing them");
+});
+
+test("production compose passes long-lived secrets to api and worker", () => {
+  const compose = read("deploy/docker-compose.prod.yml");
+  const apiStart = compose.indexOf("\n  api:");
+  const workerStart = compose.indexOf("\n  worker:");
+  const webStart = compose.indexOf("\n  web:");
+  assert.ok(apiStart >= 0 && workerStart > apiStart && webStart > workerStart);
+  const api = compose.slice(apiStart, workerStart);
+  const worker = compose.slice(workerStart, webStart);
+  for (const name of [
+    "SECRET_BOX_KEY",
+    "AUTH_SESSION_SECRET",
+    "GATEWAY_TOKEN_SECRET",
+    "RUNNER_TASK_SECRET",
+    "RUNNER_HEARTBEAT_TOKEN",
+    "RUNNER_ADMIN_TOKEN",
+  ]) {
+    assert.ok(api.includes(`${name}: \${${name}:-`), `api must receive ${name}`);
+  }
+  for (const name of ["SECRET_BOX_KEY", "RUNNER_HEARTBEAT_TOKEN", "RUNNER_ADMIN_TOKEN"]) {
+    assert.ok(worker.includes(`${name}: \${${name}:-`), `worker must receive ${name}`);
+  }
+  assert.ok(api.includes("${POSTGRES_PASSWORD:?}"), "api database URL must require the secret password");
+  assert.ok(worker.includes("${POSTGRES_PASSWORD:?}"), "worker database URL must require the secret password");
+});
+
+test("AGENTS keeps the host-migration secret constraint", () => {
+  const agents = read("AGENTS.md");
+  assert.ok(agents.includes("部署必须支持换机迁移"));
+  for (const name of LONG_LIVED_SECRETS) {
+    assert.ok(agents.includes(name), `AGENTS.md must name ${name}`);
+  }
+  assert.ok(agents.includes("禁止依赖主机 `.env` 首次部署随机生成"));
+});

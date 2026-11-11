@@ -222,6 +222,7 @@ jobs:
           : "${GATEWAY_TOKEN_SECRET:?GATEWAY_TOKEN_SECRET secret is required}"
           : "${RUNNER_TASK_SECRET:?RUNNER_TASK_SECRET secret is required}"
           : "${RUNNER_HEARTBEAT_TOKEN:?RUNNER_HEARTBEAT_TOKEN secret is required}"
+          : "${RUNNER_ADMIN_TOKEN:?RUNNER_ADMIN_TOKEN secret is required}"
           : "${RUNNER_SCRIPTS_BUNDLE_NAME:?RUNNER_SCRIPTS_BUNDLE_NAME is required}"
           : "${RUNNER_SCRIPTS_BUNDLE_SHA256:?RUNNER_SCRIPTS_BUNDLE_SHA256 is required}"
           : "${RUNNER_SCRIPTS_BUNDLE_SIZE:?RUNNER_SCRIPTS_BUNDLE_SIZE is required}"
@@ -231,6 +232,34 @@ jobs:
           callback_base_url="${RUNNER_CALLBACK_BASE_URL:-}"
           if [ -z "$callback_base_url" ] && [ -n "$API_BIND_ADDRESS" ]; then
             callback_base_url="http://${API_BIND_ADDRESS}:8000"
+          fi
+          expected_hashes="$(
+            for name in SECRET_BOX_KEY POSTGRES_PASSWORD AUTH_SESSION_SECRET GATEWAY_TOKEN_SECRET RUNNER_TASK_SECRET RUNNER_HEARTBEAT_TOKEN RUNNER_ADMIN_TOKEN; do
+              value="${!name}"
+              printf '%s %s\n' "$name" "$(printf '%s' "$value" | sha256sum | cut -d' ' -f1)"
+            done
+          )"
+          current_hashes="$(
+            ssh "root@${{ secrets.ECS_HOST }}" '
+              set -eu
+              if [ ! -f /opt/ai-eval-platform/.env ]; then
+                echo __NO_ENV__
+                exit 0
+              fi
+              cd /opt/ai-eval-platform
+              for name in SECRET_BOX_KEY POSTGRES_PASSWORD AUTH_SESSION_SECRET GATEWAY_TOKEN_SECRET RUNNER_TASK_SECRET RUNNER_HEARTBEAT_TOKEN RUNNER_ADMIN_TOKEN; do
+                value="$(sed -n "s/^${name}=//p" .env | tail -1)"
+                if [ -z "$value" ]; then
+                  printf "%s __MISSING__\n" "$name"
+                else
+                  printf "%s %s\n" "$name" "$(printf "%s" "$value" | sha256sum | cut -d" " -f1)"
+                fi
+              done
+            '
+          )"
+          if [ "$current_hashes" != "__NO_ENV__" ] && [ "$current_hashes" != "$expected_hashes" ]; then
+            echo "Existing host long-lived secrets do not match GitHub Secrets; refusing to replace /opt/ai-eval-platform/.env" >&2
+            exit 1
           fi
           {
             printf 'S3_ENDPOINT=%s\n' "$OSS_ENDPOINT"
@@ -255,7 +284,27 @@ jobs:
             printf 'RUNNER_SCRIPTS_BUNDLE_MD5=%s\n' "$RUNNER_SCRIPTS_BUNDLE_MD5"
             printf 'RUNNER_SCRIPTS_BUNDLE_SHA256=%s\n' "$RUNNER_SCRIPTS_BUNDLE_SHA256"
             printf 'RUNNER_SCRIPTS_BUNDLE_SIZE=%s\n' "$RUNNER_SCRIPTS_BUNDLE_SIZE"
-          } | ssh "root@${{ secrets.ECS_HOST }}" 'umask 077; cd /opt/ai-eval-platform && touch .env && chmod 600 .env && grep -Ev "^(S3_ENDPOINT|S3_BUCKET|S3_ACCESS_KEY|S3_SECRET_KEY|S3_REGION|S3_ADDRESSING_STYLE|GITHUB_TOKEN|DATABASE_STORAGE_LIMIT_BYTES|SECRET_BOX_KEY|POSTGRES_PASSWORD|AUTH_SESSION_SECRET|GATEWAY_TOKEN_SECRET|RUNNER_TASK_SECRET|RUNNER_HEARTBEAT_TOKEN|RUNNER_ADMIN_TOKEN|API_BIND_ADDRESS|RUNNER_CALLBACK_BASE_URL|RUNNER_SPOT_RUNNER_TARBALL_URL|RUNNER_SCRIPTS_BUNDLE_NAME|RUNNER_SCRIPTS_BUNDLE_MD5|RUNNER_SCRIPTS_BUNDLE_SHA256|RUNNER_SCRIPTS_BUNDLE_SIZE)=" .env > .env.tmp && cat .env.tmp > .env && cat >> .env && rm -f .env.tmp'
+          } | ssh "root@${{ secrets.ECS_HOST }}" '
+            set -eu
+            umask 077
+            cd /opt/ai-eval-platform
+            tmp="$(mktemp .env.XXXXXX)"
+            cleanup() { rm -f "$tmp"; }
+            trap cleanup EXIT HUP INT TERM
+            if [ -f .env ]; then
+              chmod 600 .env
+              grep -Ev "^(S3_ENDPOINT|S3_BUCKET|S3_ACCESS_KEY|S3_SECRET_KEY|S3_REGION|S3_ADDRESSING_STYLE|GITHUB_TOKEN|DATABASE_STORAGE_LIMIT_BYTES|SECRET_BOX_KEY|POSTGRES_PASSWORD|AUTH_SESSION_SECRET|GATEWAY_TOKEN_SECRET|RUNNER_TASK_SECRET|RUNNER_HEARTBEAT_TOKEN|RUNNER_ADMIN_TOKEN|API_BIND_ADDRESS|RUNNER_CALLBACK_BASE_URL|RUNNER_SPOT_RUNNER_TARBALL_URL|RUNNER_SCRIPTS_BUNDLE_NAME|RUNNER_SCRIPTS_BUNDLE_MD5|RUNNER_SCRIPTS_BUNDLE_SHA256|RUNNER_SCRIPTS_BUNDLE_SIZE)=" .env > "$tmp" || {
+                status=$?
+                [ "$status" -eq 1 ] || exit "$status"
+              }
+            else
+              : > "$tmp"
+            fi
+            cat >> "$tmp"
+            chmod 600 "$tmp"
+            mv "$tmp" .env
+            trap - EXIT HUP INT TERM
+          '
 
       - name: Deploy
         env:

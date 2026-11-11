@@ -21,31 +21,24 @@ fi
 
 login_acr_if_configured
 
-ensure_secret() {
+require_secret() {
   local key="$1"
   if ! grep -q "^${key}=..*" "$ENV_FILE" 2>/dev/null; then
-    set_env "$key" "$(openssl rand -hex 32)"
-    echo "deploy: generated ${key}" >&2
+    echo "deploy: ${key} is required from GitHub Secrets; refusing to generate a host-local replacement" >&2
+    return 1
   fi
 }
 
-ensure_fernet_secret() {
-  local key="$1"
-  if ! grep -q "^${key}=..*" "$ENV_FILE" 2>/dev/null; then
-    # Fernet keys are urlsafe-base64 of exactly 32 random bytes.
-    set_env "$key" "$(openssl rand -base64 32 | tr '+/' '-_')"
-    echo "deploy: generated ${key}" >&2
-  fi
-}
-
-# Session signing secret is server-local and stable across rollouts.
-ensure_secret AUTH_SESSION_SECRET
-# M3-02: provider credentials are encrypted at rest with a host-local key and
-# the gateway signs runner tokens with its own secret.
-ensure_fernet_secret SECRET_BOX_KEY
-ensure_secret GATEWAY_TOKEN_SECRET
-# Runner-plane case/attempt tokens (M2-05/M3-04).
-ensure_secret RUNNER_TASK_SECRET
+# Long-lived keys must be injected by the deploy workflow before this script
+# runs. Reusing the same values on a replacement host keeps encrypted model and
+# cloud credentials decryptable.
+require_secret SECRET_BOX_KEY
+require_secret POSTGRES_PASSWORD
+require_secret AUTH_SESSION_SECRET
+require_secret GATEWAY_TOKEN_SECRET
+require_secret RUNNER_TASK_SECRET
+require_secret RUNNER_HEARTBEAT_TOKEN
+require_secret RUNNER_ADMIN_TOKEN
 if ! grep -q '^AUTH_BOOTSTRAP_ADMIN_PASSWORD=.' "$ENV_FILE" 2>/dev/null; then
   echo "deploy: WARNING AUTH_BOOTSTRAP_ADMIN_PASSWORD is not set; the console will have no login account until it is provisioned" >&2
 fi

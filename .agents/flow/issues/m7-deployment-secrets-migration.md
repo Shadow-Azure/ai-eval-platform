@@ -6,12 +6,15 @@
 kind: issue
 milestone: m7
 priority: P1
-status: ready
+status: in-progress
 scope:
   - AGENTS.md
   - .agents/flow/issues/m7-deployment-secrets-migration.*
   - .github/workflows/deploy.yml
-  - deploy/docker-compose.prod.yml
+  - deploy/**
+  - tests/deploy/**
+  - plans/**
+  - reports/**
 adr: []
 github:
   number: 116
