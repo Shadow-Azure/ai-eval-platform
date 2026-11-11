@@ -6,7 +6,7 @@
 kind: issue
 milestone: m5
 priority: P1
-status: in-progress
+status: done
 scope:
   - .agents/flow/issues/m5-15-dataset-import-upload.*
   - .agents/flow/milestones/m5-product-workflows.*

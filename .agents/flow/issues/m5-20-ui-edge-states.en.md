@@ -6,7 +6,7 @@ English | [中文](m5-20-ui-edge-states.md)
 kind: issue
 milestone: m5
 priority: P2
-status: ready
+status: done
 scope:
   - .agents/flow/issues/m5-20-ui-edge-states.*
   - .agents/flow/milestones/m5-product-workflows.*
