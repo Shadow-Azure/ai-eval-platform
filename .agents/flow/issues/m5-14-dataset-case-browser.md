@@ -6,7 +6,7 @@
 kind: issue
 milestone: m5
 priority: P1
-status: backlog
+status: ready
 scope:
   - .agents/flow/issues/m5-14-dataset-case-browser.*
   - .agents/flow/milestones/m5-product-workflows.*
@@ -19,8 +19,8 @@ scope:
   - scripts/doc-budgets.manifest.json
 adr: []
 github:
-  number: null
-  url: null
+  number: 142
+  url: https://github.com/Shadow-Azure/ai-eval-platform/issues/142
 ```
 
 ## 背景

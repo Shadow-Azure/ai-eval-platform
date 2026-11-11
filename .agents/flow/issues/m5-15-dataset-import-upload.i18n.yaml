@@ -1,5 +1,5 @@
 # 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
 # git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
 #   pnpm run record:i18n -- .agents/flow/issues/m5-15-dataset-import-upload.md
-m5-15-dataset-import-upload.md: 6de6a5b90afbc8be49d707807d9961af4b180c86
-m5-15-dataset-import-upload.en.md: a2f20c3de10b1f1d5c27019c0ae3127f62483eb0
+m5-15-dataset-import-upload.md: 157e15ac42580ca0e3ee6ac6864bcfd38b768ae7
+m5-15-dataset-import-upload.en.md: deb425726c594e4aeb0381eead87ee5d7dacc539

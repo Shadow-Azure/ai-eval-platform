@@ -6,7 +6,7 @@ English | [中文](m5-19-resource-pool-readability.md)
 kind: issue
 milestone: m5
 priority: P2
-status: backlog
+status: ready
 scope:
   - .agents/flow/issues/m5-19-resource-pool-readability.*
   - .agents/flow/milestones/m5-product-workflows.*
@@ -19,8 +19,8 @@ scope:
   - scripts/doc-budgets.manifest.json
 adr: []
 github:
-  number: null
-  url: null
+  number: 147
+  url: https://github.com/Shadow-Azure/ai-eval-platform/issues/147
 ```
 
 ## Background
