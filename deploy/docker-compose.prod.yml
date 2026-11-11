@@ -50,6 +50,13 @@ services:
       # callback base URL; an explicit value overrides it with an external
       # mirror that receives no runner token.
       RUNNER_SPOT_RUNNER_TARBALL_URL: ${RUNNER_SPOT_RUNNER_TARBALL_URL:-}
+      # M5-12: content-addressed runner scripts bundle metadata. The deploy
+      # workflow injects the current bundle; the api serves its metadata and
+      # streams the private OSS object.
+      RUNNER_SCRIPTS_BUNDLE_NAME: ${RUNNER_SCRIPTS_BUNDLE_NAME:-}
+      RUNNER_SCRIPTS_BUNDLE_MD5: ${RUNNER_SCRIPTS_BUNDLE_MD5:-}
+      RUNNER_SCRIPTS_BUNDLE_SHA256: ${RUNNER_SCRIPTS_BUNDLE_SHA256:-}
+      RUNNER_SCRIPTS_BUNDLE_SIZE: ${RUNNER_SCRIPTS_BUNDLE_SIZE:-0}
       # Runner-plane token (M2-04). Provisioned in the deploy .env; when set
       # the runner heartbeat/callback endpoints require it as a Bearer token.
       RUNNER_HEARTBEAT_TOKEN: ${RUNNER_HEARTBEAT_TOKEN:-}
@@ -127,6 +134,11 @@ services:
       # VPC-reachable callback address as the API.
       RUNNER_CALLBACK_BASE_URL: ${RUNNER_CALLBACK_BASE_URL:-http://127.0.0.1:8000}
       RUNNER_SPOT_RUNNER_TARBALL_URL: ${RUNNER_SPOT_RUNNER_TARBALL_URL:-}
+      # M5-12: the worker preflights the scripts bundle before dispatch.
+      RUNNER_SCRIPTS_BUNDLE_NAME: ${RUNNER_SCRIPTS_BUNDLE_NAME:-}
+      RUNNER_SCRIPTS_BUNDLE_MD5: ${RUNNER_SCRIPTS_BUNDLE_MD5:-}
+      RUNNER_SCRIPTS_BUNDLE_SHA256: ${RUNNER_SCRIPTS_BUNDLE_SHA256:-}
+      RUNNER_SCRIPTS_BUNDLE_SIZE: ${RUNNER_SCRIPTS_BUNDLE_SIZE:-0}
       # M2-05: the worker consumes the shard-dispatch outbox and needs the
       # same GitHub dispatch credential as the API.
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}

@@ -71,6 +71,15 @@ class Settings(BaseSettings):
     runner_spot_runner_tarball_url: str | None = None
     runner_spot_runner_group_id: int | None = 1
 
+    # M5-12: content-addressed runner scripts bundle. The deploy job builds
+    # runner/ + runner-contract/schemas, names the archive by its md5 and
+    # injects these fields; the api serves it through a proxy so prepare and
+    # execute no longer clone the platform repository.
+    runner_scripts_bundle_name: str | None = None
+    runner_scripts_bundle_md5: str | None = None
+    runner_scripts_bundle_sha256: str | None = None
+    runner_scripts_bundle_size: int = 0
+
     # M2-05 synthetic evaluation loop.
     # Short-term case-token secret (platform signs, runner verifies). When
     # unset the case endpoints are open (development only).

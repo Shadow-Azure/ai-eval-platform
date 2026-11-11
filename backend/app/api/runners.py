@@ -15,7 +15,7 @@ from typing import Annotated, Any, Literal
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Response
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -32,6 +32,11 @@ from ..services.case_attempts import CaseCallbackError
 from ..services.evaluations import SHARD_DISPATCH_TOPIC
 from ..services.object_store import ObjectMissing, ObjectStoreError, object_store_from_settings
 from ..services.runner_cache import runner_cache_key
+from ..services.runner_scripts_cache import (
+    runner_scripts_key,
+    runner_scripts_path,
+    valid_runner_scripts_name,
+)
 from ..services.short_token import ShortTokenInvalid, issue_short_token, verify_short_token
 from .dependencies import require_session
 from .errors import error_detail
@@ -277,6 +282,45 @@ def require_case_token(
             status_code=401,
             detail=error_detail("runner_token_invalid", f"短期 token 校验失败：{exc.reason}"),
         ) from exc
+    if claims.get("scope") not in (None, "case"):
+        raise HTTPException(
+            status_code=403,
+            detail=error_detail(
+                "runner_token_scope_invalid", "该 token 类型不能用于用例回调"
+            ),
+        )
+    return claims
+
+
+def require_scripts_token(
+    settings: Annotated[Settings, Depends(get_settings)],
+    authorization: Annotated[str | None, Header()] = None,
+) -> dict:
+    """Bearer scripts token for the private bundle proxy.
+
+    Unlike case callbacks this endpoint never opens in development when the
+    secret is unset: the dev fallback secret still signs and verifies tokens,
+    so a download always needs the metadata-issued capability.
+    """
+
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=401,
+            detail=error_detail("runner_token_invalid", "缺少脚本包下载 token"),
+        )
+    token = authorization.removeprefix("Bearer ").strip()
+    try:
+        claims = verify_short_token(token, effective_task_secret(settings))
+    except ShortTokenInvalid as exc:
+        raise HTTPException(
+            status_code=401,
+            detail=error_detail("runner_token_invalid", f"脚本包 token 校验失败：{exc.reason}"),
+        ) from exc
+    if claims.get("scope") != "runner_scripts":
+        raise HTTPException(
+            status_code=403,
+            detail=error_detail("runner_scripts_forbidden", "token 无权下载 Runner 脚本包"),
+        )
     return claims
 
 
@@ -480,17 +524,19 @@ def case_callback(
     }
 
 
-@router.get("/runner/v1/shards/{shard_id}/manifest")
-def shard_manifest(
+def _load_shard_dispatch(
+    session: Session,
+    *,
     shard_id: str,
-    eval_run_id: Annotated[str, Query()],
-    attempt: Annotated[int, Query(ge=1)],
-    dispatch_key: Annotated[str, Query()],
-    session: Session = Depends(get_session),
-    settings: Settings = Depends(get_settings),
-) -> Response:
-    """Serve the byte-stable manifest recorded in the dispatch outbox and
-    issue the attempt-bound short-term token (X-Runner-Task-Token)."""
+    eval_run_id: str,
+    attempt: int,
+    dispatch_key: str,
+) -> tuple[Outbox, EvalRun, list[EvalCaseAttempt]]:
+    """Resolve one dispatch row and enforce its shard/run/attempt bindings.
+
+    Shared by the manifest and runner-scripts metadata endpoints so a forged
+    dispatch key cannot read another shard's manifest or bundle metadata.
+    """
 
     row = session.scalar(
         select(Outbox).where(
@@ -526,7 +572,7 @@ def shard_manifest(
     not_dispatchable = (
         run is None
         or run.status in ("cancelling", "cancelled", "pausing_budget", "paused_budget")
-        or (attempts and all(a.status in case_attempts.ACTIVE_ATTEMPT_STATUSES is False for a in attempts))
+        or (attempts and all(a.status not in case_attempts.ACTIVE_ATTEMPT_STATUSES for a in attempts))
     )
     if not_dispatchable:
         raise HTTPException(
@@ -536,12 +582,35 @@ def shard_manifest(
                 f"分片不可执行（run={run.status if run else 'missing'}）",
             ),
         )
+    return row, run, attempts
+
+
+@router.get("/runner/v1/shards/{shard_id}/manifest")
+def shard_manifest(
+    shard_id: str,
+    eval_run_id: Annotated[str, Query()],
+    attempt: Annotated[int, Query(ge=1)],
+    dispatch_key: Annotated[str, Query()],
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> Response:
+    """Serve the byte-stable manifest recorded in the dispatch outbox and
+    issue the attempt-bound short-term token (X-Runner-Task-Token)."""
+
+    row, run, _attempts = _load_shard_dispatch(
+        session,
+        shard_id=shard_id,
+        eval_run_id=eval_run_id,
+        attempt=attempt,
+        dispatch_key=dispatch_key,
+    )
 
     claims = {
         "eval_run_id": eval_run_id,
         "shard_id": shard_id,
         "attempt": attempt,
         "pool_id": run.resource_pool_id or "default",
+        "scope": "case",
     }
     token = issue_short_token(claims, effective_task_secret(settings), ttl_seconds=300)
     model_headers: dict[str, str] = {}
@@ -597,6 +666,179 @@ def shard_manifest(
             "Cache-Control": "no-store",
             "X-Shard-Dispatch-Key": dispatch_key,
             **model_headers,
+        },
+    )
+
+
+@router.get("/runner/v1/shards/{shard_id}/scripts")
+def shard_runner_scripts(
+    shard_id: str,
+    eval_run_id: Annotated[str, Query()],
+    attempt: Annotated[int, Query(ge=1)],
+    dispatch_key: Annotated[str, Query()],
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> JSONResponse:
+    """Return the content-addressed scripts bundle and a short download token.
+
+    The dispatch row is the authority: a forged key cannot point the runner at
+    another shard's bundle. The token is scoped to this eval/shard/attempt and
+    expires quickly; it is not a long-lived runner secret.
+    """
+
+    row, _run, _attempts = _load_shard_dispatch(
+        session,
+        shard_id=shard_id,
+        eval_run_id=eval_run_id,
+        attempt=attempt,
+        dispatch_key=dispatch_key,
+    )
+    pinned = row.payload_json.get("scripts_bundle") or {}
+    name = pinned.get("name") or settings.runner_scripts_bundle_name
+    if not name or not valid_runner_scripts_name(name):
+        raise HTTPException(
+            status_code=404,
+            detail=error_detail(
+                "runner_scripts_not_configured",
+                "平台尚未配置 Runner 脚本包",
+            ),
+        )
+    store = object_store_from_settings(settings)
+    if store is None:
+        raise HTTPException(
+            status_code=503,
+            detail=error_detail(
+                "runner_scripts_unavailable", "平台未配置对象存储，无法提供 Runner 脚本包"
+            ),
+        )
+    try:
+        size = store.head_object(runner_scripts_key(name))
+    except ObjectMissing as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=error_detail(
+                "runner_scripts_not_found", "Runner 脚本包不存在（发布流水线未上传？）"
+            ),
+        ) from exc
+    except ObjectStoreError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=error_detail("runner_scripts_unavailable", "对象存储读取失败"),
+        ) from exc
+    if size <= 0:
+        raise HTTPException(
+            status_code=404,
+            detail=error_detail("runner_scripts_not_found", "Runner 脚本包为空"),
+        )
+
+    claims = {
+        "eval_run_id": eval_run_id,
+        "shard_id": shard_id,
+        "attempt": attempt,
+        "bundle": name,
+        "scope": "runner_scripts",
+    }
+    token = issue_short_token(claims, effective_task_secret(settings), ttl_seconds=600)
+    query = urlencode(
+        {"eval_run_id": eval_run_id, "shard_id": shard_id, "attempt": attempt}
+    )
+    url = (
+        f"{settings.runner_callback_base_url.rstrip('/')}"
+        f"{runner_scripts_path(name)}?{query}"
+    )
+    expires_at = (datetime.now(UTC) + timedelta(seconds=600)).isoformat(
+        timespec="microseconds"
+    ).replace("+00:00", "Z")
+    md5 = pinned.get("md5") or settings.runner_scripts_bundle_md5 or name.removeprefix(
+        "eval-runner-scripts-"
+    ).removesuffix(".tar.gz")
+    sha256 = pinned.get("sha256") or settings.runner_scripts_bundle_sha256
+    return JSONResponse(
+        content={
+            "name": name,
+            "url": url,
+            "md5": md5,
+            "sha256": sha256,
+            "size": size,
+            "token": token,
+            "expires_at": expires_at,
+        },
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.get("/runner/v1/scripts/{filename}")
+def runner_scripts_proxy(
+    filename: str,
+    eval_run_id: Annotated[str, Query()],
+    shard_id: Annotated[str, Query()],
+    attempt: Annotated[int, Query(ge=1)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    token_claims: Annotated[dict, Depends(require_scripts_token)],
+) -> StreamingResponse:
+    """Stream one content-addressed runner scripts bundle from private OSS.
+
+    The short token is issued by the metadata endpoint, bound to the shard and
+    attempt, and checked against the query parameters here. The bucket itself
+    stays private; this route is the only runner-facing address.
+    """
+
+    if not valid_runner_scripts_name(filename):
+        raise HTTPException(
+            status_code=404,
+            detail=error_detail("runner_scripts_not_found", "Runner 脚本包不存在"),
+        )
+    if token_claims.get("bundle") != filename:
+        raise HTTPException(
+            status_code=403,
+            detail=error_detail(
+                "runner_scripts_forbidden",
+                "token 与请求的脚本包不一致",
+                details={"mismatched": ["bundle"]},
+            ),
+        )
+    for key, expected in (
+        ("eval_run_id", eval_run_id),
+        ("shard_id", shard_id),
+        ("attempt", attempt),
+    ):
+        if token_claims.get(key) != expected:
+            raise HTTPException(
+                status_code=403,
+                detail=error_detail(
+                    "runner_scripts_forbidden",
+                    "token 与请求的评测/分片/attempt 不一致",
+                    details={"mismatched": [key]},
+                ),
+            )
+    store = object_store_from_settings(settings)
+    if store is None:
+        raise HTTPException(
+            status_code=503,
+            detail=error_detail(
+                "runner_scripts_unavailable", "平台未配置对象存储，无法提供 Runner 脚本包"
+            ),
+        )
+    key = runner_scripts_key(filename)
+    try:
+        size = store.head_object(key)
+    except ObjectMissing as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=error_detail("runner_scripts_not_found", "Runner 脚本包不存在"),
+        ) from exc
+    except ObjectStoreError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=error_detail("runner_scripts_unavailable", "对象存储读取失败"),
+        ) from exc
+    return StreamingResponse(
+        store.iter_object(key),
+        media_type="application/gzip",
+        headers={
+            "Content-Length": str(size),
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "private, max-age=3600",
         },
     )
 
