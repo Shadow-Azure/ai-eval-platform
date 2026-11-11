@@ -38,11 +38,11 @@ _SENSITIVE_ATTRIBUTE_PARTS = (
     "apikey",
     "access_key",
     "secret",
-    "token",
     "password",
     "cookie",
     "private_key",
 )
+_SENSITIVE_ATTRIBUTE_LEAVES = {"token", "auth_token", "access_token", "refresh_token"}
 
 
 def _sanitize(value: Any) -> Any:
@@ -50,7 +50,12 @@ def _sanitize(value: Any) -> Any:
         result: dict[str, Any] = {}
         for key, item in value.items():
             normalized = str(key).lower().replace("-", "_")
-            if any(part in normalized for part in _SENSITIVE_ATTRIBUTE_PARTS):
+            leaf = normalized.rsplit(".", 1)[-1]
+            if (
+                any(part in normalized for part in _SENSITIVE_ATTRIBUTE_PARTS)
+                or leaf in _SENSITIVE_ATTRIBUTE_LEAVES
+                or leaf.endswith("_token")
+            ):
                 result[str(key)] = "[REDACTED]"
             else:
                 result[str(key)] = _sanitize(item)

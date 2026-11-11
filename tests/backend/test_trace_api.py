@@ -167,6 +167,7 @@ def _seed_trace(
             attributes_json={
                 "gen_ai.tool.call.id": "call-alpha",
                 "authorization": "Bearer must-not-leak",
+                "gen_ai.usage.input_tokens": 10,
             },
             content_preview="spawn reviewer",
         ),
@@ -340,6 +341,14 @@ def test_viewer_span_detail_hides_thinking_and_sensitive_attributes(
     assert "private chain of thought" not in response.text
     assert body["attributes"]["api_key"] == "[REDACTED]"
     assert "secret-key" not in response.text
+
+    root = trace_api_env["seeded"].root
+    root_page = client.get(f"/api/v1/trace-sessions/{root.id}/spans?limit=10")
+    root_tool = next(
+        item for item in root_page.json()["items"] if item["kind"] == "TOOL"
+    )
+    assert root_tool["attributes"]["gen_ai.usage.input_tokens"] == 10
+    assert root_tool["attributes"]["authorization"] == "[REDACTED]"
 
 
 def test_raw_file_download_requires_admin_writes_audit_and_is_short_lived(
