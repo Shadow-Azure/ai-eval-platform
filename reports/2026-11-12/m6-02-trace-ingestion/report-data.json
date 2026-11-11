@@ -1,0 +1,142 @@
+{
+  "title": "M6-02 轨迹导入与状态工作台冒烟",
+  "eyebrow": "COMPUTER USE · GUI SMOKE",
+  "summary": "真实浏览器验证了登录、评测详情轨迹汇总、四种轨迹状态、降级状态筛选与用例详情。首次筛选 degraded 时发现后端 422；补充回归测试并修复后复测通过。",
+  "meta": "2026-11-12 · macOS · Chrome · 隔离 SQLite",
+  "metrics": [
+    { "value": "5", "label": "GUI 场景" },
+    { "value": "5", "label": "稳定截图" },
+    { "value": "1", "label": "发现并修复缺陷" },
+    { "value": "34", "label": "相关 pytest" }
+  ],
+  "facts": [
+    { "label": "分支", "value": "codex/m6-02-trace-ingestion-model" },
+    { "label": "提交", "value": "91eb75a" },
+    { "label": "PR", "value": "#128 / issue #91" },
+    { "label": "数据", "value": "隔离 SQLite + 临时 API + Vite" },
+    { "label": "应用", "value": "Eval Platform 本地开发构建" }
+  ],
+  "matrix": {
+    "columns": ["#", "场景", "结果", "断言", "证据"],
+    "rows": [
+      {
+        "id": "01",
+        "name": "管理员登录与评测详情",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "使用隔离管理员登录，打开含四种轨迹状态的已完成评测。",
+        "evidence": ["01-trace-status-summary.png"]
+      },
+      {
+        "id": "02",
+        "name": "轨迹状态汇总",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "页头同时显示可用 1、采集不完整 1、已降级 1、解析失败 1，终态警告色符合优先级。",
+        "evidence": ["01-trace-status-summary.png", "02-trace-statuses.png"]
+      },
+      {
+        "id": "03",
+        "name": "逐用例轨迹状态",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "ready/degraded/incomplete/failed 四行分别显示可用、已降级、采集不完整、解析失败。",
+        "evidence": ["02-trace-statuses.png"]
+      },
+      {
+        "id": "04",
+        "name": "降级状态筛选",
+        "status": { "kind": "fixed", "label": "FIXED" },
+        "detail": "修复前请求 trace_status=degraded 返回 422 并停在骨架；修复后显示 1–1 / 1 且只保留 trace-degraded。",
+        "evidence": ["03-degraded-filter-before-fix.png", "04-degraded-filter-after-fix.png"]
+      },
+      {
+        "id": "05",
+        "name": "降级用例详情",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "用例抽屉显示成功/未解决/已降级，并在“轨迹与对象”明确提示轨迹未就绪或已降级。",
+        "evidence": ["05-degraded-case-detail.png"]
+      }
+    ]
+  },
+  "issues": [
+    {
+      "severity": "P1",
+      "title": "轨迹筛选拒绝 incomplete/degraded",
+      "facts": [
+        { "label": "实际", "value": "GET /cases?trace_status=degraded 返回 422，页面持续加载。" },
+        { "label": "预期", "value": "六种 TRACE_STATUSES 均可作为筛选条件。" },
+        { "label": "根因", "value": "workbench 筛选白名单漏掉 incomplete、degraded。" }
+      ],
+      "state": { "kind": "fixed", "label": "Fixed · 91eb75a · pytest 回归" }
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "01-trace-status-summary.png",
+      "alt": "评测详情轨迹状态汇总",
+      "label": "01 · 状态汇总",
+      "caption": "完成评测同时展示可用、采集不完整、已降级与解析失败。",
+      "variant": "wide"
+    },
+    {
+      "src": "02-trace-statuses.png",
+      "alt": "四种轨迹状态的用例明细",
+      "label": "02 · 逐用例状态",
+      "caption": "用例表逐行表达 ready/degraded/incomplete/failed。",
+      "variant": "wide"
+    },
+    {
+      "src": "03-degraded-filter-before-fix.png",
+      "alt": "降级筛选修复前停留在加载骨架",
+      "label": "03 · 修复前",
+      "caption": "筛选请求 422，表格保持加载骨架。",
+      "variant": "issue"
+    },
+    {
+      "src": "04-degraded-filter-after-fix.png",
+      "alt": "降级筛选修复后只显示降级用例",
+      "label": "04 · 修复后",
+      "caption": "筛选返回唯一 trace-degraded 用例。",
+      "variant": "wide"
+    },
+    {
+      "src": "05-degraded-case-detail.png",
+      "alt": "降级用例详情抽屉",
+      "label": "05 · 用例详情",
+      "caption": "抽屉明确表达降级状态和轨迹可用性。",
+      "variant": "wide"
+    }
+  ],
+  "coverage": {
+    "columns": ["区域", "覆盖", "结论", "建议"],
+    "rows": [
+      {
+        "area": "轨迹状态聚合与展示",
+        "coverage": "UT + GUI",
+        "conclusion": "ready/degraded/incomplete/failed 状态与优先级均可观察。",
+        "recommendation": "后续 #94 三栏查看器继续覆盖 session/span 联动。"
+      },
+      {
+        "area": "轨迹状态筛选",
+        "coverage": "UT + GUI",
+        "conclusion": "六种后端状态白名单已由参数化回归覆盖，GUI degraded 路径实测通过。",
+        "recommendation": "新增状态时统一引用 TRACE_STATUSES，避免再次漂移。"
+      },
+      {
+        "area": "真实 OSS 导入链",
+        "coverage": "UT",
+        "conclusion": "对象校验、租约、事务替换和失败隔离由 34 项相关 pytest 覆盖。",
+        "recommendation": "真实 OSS/Claude 父子轨迹由 #95 生产链路验收。"
+      }
+    ]
+  },
+  "conclusion": {
+    "kind": "pass",
+    "label": "GUI smoke 通过",
+    "summary": "所有最终场景通过；发现的一条筛选缺陷已完成 TDD 修复和浏览器复测。",
+    "points": [
+      "轨迹 ingestion 的后端模型与事务链路由自动化测试覆盖。",
+      "现有 M6 页面可准确显示四种轨迹状态并支持下钻。",
+      "三栏轨迹查看器与真实父子关系属于后续 issue，不在本次冒烟中伪造。"
+    ]
+  },
+  "footer": "Computer Use evidence generated from report-data.json; do not hand-edit smoke-report.html."
+}
