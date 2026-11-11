@@ -1746,6 +1746,15 @@ function MetricDeltaLine({ delta }: { delta: MetricDelta | undefined }) {
   );
 }
 
+const qualityCardTitle = (
+  <div>
+    <div>质量摘要</div>
+    <div className="muted" style={{ fontSize: 11, fontWeight: 400 }}>
+      相对同配置基线
+    </div>
+  </div>
+);
+
 interface BaselineQualityCardProps {
   comparison: BaselineComparison | undefined;
   loading: boolean;
@@ -1758,14 +1767,14 @@ function BaselineQualityCard(props: BaselineQualityCardProps) {
   const { comparison, loading, error, onRetry, onOpen } = props;
   if (error) {
     return (
-      <Card title="质量摘要" className="eval-quality-card">
+      <Card title={qualityCardTitle} className="eval-quality-card">
         <QueryError error={error} onRetry={onRetry} />
       </Card>
     );
   }
   if (loading && !comparison) {
     return (
-      <Card title="质量摘要" className="eval-quality-card">
+      <Card title={qualityCardTitle} className="eval-quality-card">
         <Skeleton active paragraph={{ rows: 5 }} />
       </Card>
     );
@@ -1778,7 +1787,7 @@ function BaselineQualityCard(props: BaselineQualityCardProps) {
     deltas[0];
   if (!baseline || !main) {
     return (
-      <Card title="质量摘要" className="eval-quality-card">
+      <Card title={qualityCardTitle} className="eval-quality-card">
         <EmptyState
           icon="sparkles"
           title="暂无可比基线"
@@ -1797,7 +1806,7 @@ function BaselineQualityCard(props: BaselineQualityCardProps) {
   const changedConfigs = (comparison?.configuration_differences ?? []).filter((row) => row.changed).length;
   return (
     <Card
-      title="质量摘要"
+      title={qualityCardTitle}
       className="eval-quality-card"
       extra={
         <Tag color={comparison?.is_final ? "success" : "processing"}>
@@ -1976,7 +1985,14 @@ function BaselineCompareModal(props: BaselineCompareModalProps) {
       open={open}
       onCancel={onClose}
       width={1120}
-      title="与基线对比"
+      title={
+        <div>
+          <div>与基线对比</div>
+          <div className="muted" style={{ fontSize: 11, fontWeight: 400 }}>
+            同数据集、同 Agent 组合的上一次评测
+          </div>
+        </div>
+      }
       footer={<Button onClick={onClose}>关闭</Button>}
       destroyOnClose
     >
