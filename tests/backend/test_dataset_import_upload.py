@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -37,6 +38,16 @@ def wait_for_import(client: TestClient, import_id: str, expected: set[str], time
             return detail
         time.sleep(0.1)
     raise AssertionError(f"import {import_id} stayed {detail.get('status')!r}, expected {expected}")
+
+
+def wait_for_empty_dir(directory: Path, timeout: float = 10.0) -> list[str]:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        remaining = [entry.name for entry in directory.iterdir()]
+        if not remaining:
+            return []
+        time.sleep(0.1)
+    return remaining
 
 
 def upload(
@@ -116,7 +127,7 @@ def test_validation_report_marks_fatal_json_array_error(tmp_path: Path) -> None:
     result = validate_source_file(path, get_adapter("swebench"))
     assert result.valid is False
     assert result.report["fatal"] is True
-    assert result.report["invalid"] >= 1
+    assert result.report["invalid"] == 1
     assert result.report["error_codes"]["invalid_json"] == 1
 
 
@@ -178,6 +189,7 @@ def test_upload_validates_then_commit_creates_immutable_version(
     assert detail["dataset"]["slug"] == "swebench-verified"
     assert detail["file_digest"] == created["file_digest"]
 
+    assert wait_for_empty_dir(import_dir) == []
     version = seeded.scalar(select(DatasetVersion))
     cases = list(seeded.scalars(select(DatasetCase).where(DatasetCase.dataset_version_id == version.id)))
     assert {case.case_key for case in cases} == {record["instance_id"] for record in records}
@@ -226,6 +238,18 @@ def test_validation_failure_blocks_version_and_reports_items(
     commit = client.post(f"/api/v1/dataset-imports/{created['id']}/commit")
     assert commit.status_code == 409
     assert commit.json()["detail"]["error"]["code"] == "dataset_import_state_conflict"
+
+
+def test_upload_rejects_empty_json_array(
+    seeded: Session, client: TestClient, import_dir: Path
+) -> None:
+    response = upload(client, content=b"[]", filename="empty.json")
+    assert response.status_code == 201
+    created = wait_for_import(client, response.json()["import"]["id"], {"failed"})
+    assert created["status"] == "failed"
+    assert created["report"]["fatal_code"] == "empty_source"
+    assert created["report"]["total"] == 0
+    assert list(seeded.scalars(select(DatasetVersion))) == []
 
 
 def test_upload_rejects_empty_bad_extension_and_oversize(
@@ -285,6 +309,53 @@ def test_cancel_validated_import_removes_source(
     assert client.get(f"/api/v1/dataset-imports/{created['id']}").json()["status"] == "cancelled"
     assert list(seeded.scalars(select(DatasetVersion))) == []
     assert list(import_dir.iterdir()) == []
+
+
+def test_duplicate_rejects_different_file_content(
+    seeded: Session, client: TestClient, import_dir: Path
+) -> None:
+    records = fixture_records()
+    first = upload(client, content=jsonl_bytes(records), version="upload-digest").json()["import"]
+    wait_for_import(client, first["id"], {"validated"})
+    assert client.post(f"/api/v1/dataset-imports/{first['id']}/commit").status_code == 202
+    wait_for_import(client, first["id"], {"succeeded"})
+
+    changed = [dict(record) for record in records]
+    changed[0]["problem_statement"] = changed[0]["problem_statement"] + " (edited)"
+    second = upload(client, content=jsonl_bytes(changed), version="upload-digest").json()["import"]
+    wait_for_import(client, second["id"], {"validated"})
+    assert client.post(f"/api/v1/dataset-imports/{second['id']}/commit").status_code == 202
+    detail = wait_for_import(client, second["id"], {"failed", "duplicate"})
+    assert detail["status"] == "failed"
+    assert detail["report"]["fatal_code"] == "version_conflict"
+    assert len(list(seeded.scalars(select(DatasetVersion)))) == 1
+
+
+def test_upload_strips_traversal_from_filename(
+    seeded: Session, client: TestClient, import_dir: Path
+) -> None:
+    records = fixture_records()
+    created = upload(
+        client, content=jsonl_bytes(records), filename="../../etc/passwd.jsonl", version="upload-name"
+    ).json()["import"]
+    assert created["file_name"] == "passwd.jsonl"
+    assert all(path.parent == import_dir for path in import_dir.iterdir())
+    wait_for_import(client, created["id"], {"validated"})
+    assert list(import_dir.iterdir())
+    assert list(import_dir.glob("*.jsonl"))
+
+
+def test_orphan_staged_file_is_swept(
+    seeded: Session, session: Session, import_dir: Path, configure_settings
+) -> None:
+    old = datetime.now(UTC) - timedelta(hours=5)
+    orphan = import_dir / "orphan.jsonl"
+    orphan.write_text("{}\n")
+    os.utime(orphan, (old.timestamp(), old.timestamp()))
+    configure_settings(DATASET_IMPORT_STALE_SECONDS="60")
+
+    assert import_service.sweep_orphan_files(session) == 1
+    assert not orphan.exists()
 
 
 def test_commit_refuses_source_changed_after_validation(
@@ -384,3 +455,23 @@ def test_stale_reaper_fails_interrupted_import(
     assert refreshed.status == "failed"
     assert refreshed.validation_report_json["fatal_code"] == "worker_interrupted"
     assert list(import_dir.iterdir()) == []
+
+
+def test_reaper_expires_abandoned_validated_import(
+    seeded: Session, session: Session, client: TestClient, import_dir: Path, configure_settings
+) -> None:
+    records = fixture_records()
+    created = upload(client, content=jsonl_bytes(records)).json()["import"]
+    wait_for_import(client, created["id"], {"validated"})
+    record = session.get(DatasetImport, created["id"])
+    record.status_updated_at = datetime.now(UTC) - timedelta(hours=5)
+    session.commit()
+    configure_settings(DATASET_IMPORT_STALE_SECONDS="60")
+
+    assert import_service.reap_stale_imports(session) == 1
+    session.expire_all()
+    refreshed = session.get(DatasetImport, created["id"])
+    assert refreshed.status == "failed"
+    assert refreshed.validation_report_json["fatal_code"] == "import_expired"
+    assert list(import_dir.iterdir()) == []
+    assert list(session.scalars(select(DatasetVersion))) == []

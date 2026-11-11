@@ -224,6 +224,7 @@ def materialize_dataset_version(
     environment_kind: str | None = None,
     metadata: dict[str, Any] | None = None,
     import_record: DatasetImport | None = None,
+    source_digest: str | None = None,
 ) -> ImportOutcome:
     """Write one immutable version from already-validated records.
 
@@ -256,6 +257,12 @@ def materialize_dataset_version(
             same_source = (
                 existing.source_revision == source_revision
                 and existing.adapter_version == adapter.adapter_version
+                # Uploaded files carry a content digest. Legacy imports have
+                # none, so they keep the historical revision-only comparison.
+                and (
+                    source_digest is None
+                    or existing.task_manifest_digest in (None, source_digest)
+                )
             )
             if same_source:
                 if import_record is None:
@@ -283,6 +290,7 @@ def materialize_dataset_version(
                         valid_count=total_count,
                         invalid_count=0,
                     )
+                record.dataset_id = dataset.id
                 session.commit()
                 return ImportOutcome(
                     status="duplicate",
@@ -371,6 +379,7 @@ def materialize_dataset_version(
         environment_image=environment_image,
         execution_image_digest=execution_image_digest,
         scoring_image_digest=scoring_image_digest,
+        task_manifest_digest=source_digest,
     )
     session.add(dataset_version)
     session.flush()

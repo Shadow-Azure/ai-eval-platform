@@ -334,7 +334,7 @@ function parseImportRecord(payload: unknown): DatasetImportRecord {
     created_at: text(payload.created_at),
     status_updated_at: optionalText(payload.status_updated_at),
     dataset: isRecord(payload.dataset) ? parseDataset(payload.dataset) : null,
-    version_detail: isRecord(payload.version) ? parseVersion(payload.version) : null,
+    version_detail: isRecord(payload.version_detail) ? parseVersion(payload.version_detail) : null,
   };
 }
 

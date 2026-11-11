@@ -87,7 +87,7 @@ class Settings(BaseSettings):
     dataset_import_dir: str = "/tmp/eval-dataset-imports"
     dataset_import_max_bytes: int = 1024 * 1024 * 1024
     dataset_import_timeout_seconds: int = 1800
-    dataset_import_memory_limit_mb: int = 1024
+    dataset_import_memory_limit_mb: int = 2048
     dataset_import_stale_seconds: int = 7200
     dataset_import_error_limit: int = 200
     dataset_import_progress_step: int = 1000

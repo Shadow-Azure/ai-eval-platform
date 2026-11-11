@@ -185,7 +185,12 @@ export function DatasetImportPage() {
   }
 
   async function cancelAndLeave() {
-    if (importRecord && (importRecord.status === "queued" || importRecord.status === "validated")) {
+    if (
+      importRecord &&
+      (importRecord.status === "queued" ||
+        importRecord.status === "validating" ||
+        importRecord.status === "validated")
+    ) {
       try {
         await cancelDatasetImport(importRecord.id);
       } catch {
@@ -196,6 +201,15 @@ export function DatasetImportPage() {
   }
 
   function resetWizard() {
+    if (
+      importRecord &&
+      (importRecord.status === "queued" ||
+        importRecord.status === "validating" ||
+        importRecord.status === "validated")
+    ) {
+      // Best effort: release the staged file before starting a new import.
+      cancelDatasetImport(importRecord.id).catch(() => {});
+    }
     setStep(1);
     setImportRecord(null);
     setActionError(null);
@@ -399,6 +413,15 @@ export function DatasetImportPage() {
 
               {!validating ? (
                 <>
+                  {status === "cancelled" ? (
+                    <Alert
+                      type="warning"
+                      showIcon
+                      message="导入已取消"
+                      description="暂存文件已释放；如需导入请重新选择文件。"
+                      style={{ marginBottom: 12 }}
+                    />
+                  ) : null}
                   <div className="ds-stat-grid">
                     <div className="ds-stat">
                       <div className="ds-stat-label">识别用例</div>
@@ -416,7 +439,7 @@ export function DatasetImportPage() {
                     </div>
                   </div>
 
-                  {failed ? (
+                  {failed || status === "cancelled" ? (
                     <Alert
                       type="error"
                       showIcon
@@ -552,7 +575,7 @@ export function DatasetImportPage() {
                     <Progress percent={100} status="active" showInfo={false} />
                     <div className="ds-progress-meta">
                       <span>批量写入不可变用例…</span>
-                      <strong>{importRecord.processed_count} / {importRecord.total_count} 条</strong>
+                      <strong>共 {importRecord.total_count} 条</strong>
                     </div>
                   </div>
                   <div className="ds-stage-list">

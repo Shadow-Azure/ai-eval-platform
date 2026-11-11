@@ -64,7 +64,13 @@ class ValidationResult:
 
     @property
     def valid(self) -> bool:
-        return self.report["invalid"] == 0 and self.report["total"] > 0
+        # A fatal layout error (unterminated array, unreadable source) has no
+        # per-record error to count but must still block the import.
+        return (
+            not self.report.get("fatal")
+            and self.report["invalid"] == 0
+            and self.report["total"] > 0
+        )
 
 
 def import_root(settings: Settings | None = None) -> Path:
@@ -228,10 +234,9 @@ def validate_source_file(
         if progress and total % progress_step() == 0:
             progress(total)
 
-    if fatal is not None and invalid == 0:
-        # A fatal layout error (unterminated array/trailing garbage) has no
-        # per-record issue to count, but it must still block the import.
-        invalid = 1
+    if fatal is None and total == 0:
+        fatal = ("empty_source", "数据文件不包含任何记录")
+        append(CaseIssue(code="empty_source", message=fatal[1]))
     report = {
         "mode": mode,
         "total": total,
@@ -244,6 +249,8 @@ def validate_source_file(
         "errors_truncated": max(0, sum(error_codes.values()) - len(errors)),
         "warnings": [],
         "fatal": fatal is not None,
+        "fatal_code": fatal[0] if fatal else None,
+        "fatal_message": fatal[1] if fatal else None,
         "generated_at": _now().isoformat(timespec="seconds"),
     }
     return ValidationResult(report=report, errors=errors)
@@ -303,6 +310,22 @@ def mark_worker_failure(
     if record is None or record.status not in ACTIVE_IMPORT_STATUSES:
         return False
     _fail_record(record, code=code, message=message, details=details)
+    session.commit()
+    delete_source_file(record)
+    return True
+
+
+def expire_validated_import(session: Session, import_id: str) -> bool:
+    """Fail a validated import that was never committed (release its file)."""
+
+    record = session.get(DatasetImport, import_id)
+    if record is None or record.status != "validated":
+        return False
+    _fail_record(
+        record,
+        code="import_expired",
+        message="导入超过保留时间仍未生成版本，请重新上传",
+    )
     session.commit()
     delete_source_file(record)
     return True
@@ -385,6 +408,8 @@ def validate_uploaded_import(
             "errors_truncated": 0,
             "warnings": [],
             "fatal": True,
+            "fatal_code": "adapter_not_found",
+            "fatal_message": f"未注册的数据集适配器：{record.adapter_key}",
             "generated_at": _now().isoformat(timespec="seconds"),
         }
         result = ValidationResult(
@@ -421,6 +446,8 @@ def validate_uploaded_import(
                     "errors_truncated": 0,
                     "warnings": [],
                     "fatal": True,
+                    "fatal_code": "source_file_unreadable",
+                    "fatal_message": "导入源文件无法读取，请重新上传",
                     "generated_at": _now().isoformat(timespec="seconds"),
                 },
                 errors=[CaseIssue(code="source_file_unreadable", message="导入源文件无法读取")],
@@ -520,6 +547,7 @@ def materialize_uploaded_import(
             scoring_image_digest=record.scoring_image_digest,
             created_by=record.created_by,
             import_record=record,
+            source_digest=record.file_digest,
         )
     except DatasetVersionConflict:
         session.rollback()
@@ -542,6 +570,45 @@ def mark_commit_failed(
     return mark_worker_failure(session, import_id, code=code, message=message)
 
 
+def sweep_orphan_files(
+    session: Session,
+    *,
+    settings: Settings | None = None,
+    now: datetime | None = None,
+) -> int:
+    """Delete staged files with no import row (crash between write and insert)."""
+
+    settings = settings or get_settings()
+    now = now or _now()
+    root = import_root(settings)
+    if not root.is_dir():
+        return 0
+    referenced = {
+        key
+        for key in session.scalars(
+            select(DatasetImport.storage_key).where(DatasetImport.storage_key.is_not(None))
+        )
+        if key
+    }
+    grace = timedelta(seconds=max(60, int(settings.dataset_import_stale_seconds)))
+    removed = 0
+    for path in root.iterdir():
+        if not path.is_file() or path.name in referenced:
+            continue
+        try:
+            modified = datetime.fromtimestamp(path.stat().st_mtime, tz=UTC)
+        except OSError:
+            continue
+        if now - modified < grace:
+            continue
+        try:
+            path.unlink()
+            removed += 1
+        except OSError:
+            continue
+    return removed
+
+
 def reap_stale_imports(
     session: Session,
     *,
@@ -553,9 +620,13 @@ def reap_stale_imports(
     settings = settings or get_settings()
     now = now or _now()
     cutoff = now - timedelta(seconds=max(60, int(settings.dataset_import_stale_seconds)))
+    # A validated import that nobody commits also owns a staged file, so it
+    # expires on the same heartbeat window instead of leaking disk forever.
     rows = list(
         session.scalars(
-            select(DatasetImport).where(DatasetImport.status.in_(ACTIVE_IMPORT_STATUSES))
+            select(DatasetImport).where(
+                DatasetImport.status.in_((*ACTIVE_IMPORT_STATUSES, "validated"))
+            )
         )
     )
     reaped = 0
@@ -563,13 +634,17 @@ def reap_stale_imports(
         updated = _as_utc(record.status_updated_at or record.created_at)
         if updated is None or updated > cutoff:
             continue
-        mark_worker_failure(
-            session,
-            record.id,
-            code="worker_interrupted",
-            message="导入 worker 超时或中断，请重新上传",
-        )
+        if record.status == "validated":
+            expire_validated_import(session, record.id)
+        else:
+            mark_worker_failure(
+                session,
+                record.id,
+                code="worker_interrupted",
+                message="导入 worker 超时或中断，请重新上传",
+            )
         reaped += 1
+    sweep_orphan_files(session, settings=settings, now=now)
     return reaped
 
 
@@ -582,7 +657,7 @@ def _backend_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
-def _worker_env(database_url: str, backend: Path) -> dict[str, str]:
+def _worker_env(settings: Settings, database_url: str, backend: Path) -> dict[str, str]:
     """Minimal child environment: no runner, model or session credentials.
 
     The parser only needs its database connection and import limits; passing
@@ -613,6 +688,19 @@ def _worker_env(database_url: str, backend: Path) -> dict[str, str]:
     env["PYTHONPATH"] = str(backend) + (
         os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else ""
     )
+    # pydantic-settings may have loaded these from a .env file, which is not
+    # visible in os.environ; pass the resolved values so the child uses the
+    # same directory, limits and timeouts as the API process.
+    for key in (
+        "dataset_import_dir",
+        "dataset_import_max_bytes",
+        "dataset_import_timeout_seconds",
+        "dataset_import_memory_limit_mb",
+        "dataset_import_stale_seconds",
+        "dataset_import_error_limit",
+        "dataset_import_progress_step",
+    ):
+        env[key.upper()] = str(getattr(settings, key))
     return env
 
 
@@ -650,7 +738,7 @@ def run_import_job(
     timeout = float(timeout_seconds or settings.dataset_import_timeout_seconds)
     command = [sys.executable, "-m", "app.worker.dataset_import", import_id, stage]
     backend_path = _backend_root()
-    env = _worker_env(database_url, backend_path)
+    env = _worker_env(settings, database_url, backend_path)
     # Limits are applied by the child itself: preexec_fn is not safe in a
     # threaded API process, and the worker only needs its own address space.
     popen_kwargs: dict[str, Any] = {
@@ -704,6 +792,39 @@ def run_import_job(
                 mark_worker_failure(session, import_id, code=code, message=message)
     finally:
         engine.dispose()
+
+
+CANCELLABLE_IMPORT_STATUSES = ("queued", "validating", "validated")
+
+
+def cancel_import(session: Session, import_id: str) -> DatasetImport:
+    """Atomically cancel an import that has not started materialising.
+
+    A conditional UPDATE closes the check-then-act window with a concurrent
+    worker claim: a worker that already moved the row to validating still
+    re-reads the status before persisting and exits when it sees cancelled.
+    """
+
+    from sqlalchemy import update
+
+    record = session.get(DatasetImport, import_id)
+    if record is None:
+        raise DatasetImportNotFound(import_id)
+    now = _now()
+    result = session.execute(
+        update(DatasetImport)
+        .where(
+            DatasetImport.id == import_id,
+            DatasetImport.status.in_(CANCELLABLE_IMPORT_STATUSES),
+        )
+        .values(status="cancelled", status_updated_at=now)
+    )
+    session.commit()
+    if result.rowcount != 1:
+        raise DatasetImportStateConflict(import_id)
+    session.refresh(record)
+    delete_source_file(record)
+    return record
 
 
 def begin_commit(session: Session, import_id: str) -> DatasetImport:

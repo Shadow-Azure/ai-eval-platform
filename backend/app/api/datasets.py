@@ -13,7 +13,7 @@ import uuid
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Response, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -246,6 +246,31 @@ def _upload_error(code: str, message: str, status_code: int = 422, **details: An
 
 
 UPLOAD_SUFFIXES = (".json", ".jsonl", ".ndjson")
+# Multipart framing adds a little to the file size; reject clearly oversized
+# bodies from the request header before Starlette spools them to disk.
+UPLOAD_HEADER_SLACK_BYTES = 1024 * 1024
+
+
+def _upload_size_guard(request: Request) -> None:
+    header = request.headers.get("content-length")
+    if not header:
+        return
+    try:
+        length = int(header)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=error_detail("invalid_content_length", "无效的 Content-Length"),
+        ) from exc
+    limit = int(get_settings().dataset_import_max_bytes) + UPLOAD_HEADER_SLACK_BYTES
+    if length > limit:
+        raise HTTPException(
+            status_code=413,
+            detail=error_detail(
+                "dataset_import_too_large",
+                f"数据文件超过 {get_settings().dataset_import_max_bytes // (1024 * 1024)} MB 上限",
+            ),
+        )
 
 
 @router.post("/api/v1/dataset-imports/uploads", status_code=201)
@@ -260,6 +285,7 @@ async def upload_dataset_import(
     execution_image_digest: Annotated[str | None, Form()] = None,
     scoring_image_digest: Annotated[str | None, Form()] = None,
     source_uri: Annotated[str | None, Form()] = None,
+    _guard: None = Depends(_upload_size_guard),
     session: Session = Depends(get_session),
     context: identity.AuthContext = Depends(require_admin),
 ) -> dict:
@@ -309,6 +335,10 @@ async def upload_dataset_import(
         raise _upload_error(
             "dataset_import_storage_failed", "数据文件暂存失败，请稍后重试", status_code=503
         ) from exc
+    except BaseException:
+        # Never leave an unreferenced staged file on cancellation or a crash.
+        destination.unlink(missing_ok=True)
+        raise
     finally:
         await file.close()
 
@@ -397,19 +427,17 @@ def cancel_dataset_import(
     context: identity.AuthContext = Depends(require_admin),
 ) -> dict:
     try:
-        record = dataset_service.get_import(session, import_id)
-    except dataset_service.DatasetImportNotFound as exc:
+        record = import_service.cancel_import(session, import_id)
+    except import_service.DatasetImportNotFound as exc:
         raise _not_found("dataset_import_not_found", "导入记录不存在") from exc
-    if record.status not in ("queued", "validated"):
+    except import_service.DatasetImportStateConflict as exc:
         raise HTTPException(
             status_code=409,
-            detail=error_detail("dataset_import_state_conflict", "导入正在进行或已经结束，无法取消"),
-        )
-    import_service.delete_source_file(record)
-    record.status = "cancelled"
-    record.status_updated_at = import_service._now()
-    session.commit()
-    session.refresh(record)
+            detail=error_detail(
+                "dataset_import_state_conflict",
+                "导入正在生成版本或已经结束，无法取消",
+            ),
+        ) from exc
     return import_summary(record)
 
 
