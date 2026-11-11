@@ -6,13 +6,15 @@ English | [中文](m6-05-trace-viewer.md)
 kind: issue
 milestone: m6
 priority: P0
-status: ready
+status: in-progress
 scope:
   - .agents/flow/issues/m6-05-trace-viewer.*
   - .agents/flow/milestones/m6-trace-diagnosis.*
   - web/**
   - tests/**
   - docs/**
+  - plans/**
+  - reports/**
   - scripts/doc-budgets.manifest.json
 adr: []
 github:

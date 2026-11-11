@@ -20,7 +20,12 @@ import {
   Typography,
 } from "antd";
 import type { TableColumnsType } from "antd";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import {
+  useNavigate,
+  useParams,
+  useSearchParams,
+  type NavigateFunction,
+} from "react-router-dom";
 import {
   TERMINAL_EVAL_STATUSES,
   cancelEvaluation,
@@ -925,7 +930,7 @@ export function EvalDetailPage() {
               />
             </>
           }
-          columns={caseColumns}
+          columns={caseColumns(runId, navigate)}
           rows={cases.data?.items ?? []}
           rowKey="id"
           total={cases.data?.total ?? 0}
@@ -1133,7 +1138,11 @@ export function EvalDetailPage() {
   );
 }
 
-const caseColumns: TableColumnsType<EvalCaseRow> = [
+function caseColumns(
+  runId: string,
+  navigate: NavigateFunction,
+): TableColumnsType<EvalCaseRow> {
+  return [
   {
     title: "用例",
     dataIndex: "case_key",
@@ -1197,14 +1206,30 @@ const caseColumns: TableColumnsType<EvalCaseRow> = [
   {
     title: "",
     key: "open",
-    width: 72,
-    render: () => (
-      <span className="eval-row-link">
-        查看 <Icon name="arrowRight" size={12} />
+    width: 132,
+    render: (_value, record) => (
+      <span className="eval-row-actions">
+        <span className="eval-row-link">
+          详情 <Icon name="arrowRight" size={12} />
+        </span>
+        <Button
+          type="link"
+          size="small"
+          className="eval-trace-link"
+          onClick={(event) => {
+            event.stopPropagation();
+            navigate(
+              `/evals/${encodeURIComponent(runId)}/cases/${encodeURIComponent(record.id)}/trace?attempt=${record.latest_attempt_no}`,
+            );
+          }}
+        >
+          轨迹
+        </Button>
       </span>
     ),
   },
-];
+  ];
+}
 
 interface OverviewPanelProps {
   detail: EvaluationDetail;
@@ -2661,6 +2686,7 @@ function CaseDrawer({
   onRetry,
   retrying,
 }: CaseDrawerProps) {
+  const navigate = useNavigate();
   const [retryConfirmOpen, setRetryConfirmOpen] = useState(false);
   const [logRecord, setLogRecord] = useState<CaseTestResult | null>(null);
   const detail = caseQuery.data;
@@ -2794,11 +2820,24 @@ function CaseDrawer({
               <SummaryList
                 items={[
                   ["轨迹状态", statusTag(detail.case.trace_status, traceStatusMeta)],
-                  ["会话轨迹", detail.case.trace_status === "ready" ? "轨迹已就绪，可进入会话查看（M6 提供独立轨迹页）" : "轨迹尚未就绪或已降级"],
+                  ["会话轨迹", detail.case.trace_status === "ready" ? "轨迹已就绪，可进入会话查看" : "轨迹尚未就绪或已降级，仍可查看降级原因"],
                   ["测试日志", testsQuery.data?.items.find((item) => item.log_object_key)?.log_object_key ?? "—"],
                   ["最近更新", formatTime(detail.case.updated_at)],
                 ]}
               />
+              <Button
+                type="primary"
+                icon={<Icon name="list" size={14} />}
+                onClick={() =>
+                  navigate(
+                    `/evals/${encodeURIComponent(detail.run.id)}/cases/${encodeURIComponent(detail.case.id)}/trace?attempt=${
+                      selectedAttempt ?? detail.case.latest_attempt_no
+                    }`,
+                  )
+                }
+              >
+                打开会话轨迹
+              </Button>
             </div>
           </div>
         )}
