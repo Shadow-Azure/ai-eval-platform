@@ -6,7 +6,7 @@
 kind: issue
 milestone: m6
 priority: P0
-status: ready
+status: in-progress
 scope:
   - .agents/flow/issues/m6-04-trace-query-and-raw-access.*
   - .agents/flow/milestones/m6-trace-diagnosis.*
