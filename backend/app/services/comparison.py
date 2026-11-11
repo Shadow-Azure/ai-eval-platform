@@ -554,24 +554,34 @@ def _candidate_differences(
 def _candidate_runs(
     session: Session, current: EvalRun, *, current_digest: str
 ) -> list[dict[str, Any]]:
+    # Filter on the EXISTS subquery, not after the LIMIT: terminal runs without
+    # final metrics (synthetic or dataset-less runs) would otherwise fill the
+    # window and hide an older eligible baseline.
+    has_final_metric = (
+        select(MetricResult.id)
+        .where(
+            MetricResult.eval_run_id == EvalRun.id,
+            MetricResult.is_final.is_(True),
+        )
+        .exists()
+    )
     statement = (
         select(EvalRun)
         .where(
             EvalRun.tenant_id == current.tenant_id,
             EvalRun.id != current.id,
             EvalRun.status.in_(TERMINAL_STATUSES),
+            has_final_metric,
         )
         .order_by(
             func.coalesce(EvalRun.finished_at, EvalRun.created_at).desc(),
             EvalRun.created_at.desc(),
         )
-        .limit(CANDIDATE_LIMIT * 3)
+        .limit(CANDIDATE_LIMIT)
     )
     candidates: list[dict[str, Any]] = []
     for run in session.scalars(statement):
         rows = _final_metric_rows(session, run)
-        if not rows:
-            continue
         keys = _case_keys(session, run.id)
         digest = _case_digest(keys)
         comparable, reasons = _candidate_differences(

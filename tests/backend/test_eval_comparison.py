@@ -306,6 +306,55 @@ def test_auto_recommends_newest_identical_run_and_computes_deltas(seeded: Sessio
     assert response["candidates"], "candidate list feeds manual selection"
 
 
+def test_candidate_window_ignores_runs_without_final_metrics(seeded: Session) -> None:
+    """Metric-less terminal runs must not crowd an older eligible baseline out.
+
+    The candidate query used to apply LIMIT before discarding runs without final
+    MetricResult rows, so more than CANDIDATE_LIMIT * 3 such runs hid an
+    otherwise valid baseline and produced the empty state.
+    """
+
+    _dataset_record, version, definitions = _dataset(seeded)
+    baseline = _make_run(
+        seeded,
+        version=version,
+        definitions=definitions,
+        name="可作基线的较旧评测",
+        case_keys=_ten_cases(),
+        metric_values=_values(0.3),
+        finished_minutes_ago=comparison.CANDIDATE_LIMIT * 3 + 120,
+    )
+    # Newer terminal runs with no MetricResult rows at all. They only need the
+    # EvalRun row (same dataset version, terminal status, newer finished_at).
+    for minutes in range(1, comparison.CANDIDATE_LIMIT * 3 + 6):
+        _make_run(
+            seeded,
+            version=version,
+            definitions=definitions,
+            name=f"无指标评测-{minutes}",
+            case_keys=(),
+            metric_values={},
+            finished_minutes_ago=minutes,
+        )
+    current = _make_run(
+        seeded,
+        version=version,
+        definitions=definitions,
+        name="当前评测",
+        case_keys=_ten_cases(),
+        metric_values=_values(0.4),
+        finished_minutes_ago=0,
+    )
+
+    response = comparison.compare_run(seeded, current, tenant_id=current.tenant_id)
+
+    assert response["baseline_run_id"] == baseline.id
+    assert response["empty_state"] is None
+    assert response["recommendation"]["tier"] == comparison.TIER_ASSETS
+    assert response["case_set"]["comparable"] is True
+    assert [candidate["id"] for candidate in response["candidates"]] == [baseline.id]
+
+
 def test_relaxed_tier_when_asset_snapshot_differs(seeded: Session) -> None:
     _dataset_record, version, definitions = _dataset(seeded)
     baseline = _make_run(
