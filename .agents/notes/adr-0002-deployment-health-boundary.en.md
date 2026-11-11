@@ -17,7 +17,7 @@ M5-18 lands the prototype's "delivery pipeline" page at `/deployments`, includin
 - `/operations` remains platform-administrator-only as the **detailed diagnostic surface**: database size/connections/table inventory, Redis memory and clients, object-storage bucket probe, Runner and model-gateway details, and per-service latency; it offers no deployment rollback entry.
 - Deployment records, current/previous versions, the Alembic revision comparison, the five-stage timeline and controlled rollback belong only to `/deployments`; `/operations` does not repeat deployment history.
 - Both pages may show whether the database is healthy, at different granularity: the deployment page answers "are the components this deployment depends on healthy", the operations page answers "are capacity, resources and diagnostic details healthy".
-- Rollback exists only on `/deployments` and requires all of: platform administrator, an explicit second confirmation, the target being the previous successful version, and the target migration revision equal to the live database revision; the API writes an audit record and hands the request to the deploy workflow through `repository_dispatch`. The API itself never operates the host directly and never runs a database downgrade.
+- Rollback exists only on `/deployments` and requires all of: platform administrator, an explicit second confirmation, the target being the previous successful version, and both the current and target migration revisions equal to the live database revision; the API writes an audit record and hands the request to the deploy workflow through `repository_dispatch`. The API itself never operates the host directly and never runs a database downgrade.
 
 ## Impact
 

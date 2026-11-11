@@ -337,3 +337,71 @@ def test_current_deployment_reads_the_live_ci_gate(
     assert gate["key"] == "quality_gate"
     assert gate["status"] == "success"
     assert gate["duration_seconds"] == 78
+
+
+def test_ci_gate_stage_aggregates_actions_runs(monkeypatch) -> None:
+    from app.config import Settings
+
+    settings = Settings(github_token="test-token", github_repo="owner/repo")
+    runs = [
+        {
+            "name": "Backend & Web CI",
+            "status": "completed",
+            "conclusion": "success",
+            "run_started_at": "2026-11-11T01:00:00Z",
+            "updated_at": "2026-11-11T01:01:18Z",
+        },
+        {
+            "name": "Documentation Gates",
+            "status": "completed",
+            "conclusion": "success",
+            "run_started_at": "2026-11-11T01:00:00Z",
+            "updated_at": "2026-11-11T01:00:22Z",
+        },
+        {
+            "name": "Unrelated workflow",
+            "status": "completed",
+            "conclusion": "failure",
+        },
+    ]
+    monkeypatch.setattr(
+        deployment_service.github_dispatch,
+        "list_workflow_runs_for_commit",
+        lambda commit, settings=None: runs,
+    )
+    stage = deployment_service.ci_gate_stage(settings, "a" * 40)
+    assert stage["status"] == "success"
+    assert stage["duration_seconds"] == 78
+    assert "Backend & Web CI" in stage["detail"]
+
+    runs[0]["conclusion"] = "failure"
+    failed = deployment_service.ci_gate_stage(settings, "a" * 40)
+    assert failed["status"] == "failed"
+
+    runs[0]["status"] = "in_progress"
+    runs[0]["conclusion"] = None
+    running = deployment_service.ci_gate_stage(settings, "a" * 40)
+    assert running["status"] == "running"
+
+    runs[1]["conclusion"] = "failure"
+    failed_while_running = deployment_service.ci_gate_stage(settings, "a" * 40)
+    assert failed_while_running["status"] == "failed"
+
+    monkeypatch.setattr(
+        deployment_service.github_dispatch,
+        "list_workflow_runs_for_commit",
+        lambda commit, settings=None: [],
+    )
+    missing = deployment_service.ci_gate_stage(settings, "a" * 40)
+    assert missing["status"] == "unknown"
+    assert "没有可读取" in missing["detail"]
+
+
+def test_ci_gate_stage_degrades_without_a_token() -> None:
+    from app.config import Settings
+
+    stage = deployment_service.ci_gate_stage(
+        Settings(github_token=None, github_repo="owner/repo"), "a" * 40
+    )
+    assert stage["status"] == "unknown"
+    assert "未配置" in stage["detail"]

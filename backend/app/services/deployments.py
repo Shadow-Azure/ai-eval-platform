@@ -220,10 +220,10 @@ def ci_gate_stage(settings: Settings, git_commit: str) -> dict[str, Any]:
 
     statuses = {str(run.get("status") or "") for run in matching}
     conclusions = {str(run.get("conclusion") or "") for run in matching}
-    if statuses & {"queued", "in_progress", "requested", "waiting", "pending"}:
-        stage["status"] = "running"
-    elif conclusions & {"failure", "timed_out", "cancelled", "action_required", "startup_failure"}:
+    if conclusions & {"failure", "timed_out", "cancelled", "action_required", "startup_failure"}:
         stage["status"] = "failed"
+    elif statuses & {"queued", "in_progress", "requested", "waiting", "pending"}:
+        stage["status"] = "running"
     elif all(
         str(run.get("status")) == "completed"
         and str(run.get("conclusion")) in {"success", "neutral", "skipped"}
