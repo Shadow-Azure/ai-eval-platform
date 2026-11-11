@@ -60,11 +60,17 @@ def test_bootstrap_contains_jit_and_installs_runner_once() -> None:
     assert "systemctl enable --now github-runner.service" in bootstrap
     # The eval-shard workflow runs Node on the runner host; without it the
     # prepare job dies with `node: command not found` and cases never start.
-    assert "setup_22.x" in bootstrap
-    assert "apt-get install -y --no-install-recommends nodejs" in bootstrap
+    assert "npmmirror.com/mirrors/node" in bootstrap
+    assert "node-v${NODE_VERSION}-linux-x64.tar.xz" in bootstrap
     assert "node --version" in bootstrap
     # GitHub downloads from Aliyun are slow; allow retries before giving up.
     assert "--max-time 600 --retry 3" in bootstrap
+    # An ephemeral runner exits after one job; the heartbeat must stop with it
+    # or the platform keeps seeing a phantom online runner.
+    assert "BindsTo=github-runner.service" in bootstrap
+    assert bootstrap.index("systemctl enable --now github-runner.service") < bootstrap.index(
+        "systemctl enable --now eval-heartbeat.service"
+    )
 
 
 def test_cleanup_removes_jit_env_and_cloud_init_user_data() -> None:
