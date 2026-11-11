@@ -8,7 +8,8 @@
     { "value": "2", "label": "隔离 attempts" },
     { "value": "2", "label": "真实子 Agent" },
     { "value": "7", "label": "原生文件" },
-    { "value": "23", "label": "归一化 spans" },
+    { "value": "27", "label": "归一化 spans" },
+    { "value": "2", "label": "THINKING spans" },
     { "value": "6", "label": "GUI 截图" }
   ],
   "facts": [
@@ -16,8 +17,8 @@
     { "label": "Runtime", "value": "Claude Code 2.1.278" },
     { "label": "Parser", "value": "claude-code-2.1.278-v1 / e2e-next" },
     { "label": "Storage", "value": "真实 OSS + PostgreSQL" },
-    { "label": "E2E artifact", "value": "GitHub run 43104397400" },
-    { "label": "Branch commit", "value": "f9ba996" }
+    { "label": "E2E artifact", "value": "GitHub run 43107884439" },
+    { "label": "Branch commit", "value": "17b3b0b" }
   ],
   "matrix": {
     "columns": ["#", "场景", "结果", "证据", "截图"],
