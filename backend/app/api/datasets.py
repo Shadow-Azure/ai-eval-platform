@@ -77,6 +77,10 @@ def version_summary(version: DatasetVersion) -> dict:
 
 
 def case_summary(case: DatasetCase) -> dict:
+    # M5-14: the adapter's raw difficulty label is preserved, and the display
+    # level (easy/medium/hard) comes from a documented time-band normalization.
+    # No difficulty value is invented for datasets without the field.
+    difficulty_label = dataset_service.case_difficulty_label(case)
     return {
         "id": case.id,
         "dataset_version_id": case.dataset_version_id,
@@ -84,6 +88,9 @@ def case_summary(case: DatasetCase) -> dict:
         "ordinal": case.ordinal,
         "repo": case.repo,
         "base_commit": case.base_commit,
+        "difficulty": dataset_service.difficulty_level(difficulty_label),
+        "difficulty_label": difficulty_label,
+        "expected_test_count": dataset_service.case_expected_test_count(case),
         "created_at": case.created_at.isoformat(timespec="microseconds"),
     }
 
@@ -517,6 +524,7 @@ def get_dataset_version(version_id: str, session: Session = Depends(get_session)
     return {
         **version_summary(version),
         "metrics": [metric_summary(definition) for definition in metrics],
+        "validation": dataset_service.version_import_validation(session, version),
     }
 
 
@@ -525,6 +533,8 @@ def list_version_cases(
     version_id: str,
     limit: Annotated[int, Query(ge=1, le=200)] = 20,
     offset: Annotated[int, Query(ge=0)] = 0,
+    q: Annotated[str | None, Query(max_length=200)] = None,
+    difficulty: Annotated[str | None, Query(max_length=32)] = None,
     session: Session = Depends(get_session),
 ) -> dict:
     try:
@@ -532,11 +542,19 @@ def list_version_cases(
     except dataset_service.DatasetVersionNotFound as exc:
         raise _not_found("dataset_version_not_found", "数据集版本不存在") from exc
     items, total = dataset_service.list_version_cases(
-        session, version_id, limit=limit, offset=offset
+        session,
+        version_id,
+        limit=limit,
+        offset=offset,
+        q=q,
+        difficulty=difficulty,
     )
     return {
         "items": [case_summary(case) for case in items],
         "page_info": dataset_service.page_info(limit=limit, offset=offset, total=total),
+        # An adapter may not provide a difficulty label; the UI uses facets to
+        # decide whether the filter is usable instead of assuming easy/hard.
+        "facets": {"difficulties": dataset_service.version_difficulty_facets(session, version_id)},
     }
 
 
