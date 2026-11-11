@@ -17,8 +17,8 @@
     { "label": "Runtime", "value": "Claude Code 2.1.278" },
     { "label": "Parser", "value": "claude-code-2.1.278-v1 / e2e-next" },
     { "label": "Storage", "value": "真实 OSS + PostgreSQL" },
-    { "label": "E2E artifact", "value": "GitHub run 43107884439" },
-    { "label": "Branch commit", "value": "17b3b0b" }
+    { "label": "E2E artifact", "value": "GitHub run 43108971219" },
+    { "label": "Branch commit", "value": "2d65298" }
   ],
   "matrix": {
     "columns": ["#", "场景", "结果", "证据", "截图"],
