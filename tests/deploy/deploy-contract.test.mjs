@@ -142,14 +142,22 @@ test("production runner callback entry stays VPC-only and keeps loopback", () =>
   );
 });
 
-test("deploy pipeline caches the runner tarball in OSS and injects the URL", () => {
+test("deploy pipeline caches the runner tarball and leaves the URL to the api proxy", () => {
   const workflow = read(".github/workflows/deploy.yml");
   assert.ok(workflow.includes("runner-cache:"), "missing runner-cache job");
   assert.ok(workflow.includes("scripts/cache-runner-tarball.py"), "missing cache script");
   assert.ok(workflow.includes("needs: [build, runner-cache]"), "deploy must depend on the cache job");
   assert.ok(
-    workflow.includes("needs.runner-cache.outputs.url"),
-    "deploy env must use the presigned cache URL",
+    !workflow.includes("needs.runner-cache.outputs.url"),
+    "the deploy must not inject an expiring presigned cache URL",
+  );
+  assert.ok(
+    workflow.includes("RUNNER_SPOT_RUNNER_TARBALL_URL: ${{ secrets.RUNNER_SPOT_RUNNER_TARBALL_URL }}"),
+    "the explicit external-mirror override is the only remaining URL source",
+  );
+  assert.ok(
+    workflow.includes("printf 'RUNNER_SPOT_RUNNER_TARBALL_URL=%s\\n'"),
+    "the optional explicit override still reaches the host .env",
   );
 });
 

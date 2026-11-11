@@ -39,6 +39,8 @@ from ...config import Settings
 from ...models import Connection, Credential, ProvisionedInstance, ResourcePool, Runner
 from ...money import UNIT_PRICE, Money
 from ...secrets import SecretBoxError, get_secret_box
+from .. import runner_cache
+from ..object_store import object_store_from_settings
 from ..runner_labels import pool_runner_labels
 from ..runner_registration import GitHubRunnerRegistrar
 from . import (
@@ -665,6 +667,26 @@ class AliyunEcsProvisioner:
             base_url = configured_base if isinstance(configured_base, str) else ""
         else:
             base_url = self.settings.runner_callback_base_url
+        explicit_tarball_url = _config_str(config, "runner_tarball_url") or (
+            self.settings.runner_spot_runner_tarball_url
+        )
+        if explicit_tarball_url:
+            # An operator-provided mirror is used as-is and never receives the
+            # platform's heartbeat token.
+            tarball_url = explicit_tarball_url
+            tarball_token = None
+        elif base_url and object_store_from_settings(self.settings) is not None:
+            # M5-11: the fixed api proxy streams the cached archive, so the URL
+            # no longer expires with a seven-day presigned signature.
+            tarball_url = runner_cache.runner_tarball_url(
+                base_url, self.settings.runner_spot_runner_version
+            )
+            tarball_token = self.settings.runner_heartbeat_token
+        else:
+            tarball_url = runner_cache.github_runner_url(
+                self.settings.runner_spot_runner_version
+            )
+            tarball_token = None
         return render_cloud_init(
             platform_base_url=base_url,
             runner_name=runner_name,
@@ -672,15 +694,8 @@ class AliyunEcsProvisioner:
             labels=_runner_labels(self.settings, pool),
             encoded_jit=encoded_jit,
             heartbeat_token=self.settings.runner_heartbeat_token,
-            runner_tarball_url=(
-                _config_str(config, "runner_tarball_url")
-                or self.settings.runner_spot_runner_tarball_url
-                or (
-                    "https://github.com/actions/runner/releases/download/"
-                    f"v{self.settings.runner_spot_runner_version}/"
-                    f"actions-runner-linux-x64-{self.settings.runner_spot_runner_version}.tar.gz"
-                )
-            ),
+            runner_tarball_url=tarball_url,
+            runner_tarball_token=tarball_token,
         )
 
     @staticmethod
