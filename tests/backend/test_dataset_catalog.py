@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import time
+
 import pytest
 from app.defaults import DEFAULT_PROJECT_ID, DEFAULT_TENANT_ID
 from app.models import Dataset
@@ -125,6 +127,47 @@ def test_catalog_reports_draft_dataset_without_version(seeded: Session, client: 
     # 数据行没有任务族/环境形态时回落到适配器元数据。
     assert item["task_family"] == "软件工程"
     assert item["environment_kind"] == "GitHub Issue · Docker"
+
+
+def test_catalog_selects_latest_of_multiple_versions(seeded: Session, client: TestClient) -> None:
+    records = fixture_records()
+    post_import(client, records=records[:2], version="v1", slug="swebench-multi", name="SWE-bench Multi")
+    time.sleep(0.02)
+    post_import(client, records=records[:4], version="v2", slug="swebench-multi", name="SWE-bench Multi")
+
+    body = client.get("/api/v1/datasets", params={"limit": 200}).json()
+    item = next(entry for entry in body["items"] if entry["slug"] == "swebench-multi")
+    assert item["version_count"] == 2
+    assert item["latest_version"]["version"] == "v2"
+    assert item["latest_version"]["case_count"] == 4
+    assert item["status"] == "ready"
+
+
+def test_catalog_handles_unregistered_adapter(seeded: Session, client: TestClient) -> None:
+    seeded.add(
+        Dataset(
+            tenant_id=str(DEFAULT_TENANT_ID),
+            project_id=str(DEFAULT_PROJECT_ID),
+            slug="legacy-custom",
+            name="Legacy Custom Dataset",
+            adapter_key="missing-adapter",
+            task_family="自定义",
+            environment_kind="VM",
+            metadata_json={},
+        )
+    )
+    seeded.commit()
+
+    body = client.get("/api/v1/datasets", params={"limit": 200}).json()
+    item = next(entry for entry in body["items"] if entry["slug"] == "legacy-custom")
+    assert item["adapter"] == {
+        "key": "missing-adapter",
+        "display_name": "missing-adapter",
+        "registered": False,
+    }
+    assert item["status"] == "draft"
+    assert item["task_family"] == "自定义"
+    assert item["environment_kind"] == "VM"
 
 
 def test_imports_are_listed_for_recent_import_card(seeded: Session, client: TestClient) -> None:

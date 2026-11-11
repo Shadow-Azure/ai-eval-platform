@@ -122,7 +122,7 @@ function datasetCards(
       adapterAvailable: entry.adapter.registered,
       adapterName: entry.adapter.display_name || adapter?.display_name || entry.adapter_key,
       name: entry.name,
-      description: entry.description || adapter?.description || "尚未导入版本。",
+      description: entry.description || adapter?.description || "暂无描述。",
       taskFamily: entry.task_family || adapter?.task_family || "未分类",
       environmentKind: entry.environment_kind || adapter?.environment_kind || "—",
       versionLabel: entry.latest_version?.version ?? "—",
@@ -189,9 +189,10 @@ interface AdapterGuideProps {
   onClose: () => void;
   adapters: DatasetAdapterMetadata[];
   loading: boolean;
+  failed: boolean;
 }
 
-function AdapterGuide({ open, onClose, adapters, loading }: AdapterGuideProps) {
+function AdapterGuide({ open, onClose, adapters, loading, failed }: AdapterGuideProps) {
   return (
     <Modal
       open={open}
@@ -206,7 +207,10 @@ function AdapterGuide({ open, onClose, adapters, loading }: AdapterGuideProps) {
           新增数据集类型只需注册适配器，不需要改目录页。
         </p>
         {loading ? <Skeleton active paragraph={{ rows: 4 }} /> : null}
-        {!loading && adapters.length === 0 ? (
+        {failed ? (
+          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="适配器注册表加载失败，请关闭后重试。" />
+        ) : null}
+        {!loading && !failed && adapters.length === 0 ? (
           <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前没有注册任何数据集适配器" />
         ) : null}
         {adapters.map((adapter) => (
@@ -433,7 +437,7 @@ export function DatasetsPage() {
             <h2 className="card-title">数据集目录</h2>
             <p className="card-subtitle">可按任务族、接入状态或关键字筛选；每页固定展示独立卡片</p>
           </div>
-          <div className="row dataset-catalog-counts">
+          <div className="row dataset-catalog-counts" aria-live="polite">
             <span className="tag tag-primary">{filtered.length} 个结果</span>
             <span className="tag tag-neutral">每页 {pageSize} 个</span>
           </div>
@@ -461,6 +465,7 @@ export function DatasetsPage() {
                   type="button"
                   key={name}
                   className={`segment${family === name ? " active" : ""}`}
+                  aria-pressed={family === name}
                   onClick={() => {
                     setFamily(name);
                     setPage(1);
@@ -713,6 +718,7 @@ export function DatasetsPage() {
         onClose={() => setGuideOpen(false)}
         adapters={adapterItems}
         loading={adapters.isLoading}
+        failed={Boolean(adapters.error)}
       />
     </section>
   );

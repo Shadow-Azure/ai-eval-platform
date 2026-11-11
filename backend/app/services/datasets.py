@@ -544,6 +544,9 @@ def dataset_catalog(session: Session, *, limit: int = 200, offset: int = 0) -> t
         primary = next((item for item in definitions if item.metric_key == primary_key), None)
         if primary is None and definitions:
             primary = definitions[0]
+        # DATASET_VERSION_STATUSES 目前只有 active/archived，且没有归档 API；
+        # 非 active 的最新版本保守按“待导入”处理，不发明第 4 种产品状态。
+        # 引入归档工作流时再定义“已归档”的目录语义与 CTA。
         status = "ready" if latest is not None and latest.status == "active" else "draft"
         items.append(
             {

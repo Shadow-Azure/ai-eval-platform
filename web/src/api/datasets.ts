@@ -119,6 +119,7 @@ interface PageInfo {
   total?: number;
   limit?: number;
   offset?: number;
+  next_offset?: number | null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -294,10 +295,19 @@ function parseImportRecord(item: Record<string, unknown>): DatasetImportRecord {
   };
 }
 
-/** 目录页一次拉取全部条目（<=200）后在客户端组合筛选与每页 6 卡分页。 */
+/** 拉取全部目录条目：按 200/页翻页直到没有下一页，避免 >200 时统计与筛选静默缺数据。 */
 export async function fetchDatasetCatalog(signal?: AbortSignal): Promise<DatasetCatalogEntry[]> {
-  const payload = await request("/api/v1/datasets?limit=200", { signal });
-  return items(payload).records.map(parseCatalogEntry);
+  const entries: DatasetCatalogEntry[] = [];
+  let offset = 0;
+  // 上限只防止后端异常时无限循环；正常目录远小于 50 页。
+  for (let page = 0; page < 50; page += 1) {
+    const payload = await request(`/api/v1/datasets?limit=200&offset=${offset}`, { signal });
+    const { records, page: info } = items(payload);
+    entries.push(...records.map(parseCatalogEntry));
+    if (!info.has_more || records.length === 0) break;
+    offset = info.next_offset ?? offset + records.length;
+  }
+  return entries;
 }
 
 export async function fetchDatasetAdapters(signal?: AbortSignal): Promise<DatasetAdapterMetadata[]> {
