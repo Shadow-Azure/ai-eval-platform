@@ -127,11 +127,12 @@ test("production runner callback entry stays VPC-only and keeps loopback", () =>
   assert.ok(common.includes("127.0.0.1"), "the override must be skipped for loopback");
 
   const workflow = read(".github/workflows/deploy.yml");
+  const writer = read("deploy/write-managed-env.sh");
   assert.ok(workflow.includes("secrets.API_BIND_ADDRESS"));
   assert.ok(workflow.includes("secrets.RUNNER_CALLBACK_BASE_URL"));
   assert.ok(workflow.includes("printf 'API_BIND_ADDRESS=%s\\n'"));
   assert.ok(workflow.includes("printf 'RUNNER_CALLBACK_BASE_URL=%s\\n'"));
-  assert.ok(workflow.includes("|API_BIND_ADDRESS|RUNNER_CALLBACK_BASE_URL|"));
+  assert.ok(writer.includes("|API_BIND_ADDRESS|RUNNER_CALLBACK_BASE_URL|"));
   assert.ok(
     workflow.includes('callback_base_url="${RUNNER_CALLBACK_BASE_URL:-}"'),
     "callback base URL should accept an explicit override",
@@ -170,6 +171,7 @@ test("eval-shard executes on the runner labels frozen in the dispatch", () => {
 
 test("deploy builds and injects the content-addressed runner scripts bundle", () => {
   const workflow = read(".github/workflows/deploy.yml");
+  const writer = read("deploy/write-managed-env.sh");
   for (const expected of [
     "scripts-bundle:",
     "scripts/cache-runner-scripts.py",
@@ -178,12 +180,12 @@ test("deploy builds and injects the content-addressed runner scripts bundle", ()
     "RUNNER_SCRIPTS_BUNDLE_SHA256: ${{ needs.scripts-bundle.outputs.sha256 }}",
     "RUNNER_SCRIPTS_BUNDLE_SIZE: ${{ needs.scripts-bundle.outputs.size }}",
     "printf 'RUNNER_SCRIPTS_BUNDLE_NAME=%s\\n'",
-    "|RUNNER_SCRIPTS_BUNDLE_NAME|",
     "runner-contract/schemas/**",
     "runner/**",
   ]) {
     assert.ok(workflow.includes(expected), `scripts bundle deploy missing ${expected}`);
   }
+  assert.ok(writer.includes("|RUNNER_SCRIPTS_BUNDLE_NAME|"));
   const compose = read("deploy/docker-compose.prod.yml");
   for (const name of ["NAME", "MD5", "SHA256", "SIZE"]) {
     const fallback = name === "SIZE" ? "0" : "";
@@ -236,12 +238,13 @@ test("host deploy never generates or silently replaces long-lived secrets", () =
 });
 
 test("host env replacement is atomic and preserves unmanaged keys", () => {
+  const writer = read("deploy/write-managed-env.sh");
+  assert.ok(writer.includes("mktemp"), "the remote writer must stage a temporary env file");
+  assert.ok(writer.includes('grep -Ev "^(S3_ENDPOINT|'), "managed keys must be filtered");
+  assert.ok(writer.includes('>>"$output_file"'), "managed values must append to the staged env");
+  assert.ok(writer.includes('chmod 600 "$output_file"'), "the staged env must be private");
+  assert.ok(writer.includes('mv "$output_file" "$env_file"'), "the staged env must replace .env atomically");
   const workflow = read(".github/workflows/deploy.yml");
-  assert.ok(workflow.includes("mktemp"), "the remote writer must stage a temporary env file");
-  assert.ok(workflow.includes('grep -Ev "^(S3_ENDPOINT|'), "managed keys must be filtered");
-  assert.ok(workflow.includes('>> "$tmp"'), "managed values must append to the staged env");
-  assert.ok(workflow.includes('chmod 600 "$tmp"'), "the staged env must be private");
-  assert.ok(workflow.includes('mv "$tmp" .env'), "the staged env must replace .env atomically");
   assert.equal(
     workflow.includes("cat .env.tmp > .env"),
     false,
@@ -251,14 +254,16 @@ test("host env replacement is atomic and preserves unmanaged keys", () => {
 
 test("deploy refuses to rotate an existing host away from the GitHub secrets", () => {
   const workflow = read(".github/workflows/deploy.yml");
-  assert.ok(workflow.includes("sha256sum"), "secret equality must be checked by digest");
-  assert.ok(workflow.includes("__NO_ENV__"), "a fresh host must be distinguishable from an existing host");
+  const writer = read("deploy/write-managed-env.sh");
+  assert.ok(workflow.includes("write-managed-env.sh"), "the host writer must be a testable script");
+  assert.ok(workflow.includes("payload_digest"), "the workflow must pass a payload digest");
+  assert.ok(writer.includes("sha256sum"), "secret equality must be checked by digest");
   assert.ok(
-    workflow.includes("Existing host long-lived secrets do not match GitHub Secrets"),
+    writer.includes("Existing host long-lived secret"),
     "mismatches must fail before the host env is replaced",
   );
-  assert.ok(workflow.includes("current_hashes"), "current host values must be compared without printing them");
-  assert.ok(workflow.includes("expected_hashes"), "GitHub-backed values must be compared without printing them");
+  assert.ok(writer.includes("partially populated"), "a partial old host must fail before replacement");
+  assert.ok(writer.includes("checksum mismatch"), "truncated payloads must fail before replacement");
 });
 
 test("production compose passes long-lived secrets to api and worker", () => {
