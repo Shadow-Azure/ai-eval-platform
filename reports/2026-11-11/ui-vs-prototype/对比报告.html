@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>前端 Web UI 与原型设计对比报告</title>
+<style>
+  :root { --accent:#1a6ded; --danger:#d4380d; --warn:#d46b08; --ok:#237804; --border:#e5e7eb; }
+  * { box-sizing: border-box; }
+  body { font-family: "Segoe UI", "Microsoft YaHei", sans-serif; margin:0; background:#f6f8fa; color:#1f2328; line-height:1.65; }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 32px 28px 80px; }
+  h1 { font-size: 1.7em; border-bottom: 2px solid var(--accent); padding-bottom: .4em; }
+  h2 { font-size: 1.3em; margin-top: 2.2em; border-bottom: 1px solid var(--border); padding-bottom: .3em; }
+  h3 { font-size: 1.1em; margin-top: 1.6em; }
+  a { color: var(--accent); }
+  code { background:#eff1f3; padding:.15em .4em; border-radius:4px; font-size:.9em; font-family:Consolas,monospace; }
+  pre code { display:block; padding:1em; overflow-x:auto; }
+  blockquote { margin:1em 0; padding:.6em 1em; background:#fffbe6; border-left:4px solid #fadb14; border-radius:4px; }
+  table { border-collapse: collapse; width:100%; margin:1em 0; background:#fff; }
+  th,td { border:1px solid var(--border); padding:7px 10px; text-align:left; vertical-align:top; font-size:.92em; }
+  th { background:#f0f4ff; }
+  tr:nth-child(even) td { background:#fafbfc; }
+  img { max-width:100%; border:1px solid var(--border); border-radius:8px; margin:6px 4px 6px 0; box-shadow:0 1px 4px rgba(0,0,0,.08); }
+  li { margin: .25em 0; }
+  hr { border:none; border-top:1px solid var(--border); margin:2em 0; }
+  .meta { color:#57606a; font-size:.95em; background:#fff; border:1px solid var(--border); border-radius:8px; padding:14px 18px; }
+</style>
+</head>
+<body><div class="wrap">
+<div class="meta">📄 由 reports/2026-11-11/ui-vs-prototype/对比报告.md 生成 · 图片相对本文件 shots/ 目录加载 · 生成时间 2026-11-11 18:10 (Asia/Shanghai)</div>
+<h1>前端 Web UI 与原型设计对比报告</h1>
+<ul>
+<li>对比日期：2026-11-11</li>
+<li>分支：<code>ui-vs-prototype-audit</code>（基于 main @ <code>a7126e9</code>）</li>
+<li>原型基线：<code>prototype/index.html</code>（M1-02，本地无头 Chrome 1520×940 渲染截图）</li>
+<li>线上环境：<a href="http://47.98.144.243:8080/%EF%BC%88%E7%9C%9F%E5%AE%9E%E8%B4%A6%E5%8F%B7%E7%99%BB%E5%BD%95%EF%BC%8C%E6%97%A0%E5%A4%B4">http://47.98.144.243:8080/（真实账号登录，无头</a> Chrome 同尺寸截图）</li>
+<li>截图目录：<code>reports/2026-11-11/ui-vs-prototype/shots/</code>（<code>proto_*.png</code> = 原型，<code>live_*.png</code> = 线上）</li>
+</ul>
+<blockquote>
+<p>重要背景：线上总览页显示“<strong>M3 建设中</strong>”横幅。本地 main 已合入 M5/M6（评测向导 v2、结果工作台、轨迹采集等）的页面代码，但线上部署版本疑似落后于 main。因此下文部分“缺失”可能是<strong>部署滞后</strong>而非代码未实现，已逐条标注，建议先核实部署版本再排期。</p>
+</blockquote>
+<hr>
+<h2>1. 已开发 issue 特性与页面覆盖</h2>
+<p>本次分析的已开发 issue（<code>.agents/flow/issues/</code>）中，与前端页面直接相关的特性：</p>
+<table>
+<thead>
+<tr>
+<th>域</th>
+<th>Issue</th>
+<th>原型页面</th>
+<th>线上页面</th>
+<th>状态</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>身份</td>
+<td>m3-05 账号认证</td>
+<td>登录 <code>#/login</code></td>
+<td><code>/login</code></td>
+<td>✅ 高度一致</td>
+</tr>
+<tr>
+<td>总览</td>
+<td>m3-01~03</td>
+<td>总览 <code>#/overview</code></td>
+<td><code>/overview</code></td>
+<td>⚠️ 指标缩水</td>
+</tr>
+<tr>
+<td>数据集</td>
+<td>m3-01 SWE-bench 导入与指标</td>
+<td>目录/详情/导入</td>
+<td><code>/datasets*</code></td>
+<td>❌ 结构性差异</td>
+</tr>
+<tr>
+<td>模型凭据</td>
+<td>m5-02</td>
+<td>模型凭据 <code>#/models</code></td>
+<td><code>/models</code></td>
+<td>✅ 骨架一致</td>
+</tr>
+<tr>
+<td>Agent 资产</td>
+<td>m5-01</td>
+<td>Agent 资产 <code>#/assets</code></td>
+<td><code>/assets</code></td>
+<td>⚠️ 空态，源卡片结构未验证</td>
+</tr>
+<tr>
+<td>资源池</td>
+<td>m5-03 / m4-03</td>
+<td>资源池 <code>#/resources</code></td>
+<td><code>/resources</code></td>
+<td>⚠️ 表达重组</td>
+</tr>
+<tr>
+<td>评测任务</td>
+<td>m3-04 / m5-04 / m5-05</td>
+<td>列表/发起/详情</td>
+<td><code>/evals*</code></td>
+<td>❌ 详情退化为 Drawer</td>
+</tr>
+<tr>
+<td>轨迹</td>
+<td>m6-05 轨迹查看器</td>
+<td>会话轨迹 <code>#/trace/*</code></td>
+<td><strong>无路由</strong></td>
+<td>❌ 整页缺失</td>
+</tr>
+<tr>
+<td>交付</td>
+<td>m2-02</td>
+<td>交付流水线 <code>#/deployment</code></td>
+<td><code>/deployments</code> 占位页</td>
+<td>❌ 占位</td>
+</tr>
+<tr>
+<td>运维</td>
+<td>m3-06</td>
+<td>—（原型无独立页）</td>
+<td><code>/operations</code>（新增，管理员）</td>
+<td>➕ 线上增量</td>
+</tr>
+</tbody></table>
+<hr>
+<h2>2. 登录页 — 还原度最高 ✅</h2>
+<p><img src="shots/proto_login.png" alt="登录页对比"> <img src="shots/live_login.png" alt="线上登录"></p>
+<ul>
+<li>一致：双栏品牌区/表单区、“保持登录”、忘记密码、流程标签全部保留。</li>
+<li>差异（均低）：原型预填演示账号并有演示提示框（线上为真实认证，合理删减）；线上新增密码可见性切换；页脚里程碑语义从 M1-02 更新为 M3。</li>
+</ul>
+<h2>3. 总览页 ⚠️</h2>
+<p><img src="shots/proto_overview.png" alt="原型总览"> <img src="shots/live_overview.png" alt="线上总览"></p>
+<ul>
+<li>一致：4 张 KPI 卡布局、系统健康侧栏、最近评测表列结构、导入数据集 + 发起评测双按钮。</li>
+<li>差异：<ol>
+<li>【中】原型 KPI 含<strong>本月解决率 / 今日评测成本</strong>；线上换成任务总数/运行中/失败/Runner 在线，结果指标体系未接入（与“M3 建设中”横幅自洽，属阶段性未完成）。</li>
+<li>【中】原型“进行中的评测”单运行详情卡（进度 46%、预计剩余、实时进展入口）被“运行概况”汇总列表替代，<strong>运行中任务快速下钻路径缺失</strong>。</li>
+<li>【低】线上“最近评测”空态文案与 KPI “32 个任务”不自洽；侧边栏新增“运营状态/发起评测”入口（增强）。</li>
+</ol>
+</li>
+</ul>
+<h2>4. 数据集域 — 差异最严重 ❌</h2>
+<h3>4.1 目录页</h3>
+<p><img src="shots/proto_datasets.png" alt="原型数据集目录"> <img src="shots/live_datasets.png" alt="线上数据集"></p>
+<ul>
+<li>【严重】原型为<strong>适配器驱动的卡片目录</strong>（任务族标签、环境形态、核心指标、接入状态、筛选 Tab、搜索、分页）；线上退化为 5 列简单表格（名称/slug/适配器/版本数/创建时间），无任何筛选/分页/状态标签。</li>
+<li>【中】原型顶部 4 张统计卡（目录类型/已接入版本/用例总量/待接入）与“适配器规范”按钮缺失。</li>
+<li>【中】信息架构变化：原型数据集在“评测”分组（评测资产），线上归入“配置”分组（配置项）——建议确认是否有意为之。</li>
+</ul>
+<h3>4.2 详情页</h3>
+<p><img src="shots/proto_datasets_swebench-verified.png" alt="原型数据集详情"> <img src="shots/live_dataset_detail.png" alt="线上数据集详情"></p>
+<ul>
+<li>【严重】原型用例表支持搜索/难度筛选/分页（500 用例场景）；线上为平铺原始表（case_key/repo/base_commit），无搜索、筛选、分页，<strong>规模一大数据不可浏览</strong>。</li>
+<li>【中】原型“校验结果通过 / 字段完整率 100%”与刷新、难度标签缺失——导入质量状态线上不可见。</li>
+<li>【低·增强】线上以显式指标定义表公开口径（resolved_rate 等），比原型更完整；支持多版本管理。</li>
+</ul>
+<h3>4.3 导入向导</h3>
+<p><img src="shots/proto_datasets_import.png" alt="原型导入"> <img src="shots/live_datasets_import.png" alt="线上导入"></p>
+<ul>
+<li>【严重】原型第一步是<strong>上传数据文件（JSON/JSONL ≤1GB）→ 隔离 worker 解析校验</strong>；线上为纯元信息表单（slug/适配器/来源 URI/镜像 digest），无文件上传区，核心“上传→解析→校验”流程缺失。</li>
+<li>【中】步骤条从左侧竖向（含说明）改为顶部横向；隔离执行安全提示缺失；无显式取消入口。</li>
+<li>【低·增强】线上新增 slug、镜像 digest 覆盖等后端对齐字段。</li>
+</ul>
+<h2>5. 配置类页面（模型凭据 / Agent 资产 / 资源池）⚠️</h2>
+<p><img src="shots/proto_models.png" alt="原型模型凭据"> <img src="shots/live_models.png" alt="线上模型凭据">
+<img src="shots/proto_assets.png" alt="原型Agent资产"> <img src="shots/live_assets.png" alt="线上Agent资产">
+<img src="shots/proto_resources.png" alt="原型资源池"> <img src="shots/live_resources.png" alt="线上资源池"></p>
+<ul>
+<li>模型凭据：骨架高度一致（凭据边界提示条、掩码 Key、替换 Key）。【中】原型“未授权角色锁定态”未见卡片级表达；【中】搜索无结果空态未确认。</li>
+<li>Agent 资产：统计卡、“Git 是唯一来源”、添加源流程文案一致。【严重】线上无资产源卡片列表（状态标签/默认 Ref/commit 快照/扫描·查看资产操作），当前环境数据全为 0，需验证是结构缺失还是空态；【中】“运行时前置缺失”（OpenSpec）边界状态未见。</li>
+<li>资源池：统计卡 + 双页签结构一致。【中】原型“利用率 / 今日成本 / 彩色容量分段（含排队黄色）”被“池上限/在线/忙碌/扩容中”原始数值替代，<strong>容量不足与排队风险可视化弱化</strong>（违背 README 状态矩阵“容量不足”表达）；【中】资源连接“密钥锁定态 + 权限申请”未见；【低·增强】线上新增编辑、心跳/检查时间、价格阈值等真实运维字段。</li>
+</ul>
+<h2>6. 评测流程 — 结果侧能力明显缩水 ❌</h2>
+<h3>6.1 任务列表</h3>
+<p><img src="shots/proto_evals.png" alt="原型评测列表"> <img src="shots/live_evals.png" alt="线上评测列表"></p>
+<ul>
+<li>【严重】原型顶部统计卡 + 搜索 + 状态/数据集筛选缺失，任务多时只能滚动查找。</li>
+<li>【严重】列表列缺 Agent/模型、数据集版本、<strong>核心指标（解决率）</strong>——横向对比评测效果的信息缺失。</li>
+<li>【中】原型有“部分成功”状态；线上仅运行中/失败/已完成/已取消，部分失败任务可能被笼统表达（违背“避免伪装成全量成功”设计取舍）。</li>
+<li>【低·增强】线上行内“取消”更直接。</li>
+</ul>
+<h3>6.2 发起评测向导</h3>
+<p><img src="shots/proto_evals_new.png" alt="原型向导"> <img src="shots/live_evals_new.png" alt="线上向导"></p>
+<ul>
+<li>一致：四步 Stepper 命名、左步骤 + 右“评测摘要”双栏、数据集卡片选择、用例范围。</li>
+<li>【中】原型摘要含<strong>预计费用 ¥126-158 / 峰值并发 / 总耗时</strong>；线上“确认后计算 / —”，启动前无成本预期（关联 m5-10 计费特性未接入前端）。</li>
+<li>【中】原型 Agent 资产必选；线上改为“可选（仅使用内置能力）”——流程语义变化，建议确认设计意图。</li>
+<li>【低】数据集选择从双卡片改为“下拉选数据集 → 选版本卡片”，更贴合真实数据但引导性弱。</li>
+</ul>
+<h3>6.3 评测详情</h3>
+<p><img src="shots/proto_evals_eval-001.png" alt="原型评测详情"> <img src="shots/live_eval_detail.png" alt="线上评测详情Drawer"></p>
+<ul>
+<li>【严重】原型为独立路由详情页，五个页签（实时进展/用例明细/结果分析/评测配置/事件日志）；线上是列表页右侧 <strong>Drawer 单列堆叠</strong>。<code>routes.tsx</code> 的 <code>/evals/:id</code> 与 <code>EvalDetailPage.tsx</code> 存在但入口不可达（死代码）。</li>
+<li>【严重】原型 4 张统计卡 + 状态堆叠进度条（图例/预计完成/失败警示）+ 模型/资源池/并发/成本面板；线上仅一行文本计数，解决率、成本、分状态堆叠全部缺失。</li>
+<li>【中】无“重试失败用例”；用例表无分页（20/50/100）/状态筛选/搜索；“部分成功”表达缺失。</li>
+<li>【低·增量】线上多出“分片派发对账”表（shard/attempt/outbox/GitHub）与 attempt 级心跳时间线，是针对真实调度链路的高价值增强，<strong>建议反哺原型</strong>。</li>
+</ul>
+<h3>6.4 会话轨迹 — 整页缺失 ❌</h3>
+<p><img src="shots/proto_trace_eval-001_django__django-11019.png" alt="原型轨迹页"></p>
+<ul>
+<li>线上<strong>无任何对应路由</strong>。原型三栏结构（左会话树 + 中 span waterfall + 右 gen_ai.* 属性）及“轨迹降级保留原始 JSONL/SQLite 入口”均无落点。</li>
+<li>影响：README 主路径“点击用例进入会话轨迹”断裂，失败根因（如 heartbeat_timeout）无法定位；M6 系列采集/归一化特性在前端没有出口。</li>
+</ul>
+<h2>7. 交付流水线与运营状态 ❌➕</h2>
+<p><img src="shots/proto_deployment.png" alt="原型交付流水线"> <img src="shots/live_deployments.png" alt="线上占位页"> <img src="shots/live_operations.png" alt="线上运营状态"></p>
+<ul>
+<li>【严重】线上 <code>/deployments</code> 为占位页：五阶段流水线时间线、部署历史、<strong>回滚危险操作</strong>全部缺失（关联 m2-02 特性）。</li>
+<li>【中】原型部署页内嵌的环境健康（ECS/RDS/OSS/Redis）被拆分为独立 <code>/operations</code>“运营状态”页（7/7 服务状态、数据库迁移、调度队列，RequireAdmin + 30s 刷新）——架构拆分合理，但“部署健康与版本/回滚同页”的用户心智路径变化。</li>
+</ul>
+<hr>
+<h2>8. 差异总表（按严重度）</h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>页面</th>
+<th>差异</th>
+<th>严重度</th>
+<th>性质</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1</td>
+<td>会话轨迹</td>
+<td>整页/路由缺失，轨迹查看链路断裂</td>
+<td>严重</td>
+<td>疑似部署滞后（m6-05 已在 main）</td>
+</tr>
+<tr>
+<td>2</td>
+<td>交付流水线</td>
+<td>占位页，流水线/历史/回滚缺失</td>
+<td>严重</td>
+<td>阶段性未实现（m2-02 已开发）</td>
+</tr>
+<tr>
+<td>3</td>
+<td>数据集目录</td>
+<td>卡片目录→简单表格，筛选/分页/指标全无</td>
+<td>严重</td>
+<td>结构性偏离</td>
+</tr>
+<tr>
+<td>4</td>
+<td>数据集详情</td>
+<td>用例表无搜索/筛选/分页</td>
+<td>严重</td>
+<td>结构性偏离</td>
+</tr>
+<tr>
+<td>5</td>
+<td>数据集导入</td>
+<td>文件上传→解析校验流程缺失</td>
+<td>严重</td>
+<td>结构性偏离</td>
+</tr>
+<tr>
+<td>6</td>
+<td>评测详情</td>
+<td>独立页→Drawer；指标/结果分析/重试缺失；死路由</td>
+<td>严重</td>
+<td>结构性偏离 + 部署滞后</td>
+</tr>
+<tr>
+<td>7</td>
+<td>评测列表</td>
+<td>统计卡/筛选/解决率列缺失；“部分成功”缺失</td>
+<td>严重</td>
+<td>部分滞后 + 部分偏离</td>
+</tr>
+<tr>
+<td>8</td>
+<td>发起评测</td>
+<td>成本预估缺失；资产改可选</td>
+<td>中</td>
+<td>滞后 + 待确认的设计变更</td>
+</tr>
+<tr>
+<td>9</td>
+<td>总览</td>
+<td>解决率/成本指标缺失；运行下钻卡缺失</td>
+<td>中</td>
+<td>滞后</td>
+</tr>
+<tr>
+<td>10</td>
+<td>资源池</td>
+<td>成本/利用率/排队可视化弱化；锁定态缺失</td>
+<td>中</td>
+<td>表达偏离</td>
+</tr>
+<tr>
+<td>11</td>
+<td>Agent 资产</td>
+<td>源卡片结构未验证（环境空数据）</td>
+<td>严重(待验证)</td>
+<td>待验证</td>
+</tr>
+<tr>
+<td>12</td>
+<td>模型凭据</td>
+<td>权限锁定态、空态未确认</td>
+<td>中</td>
+<td>待验证</td>
+</tr>
+<tr>
+<td>13</td>
+<td>运营状态</td>
+<td>新增页，原型无对应</td>
+<td>增量</td>
+<td>合理增强</td>
+</tr>
+<tr>
+<td>14</td>
+<td>评测详情</td>
+<td>分片派发对账 + attempt 时间线</td>
+<td>增量</td>
+<td>高价值增强，建议反哺原型</td>
+</tr>
+</tbody></table>
+<h2>9. 建议优先级</h2>
+<ol>
+<li><strong>核实部署版本</strong>：线上显示“M3 建设中”，先确认 47.98.144.243 是否落后于 main——轨迹页、详情页、成本指标等差异可能随部署收窄。</li>
+<li><strong>补齐结果侧</strong>：评测详情恢复独立路由/直链（清理或启用 <code>/evals/:id</code>），接入解决率、成本、状态堆叠、重试；用例明细分页/筛选/搜索。</li>
+<li><strong>补齐轨迹查看器</strong>（m6-05）部署与入口：从评测详情用例行进入会话轨迹。</li>
+<li><strong>数据集域重构对齐原型</strong>：目录卡片化 + 筛选分页；详情用例浏览；导入文件上传→校验流程。</li>
+<li><strong>交付流水线页</strong>（含回滚危险操作说明）按原型补齐。</li>
+<li><strong>边界状态补课</strong>：空态（凭据搜索无结果）、无权限锁定态（连接密钥）、运行时前置缺失（OpenSpec）、容量不足排队风险可视化。</li>
+<li><strong>确认两个设计变更是否有意</strong>：数据集从“评测”移入“配置”分组；发起评测资产改可选。</li>
+</ol>
+<h2>10. 方法说明</h2>
+<ul>
+<li>原型：<code>prototype/index.html</code> 经无头 Chrome 按 hash 路由逐页截图（登录态内存注入）。</li>
+<li>线上：无头 Chrome 使用真实账号登录，遍历侧边栏全部路由；数据集详情与评测详情通过点击行/按钮进入（评测详情为 Drawer）。</li>
+<li>差异结论均结合 <code>web/src/pages/*</code>、<code>web/src/app/routes.tsx</code> 源码交叉确认，避免把环境数据差异误判为设计差异。</li>
+</ul>
+
+</div></body></html>
