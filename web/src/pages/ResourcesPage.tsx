@@ -51,7 +51,7 @@ import { Icon } from "../components/Icon";
 import { PageHeading } from "../components/PageHeading";
 import { QueryError } from "../components/QueryError";
 import { StatusCard } from "../components/StatusCard";
-import { formatUnitPrice } from "../utils/money";
+import { formatMoney, formatUnitPrice } from "../utils/money";
 
 type TabKey = "pools" | "connections";
 
@@ -182,14 +182,33 @@ function relativeTime(value: string | null | undefined): string {
   return `${Math.round(hours / 24)} 天前`;
 }
 
-function statusTag(status: string, labels: Record<string, { label: string; tone: string }>) {
-  const meta = labels[status] ?? { label: status || "未知", tone: "neutral" };
+function tagBadge(meta: { label: string; tone: string }) {
   return (
     <span className={`tag tag-${meta.tone}`}>
       <span className="status-dot" aria-hidden="true" />
       {meta.label}
     </span>
   );
+}
+
+function statusTag(status: string, labels: Record<string, { label: string; tone: string }>) {
+  const meta = labels[status] ?? { label: status || "未知", tone: "neutral" };
+  return tagBadge(meta);
+}
+
+/**
+ * A pool is "ready" when it has capacity to schedule work and "auto-scaling"
+ * while the capacity controller is creating instances. This is derived from the
+ * capacity snapshot, not from the generic lifecycle status, so the tag matches
+ * what the operator sees in the events.
+ */
+function poolStatusMeta(pool: ResourcePool): { label: string; tone: string } {
+  if (pool.status === "disabled") return { label: "已停用", tone: "neutral" };
+  const state = pool.capacity_state;
+  if (state.starting_instances > 0 || state.capacity_reason === "capacity_scale_up") {
+    return { label: "自动扩容中", tone: "primary" };
+  }
+  return { label: "就绪", tone: "success" };
 }
 
 function providerLabel(provider: string): string {
@@ -295,18 +314,33 @@ export function ResourcesPage() {
   const testPool = pools.find((pool) => pool.id === testPoolId);
 
   const summary = useMemo(() => {
-    return pools.reduce(
+    const totals = pools.reduce(
       (total, pool) => {
         total.live += liveRunners(pool.runners);
         total.busy += pool.runners.busy;
         total.offline += pool.runners.offline;
         total.capacity += pool.max_capacity;
         total.starting += pool.capacity_state.starting_instances;
-        total.queued += pool.capacity_state.queued_attempts;
+        total.costToday += Number(pool.usage.cost.today_cny) || 0;
+        total.costSpot += Number(pool.usage.cost.spot_cny) || 0;
+        total.unpricedInstances += pool.usage.cost.unpriced_instance_count;
         return total;
       },
-      { live: 0, busy: 0, offline: 0, capacity: 0, starting: 0, queued: 0 },
+      {
+        live: 0,
+        busy: 0,
+        offline: 0,
+        capacity: 0,
+        starting: 0,
+        costToday: 0,
+        costSpot: 0,
+        unpricedInstances: 0,
+      },
     );
+    return {
+      ...totals,
+      utilization: totals.capacity > 0 ? totals.busy / totals.capacity : 0,
+    };
   }, [pools]);
 
   const attentionPools = pools.filter(
@@ -314,7 +348,8 @@ export function ResourcesPage() {
       pool.capacity_state.capacity_reason === "resource_price_above_threshold" ||
       pool.capacity_state.capacity_reason === "resource_inventory_insufficient" ||
       pool.capacity_state.capacity_reason === "resource_provider_auth_failed" ||
-      pool.capacity_state.capacity_reason === "resource_account_balance_insufficient",
+      pool.capacity_state.capacity_reason === "resource_account_balance_insufficient" ||
+      pool.usage.queue_risk.at_risk,
   ).length;
 
   const refreshAll = () => {
@@ -363,7 +398,8 @@ export function ResourcesPage() {
             <Icon name="alert" size={15} />
             <div>
               <strong>{attentionPools} 个资源池需要关注。</strong>
-              卡片下方的排队原因会说明是价格、库存、认证还是容量导致等待；排队用例不会被判失败。
+              卡片下方的排队原因会说明是价格、库存、认证还是容量导致等待；在线 Runner
+              接近池上限且存在排队 Job 时会显示排队风险，排队用例不会被判失败。
             </div>
           </div>
         ) : null}
@@ -410,10 +446,7 @@ export function ResourcesPage() {
                         {providerLabel(connection?.provider ?? pool.provider_key)}
                       </div>
                     </div>
-                    {statusTag(pool.status, {
-                      active: { label: "运行中", tone: "success" },
-                      disabled: { label: "已停用", tone: "neutral" },
-                    })}
+                    {tagBadge(poolStatusMeta(pool))}
                   </div>
 
                   <div className="row-between small">
@@ -423,18 +456,39 @@ export function ResourcesPage() {
                     </strong>
                   </div>
 
-                  <RunnerDots summary={pool.runners} capacity={pool.max_capacity} />
+                  <PoolCapacityBar pool={pool} />
+
+                  {pool.usage.queue_risk.at_risk ? (
+                    <div className="banner warning resource-reason" role="status">
+                      <Icon name="alert" size={15} />
+                      <div>
+                        <strong>排队风险。</strong>
+                        排队 {numberFormat.format(pool.usage.queue_risk.queued_attempts)} 个
+                        Job（预警阈值 {pool.usage.queue_risk.threshold}），在线{" "}
+                        {pool.usage.queue_risk.live_runners} / {pool.max_capacity} Runner
+                        已接近或达到池上限；扩容完成后会自动继续调度，排队用例不会被判失败。
+                      </div>
+                    </div>
+                  ) : null}
 
                   <div className="pool-stats">
-                    <PoolStat label="池上限" value={pool.max_capacity} />
-                    <PoolStat label="在线" value={pool.runners.online + pool.runners.busy} />
-                    <PoolStat label="忙碌" value={pool.runners.busy} />
-                    <PoolStat label="扩容中" value={state.starting_instances} />
+                    <PoolStat label="在线" value={liveRunners(pool.runners)} tone="online" />
+                    <PoolStat label="忙碌" value={pool.runners.busy} tone="busy" />
+                    <PoolStat label="排队" value={state.queued_attempts} tone="queued" />
+                    <PoolStat
+                      label="离线"
+                      value={pool.runners.offline + pool.runners.draining}
+                      tone="offline"
+                    />
+                    <PoolStat label="扩容中" value={state.starting_instances} tone="starting" />
                   </div>
 
                   <div className="pool-meta">
                     <PoolMeta label="容量区间" value={`${pool.min_capacity} – ${pool.max_capacity}`} />
-                    <PoolMeta label="排队 Job" value={numberFormat.format(state.queued_attempts)} />
+                    <PoolMeta
+                      label="今日资源成本"
+                      value={formatMoney(pool.usage.cost.today_cny)}
+                    />
                     <PoolMeta
                       label="当前价格 / 阈值（CNY/小时）"
                       value={`${formatUnitPrice(state.price_cny)} / ${formatUnitPrice(
@@ -600,7 +654,9 @@ export function ResourcesPage() {
           value={`${summary.live} / ${summary.capacity}`}
           meta={
             <span>
-              {summary.busy} 台忙碌 · {summary.offline} 台离线
+              {summary.starting > 0
+                ? `${summary.starting} 台正在扩容`
+                : `${summary.busy} 台忙碌 · ${summary.offline} 台离线`}
             </span>
           }
           icon="server"
@@ -608,32 +664,34 @@ export function ResourcesPage() {
           loading={loading && pools.length === 0}
         />
         <StatusCard
-          label="池上限"
+          label="最大并发"
           value={numberFormat.format(summary.capacity)}
           meta={<span>{pools.length} 个资源池 · 单 Runner 单 Job</span>}
           icon="cpu"
           loading={loading && pools.length === 0}
         />
         <StatusCard
-          label="扩容中实例"
-          value={numberFormat.format(summary.starting)}
-          meta={<span>创建完成后注册为临时 Runner</span>}
-          icon="cloud"
-          tone={summary.starting > 0 ? "violet" : "primary"}
+          label="当前利用率"
+          value={`${Math.round(summary.utilization * 100)}%`}
+          meta={<span>{summary.busy} 个 Job 执行中</span>}
+          icon="play"
+          tone="violet"
           loading={loading && pools.length === 0}
         />
         <StatusCard
-          label="排队 Job"
-          value={numberFormat.format(summary.queued)}
+          label="今日资源成本"
+          value={formatMoney(summary.costToday)}
           meta={
             <span>
-              {attentionPools > 0
-                ? `${attentionPools} 个池因价格/库存/容量等待`
-                : "无容量阻塞"}
+              {summary.unpricedInstances > 0
+                ? `${summary.unpricedInstances} 台实例缺少价格快照`
+                : summary.costSpot > 0
+                  ? `竞价实例 ${formatMoney(summary.costSpot)}`
+                  : "暂无云实例计费"}
             </span>
           }
-          icon="pulse"
-          tone={summary.queued > 0 ? "warning" : "success"}
+          icon="cloud"
+          tone="warning"
           loading={loading && pools.length === 0}
         />
       </div>
@@ -752,11 +810,22 @@ export function ResourcesPage() {
 // Small presentational pieces
 // ---------------------------------------------------------------------------
 
-function PoolStat({ label, value }: { label: string; value: number | string }) {
+function PoolStat({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number | string;
+  tone?: "online" | "busy" | "queued" | "offline" | "starting";
+}) {
   return (
     <div className="pool-stat">
       <div className="pool-stat-value">{value}</div>
-      <div className="pool-stat-label">{label}</div>
+      <div className="pool-stat-label">
+        {tone ? <span className={`capacity-dot ${tone}`} aria-hidden="true" /> : null}
+        {label}
+      </div>
     </div>
   );
 }
@@ -770,36 +839,52 @@ function PoolMeta({ label, value }: { label: string; value: string }) {
   );
 }
 
-function RunnerDots({
-  summary,
-  capacity,
-}: {
-  summary: RunnerSummary;
-  capacity: number;
-}) {
-  const slots = Math.min(Math.max(capacity, 1), 16);
-  const dots: Array<{ tone: string; title: string }> = [];
-  for (let index = 0; index < summary.busy && dots.length < slots; index += 1) {
-    dots.push({ tone: "busy", title: "忙碌 Runner" });
-  }
-  for (let index = 0; index < summary.online && dots.length < slots; index += 1) {
-    dots.push({ tone: "online", title: "在线 Runner" });
-  }
-  for (let index = 0; index < summary.draining && dots.length < slots; index += 1) {
-    dots.push({ tone: "draining", title: "排空中 Runner" });
-  }
-  for (let index = 0; index < Math.min(summary.offline, slots) && dots.length < slots; index += 1) {
-    dots.push({ tone: "offline", title: "离线 Runner" });
-  }
-  while (dots.length < slots) {
-    dots.push({ tone: "empty", title: "空闲容量" });
-  }
-  const description = `在线 ${summary.online}，忙碌 ${summary.busy}，离线 ${summary.offline}，池上限 ${capacity}`;
+/**
+ * Colored segmented capacity bar (M5-19).
+ *
+ * Each segment is a runner/job state the operator can act on: online (idle),
+ * busy (executing), queued (waiting job), offline (including draining), and
+ * starting (capacity controller creating instances). Empty capacity is the
+ * track. The stat row below the bar repeats the same counts with matching
+ * colored dots, and the aria label spells them out for screen readers.
+ */
+function PoolCapacityBar({ pool }: { pool: ResourcePool }) {
+  const { runners, capacity_state: state } = pool;
+  const online = runners.online;
+  const busy = runners.busy;
+  const offline = runners.offline + runners.draining;
+  const starting = state.starting_instances;
+  const queued = state.queued_attempts;
+  const occupied = online + busy + offline + starting;
+  const empty = Math.max(pool.max_capacity - occupied, 0);
+  const segments = [
+    { key: "busy", label: "忙碌", count: busy, tone: "busy" },
+    { key: "online", label: "在线", count: online, tone: "online" },
+    { key: "queued", label: "排队", count: queued, tone: "queued" },
+    { key: "offline", label: "离线", count: offline, tone: "offline" },
+    { key: "starting", label: "扩容中", count: starting, tone: "starting" },
+    { key: "empty", label: "空闲容量", count: empty, tone: "empty" },
+  ];
+  const description = segments
+    .filter((segment) => segment.count > 0)
+    .map((segment) => `${segment.label} ${segment.count}`)
+    .join("，");
   return (
-    <div className="runner-dots" role="img" aria-label={description}>
-      {dots.map((dot, index) => (
-        <span className={`runner-dot ${dot.tone}`} title={dot.title} key={index} />
-      ))}
+    <div
+      className="capacity-bar"
+      role="img"
+      aria-label={`资源池容量构成：${description || "暂无数据"}`}
+    >
+      {segments
+        .filter((segment) => segment.count > 0)
+        .map((segment) => (
+          <span
+            key={segment.key}
+            className={`capacity-seg ${segment.tone}`}
+            style={{ flexGrow: segment.count }}
+            title={`${segment.label} ${segment.count}`}
+          />
+        ))}
     </div>
   );
 }
@@ -1673,10 +1758,7 @@ function PoolDetailDrawer({
                 {detail.runner_group ? ` · Runner 组 ${detail.runner_group}` : ""}
               </div>
             </div>
-            {statusTag(detail.status, {
-              active: { label: "运行中", tone: "success" },
-              disabled: { label: "已停用", tone: "neutral" },
-            })}
+            {tagBadge(poolStatusMeta(detail))}
           </div>
 
           <div className="pool-stats detail-stats">
@@ -1708,6 +1790,14 @@ function PoolDetailDrawer({
             <PoolMeta
               label="离线 / 排空"
               value={`${detail.runners.offline} / ${detail.runners.draining}`}
+            />
+            <PoolMeta
+              label="当前利用率"
+              value={`${Math.round(detail.usage.utilization.ratio * 100)}%`}
+            />
+            <PoolMeta
+              label="今日资源成本"
+              value={formatMoney(detail.usage.cost.today_cny)}
             />
           </div>
 

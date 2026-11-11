@@ -21,6 +21,7 @@ from decimal import Decimal
 from sqlalchemy.orm import Session
 
 from ...models import Connection, ProvisionedInstance, ResourcePool
+from ...money import money_str
 from . import (
     CAPABILITY_ECS_INVENTORY,
     CAPABILITY_ECS_SPOT,
@@ -128,6 +129,11 @@ class FakeProvisioner:
             spot_strategy="spot" if spec.spot else None,
             cost_json={},
         )
+        # Snapshot the CNY/hour quote at creation so today's cost can be
+        # recomputed without re-quoting the provider (M5-19).
+        price = money_str(pool.price_cny)
+        if price is not None:
+            instance.cost_json = {"price_cny": price}
         session.add(instance)
         session.flush()
         return instance

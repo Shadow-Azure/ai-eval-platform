@@ -56,6 +56,41 @@ export interface CapacityState {
   next_check_at: string | null;
 }
 
+export interface PoolUtilization {
+  /** busy runners / max_capacity, 0–1 */
+  ratio: number;
+  busy_runners: number;
+  live_runners: number;
+  capacity: number;
+}
+
+export interface PoolCost {
+  today_cny: string;
+  spot_cny: string;
+  fixed_cny: string;
+  instance_count: number;
+  unpriced_instance_count: number;
+  window_start: string | null;
+  window_end: string | null;
+  basis: string;
+}
+
+export interface PoolQueueRisk {
+  at_risk: boolean;
+  queued_attempts: number;
+  threshold: number;
+  near_capacity: boolean;
+  live_runners: number;
+  capacity: number;
+  live_ratio: number;
+}
+
+export interface PoolUsage {
+  utilization: PoolUtilization;
+  cost: PoolCost;
+  queue_risk: PoolQueueRisk;
+}
+
 export interface ResourcePool {
   id: string;
   project_id: string;
@@ -76,6 +111,7 @@ export interface ResourcePool {
   next_check_at: string | null;
   capacity_state: CapacityState;
   runners: RunnerSummary;
+  usage: PoolUsage;
 }
 
 export interface ResourceEventItem {
@@ -232,6 +268,40 @@ export function parseCapacityState(value: unknown): CapacityState {
   };
 }
 
+function parseUsage(value: unknown): PoolUsage {
+  const usage = record(value) ?? {};
+  const utilization = record(usage.utilization) ?? {};
+  const cost = record(usage.cost) ?? {};
+  const queueRisk = record(usage.queue_risk) ?? {};
+  return {
+    utilization: {
+      ratio: number(utilization.ratio),
+      busy_runners: number(utilization.busy_runners),
+      live_runners: number(utilization.live_runners),
+      capacity: number(utilization.capacity),
+    },
+    cost: {
+      today_cny: text(cost.today_cny, "0"),
+      spot_cny: text(cost.spot_cny, "0"),
+      fixed_cny: text(cost.fixed_cny, "0"),
+      instance_count: number(cost.instance_count),
+      unpriced_instance_count: number(cost.unpriced_instance_count),
+      window_start: optionalText(cost.window_start),
+      window_end: optionalText(cost.window_end),
+      basis: text(cost.basis),
+    },
+    queue_risk: {
+      at_risk: queueRisk.at_risk === true,
+      queued_attempts: number(queueRisk.queued_attempts),
+      threshold: number(queueRisk.threshold),
+      near_capacity: queueRisk.near_capacity === true,
+      live_runners: number(queueRisk.live_runners),
+      capacity: number(queueRisk.capacity),
+      live_ratio: number(queueRisk.live_ratio),
+    },
+  };
+}
+
 function parseConnection(value: Dictionary): ResourceConnection {
   return {
     id: text(value.id),
@@ -266,6 +336,7 @@ function parsePool(value: Dictionary): ResourcePool {
     next_check_at: optionalText(value.next_check_at),
     capacity_state: parseCapacityState(value.capacity_state),
     runners: parseRunnerSummary(value.runners),
+    usage: parseUsage(value.usage),
   };
 }
 

@@ -327,7 +327,7 @@ def test_create_embeds_jit_in_user_data_only(
     session: Session, scope: dict[str, str], clock: datetime
 ) -> None:
     connection = _connection(session, scope)
-    pool = _pool(session, scope, connection)
+    pool = _pool(session, scope, connection, price_cny=Decimal("0.5000"))
     transport = FakeAliyun()
     registrar = FakeRegistrar()
     provisioner = _provisioner(transport=transport, registrar=registrar)
@@ -344,6 +344,7 @@ def test_create_embeds_jit_in_user_data_only(
     assert instance.status == "creating"
     assert instance.spot_strategy == "spot"
     assert instance.cost_json["runner_name"].startswith("spot-")
+    assert instance.cost_json["price_cny"] == "0.5000"
     assert registrar.generated[0]["labels"] == ["self-hosted", "linux", "eval"]
     # JIT is embedded in the bootstrap cloud-init file and nowhere else.
     run_call = next(call for call in transport.calls if call[0] == "RunInstances")

@@ -9,6 +9,7 @@ from .api.agent_assets import router as agent_assets_router
 from .api.auth import router as auth_router
 from .api.datasets import router as datasets_router
 from .api.dependencies import require_session
+from .api.deployments import router as deployments_router
 from .api.eval_workbench import router as eval_workbench_router
 from .api.evaluations import router as evaluations_router
 from .api.health import router as health_router
@@ -74,6 +75,9 @@ def create_app() -> FastAPI:
     # (enforced in the router); the session dependency is kept for consistency
     # with the other console APIs.
     app.include_router(operations_router, dependencies=[Depends(require_session)])
+    # Delivery pipeline: members can read, only administrators can request the
+    # controlled rollback (enforced per route in the router, M5-18).
+    app.include_router(deployments_router)
     # The model gateway authenticates its own short-lived runner tokens.
     app.include_router(model_gateway_router)
     return app

@@ -43,7 +43,7 @@ from .identity import (
     Workspace,
 )
 from .model import CREDENTIAL_KINDS, USAGE_STATUSES, Credential, ModelConfig, ModelUsage
-from .operations import ServiceHeartbeat
+from .operations import DEPLOYMENT_STATUSES, Deployment, ServiceHeartbeat
 from .outbox import Outbox
 from .resources import (
     CONNECTION_STATUSES,
@@ -79,6 +79,8 @@ __all__ = [
     "AuditLog",
     "Outbox",
     "ServiceHeartbeat",
+    "Deployment",
+    "DEPLOYMENT_STATUSES",
     "AgentAssetSource",
     "AgentAssetSnapshot",
     "AgentAsset",
