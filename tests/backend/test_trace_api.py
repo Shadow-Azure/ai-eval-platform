@@ -363,6 +363,7 @@ def test_raw_file_download_requires_admin_writes_audit_and_is_short_lived(
     response = client.post(f"/api/v1/trace-files/{file.id}/download-url")
 
     assert response.status_code == 200, response.text
+    assert response.headers["cache-control"] == "no-store"
     body = response.json()
     assert body["file"]["id"] == file.id
     assert "object_key" not in body["file"]
@@ -431,6 +432,7 @@ def test_large_span_content_requires_admin_and_is_audited(
     response = client.post(f"/api/v1/trace-spans/{thinking_id}/content-url")
 
     assert response.status_code == 200, response.text
+    assert response.headers["cache-control"] == "no-store"
     assert "X-Amz-Expires=300" in response.json()["url"]
     assert "full private content" not in response.text
     assert "content_object_key" not in response.text

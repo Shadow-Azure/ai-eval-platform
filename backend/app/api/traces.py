@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -112,6 +112,7 @@ def get_trace_span(
 @router.post("/api/v1/trace-files/{file_id}/download-url")
 def create_trace_file_download_url(
     file_id: str,
+    response: Response,
     session: Session = Depends(get_session),
     settings: Settings = Depends(get_settings),
     context: identity.AuthContext = Depends(require_admin),
@@ -151,6 +152,8 @@ def create_trace_file_download_url(
         },
     )
     session.commit()
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Referrer-Policy"] = "no-referrer"
     return {
         "url": url,
         "expires_at": expires_at.isoformat().replace("+00:00", "Z"),
@@ -173,6 +176,7 @@ def create_trace_file_download_url(
 @router.post("/api/v1/trace-spans/{span_id}/content-url")
 def create_trace_span_content_url(
     span_id: str,
+    response: Response,
     session: Session = Depends(get_session),
     settings: Settings = Depends(get_settings),
     context: identity.AuthContext = Depends(require_admin),
@@ -212,6 +216,8 @@ def create_trace_span_content_url(
         },
     )
     session.commit()
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Referrer-Policy"] = "no-referrer"
     return {
         "url": url,
         "expires_at": expires_at.isoformat().replace("+00:00", "Z"),
