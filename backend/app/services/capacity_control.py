@@ -620,7 +620,16 @@ def _scale_down(
     settings: Settings,
     now: datetime,
 ) -> int:
-    excess = int(state["idle_runners"]) - pool.min_capacity
+    # Keep idle runners that queued shards still need, and enough to honour
+    # min_capacity after the busy ones. Releasing on `idle - min` alone frees
+    # every runner as soon as it registers, even with work waiting, so the
+    # spot runner never gets a chance to pick its job.
+    idle = int(state["idle_runners"])
+    live = int(state["live_runners"])
+    queued = int(state["queued_attempts"])
+    busy = max(0, live - idle)
+    keep_for_min = max(0, int(pool.min_capacity) - busy)
+    excess = idle - queued - keep_for_min
     if excess <= 0:
         return 0
 

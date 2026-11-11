@@ -74,20 +74,22 @@ export DEBIAN_FRONTEND=noninteractive
 # is sent to a third party.
 RUNNER_TARBALL_TOKEN={shlex.quote(runner_tarball_token or "")}
 apt-get update -y
-apt-get install -y --no-install-recommends ca-certificates curl git jq docker.io libicu-dev
+apt-get install -y --no-install-recommends ca-certificates curl git jq docker.io libicu-dev xz-utils
 systemctl enable --now docker
 
 # The eval-shard workflow runs Node on the runner host: the prepare job
 # validates the dispatch contract and plans the matrix (contracts.mjs,
-# plan-cases.mjs) and every execute job runs real-task.mjs. The distro Node
-# is too old on some images, so install Node 22 from NodeSource. Keep the
-# downloads bounded so a slow mirror cannot hang cloud-init past the runner
+# plan-cases.mjs) and every execute job runs real-task.mjs. Install Node 22
+# from the npmmirror CDN: NodeSource/apt rate-limits a burst of five fresh
+# instances sharing one NAT, which left most boots without Node. Keep the
+# download bounded so a slow mirror cannot hang cloud-init past the runner
 # registration timeout; a bootstrap failure leaves a diagnosable
 # register_timeout instead of a silently idle instance.
-curl -fsSL --max-time 120 --retry 2 -o /tmp/nodesource_setup.sh \\
-  https://deb.nodesource.com/setup_22.x
-bash /tmp/nodesource_setup.sh
-apt-get install -y --no-install-recommends nodejs
+NODE_VERSION=22.11.0
+curl -fsSL --max-time 300 --retry 3 --retry-delay 5 -o /tmp/node.tar.xz \\
+  "https://npmmirror.com/mirrors/node/v${{NODE_VERSION}}/node-v${{NODE_VERSION}}-linux-x64.tar.xz"
+tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1
+rm -f /tmp/node.tar.xz
 node --version
 
 mkdir -p /opt/actions-runner /etc/eval
@@ -135,7 +137,12 @@ RUNNER_UNIT
 cat > /etc/systemd/system/eval-heartbeat.service <<'HEARTBEAT_UNIT'
 [Unit]
 Description=AI Eval Platform spot runner heartbeat
-After=network-online.target
+# The GitHub runner is ephemeral: it exits after one job. Bind the heartbeat to
+# its lifetime so the platform stops seeing a phantom online runner once the
+# runner is gone (otherwise the capacity gate keeps counting a runner GitHub no
+# longer has, and queued execute jobs never get picked).
+BindsTo=github-runner.service
+After=network-online.target github-runner.service
 Wants=network-online.target
 
 [Service]
@@ -158,8 +165,10 @@ ExecStart=/bin/bash /etc/eval/cleanup.sh
 CLEANUP_UNIT
 
 systemctl daemon-reload
-systemctl enable --now eval-heartbeat.service
+# Start the runner first: the heartbeat unit is bound to it and must not linger
+# after the ephemeral runner exits.
 systemctl enable --now github-runner.service
+systemctl enable --now eval-heartbeat.service
 systemctl enable --now runner-cleanup.service
 """
 
