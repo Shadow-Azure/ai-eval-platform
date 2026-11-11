@@ -186,7 +186,8 @@ test("deploy builds and injects the content-addressed runner scripts bundle", ()
   }
   const compose = read("deploy/docker-compose.prod.yml");
   for (const name of ["NAME", "MD5", "SHA256", "SIZE"]) {
-    const expected = `RUNNER_SCRIPTS_BUNDLE_${name}: \${RUNNER_SCRIPTS_BUNDLE_${name}:-}`;
+    const fallback = name === "SIZE" ? "0" : "";
+    const expected = `RUNNER_SCRIPTS_BUNDLE_${name}: \${RUNNER_SCRIPTS_BUNDLE_${name}:-${fallback}}`;
     const mappings = compose.split("\n").filter((line) => line.includes(expected)).length;
     assert.equal(mappings, 2, `compose must pass RUNNER_SCRIPTS_BUNDLE_${name} to api and worker`);
   }

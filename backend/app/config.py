@@ -78,7 +78,7 @@ class Settings(BaseSettings):
     runner_scripts_bundle_name: str | None = None
     runner_scripts_bundle_md5: str | None = None
     runner_scripts_bundle_sha256: str | None = None
-    runner_scripts_bundle_size: int | None = None
+    runner_scripts_bundle_size: int = 0
 
     # M2-05 synthetic evaluation loop.
     # Short-term case-token secret (platform signs, runner verifies). When

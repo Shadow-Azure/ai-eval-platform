@@ -56,7 +56,7 @@ services:
       RUNNER_SCRIPTS_BUNDLE_NAME: ${RUNNER_SCRIPTS_BUNDLE_NAME:-}
       RUNNER_SCRIPTS_BUNDLE_MD5: ${RUNNER_SCRIPTS_BUNDLE_MD5:-}
       RUNNER_SCRIPTS_BUNDLE_SHA256: ${RUNNER_SCRIPTS_BUNDLE_SHA256:-}
-      RUNNER_SCRIPTS_BUNDLE_SIZE: ${RUNNER_SCRIPTS_BUNDLE_SIZE:-}
+      RUNNER_SCRIPTS_BUNDLE_SIZE: ${RUNNER_SCRIPTS_BUNDLE_SIZE:-0}
       # Runner-plane token (M2-04). Provisioned in the deploy .env; when set
       # the runner heartbeat/callback endpoints require it as a Bearer token.
       RUNNER_HEARTBEAT_TOKEN: ${RUNNER_HEARTBEAT_TOKEN:-}
@@ -138,7 +138,7 @@ services:
       RUNNER_SCRIPTS_BUNDLE_NAME: ${RUNNER_SCRIPTS_BUNDLE_NAME:-}
       RUNNER_SCRIPTS_BUNDLE_MD5: ${RUNNER_SCRIPTS_BUNDLE_MD5:-}
       RUNNER_SCRIPTS_BUNDLE_SHA256: ${RUNNER_SCRIPTS_BUNDLE_SHA256:-}
-      RUNNER_SCRIPTS_BUNDLE_SIZE: ${RUNNER_SCRIPTS_BUNDLE_SIZE:-}
+      RUNNER_SCRIPTS_BUNDLE_SIZE: ${RUNNER_SCRIPTS_BUNDLE_SIZE:-0}
       # M2-05: the worker consumes the shard-dispatch outbox and needs the
       # same GitHub dispatch credential as the API.
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
