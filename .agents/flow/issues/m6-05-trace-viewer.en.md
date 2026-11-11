@@ -6,7 +6,7 @@ English | [中文](m6-05-trace-viewer.md)
 kind: issue
 milestone: m6
 priority: P0
-status: in-progress
+status: done
 scope:
   - .agents/flow/issues/m6-05-trace-viewer.*
   - .agents/flow/milestones/m6-trace-diagnosis.*
