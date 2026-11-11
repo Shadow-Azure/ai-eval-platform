@@ -177,6 +177,55 @@ def test_dispatch_freezes_custom_pool_labels(seeded: Session, configure_settings
         assert manifest["runs_on"] == ["self-hosted", "gpu", "eval"]
 
 
+def test_dispatch_ignores_legacy_fixed_pool_marker(
+    seeded: Session, configure_settings
+) -> None:
+    """A legacy ``{"kind": "fixed"}`` marker must not become the execute label."""
+
+    configure_settings()
+    run, _ = create_eval(seeded, shard_size=8, idempotency_key="legacy-fixed-labels")
+    pool = ResourcePool(
+        id="pool-legacy-fixed",
+        tenant_id=str(DEFAULT_TENANT_ID),
+        project_id=str(DEFAULT_PROJECT_ID),
+        name="legacy-fixed",
+        provider_key="fixed",
+        provisioning_mode="fixed",
+        labels_json={"kind": "fixed"},
+    )
+    seeded.add(pool)
+    seeded.flush()
+    run.resource_pool_id = pool.id
+    seeded.flush()
+
+    cases = list(
+        seeded.scalars(
+            select(EvalCaseRun)
+            .where(EvalCaseRun.eval_run_id == run.id)
+            .order_by(EvalCaseRun.ordinal)
+        )
+    )
+    bundle = evaluations.build_case_dispatches(
+        seeded,
+        run=run,
+        case_runs=cases,
+        attempt_no=2,
+        shard_size=8,
+        shard_prefix="legacy-fixed",
+        settings=get_settings(),
+        now=datetime.now(UTC),
+    )
+
+    assert bundle.outbox_rows
+    for row in bundle.outbox_rows:
+        client_payload = row.payload_json["client_payload"]
+        manifest = json.loads(row.payload_json["manifest_text"])
+        validate_payload("dispatch", client_payload)
+        validate_payload("manifest", manifest)
+        assert client_payload["runs_on"] == ["self-hosted", "linux", "eval"]
+        assert manifest["runs_on"] == ["self-hosted", "linux", "eval"]
+
+
 def test_create_is_idempotent_on_client_key(seeded: Session, configure_settings) -> None:
     configure_settings()
     first, created_first = create_eval(seeded, idempotency_key="same-key")

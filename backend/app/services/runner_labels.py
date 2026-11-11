@@ -27,6 +27,12 @@ LABEL_KEYS: tuple[str, ...] = ("runs_on", "runner_labels", "labels")
 #: truncated identically on both sides instead of breaking the contract.
 MAX_LABELS = 64
 
+#: ``ensure_fixed_pool`` used to write its provider marker into ``labels_json``
+#: before pool labels were a user-facing setting. The key is metadata, not a
+#: Runner label; treating it as one made every fixed-pool shard wait for a
+#: runner labeled ``kind`` and never start.
+LEGACY_FIXED_LABELS: dict[str, str] = {"kind": "fixed"}
+
 
 def _labels(value: Any) -> list[str]:
     if isinstance(value, str):
@@ -71,7 +77,10 @@ def pool_runner_labels(
         if isinstance(pool.labels_json, Mapping) and not any(
             key in pool.labels_json for key in LABEL_KEYS
         ):
-            labels = _labels(pool.labels_json)
+            if pool.provisioning_mode == "fixed" and pool.labels_json == LEGACY_FIXED_LABELS:
+                labels = []
+            else:
+                labels = _labels(pool.labels_json)
             if labels:
                 return labels[:MAX_LABELS]
     labels = [str(item).strip() for item in fallback if str(item).strip()]
