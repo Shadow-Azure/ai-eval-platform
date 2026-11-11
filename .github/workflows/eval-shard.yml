@@ -117,7 +117,21 @@ jobs:
       cases: ${{ steps.plan.outputs.cases }}
       runs_on: ${{ steps.plan.outputs.runs_on }}
     steps:
-      - uses: actions/checkout@v4
+      # Aliyun runners occasionally lose the GitHub connection mid-clone;
+      # retry so one flaky checkout does not strand a queued case (the platform
+      # only re-queues it on the 3600s queue timeout).
+      - name: Checkout
+        id: checkout
+        uses: actions/checkout@v4
+        continue-on-error: true
+      - name: Checkout (retry 1)
+        id: checkout_retry_1
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@v4
+        continue-on-error: true
+      - name: Checkout (retry 2)
+        if: steps.checkout.outcome == 'failure' && steps.checkout_retry_1.outcome == 'failure'
+        uses: actions/checkout@v4
 
       - name: Materialize and validate the dispatch payload
         env:
@@ -161,7 +175,21 @@ jobs:
       matrix:
         case: ${{ fromJson(needs.prepare.outputs.cases) }}
     steps:
-      - uses: actions/checkout@v4
+      # Aliyun runners occasionally lose the GitHub connection mid-clone;
+      # retry so one flaky checkout does not strand a queued case (the platform
+      # only re-queues it on the 3600s queue timeout).
+      - name: Checkout
+        id: checkout
+        uses: actions/checkout@v4
+        continue-on-error: true
+      - name: Checkout (retry 1)
+        id: checkout_retry_1
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@v4
+        continue-on-error: true
+      - name: Checkout (retry 2)
+        if: steps.checkout.outcome == 'failure' && steps.checkout_retry_1.outcome == 'failure'
+        uses: actions/checkout@v4
 
       # runner.temp is per job: never read the prepare job's dispatch file.
       - name: Materialize and validate the dispatch payload
