@@ -19,6 +19,7 @@ scope:
   - .github/**
   - runner-contract/**
   - scripts/doc-budgets.manifest.json
+  - scripts/**
   - plans/**
 adr: []
 github:

@@ -1,5 +1,5 @@
 # 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
 # git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
 #   pnpm run record:i18n -- .agents/flow/issues/m5-08-production-runner-callback.md
-m5-08-production-runner-callback.md: dda9f3b50b121bf28e1c8ffb7645d277b0cd669c
-m5-08-production-runner-callback.en.md: 57003790bd5cc8c039c3544d0bec30ffef64d9e7
+m5-08-production-runner-callback.md: 65535d4fa271147cabd4baa95ff284cb5b71758b
+m5-08-production-runner-callback.en.md: 6ebcbea8a2586763cb2518f3f01828151be23b8d
