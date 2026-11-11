@@ -1,0 +1,150 @@
+{
+  "lang": "zh-CN",
+  "title": "M6 真实主子 Agent 轨迹端到端验收",
+  "eyebrow": "Computer Use + Fixed Runner Smoke",
+  "summary": "固定 Linux Runner 上使用真实 Claude Code 2.1.278、隔离 PostgreSQL 与真实 OSS 完成两次 attempt 的主子 Agent 轨迹闭环，并在本地 Computer Use 中核对三栏查看器、权限、重试隔离和恶意文本安全。",
+  "meta": "2026-11-12 · PR #171 · run 43104397400",
+  "metrics": [
+    { "value": "2", "label": "隔离 attempts" },
+    { "value": "2", "label": "真实子 Agent" },
+    { "value": "7", "label": "原生文件" },
+    { "value": "23", "label": "归一化 spans" },
+    { "value": "6", "label": "GUI 截图" }
+  ],
+  "facts": [
+    { "label": "Runner", "value": "fixed-linux-eval" },
+    { "label": "Runtime", "value": "Claude Code 2.1.278" },
+    { "label": "Parser", "value": "claude-code-2.1.278-v1 / e2e-next" },
+    { "label": "Storage", "value": "真实 OSS + PostgreSQL" },
+    { "label": "E2E artifact", "value": "GitHub run 43104397400" },
+    { "label": "Branch commit", "value": "f9ba996" }
+  ],
+  "matrix": {
+    "columns": ["#", "场景", "结果", "证据", "截图"],
+    "rows": [
+      {
+        "id": "01",
+        "name": "固定 Runner 真实 OSS 全链路",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "真实 Claude CLI 生成原生文件，经 runner 回调、预签名上传、Worker 导入、API 查询成功。",
+        "evidence": ["fixed-runner-evidence.json", "trace-e2e job 成功"]
+      },
+      {
+        "id": "02",
+        "name": "主 Agent + 两个子 Agent 恢复",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "每次 attempt 恢复 1 root + 2 children；父子链路含 tool_use_id、agentId 与 meta 证据。",
+        "evidence": ["01", "02"]
+      },
+      {
+        "id": "03",
+        "name": "重试 attempt 隔离",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "attempt 1 失败、attempt 2 成功；session 与 trace_file ID 集合完全不相交。",
+        "evidence": ["05"]
+      },
+      {
+        "id": "04",
+        "name": "重复回调与 parser 重放",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "upload/failure/completion 均重复投递；重放后 sessions 3→3、spans 23→23，原件 ID 保留。",
+        "evidence": ["fixed-runner-evidence.json"]
+      },
+      {
+        "id": "05",
+        "name": "raw 下载与审计",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "管理员获得 300 秒地址，实际下载 200、no-store，并写入 trace.file.download_url 审计。",
+        "evidence": ["03"]
+      },
+      {
+        "id": "06",
+        "name": "只读权限",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "viewer 可读树与 spans、thinking 隐藏；raw 请求 403；匿名 trace 401，未登记 file id 404。",
+        "evidence": ["04"]
+      },
+      {
+        "id": "07",
+        "name": "恶意内容安全",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "轨迹中的 script 文本以纯文本显示，未执行，也没有形成 HTML 控件。",
+        "evidence": ["06"]
+      },
+      {
+        "id": "08",
+        "name": "降级矩阵",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "缺子文件、unknown format/version、stdout-only、orphan fragment 由轨迹 parser/ingestion/API 回归覆盖；真实 GUI 的 degraded/incomplete 路径已在 #94 smoke 验证。",
+        "evidence": ["tests/backend/test_claude_trace_parser.py", "tests/backend/test_trace_ingestion.py", "PR #169 smoke"]
+      }
+    ]
+  },
+  "issues": [],
+  "screenshots": [
+    {
+      "src": "screenshots/01-real-parent-child-three-pane.jpeg",
+      "alt": "真实主 Agent 与两个子 Agent 的三栏轨迹页",
+      "label": "01 · 三栏总览",
+      "caption": "真实 attempt 2 显示 3 个 sessions、2 个 child 和 15 个根会话 spans。",
+      "variant": "wide"
+    },
+    {
+      "src": "screenshots/02-child-session-evidence.jpeg",
+      "alt": "选中真实子 Agent 会话",
+      "label": "02 · 子 Agent",
+      "caption": "选中 child 后 URL 保存 session/span，inspector 展示 agentId、Runtime 与 parser 属性。",
+      "variant": "wide"
+    },
+    {
+      "src": "screenshots/03-raw-download-audited.jpeg",
+      "alt": "管理员原件地址签发弹窗",
+      "label": "03 · Raw 审计",
+      "caption": "管理员触发受控地址，弹窗明确 300 秒过期与审计。",
+      "variant": "issue"
+    },
+    {
+      "src": "screenshots/04-viewer-raw-denied.jpeg",
+      "alt": "只读成员 raw 下载被拒绝",
+      "label": "04 · 只读拒绝",
+      "caption": "viewer 触发 raw 后显示无写入权限，服务端返回 403。",
+      "variant": "issue"
+    },
+    {
+      "src": "screenshots/05-attempt-1-failed-isolated.jpeg",
+      "alt": "失败的 attempt 1 仍有独立轨迹",
+      "label": "05 · Attempt 隔离",
+      "caption": "切到 failed attempt 1 后树、spans 与失败原因切换，未复用 attempt 2 标识。",
+      "variant": "wide"
+    },
+    {
+      "src": "screenshots/06-malicious-text-inert.jpeg",
+      "alt": "恶意 script 内容以纯文本显示",
+      "label": "06 · XSS 安全",
+      "caption": "OUTPUT 中显示 `<script>` 原文，页面没有执行或生成脚本元素。",
+      "variant": "issue"
+    }
+  ],
+  "coverage": {
+    "columns": ["区域", "覆盖", "结论", "建议"],
+    "rows": [
+      ["真实 Claude CLI", "E2E", "固定 Runner 上生成 root + 2 children 原生文件。", "外部模型费用为零，使用确定性测试网关。"],
+      ["OSS 与 PostgreSQL", "E2E", "真实 presigned upload/download、事务与 ingestion 通过。", "保留本次测试对象作为证据。"],
+      ["重试与幂等", "E2E", "独立 attempts；重复回调；parser replay 不重复。", "继续在发布前运行手动 trace-e2e。"],
+      ["API 权限", "E2E", "匿名、viewer、admin、非法深链均按边界返回。", "无。"],
+      ["GUI 与安全", "CUA", "三栏联动、raw 弹窗、拒绝提示、恶意文本纯文本显示。", "无。"],
+      ["降级", "UT + prior CUA", "parser/ingestion 回归与 #94 degraded smoke 通过。", "后续真实故障演练可扩展 #95 harness。"]
+    ]
+  },
+  "conclusion": {
+    "kind": "pass",
+    "label": "M6 真实轨迹闭环通过",
+    "summary": "固定 Runner、真实 Claude Code、OSS、PostgreSQL、API 与 Web 的真实主/子 Agent 链路已验证，未发现未解决缺陷。",
+    "points": [
+      "常规 PR CI 不运行外部 trace-e2e，避免成本和网络不确定性。",
+      "测试模型网关是确定性 double，但 Claude Code CLI、原生文件、OSS 与数据库均为真实执行。",
+      "本次未覆盖真实外部模型供应商；该边界不影响轨迹采集与归一化验收。"
+    ]
+  },
+  "footer": "M6-06 · real Claude Code trace E2E · no credentials or private object keys included"
+}

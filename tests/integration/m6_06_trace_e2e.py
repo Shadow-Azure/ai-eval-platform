@@ -252,10 +252,12 @@ def main() -> int:
     parser.add_argument("--out", type=Path, default=Path("/tmp/m6-06-evidence.json"))
     parser.add_argument("--object-store", choices=("stub", "oss"), default="stub")
     parser.add_argument("--keep-workdir", action="store_true")
+    parser.add_argument("--api-port", type=int)
+    parser.add_argument("--stay", action="store_true")
     args = parser.parse_args()
 
     work = Path(tempfile.mkdtemp(prefix="m6-06-trace-e2e-"))
-    api_port = free_port()
+    api_port = args.api_port or free_port()
     api_base = f"http://127.0.0.1:{api_port}"
     stub: S3Stub | None = None
     gateway: subprocess.Popen[str] | None = None
@@ -728,6 +730,26 @@ def main() -> int:
                 f"evidence assertion failed: {validated.stdout}{validated.stderr}"
             )
         print(json.dumps({"ok": True, "out": str(args.out), "evidence": evidence}))
+        if args.stay:
+            print(
+                json.dumps(
+                    {
+                        "ready": True,
+                        "api": api_base,
+                        "admin_email": ADMIN_EMAIL,
+                        "admin_password": ADMIN_PASSWORD,
+                        "viewer_email": VIEWER_EMAIL,
+                        "viewer_password": VIEWER_PASSWORD,
+                        "case_run_id": case_run_id,
+                    }
+                ),
+                flush=True,
+            )
+            try:
+                while True:
+                    time.sleep(5)
+            except KeyboardInterrupt:
+                pass
         return 0
     finally:
         for process in (worker, api, gateway):

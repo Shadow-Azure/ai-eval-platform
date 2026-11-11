@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>M6 真实主子 Agent 轨迹端到端验收</title>
+  <style>
+    :root{
+      color-scheme:light;
+      --bg:#f4f7fb;--card:#fff;--ink:#16202f;--ink2:#55637a;--ink3:#7b869b;
+      --line:#dde4ee;--accent:#2563eb;--accent-wash:#e8efff;--good:#157347;
+      --good-wash:#e7f6ee;--warn:#b45309;--warn-wash:#fff2dd;--bad:#c9282e;
+      --bad-wash:#ffeded;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:radial-gradient(circle at 8% 0,#dbe9ff 0,transparent 32rem),radial-gradient(circle at 92% 4%,#e7f1ff 0,transparent 28rem),var(--bg);color:var(--ink);font:14px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Noto Sans CJK SC",sans-serif}
+    main{max-width:1220px;margin:auto;padding:36px 28px 72px}
+    .hero{padding:30px 34px;border:1px solid #dbe3ee;border-radius:24px;background:rgba(255,255,255,.92);box-shadow:0 18px 44px #17202f12}
+    .eyebrow{margin:0;color:var(--accent);font-size:12px;font-weight:800;letter-spacing:.16em;text-transform:uppercase}
+    h1{margin:10px 0 8px;font-size:clamp(28px,4vw,44px);letter-spacing:-.04em}
+    .summary{margin:0;max-width:850px;color:var(--ink2);font-size:15px}
+    .meta{display:block;margin-top:8px;color:var(--ink3);font-size:12px}
+    .metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-top:26px}
+    .metric{padding:16px 18px;border:1px solid var(--line);border-radius:16px;background:#fafbfd}
+    .metric b{display:block;font-size:30px;letter-spacing:-.04em}
+    .metric span{display:block;margin-top:2px;color:var(--ink3);font-size:12px}
+    section{margin-top:28px}
+    .head{display:flex;align-items:baseline;justify-content:space-between;gap:16px;margin:0 4px 14px}
+    h2{margin:0;font-size:21px;letter-spacing:-.03em}
+    .head small{color:var(--ink3);white-space:nowrap}
+    .card{padding:22px;border:1px solid var(--line);border-radius:20px;background:var(--card);box-shadow:0 5px 22px #17202f08}
+    .facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin:0}
+    .fact{padding:13px 16px;border:1px solid #eceff5;border-radius:12px;background:#fafbfd}
+    .fact dt{color:var(--ink3);font-size:11px;font-weight:700}
+    .fact dd{margin:3px 0 0;overflow-wrap:anywhere}
+    code{font-family:var(--mono);font-size:.9em;color:#29456d;overflow-wrap:anywhere}
+    .status{display:inline-flex;padding:3px 8px;border-radius:999px;font-size:11px;font-weight:800;white-space:nowrap;background:#eef1f6;color:var(--ink2)}
+    .status.pass,.status.fixed{background:var(--good-wash);color:var(--good)}
+    .status.warn,.status.manual{background:var(--warn-wash);color:var(--warn)}
+    .status.fail{background:var(--bad-wash);color:var(--bad)}
+    .tableWrap{overflow:auto;border:1px solid var(--line);border-radius:18px;background:var(--card);box-shadow:0 5px 22px #17202f08}
+    table{width:100%;min-width:920px;border-collapse:collapse}
+    th,td{padding:12px 15px;border-bottom:1px solid #edf0f5;text-align:left;vertical-align:top}
+    th{position:sticky;top:0;background:#fafbfe;color:var(--ink2);font-size:12px}
+    tr:last-child td{border-bottom:0}
+    tr:hover{background:#fcfdff}
+    .num{color:var(--ink3);font-family:var(--mono);font-size:12px}
+    .evidence{color:var(--ink3);font-size:12px}
+    .issues{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px}
+    .issueCard{padding:18px 21px;border:1px solid #ffcece;border-left:5px solid var(--bad);border-radius:16px;background:#fffbfb}
+    .issueCard h3{margin:0;color:#b91c1c;font-size:16px}
+    .issueCard p{margin:8px 0;color:var(--ink2)}
+    .issueCard dt{color:var(--ink3);font-size:11px;font-weight:700}
+    .issueCard dd{margin:2px 0 0;color:var(--ink2)}
+    .tag{float:right;padding:3px 8px;border-radius:999px;background:#fee4e4;color:#9a1b21;font-size:11px;font-weight:800}
+    .fixed{display:inline-flex;gap:5px;align-items:center;margin-top:11px;padding:6px 10px;border-radius:999px;background:var(--good-wash);color:var(--good);font-size:12px;font-weight:800}
+    .shots{display:grid;grid-template-columns:repeat(auto-fit,minmax(430px,1fr));gap:16px}
+    figure{margin:0;overflow:hidden;border:1px solid var(--line);border-radius:18px;background:#fff;box-shadow:0 6px 22px #17202f08}
+    figure.wide{grid-column:1/-1}
+    img{display:block;width:100%;max-height:500px;object-fit:contain;background:#eef2f7}
+    figcaption{display:flex;gap:9px;align-items:flex-start;padding:11px 14px;border-top:1px solid #edf0f5;background:#fafbfd;color:var(--ink2);font-size:12.5px}
+    figcaption b{flex:none;color:var(--ink)}
+    .issue-shot{border-color:#ffcece}
+    .conclusion{border:1px solid #c8e5d2;border-radius:20px;background:linear-gradient(135deg,#f2fbf6,white 54%)}
+    .conclusion.warn{border-color:#f1d9a4;background:linear-gradient(135deg,#fff8e8,white 54%)}
+    .conclusion.fail{border-color:#ffc9c9;background:linear-gradient(135deg,#fff5f5,white 54%)}
+    .conclusion ul{margin:12px 0 0;padding-left:20px;color:#344155}
+    .conclusion li+li{margin-top:7px}
+    .empty{padding:20px;text-align:center;color:var(--ink3);background:#fafbfd;border:1px dashed var(--line);border-radius:12px}
+    .foot{margin-top:24px;color:var(--ink3);font-size:12px;text-align:center}
+    @media(max-width:860px){main{padding:22px 14px 52px}.hero{padding:23px}.shots{grid-template-columns:1fr}.head{align-items:flex-start;flex-direction:column;gap:4px}}
+    @media print{body{background:white}main{max-width:none;padding:0}.card,.issueCard,figure,.tableWrap{box-shadow:none;break-inside:avoid}img{max-height:420px}}
+  </style>
+</head>
+<body>
+<main>
+  <header class="hero">
+    <p class="eyebrow">Computer Use + Fixed Runner Smoke</p>
+    <h1>M6 真实主子 Agent 轨迹端到端验收</h1>
+    <p class="summary">固定 Linux Runner 上使用真实 Claude Code 2.1.278、隔离 PostgreSQL 与真实 OSS 完成两次 attempt 的主子 Agent 轨迹闭环，并在本地 Computer Use 中核对三栏查看器、权限、重试隔离和恶意文本安全。</p>
+    <span class="meta">2026-11-12 · PR #171 · run 43104397400</span>
+    <div class="metrics"><div class="metric"><b>2</b><span>隔离 attempts</span></div><div class="metric"><b>2</b><span>真实子 Agent</span></div><div class="metric"><b>7</b><span>原生文件</span></div><div class="metric"><b>23</b><span>归一化 spans</span></div><div class="metric"><b>6</b><span>GUI 截图</span></div></div>
+  </header>
+
+  <section>
+    <div class="head"><h2>Environment and Artifact</h2><small>2026-11-12 · PR #171 · run 43104397400</small></div>
+    <article class="card"><dl class="facts"><div class="fact"><dt>Runner</dt><dd>fixed-linux-eval</dd></div><div class="fact"><dt>Runtime</dt><dd>Claude Code 2.1.278</dd></div><div class="fact"><dt>Parser</dt><dd>claude-code-2.1.278-v1 / e2e-next</dd></div><div class="fact"><dt>Storage</dt><dd>真实 OSS + PostgreSQL</dd></div><div class="fact"><dt>E2E artifact</dt><dd>GitHub run 43104397400</dd></div><div class="fact"><dt>Branch commit</dt><dd>f9ba996</dd></div></dl></article>
+  </section>
+
+  <section>
+    <div class="head"><h2>Scenario Matrix</h2><small>8 pass</small></div>
+    <div class="tableWrap"><table><table><thead><tr><th>#</th><th>场景</th><th>结果</th><th>证据</th><th>截图</th></tr></thead><tbody><tr><td class="num">01</td><td>固定 Runner 真实 OSS 全链路</td><td><span class="status pass">PASS</span></td><td>真实 Claude CLI 生成原生文件，经 runner 回调、预签名上传、Worker 导入、API 查询成功。</td><td class="evidence">fixed-runner-evidence.json<br>trace-e2e job 成功</td></tr><tr><td class="num">02</td><td>主 Agent + 两个子 Agent 恢复</td><td><span class="status pass">PASS</span></td><td>每次 attempt 恢复 1 root + 2 children；父子链路含 tool_use_id、agentId 与 meta 证据。</td><td class="evidence">01<br>02</td></tr><tr><td class="num">03</td><td>重试 attempt 隔离</td><td><span class="status pass">PASS</span></td><td>attempt 1 失败、attempt 2 成功；session 与 trace_file ID 集合完全不相交。</td><td class="evidence">05</td></tr><tr><td class="num">04</td><td>重复回调与 parser 重放</td><td><span class="status pass">PASS</span></td><td>upload/failure/completion 均重复投递；重放后 sessions 3→3、spans 23→23，原件 ID 保留。</td><td class="evidence">fixed-runner-evidence.json</td></tr><tr><td class="num">05</td><td>raw 下载与审计</td><td><span class="status pass">PASS</span></td><td>管理员获得 300 秒地址，实际下载 200、no-store，并写入 trace.file.download_url 审计。</td><td class="evidence">03</td></tr><tr><td class="num">06</td><td>只读权限</td><td><span class="status pass">PASS</span></td><td>viewer 可读树与 spans、thinking 隐藏；raw 请求 403；匿名 trace 401，未登记 file id 404。</td><td class="evidence">04</td></tr><tr><td class="num">07</td><td>恶意内容安全</td><td><span class="status pass">PASS</span></td><td>轨迹中的 script 文本以纯文本显示，未执行，也没有形成 HTML 控件。</td><td class="evidence">06</td></tr><tr><td class="num">08</td><td>降级矩阵</td><td><span class="status pass">PASS</span></td><td>缺子文件、unknown format/version、stdout-only、orphan fragment 由轨迹 parser/ingestion/API 回归覆盖；真实 GUI 的 degraded/incomplete 路径已在 #94 smoke 验证。</td><td class="evidence">tests/backend/test_claude_trace_parser.py<br>tests/backend/test_trace_ingestion.py<br>PR #169 smoke</td></tr></tbody></table></table></div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Issues and Observations</h2><small>No defects found</small></div>
+    <div class="empty">No defects were found.</div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Evidence</h2><small>6 screenshots</small></div>
+    <div class="shots"><figure class="wide"><img loading="lazy" src="screenshots/01-real-parent-child-three-pane.jpeg" alt="真实主 Agent 与两个子 Agent 的三栏轨迹页"><figcaption><b>01 · 三栏总览</b><span>真实 attempt 2 显示 3 个 sessions、2 个 child 和 15 个根会话 spans。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="screenshots/02-child-session-evidence.jpeg" alt="选中真实子 Agent 会话"><figcaption><b>02 · 子 Agent</b><span>选中 child 后 URL 保存 session/span，inspector 展示 agentId、Runtime 与 parser 属性。</span></figcaption></figure><figure class="issue"><img loading="lazy" src="screenshots/03-raw-download-audited.jpeg" alt="管理员原件地址签发弹窗"><figcaption><b>03 · Raw 审计</b><span>管理员触发受控地址，弹窗明确 300 秒过期与审计。</span></figcaption></figure><figure class="issue"><img loading="lazy" src="screenshots/04-viewer-raw-denied.jpeg" alt="只读成员 raw 下载被拒绝"><figcaption><b>04 · 只读拒绝</b><span>viewer 触发 raw 后显示无写入权限，服务端返回 403。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="screenshots/05-attempt-1-failed-isolated.jpeg" alt="失败的 attempt 1 仍有独立轨迹"><figcaption><b>05 · Attempt 隔离</b><span>切到 failed attempt 1 后树、spans 与失败原因切换，未复用 attempt 2 标识。</span></figcaption></figure><figure class="issue"><img loading="lazy" src="screenshots/06-malicious-text-inert.jpeg" alt="恶意 script 内容以纯文本显示"><figcaption><b>06 · XSS 安全</b><span>OUTPUT 中显示 `&lt;script&gt;` 原文，页面没有执行或生成脚本元素。</span></figcaption></figure></div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Automated Coverage Assessment</h2><small>6 areas reviewed</small></div>
+    <div class="tableWrap"><table><table><thead><tr><th>区域</th><th>覆盖</th><th>结论</th><th>建议</th></tr></thead><tbody><tr><td>真实 Claude CLI</td><td>E2E</td><td>固定 Runner 上生成 root + 2 children 原生文件。</td><td>外部模型费用为零，使用确定性测试网关。</td></tr><tr><td>OSS 与 PostgreSQL</td><td>E2E</td><td>真实 presigned upload/download、事务与 ingestion 通过。</td><td>保留本次测试对象作为证据。</td></tr><tr><td>重试与幂等</td><td>E2E</td><td>独立 attempts；重复回调；parser replay 不重复。</td><td>继续在发布前运行手动 trace-e2e。</td></tr><tr><td>API 权限</td><td>E2E</td><td>匿名、viewer、admin、非法深链均按边界返回。</td><td>无。</td></tr><tr><td>GUI 与安全</td><td>CUA</td><td>三栏联动、raw 弹窗、拒绝提示、恶意文本纯文本显示。</td><td>无。</td></tr><tr><td>降级</td><td>UT + prior CUA</td><td>parser/ingestion 回归与 #94 degraded smoke 通过。</td><td>后续真实故障演练可扩展 #95 harness。</td></tr></tbody></table></table></div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Conclusion</h2><small>M6 真实轨迹闭环通过</small></div>
+    <article class="card conclusion pass"><p><strong>固定 Runner、真实 Claude Code、OSS、PostgreSQL、API 与 Web 的真实主/子 Agent 链路已验证，未发现未解决缺陷。</strong></p><ul><li>常规 PR CI 不运行外部 trace-e2e，避免成本和网络不确定性。</li><li>测试模型网关是确定性 double，但 Claude Code CLI、原生文件、OSS 与数据库均为真实执行。</li><li>本次未覆盖真实外部模型供应商；该边界不影响轨迹采集与归一化验收。</li></ul></article>
+  </section>
+
+  <p class="foot">M6-06 · real Claude Code trace E2E · no credentials or private object keys included</p>
+</main>
+</body>
+</html>
