@@ -31,6 +31,9 @@ interface CaseBrowserProps<Row extends object> {
   empty: ReactNode;
   className?: string;
   tableClassName?: string;
+  errorTitle?: string;
+  /** Endpoint shown in the error card; differs for dataset vs eval cases. */
+  errorEndpoint?: string;
   skeletonRows?: number;
 }
 
@@ -65,6 +68,8 @@ export function CaseBrowser<Row extends object>({
   empty,
   className,
   tableClassName,
+  errorTitle = "无法加载用例",
+  errorEndpoint = "GET /api/v1/dataset-versions/:id/cases",
   skeletonRows = 6,
 }: CaseBrowserProps<Row>) {
   const offset = (page - 1) * pageSize;
@@ -126,8 +131,8 @@ export function CaseBrowser<Row extends object>({
               error={error}
               onRetry={onRetry}
               isRetrying={loading}
-              title="无法加载用例"
-              endpoint="GET /api/v1/dataset-versions/:id/cases"
+              title={errorTitle}
+              endpoint={errorEndpoint}
             />
           </div>
         ) : (

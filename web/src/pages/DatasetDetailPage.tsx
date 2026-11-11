@@ -41,11 +41,9 @@ const DIFFICULTY_LABEL: Record<DatasetDifficultyLevel, string> = {
   hard: "hard",
 };
 
-const DIFFICULTY_TAG: Record<DatasetDifficultyLevel, string> = {
-  easy: "tag tag-success",
-  medium: "tag tag-warning",
-  hard: "tag tag-danger",
-};
+// Difficulty is a classification, not a health status: the prototype renders
+// it as a neutral tag, and design 09 reserves success/warning/error for status.
+const DIFFICULTY_TAG = "tag tag-neutral";
 
 const IMPORT_STATUS_LABEL: Record<string, string> = {
   succeeded: "成功",
@@ -107,7 +105,7 @@ function DifficultyTag({ caseRow }: { caseRow: DatasetCaseSummary }) {
   }
   return (
     <Tooltip title={caseRow.difficulty_label ? `上游难度：${caseRow.difficulty_label}` : undefined}>
-      <span className={DIFFICULTY_TAG[caseRow.difficulty]}>{DIFFICULTY_LABEL[caseRow.difficulty]}</span>
+      <span className={DIFFICULTY_TAG}>{DIFFICULTY_LABEL[caseRow.difficulty]}</span>
     </Tooltip>
   );
 }
@@ -342,7 +340,7 @@ function CaseDetailBody({
         </Descriptions.Item>
         <Descriptions.Item label="难度">
           {detail.difficulty ? (
-            <span className={DIFFICULTY_TAG[detail.difficulty]}>
+            <span className={DIFFICULTY_TAG}>
               {DIFFICULTY_LABEL[detail.difficulty]}
               {detail.difficulty_label ? ` · ${detail.difficulty_label}` : ""}
             </span>
@@ -449,6 +447,18 @@ export function DatasetDetailPage() {
     return () => clearTimeout(timer);
   }, [searchDraft]);
 
+  // Facets are always computed over the whole version. If the selected level
+  // disappears after a refresh, clear it instead of leaving an invisible
+  // filter that returns zero rows while the control is disabled.
+  useEffect(() => {
+    const available = cases.data?.difficulties;
+    if (!difficulty || !available) return;
+    if (!available.some((facet) => facet.value === difficulty)) {
+      setDifficulty(null);
+      setPage(1);
+    }
+  }, [cases.data?.difficulties, difficulty]);
+
   const difficulties = cases.data?.difficulties ?? [];
   const difficultyOptions = difficulties.map((facet) => ({
     value: facet.value,
@@ -504,6 +514,10 @@ export function DatasetDetailPage() {
           onRow={(record) => ({
             onClick: () => {
               setSelectedVersion(record.id);
+              // A filter from the previous version must not silently scope the
+              // next one (the new version may not even provide that difficulty).
+              setDifficulty(null);
+              setSelectedCaseId(null);
               setPage(1);
             },
             style: { cursor: "pointer" },

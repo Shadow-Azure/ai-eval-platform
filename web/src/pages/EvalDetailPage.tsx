@@ -941,6 +941,8 @@ export function EvalDetailPage() {
           }
           loading={cases.isLoading || cases.isFetching}
           error={cases.error}
+          errorTitle="无法加载评测用例"
+          errorEndpoint="GET /api/v1/eval-runs/:id/cases"
           onRetry={() => cases.refetch()}
           onRow={(record) => ({
             onClick: () => openCase(record.id, record.latest_attempt_no),
