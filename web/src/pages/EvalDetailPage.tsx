@@ -1872,6 +1872,7 @@ function BaselineCompareModal(props: BaselineCompareModalProps) {
   const { open, onClose, comparison, loading, error, onRetry, baselineRunId, onSelectBaseline } = props;
   const baseline = comparison?.baseline ?? null;
   const candidates = comparison?.candidates ?? [];
+  const highlights = (comparison?.metric_deltas ?? []).slice(0, 3);
   const options = [
     { value: "auto", label: baseline ? `自动推荐（${baseline.name}）` : "自动推荐" },
     ...candidates.map((candidate) => ({
@@ -1994,7 +1995,7 @@ function BaselineCompareModal(props: BaselineCompareModalProps) {
         </div>
       }
       footer={<Button onClick={onClose}>关闭</Button>}
-      destroyOnClose
+      destroyOnHidden
     >
       <div className="compare-toolbar">
         <div className="compare-baseline-picker">
@@ -2051,6 +2052,25 @@ function BaselineCompareModal(props: BaselineCompareModalProps) {
           ) : null}
           {baseline ? (
             <>
+              {highlights.length ? (
+                <div className="compare-highlights">
+                  {highlights.map((item, index) => (
+                    <div className="compare-highlight" key={item.metric_key}>
+                      <div className="compare-highlight-head">
+                        <span>{item.display_name}</span>
+                        <Icon name={index === 1 ? "check" : index === 2 ? "database" : "sparkles"} size={14} />
+                      </div>
+                      <div className={`compare-highlight-value ${item.comparable ? deltaTone(item.improvement) : "flat"}`}>
+                        {item.comparable ? formatDeltaText(item) : "不可比"}
+                      </div>
+                      <div className="compare-highlight-meta">
+                        {formatMetricDisplay(item.display_kind, item.current_value, item.unit)} vs{" "}
+                        {formatMetricDisplay(item.display_kind, item.baseline_value, item.unit)}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
               <section className="compare-section">
                 <div className="compare-section-head">
                   <h3>指标差值</h3>
