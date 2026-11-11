@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 from ..config import Settings, get_settings
 from ..defaults import DEFAULT_PROJECT_ID, DEFAULT_TENANT_ID
 from ..models import Project, ResourcePool, Runner, Tenant
+from .runner_labels import DEFAULT_RUNS_ON
 
 
 class RunnerBusyConflict(Exception):
@@ -80,7 +81,7 @@ def ensure_fixed_pool(session: Session, settings: Settings | None = None) -> Res
         name=settings.runner_fixed_pool_name,
         provider_key=settings.runner_fixed_pool_provider_key,
         runner_group=settings.runner_fixed_pool_name,
-        labels_json={"kind": "fixed"},
+        labels_json={"runs_on": list(DEFAULT_RUNS_ON)},
         status="active",
     )
     session.add(pool)

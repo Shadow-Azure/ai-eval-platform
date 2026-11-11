@@ -633,6 +633,19 @@ def test_heartbeat_adopts_runner_row_left_in_stale_pool(
     assert json.loads(json.dumps(adopted.labels_json)) == ["self-hosted", "linux", "eval"]
 
 
+def test_ensure_fixed_pool_registers_explicit_runner_labels(seeded: Session) -> None:
+    """A new system pool must not store the legacy provider marker as a label."""
+
+    from app.services.runners import ensure_fixed_pool
+
+    pool = ensure_fixed_pool(seeded)
+    seeded.flush()
+
+    assert json.loads(json.dumps(pool.labels_json)) == {
+        "runs_on": ["self-hosted", "linux", "eval"]
+    }
+
+
 # ---------------------------------------------------------------------------
 # M4-04: spot runners join the pool that created them
 # ---------------------------------------------------------------------------
