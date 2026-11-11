@@ -216,6 +216,7 @@ def _sanitize_evidence(value: Any, *, host: str) -> Any:
     text = value.replace(host, "<runner-host>")
     text = re.sub(
         r"(?:-private-var-folders-[^/]+|/private/(?:tmp|var)/[^/\s]+|"
+        r"/opt/ai-eval-platform(?:-runner)?/[^<\s\"']*m6-e2e-work/claude-[^/\s<\"']+|"
         r"/opt/ai-eval-platform/runner/[^/\s]+|-opt-ai-eval-platform-runner--work[^/\s]*)"
         r"(?:/m6-trace-e2e-[^/\s]+)?",
         "<runner-temp>",
