@@ -8,7 +8,7 @@
 kind: milestone
 id: m6
 title: 轨迹诊断闭环
-status: active
+status: done
 github:
   number: 6
   url: https://github.com/Shadow-Azure/ai-eval-platform/milestone/6
