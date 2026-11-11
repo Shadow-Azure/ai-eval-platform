@@ -1,0 +1,125 @@
+{
+  "title": "M6-03 Claude Code 轨迹归一化冒烟",
+  "eyebrow": "COMPUTER USE · GUI SMOKE",
+  "summary": "真实浏览器验证了 ready、degraded/unlinked、incomplete 三种轨迹处理状态及用例详情。ready 数据由 2.1.278 golden fixtures 实际经过 parser 与 ingestion 写入，数据库断言确认 root 下有 alpha、beta 两个已恢复的子 session。",
+  "meta": "2026-11-12 · macOS · Chrome · 隔离 SQLite + 本地对象存储桩 + Vite",
+  "metrics": [
+    { "value": "3", "label": "GUI 场景" },
+    { "value": "6", "label": "稳定截图" },
+    { "value": "16", "label": "Claude pytest" },
+    { "value": "0", "label": "新增 GUI 缺陷" }
+  ],
+  "facts": [
+    { "label": "分支", "value": "codex/m6-03-claude-code-trace-normalizer" },
+    { "label": "提交", "value": "ea1ef52" },
+    { "label": "PR", "value": "#165 / issue #92" },
+    { "label": "Parser", "value": "claude-code-2.1.278-v1" },
+    { "label": "数据", "value": "隔离 SQLite + 临时对象存储桩" },
+    { "label": "应用", "value": "Eval Platform 本地开发构建" }
+  ],
+  "matrix": {
+    "columns": ["#", "场景", "结果", "断言", "证据"],
+    "rows": [
+      {
+        "id": "01",
+        "name": "完整多 Agent 轨迹",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "root、两个子 JSONL 与两个 .meta.json 经 parser/ingestion 后为 ready；数据库断言 alpha/beta 均挂到 root，页面显示可用 1。",
+        "evidence": ["01-ready-trace-status.jpeg", "06-ready-case-detail.jpeg"]
+      },
+      {
+        "id": "02",
+        "name": "缺失 root 的降级关系",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "子文件与元数据存在但缺少 root Agent 调用证据时 session 为 unlinked，页面显示已降级 1；用例明细和抽屉均明确提示轨迹不可用。",
+        "evidence": ["02-degraded-trace-status.jpeg", "03-degraded-case-status.jpeg", "04-degraded-case-detail.jpeg"]
+      },
+      {
+        "id": "03",
+        "name": "仅 stdout 的采集不完整",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "partial manifest 只有诊断日志时不伪造轨迹，页面显示采集不完整 1。",
+        "evidence": ["05-incomplete-trace-status.jpeg"]
+      }
+    ]
+  },
+  "issues": [],
+  "screenshots": [
+    {
+      "src": "01-ready-trace-status.jpeg",
+      "alt": "完整 Claude 多 Agent 轨迹显示可用",
+      "label": "01 · Ready 汇总",
+      "caption": "轨迹处理显示可用 1，Runtime 为 claude-code 2.1.278。",
+      "variant": "wide"
+    },
+    {
+      "src": "02-degraded-trace-status.jpeg",
+      "alt": "缺少 root 证据的轨迹显示已降级",
+      "label": "02 · Degraded 汇总",
+      "caption": "无法证明父关系的子 Agent 轨迹显示已降级 1。",
+      "variant": "wide"
+    },
+    {
+      "src": "03-degraded-case-status.jpeg",
+      "alt": "降级轨迹在用例明细中的状态",
+      "label": "03 · Degraded 用例",
+      "caption": "用例表轨迹列明确显示已降级。",
+      "variant": "wide"
+    },
+    {
+      "src": "04-degraded-case-detail.jpeg",
+      "alt": "降级轨迹用例详情抽屉",
+      "label": "04 · Degraded 详情",
+      "caption": "抽屉说明轨迹未就绪或已降级，不把 unlinked 关系伪装成完整树。",
+      "variant": "issue"
+    },
+    {
+      "src": "05-incomplete-trace-status.jpeg",
+      "alt": "只有诊断日志时显示采集不完整",
+      "label": "05 · Incomplete",
+      "caption": "partial capture 显示采集不完整 1，不生成猜测 session。",
+      "variant": "wide"
+    },
+    {
+      "src": "06-ready-case-detail.jpeg",
+      "alt": "ready 轨迹用例详情抽屉",
+      "label": "06 · Ready 详情",
+      "caption": "用例抽屉显示轨迹已就绪，可进入后续独立轨迹页。",
+      "variant": "issue"
+    }
+  ],
+  "coverage": {
+    "columns": ["区域", "覆盖", "结论", "建议"],
+    "rows": [
+      {
+        "area": "Claude 原生解析与关系恢复",
+        "coverage": "UT + DB",
+        "conclusion": "root 加两个 subagent 的父子关系和最终 usage/cost 由 16 项 pytest 覆盖，smoke 种子再次断言 3 sessions / 2 parents。",
+        "recommendation": "真实 OSS 与生产 Claude 输出继续由 #95 验收。"
+      },
+      {
+        "area": "现有轨迹状态 UI",
+        "coverage": "GUI",
+        "conclusion": "ready/degraded/incomplete 三类状态、用例表与详情抽屉均与后端状态一致。",
+        "recommendation": "#94 三栏 viewer 落地后补充 session/span 联动冒烟。"
+      },
+      {
+        "area": "降级与 raw 入口",
+        "coverage": "UT + GUI",
+        "conclusion": "unknow version/format、缺 child/meta 和 unlinked 不伪造父子；当前 UI 正确表达不可用。",
+        "recommendation": "raw range 下载与权限审计由 #93 补充。"
+      }
+    ]
+  },
+  "conclusion": {
+    "kind": "pass",
+    "label": "GUI smoke 通过",
+    "summary": "所有最终场景通过，未发现新的 GUI 缺陷；Claude parser 的关键关系与降级边界有自动化测试和真实入库补证。",
+    "points": [
+      "ready fixture 实际生成 root + alpha + beta 三个 session，两个子 session 均有 parent_session_id。",
+      "缺失 root 证据时显示 degraded，不会把同 sessionId 或 .meta 存在误判为完整关系。",
+      "三栏查看器尚未交付，因此本 smoke 验证现有可达路径，不伪造 #94 的 session/span 交互。"
+    ]
+  },
+  "footer": "Computer Use evidence generated from report-data.json; do not hand-edit smoke-report.html."
+}

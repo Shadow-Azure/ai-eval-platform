@@ -35,6 +35,7 @@ from .trace_parsers import (
     ParseInput,
     ParserRegistry,
     detect_format,
+    resolve_cross_file_relations,
 )
 from .trace_redaction import redact_text
 
@@ -376,6 +377,36 @@ class _StagedTrace:
     line_no: int | None = None
     lease_owner: str | None = None
     lease_lost: bool = False
+
+
+def _resolve_batch_relations(staged_files: list[_StagedTrace]) -> None:
+    """Resolve evidence that spans native files before any derived rows persist."""
+
+    parsed_files = [
+        staged.parsed for staged in staged_files if staged.parsed is not None
+    ]
+    if not parsed_files:
+        return
+    has_claude_runtime = any(
+        session.metadata.get("runtime_key") == "claude-code"
+        for parsed in parsed_files
+        for session in parsed.sessions
+    )
+    has_claude_metadata = any(
+        relation.kind in ("spawn", "metadata")
+        for parsed in parsed_files
+        for relation in parsed.relations
+    )
+    if not has_claude_runtime and not has_claude_metadata:
+        return
+    resolve_cross_file_relations(parsed_files)
+    for staged in staged_files:
+        if staged.parsed is None:
+            continue
+        staged.status = staged.parsed.status
+        staged.error_code = staged.parsed.error_code
+        staged.error_summary = staged.parsed.error_summary
+        staged.line_no = staged.parsed.line_no
 
 
 def _parsed_session_key(parsed_session) -> str:
@@ -842,7 +873,7 @@ def _load_and_parse(
     if (
         not parsed.sessions
         and trace_file.artifact_kind != "trace_metadata"
-        and parsed.error_code != "unknown_format_version"
+        and parsed.status != "degraded"
     ):
         return failed(
             "empty_trace", "轨迹文件没有可用的 session", line_no=parsed.line_no
@@ -1349,15 +1380,34 @@ def ingest_attempt(
             .distinct()
         )
     )
+    if not existing_versions:
+        # A failed initial parse may have provenance but no session. Treat
+        # terminal trace_file rows as an existing tree version so a later
+        # Claude sibling cannot resolve relations against a partial batch.
+        existing_versions = set(
+            session.scalars(
+                select(TraceFile.parser_version)
+                .where(
+                    TraceFile.eval_case_attempt_id == attempt.id,
+                    TraceFile.status.in_(("ready", "degraded", "failed")),
+                )
+                .distinct()
+            )
+        )
     # A replay is a single parser version already present in the tree. Any
     # other shape (new version, or a mixed-version batch) must stage the whole
     # attempt atomically instead of replacing files one at a time.
     single_version = next(iter(parser_versions)) if len(parser_versions) == 1 else None
+    claude_cross_file = any(
+        "claude-code" in getattr(parser, "runtime_keys", ())
+        or "claude_code" in getattr(parser, "runtime_keys", ())
+        for _, parser in rows
+    )
     replacing = len(parser_versions) > 1 or (
         bool(existing_versions)
         and single_version is not None
         and single_version not in existing_versions
-    )
+    ) or (claude_cross_file and bool(existing_versions))
 
     staged: list[_StagedTrace] = []
     for row, parser in rows:
@@ -1385,6 +1435,7 @@ def ingest_attempt(
             )
         )
     staged = [item for item in staged if not item.lease_lost]
+    _resolve_batch_relations(staged)
 
     upgrade_aborted = False
     replaced = False
@@ -1558,6 +1609,24 @@ def ingest_trace_file(
             .distinct()
         )
     )
+    if (
+        trace_file.runtime_key in ("claude-code", "claude_code")
+        and has_ingestible_trace_objects(attempt)
+    ):
+        # Claude parent/child evidence spans multiple objects. Replaying the
+        # whole attempt keeps retries atomic when some files are already ready.
+        return ingest_attempt(
+            session,
+            attempt,
+            now=now,
+            parser_registry=parser_registry,
+            parser_version=trace_file.parser_version,
+            store=store,
+            settings=settings,
+            lease_seconds=lease_seconds,
+            worker_id=worker_id,
+            repair=repair,
+        )
     if current_versions and trace_file.parser_version not in current_versions:
         return ingest_attempt(
             session,
@@ -1612,6 +1681,7 @@ def ingest_trace_file(
     if staged.lease_lost:
         return {"status": "skipped", "reason": "lease_lost"}
     if staged.parsed is not None:
+        _resolve_batch_relations([staged])
         try:
             with session.begin_nested():
                 _replace_file_tree(session, staged.trace_file_id)

@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>M6-03 Claude Code 轨迹归一化冒烟</title>
+  <style>
+    :root{
+      color-scheme:light;
+      --bg:#f4f7fb;--card:#fff;--ink:#16202f;--ink2:#55637a;--ink3:#7b869b;
+      --line:#dde4ee;--accent:#2563eb;--accent-wash:#e8efff;--good:#157347;
+      --good-wash:#e7f6ee;--warn:#b45309;--warn-wash:#fff2dd;--bad:#c9282e;
+      --bad-wash:#ffeded;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:radial-gradient(circle at 8% 0,#dbe9ff 0,transparent 32rem),radial-gradient(circle at 92% 4%,#e7f1ff 0,transparent 28rem),var(--bg);color:var(--ink);font:14px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Noto Sans CJK SC",sans-serif}
+    main{max-width:1220px;margin:auto;padding:36px 28px 72px}
+    .hero{padding:30px 34px;border:1px solid #dbe3ee;border-radius:24px;background:rgba(255,255,255,.92);box-shadow:0 18px 44px #17202f12}
+    .eyebrow{margin:0;color:var(--accent);font-size:12px;font-weight:800;letter-spacing:.16em;text-transform:uppercase}
+    h1{margin:10px 0 8px;font-size:clamp(28px,4vw,44px);letter-spacing:-.04em}
+    .summary{margin:0;max-width:850px;color:var(--ink2);font-size:15px}
+    .meta{display:block;margin-top:8px;color:var(--ink3);font-size:12px}
+    .metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-top:26px}
+    .metric{padding:16px 18px;border:1px solid var(--line);border-radius:16px;background:#fafbfd}
+    .metric b{display:block;font-size:30px;letter-spacing:-.04em}
+    .metric span{display:block;margin-top:2px;color:var(--ink3);font-size:12px}
+    section{margin-top:28px}
+    .head{display:flex;align-items:baseline;justify-content:space-between;gap:16px;margin:0 4px 14px}
+    h2{margin:0;font-size:21px;letter-spacing:-.03em}
+    .head small{color:var(--ink3);white-space:nowrap}
+    .card{padding:22px;border:1px solid var(--line);border-radius:20px;background:var(--card);box-shadow:0 5px 22px #17202f08}
+    .facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin:0}
+    .fact{padding:13px 16px;border:1px solid #eceff5;border-radius:12px;background:#fafbfd}
+    .fact dt{color:var(--ink3);font-size:11px;font-weight:700}
+    .fact dd{margin:3px 0 0;overflow-wrap:anywhere}
+    code{font-family:var(--mono);font-size:.9em;color:#29456d;overflow-wrap:anywhere}
+    .status{display:inline-flex;padding:3px 8px;border-radius:999px;font-size:11px;font-weight:800;white-space:nowrap;background:#eef1f6;color:var(--ink2)}
+    .status.pass,.status.fixed{background:var(--good-wash);color:var(--good)}
+    .status.warn,.status.manual{background:var(--warn-wash);color:var(--warn)}
+    .status.fail{background:var(--bad-wash);color:var(--bad)}
+    .tableWrap{overflow:auto;border:1px solid var(--line);border-radius:18px;background:var(--card);box-shadow:0 5px 22px #17202f08}
+    table{width:100%;min-width:920px;border-collapse:collapse}
+    th,td{padding:12px 15px;border-bottom:1px solid #edf0f5;text-align:left;vertical-align:top}
+    th{position:sticky;top:0;background:#fafbfe;color:var(--ink2);font-size:12px}
+    tr:last-child td{border-bottom:0}
+    tr:hover{background:#fcfdff}
+    .num{color:var(--ink3);font-family:var(--mono);font-size:12px}
+    .evidence{color:var(--ink3);font-size:12px}
+    .issues{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px}
+    .issueCard{padding:18px 21px;border:1px solid #ffcece;border-left:5px solid var(--bad);border-radius:16px;background:#fffbfb}
+    .issueCard h3{margin:0;color:#b91c1c;font-size:16px}
+    .issueCard p{margin:8px 0;color:var(--ink2)}
+    .issueCard dt{color:var(--ink3);font-size:11px;font-weight:700}
+    .issueCard dd{margin:2px 0 0;color:var(--ink2)}
+    .tag{float:right;padding:3px 8px;border-radius:999px;background:#fee4e4;color:#9a1b21;font-size:11px;font-weight:800}
+    .fixed{display:inline-flex;gap:5px;align-items:center;margin-top:11px;padding:6px 10px;border-radius:999px;background:var(--good-wash);color:var(--good);font-size:12px;font-weight:800}
+    .shots{display:grid;grid-template-columns:repeat(auto-fit,minmax(430px,1fr));gap:16px}
+    figure{margin:0;overflow:hidden;border:1px solid var(--line);border-radius:18px;background:#fff;box-shadow:0 6px 22px #17202f08}
+    figure.wide{grid-column:1/-1}
+    img{display:block;width:100%;max-height:500px;object-fit:contain;background:#eef2f7}
+    figcaption{display:flex;gap:9px;align-items:flex-start;padding:11px 14px;border-top:1px solid #edf0f5;background:#fafbfd;color:var(--ink2);font-size:12.5px}
+    figcaption b{flex:none;color:var(--ink)}
+    .issue-shot{border-color:#ffcece}
+    .conclusion{border:1px solid #c8e5d2;border-radius:20px;background:linear-gradient(135deg,#f2fbf6,white 54%)}
+    .conclusion.warn{border-color:#f1d9a4;background:linear-gradient(135deg,#fff8e8,white 54%)}
+    .conclusion.fail{border-color:#ffc9c9;background:linear-gradient(135deg,#fff5f5,white 54%)}
+    .conclusion ul{margin:12px 0 0;padding-left:20px;color:#344155}
+    .conclusion li+li{margin-top:7px}
+    .empty{padding:20px;text-align:center;color:var(--ink3);background:#fafbfd;border:1px dashed var(--line);border-radius:12px}
+    .foot{margin-top:24px;color:var(--ink3);font-size:12px;text-align:center}
+    @media(max-width:860px){main{padding:22px 14px 52px}.hero{padding:23px}.shots{grid-template-columns:1fr}.head{align-items:flex-start;flex-direction:column;gap:4px}}
+    @media print{body{background:white}main{max-width:none;padding:0}.card,.issueCard,figure,.tableWrap{box-shadow:none;break-inside:avoid}img{max-height:420px}}
+  </style>
+</head>
+<body>
+<main>
+  <header class="hero">
+    <p class="eyebrow">COMPUTER USE · GUI SMOKE</p>
+    <h1>M6-03 Claude Code 轨迹归一化冒烟</h1>
+    <p class="summary">真实浏览器验证了 ready、degraded/unlinked、incomplete 三种轨迹处理状态及用例详情。ready 数据由 2.1.278 golden fixtures 实际经过 parser 与 ingestion 写入，数据库断言确认 root 下有 alpha、beta 两个已恢复的子 session。</p>
+    <span class="meta">2026-11-12 · macOS · Chrome · 隔离 SQLite + 本地对象存储桩 + Vite</span>
+    <div class="metrics"><div class="metric"><b>3</b><span>GUI 场景</span></div><div class="metric"><b>6</b><span>稳定截图</span></div><div class="metric"><b>16</b><span>Claude pytest</span></div><div class="metric"><b>0</b><span>新增 GUI 缺陷</span></div></div>
+  </header>
+
+  <section>
+    <div class="head"><h2>Environment and Artifact</h2><small>2026-11-12 · macOS · Chrome · 隔离 SQLite + 本地对象存储桩 + Vite</small></div>
+    <article class="card"><dl class="facts"><div class="fact"><dt>分支</dt><dd>codex/m6-03-claude-code-trace-normalizer</dd></div><div class="fact"><dt>提交</dt><dd>ea1ef52</dd></div><div class="fact"><dt>PR</dt><dd>#165 / issue #92</dd></div><div class="fact"><dt>Parser</dt><dd>claude-code-2.1.278-v1</dd></div><div class="fact"><dt>数据</dt><dd>隔离 SQLite + 临时对象存储桩</dd></div><div class="fact"><dt>应用</dt><dd>Eval Platform 本地开发构建</dd></div></dl></article>
+  </section>
+
+  <section>
+    <div class="head"><h2>Scenario Matrix</h2><small>3 pass</small></div>
+    <div class="tableWrap"><table><table><thead><tr><th>#</th><th>场景</th><th>结果</th><th>断言</th><th>证据</th></tr></thead><tbody><tr><td class="num">01</td><td>完整多 Agent 轨迹</td><td><span class="status pass">PASS</span></td><td>root、两个子 JSONL 与两个 .meta.json 经 parser/ingestion 后为 ready；数据库断言 alpha/beta 均挂到 root，页面显示可用 1。</td><td class="evidence">01-ready-trace-status.jpeg<br>06-ready-case-detail.jpeg</td></tr><tr><td class="num">02</td><td>缺失 root 的降级关系</td><td><span class="status pass">PASS</span></td><td>子文件与元数据存在但缺少 root Agent 调用证据时 session 为 unlinked，页面显示已降级 1；用例明细和抽屉均明确提示轨迹不可用。</td><td class="evidence">02-degraded-trace-status.jpeg<br>03-degraded-case-status.jpeg<br>04-degraded-case-detail.jpeg</td></tr><tr><td class="num">03</td><td>仅 stdout 的采集不完整</td><td><span class="status pass">PASS</span></td><td>partial manifest 只有诊断日志时不伪造轨迹，页面显示采集不完整 1。</td><td class="evidence">05-incomplete-trace-status.jpeg</td></tr></tbody></table></table></div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Issues and Observations</h2><small>No defects found</small></div>
+    <div class="empty">No defects were found.</div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Evidence</h2><small>6 screenshots</small></div>
+    <div class="shots"><figure class="wide"><img loading="lazy" src="01-ready-trace-status.jpeg" alt="完整 Claude 多 Agent 轨迹显示可用"><figcaption><b>01 · Ready 汇总</b><span>轨迹处理显示可用 1，Runtime 为 claude-code 2.1.278。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="02-degraded-trace-status.jpeg" alt="缺少 root 证据的轨迹显示已降级"><figcaption><b>02 · Degraded 汇总</b><span>无法证明父关系的子 Agent 轨迹显示已降级 1。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="03-degraded-case-status.jpeg" alt="降级轨迹在用例明细中的状态"><figcaption><b>03 · Degraded 用例</b><span>用例表轨迹列明确显示已降级。</span></figcaption></figure><figure class="issue"><img loading="lazy" src="04-degraded-case-detail.jpeg" alt="降级轨迹用例详情抽屉"><figcaption><b>04 · Degraded 详情</b><span>抽屉说明轨迹未就绪或已降级，不把 unlinked 关系伪装成完整树。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="05-incomplete-trace-status.jpeg" alt="只有诊断日志时显示采集不完整"><figcaption><b>05 · Incomplete</b><span>partial capture 显示采集不完整 1，不生成猜测 session。</span></figcaption></figure><figure class="issue"><img loading="lazy" src="06-ready-case-detail.jpeg" alt="ready 轨迹用例详情抽屉"><figcaption><b>06 · Ready 详情</b><span>用例抽屉显示轨迹已就绪，可进入后续独立轨迹页。</span></figcaption></figure></div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Automated Coverage Assessment</h2><small>3 areas reviewed</small></div>
+    <div class="tableWrap"><table><table><thead><tr><th>区域</th><th>覆盖</th><th>结论</th><th>建议</th></tr></thead><tbody><tr><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td></tr></tbody></table></table></div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Conclusion</h2><small>GUI smoke 通过</small></div>
+    <article class="card conclusion pass"><p><strong>所有最终场景通过，未发现新的 GUI 缺陷；Claude parser 的关键关系与降级边界有自动化测试和真实入库补证。</strong></p><ul><li>ready fixture 实际生成 root + alpha + beta 三个 session，两个子 session 均有 parent_session_id。</li><li>缺失 root 证据时显示 degraded，不会把同 sessionId 或 .meta 存在误判为完整关系。</li><li>三栏查看器尚未交付，因此本 smoke 验证现有可达路径，不伪造 #94 的 session/span 交互。</li></ul></article>
+  </section>
+
+  <p class="foot">Computer Use evidence generated from report-data.json; do not hand-edit smoke-report.html.</p>
+</main>
+</body>
+</html>

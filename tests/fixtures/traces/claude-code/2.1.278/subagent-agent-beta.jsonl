@@ -1,0 +1,3 @@
+{"type":"user","sessionId":"session-root","uuid":"beta-u1","parentUuid":"a-root","timestamp":"2026-11-12T00:00:02.200Z","isSidechain":true,"agentId":"agent-beta","version":"2.1.278","message":{"role":"user","content":"beta check"}}
+{"type":"assistant","sessionId":"session-root","uuid":"beta-a1","parentUuid":"beta-u1","timestamp":"2026-11-12T00:00:02.600Z","isSidechain":true,"agentId":"agent-beta","version":"2.1.278","message":{"id":"msg-beta-1","role":"assistant","model":"claude-sonnet-4","content":[{"type":"text","text":"beta done"}],"usage":{"input_tokens":9,"output_tokens":4},"stop_reason":"end_turn"}}
+{"type":"cost-state","sessionId":"session-root","startTime":"2026-11-12T00:00:02.200Z","totalCostUSD":0.0015,"totalDuration":600}

@@ -62,7 +62,7 @@ M2 把执行与数据集、Agent 解耦：平台经 repository_dispatch 传 eval
 
 ## 轨迹采集
 
-Runner 归档会话、元数据与诊断，失败保留；清单记录路径、digest、size、版本与平台对象键。回调写 `trace_file(pending)`；Worker 以 owner 租约领取并校验原件，解析后写 `trace_session`/`trace_span`；`native_session_key` 区分共享 `sessionId`，元数据只留原件行。坏行降级，单文件失败隔离。幂等键 `(attempt, sha256, parser_version)`：重复不新增，升级单事务换树，失败保留旧树，单文件修复遇新版本也原子重放整 attempt；回收后旧 Worker 不能续租或完成。`trace_status` 按 failed > incomplete > degraded > ready 聚合，旧 attempt 不覆盖最新；发布时锁 case 行并重读 `trace_file`，inflight 不发布终态，由收尾 Worker 写去重 `trace.ingestion.updated`；Worker SQL 过滤后回填缺 `trace_file` 的 attempt。导入不改评分/终态。
+Runner 归档会话、元数据与诊断，失败保留；清单记录路径、digest、size、版本与平台对象键。回调写 `trace_file(pending)`；Worker 以 owner 租约领取并校验原件，解析后写 `trace_session`/`trace_span`；`native_session_key` 区分共享 `sessionId`，元数据只留原件行。Claude Code 2.1.278 使用显式版本化 parser：主文件 Agent `tool_use.id`、`toolUseResult.agentId` 与子文件 `.meta.json` 的 `toolUseId` 必须一致才建立父子关系，`parentUuid` 只建 span 层级，同 `sessionId` 或时间相邻不建树；消息按 `message.id` 去重，最终用量取消息快照，成本取 `cost-state`，缺失子文件或元数据进入 degraded/unlinked，孤立 span 保留为 root fragment，大内容只存脱敏截断预览与对象引用。坏行降级，单文件失败隔离。幂等键 `(attempt, sha256, parser_version)`：重复不新增，升级单事务换树，失败保留旧树，单文件修复遇新版本也原子重放整 attempt；回收后旧 Worker 不能续租或完成。`trace_status` 按 failed > incomplete > degraded > ready 聚合，旧 attempt 不覆盖最新；发布时锁 case 行并重读 `trace_file`，inflight 不发布终态，由收尾 Worker 写去重 `trace.ingestion.updated`；Worker SQL 过滤后回填缺 `trace_file` 的 attempt。导入不改评分/终态。
 
 ## 数据集导入
 

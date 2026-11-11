@@ -2,7 +2,7 @@
 
 English | [中文](architecture.md)
 
-The repository is entering M5: the execution foundation and the real evaluation loop are in place, and model credentials, Git assets, resource pools, and result browsing are being organized into complete Web product workflows.
+The repository is in M6: the execution foundation and the real evaluation loop are in place, product workflows are usable, and native trace capture and diagnosis are being completed.
 
 ## Components
 
@@ -62,7 +62,7 @@ Production deployment binds the Runner callback entry to the VPC private address
 
 ## Trace capture
 
-Runner archives sessions, metadata and diagnostics, retaining failures; manifest records paths, digest, size, versions and platform object keys. Completion writes `trace_file(pending)`; the worker claims an owner-bound lease, verifies objects, then parses into `trace_session`/`trace_span`; `native_session_key` disambiguates shared `sessionId`, metadata keeps provenance only. Corrupt lines degrade; single-file failures stay isolated. Idempotency is `(attempt, sha256, parser_version)`: replays add no rows, upgrades swap the tree atomically, failure preserves the old tree, and single-file repair of a newer version replays the whole attempt; a reclaimed lease cannot be renewed or completed by its old worker. `trace_status` aggregates failed > incomplete > degraded > ready, an older attempt cannot overwrite the latest, and the publisher locks the case row, re-reads `trace_file`, skips publication while inflight, then writes the deduped `trace.ingestion.updated`; the worker SQL-filters and backfills attempts missing `trace_file`. Ingestion failure never changes scoring or terminal state.
+Runner archives sessions, metadata and diagnostics, retaining failures; manifest records paths, digest, size, versions and platform object keys. Completion writes `trace_file(pending)`; the worker claims an owner-bound lease, verifies objects, then parses into `trace_session`/`trace_span`; `native_session_key` disambiguates shared `sessionId`, metadata keeps provenance only. Claude Code 2.1.278 uses an explicitly versioned parser: ancestry is established only when the root Agent `tool_use.id`, `toolUseResult.agentId`, and child `.meta.json` `toolUseId` agree; `parentUuid` establishes span hierarchy only, and equal `sessionId` or temporal adjacency never establishes session ancestry. Messages deduplicate by `message.id`, final usage comes from message snapshots, cost comes from `cost-state`, missing child files or metadata become degraded/unlinked, orphan spans remain root fragments, and large content stores only a redacted truncated preview plus an object reference. Corrupt lines degrade; single-file failures stay isolated. Idempotency is `(attempt, sha256, parser_version)`: replays add no rows, upgrades swap the tree atomically, failure preserves the old tree, and single-file repair of a newer version replays the whole attempt; a reclaimed lease cannot be renewed or completed by its old worker. `trace_status` aggregates failed > incomplete > degraded > ready, an older attempt cannot overwrite the latest, and the publisher locks the case row, re-reads `trace_file`, skips publication while inflight, then writes the deduped `trace.ingestion.updated`; the worker SQL-filters and backfills attempts missing `trace_file`. Ingestion failure never changes scoring or terminal state.
 
 ## Dataset import
 
