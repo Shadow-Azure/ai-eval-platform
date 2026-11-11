@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from ..config import get_settings
 from ..models import (
+    TRACE_STATUSES,
     Dataset,
     DatasetVersion,
     EvalCaseAttempt,
@@ -235,7 +236,7 @@ def list_cases(
         (
             trace_status,
             EvalCaseRun.trace_status,
-            ("pending", "ready", "failed", "unlinked"),
+            TRACE_STATUSES,
             "trace_status",
         ),
     ):

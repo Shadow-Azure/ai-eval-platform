@@ -199,6 +199,26 @@ def test_cases_reject_invalid_filters(seeded: Session, client: TestClient) -> No
     assert client.get("/api/v1/eval-runs/missing/cases").status_code == 404
 
 
+def test_cases_filter_every_trace_state(seeded: Session, client: TestClient) -> None:
+    statuses = ("pending", "ready", "incomplete", "degraded", "failed", "unlinked")
+    run = _create_run(
+        seeded,
+        case_keys=tuple(f"trace-{status}" for status in statuses),
+        idempotency_key="trace-status-filter",
+    )
+    for case, status in zip(_cases(seeded, run), statuses, strict=True):
+        case.trace_status = status
+    seeded.commit()
+
+    for status in statuses:
+        response = client.get(
+            f"/api/v1/eval-runs/{run.id}/cases",
+            params={"trace_status": status},
+        )
+        assert response.status_code == 200
+        assert response.json()["items"][0]["trace_status"] == status
+
+
 def test_case_detail_lists_attempts_and_tests(seeded: Session, client: TestClient) -> None:
     run, cases = _prepare_failed_run(seeded, key="detail-run")
     _add_test(seeded, cases[0], group="F2P", outcome="failed")
