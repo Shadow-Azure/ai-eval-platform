@@ -24,7 +24,7 @@ def trace_env(session, configure_settings):
             S3_ACCESS_KEY="ak",
             S3_SECRET_KEY="sk",
         )
-        yield create_env(session, store)
+        yield create_env(session, store, runtime_key="generic")
 
 
 def _events(session, case_run_id: str) -> list[EvalEvent]:

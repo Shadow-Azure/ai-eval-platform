@@ -4,7 +4,16 @@ from __future__ import annotations
 
 from pathlib import PurePosixPath
 
-from .base import ParsedFile, ParsedSession, ParsedSpan, ParseError, ParseInput, TraceParser
+from .base import (
+    ParsedFile,
+    ParsedRelation,
+    ParsedSession,
+    ParsedSpan,
+    ParseError,
+    ParseInput,
+    TraceParser,
+)
+from .claude_code import ClaudeCodeParser, resolve_cross_file_relations
 from .generic import GenericJsonlParser
 
 
@@ -109,16 +118,19 @@ class ParserRegistry:
         raise LookupError("默认轨迹解析器未注册")
 
 
-DEFAULT_REGISTRY = ParserRegistry((GenericJsonlParser(),))
+DEFAULT_REGISTRY = ParserRegistry((GenericJsonlParser(), ClaudeCodeParser()))
 
 __all__ = [
+    "ClaudeCodeParser",
     "DEFAULT_REGISTRY",
     "ParseError",
     "ParseInput",
     "ParsedFile",
+    "ParsedRelation",
     "ParsedSession",
     "ParsedSpan",
     "ParserRegistry",
     "TraceParser",
     "detect_format",
+    "resolve_cross_file_relations",
 ]

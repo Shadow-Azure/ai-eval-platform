@@ -59,8 +59,21 @@ class ParsedSession:
 
 
 @dataclass
+class ParsedRelation:
+    """Cross-file native evidence; resolved after every attempt file is parsed."""
+
+    kind: str
+    child_agent_id: str
+    tool_use_id: str | None = None
+    parent_native_session_id: str | None = None
+    parent_session_key: str | None = None
+    evidence: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class ParsedFile:
     sessions: list[ParsedSession] = field(default_factory=list)
+    relations: list[ParsedRelation] = field(default_factory=list)
     status: str = "ready"
     detected_format: str = "unknown"
     error_code: str | None = None
