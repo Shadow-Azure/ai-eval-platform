@@ -13,6 +13,7 @@ import argparse
 import http.cookiejar
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -205,6 +206,25 @@ def _read_dispatch(tmp: Path, row_payload: dict[str, Any], name: str) -> Path:
     return path
 
 
+def _sanitize_evidence(value: Any, *, host: str) -> Any:
+    if isinstance(value, dict):
+        return {key: _sanitize_evidence(item, host=host) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_sanitize_evidence(item, host=host) for item in value]
+    if not isinstance(value, str):
+        return value
+    text = value.replace(host, "<runner-host>")
+    text = re.sub(
+        r"(?:-private-var-folders-[^/]+|/private/(?:tmp|var)/[^/\s]+|"
+        r"/opt/ai-eval-platform/runner/[^/\s]+|-opt-ai-eval-platform-runner--work[^/\s]*)"
+        r"(?:/m6-trace-e2e-[^/\s]+)?",
+        "<runner-temp>",
+        text,
+    )
+    text = re.sub(r"/private/tmp/claude-[^/\s]+", "<runner-temp>/claude", text)
+    return text
+
+
 def _run_runner(
     dispatch: Path,
     *,
@@ -212,6 +232,7 @@ def _run_runner(
     work: Path,
     evidence_path: Path,
     terminal: str,
+    profile: str = "real",
     env: dict[str, str],
 ) -> dict[str, Any]:
     command = [
@@ -229,6 +250,8 @@ def _run_runner(
         SENSITIVE_SENTINEL,
         "--terminal",
         terminal,
+        "--profile",
+        profile,
         "--evidence",
         str(evidence_path),
     ]
@@ -460,6 +483,10 @@ def main() -> int:
             terminal="succeeded",
             env=env,
         )
+        if evidence_two["runtime_version"] != "2.1.278":
+            raise AssertionError(
+                f"unexpected Claude Code runtime version: {evidence_two['runtime_version']}"
+            )
 
         worker = subprocess.Popen(
             [sys.executable, "-m", "app.worker.main"],
@@ -467,6 +494,52 @@ def main() -> int:
             env=env,
             stdout=worker_log,
             stderr=subprocess.STDOUT,
+        )
+
+        with SessionLocal() as session:
+            degraded_run, _ = evaluations.create_synthetic_evaluation(
+                session,
+                name="M6-06 degraded trace E2E",
+                case_keys=["m6-trace-e2e-degraded"],
+                shard_size=1,
+                requested_concurrency=1,
+                case_timeout_seconds=600,
+                max_attempts=1,
+                idempotency_key=f"m6-e2e-degraded-{time.time_ns()}",
+                created_by=ADMIN_EMAIL,
+                runtime_key="claude-code",
+                runtime_version="2.1.278",
+                settings=settings,
+            )
+            degraded_outbox = (
+                session.query(Outbox)
+                .filter(Outbox.aggregate_id == degraded_run.id)
+                .order_by(Outbox.dispatch_key)
+                .first()
+            )
+            if degraded_outbox is None:
+                raise AssertionError("degraded dispatch outbox missing")
+            degraded_dispatch_payload = json.loads(json.dumps(degraded_outbox.payload_json))
+            degraded_case = (
+                session.query(EvalCaseRun)
+                .filter(EvalCaseRun.eval_run_id == degraded_run.id)
+                .one()
+            )
+            degraded_run_id = degraded_run.id
+            degraded_case_run_id = degraded_case.id
+            session.commit()
+
+        degraded_dispatch = _read_dispatch(
+            work, degraded_dispatch_payload, "dispatch-degraded.json"
+        )
+        _run_runner(
+            degraded_dispatch,
+            gateway_url=gateway_url,
+            work=work,
+            evidence_path=work / "degraded.json",
+            terminal="succeeded",
+            profile="degraded",
+            env=env,
         )
 
         admin = Api(api_base)
@@ -477,6 +550,7 @@ def main() -> int:
 
         trace_one: dict[str, Any] = {}
         trace_two: dict[str, Any] = {}
+        degraded_trace: dict[str, Any] = {}
         deadline = time.monotonic() + 120
         while time.monotonic() < deadline:
             status_one, body_one = admin.request(
@@ -485,20 +559,64 @@ def main() -> int:
             status_two, body_two = admin.request(
                 "GET", f"/api/v1/eval-case-runs/{case_run_id}/trace?attempt=2"
             )
+            degraded_status, degraded_body = admin.request(
+                "GET", f"/api/v1/eval-case-runs/{degraded_case_run_id}/trace?attempt=1"
+            )
             if (
                 status_one == 200
                 and status_two == 200
+                and degraded_status == 200
                 and body_one["trace_status"] == "ready"
                 and body_two["trace_status"] == "ready"
+                and degraded_body["trace_status"] in ("degraded", "incomplete")
                 and body_one["stats"]["session_count"] == 3
                 and body_two["stats"]["session_count"] == 3
             ):
                 trace_one = body_one
                 trace_two = body_two
+                degraded_trace = degraded_body
                 break
             time.sleep(0.5)
-        if not trace_one or not trace_two:
-            raise AssertionError("trace ingestion did not reach ready for both attempts")
+        if not trace_one or not trace_two or not degraded_trace:
+            raise AssertionError("trace ingestion did not reach ready/degraded expectations")
+
+        if degraded_trace["stats"]["session_count"] != 0:
+            raise AssertionError("degraded trace invented a session")
+        if any(item["status"] in ("pending", "parsing") for item in degraded_trace["files"]):
+            raise AssertionError("degraded trace files did not settle")
+        degraded_raw_file = next(
+            item
+            for item in degraded_trace["files"]
+            if item["artifact_kind"] == "trace"
+        )
+        degraded_raw_status, degraded_raw_body = admin.request(
+            "POST", f"/api/v1/trace-files/{degraded_raw_file['id']}/download-url"
+        )
+        if degraded_raw_status != 200:
+            raise AssertionError(
+                f"degraded raw URL failed: {degraded_raw_status} {degraded_raw_body}"
+            )
+        with urllib.request.urlopen(degraded_raw_body["url"], timeout=30) as response:
+            if response.status != 200:
+                raise AssertionError(f"degraded raw download failed: {response.status}")
+        with SessionLocal() as session:
+            degraded_attempt = (
+                session.query(EvalCaseAttempt)
+                .filter(
+                    EvalCaseAttempt.eval_case_run_id == degraded_case_run_id,
+                    EvalCaseAttempt.attempt_no == 1,
+                )
+                .one()
+            )
+            degraded_case_row = session.get(EvalCaseRun, degraded_case_run_id)
+            if degraded_attempt.status != "succeeded":
+                raise AssertionError(
+                    f"degraded trace changed attempt terminal: {degraded_attempt.status}"
+                )
+            if degraded_case_row is None or degraded_case_row.result_status != "resolved":
+                raise AssertionError("degraded trace changed scoring result")
+            degraded_attempt_status = degraded_attempt.status
+            degraded_result_status = degraded_case_row.result_status
 
         sessions_one = _flatten_sessions(trace_one["sessions"])
         sessions_two = _flatten_sessions(trace_two["sessions"])
@@ -534,11 +652,14 @@ def main() -> int:
         viewer_spans = viewer_body.get("items", []) if isinstance(viewer_body, dict) else []
         viewer_span_text = json.dumps(viewer_body, ensure_ascii=False)
         xss_visible_as_text = "<script>window.__m6_xss=1</script>" in viewer_span_text
+        thinking_spans = [span for span in viewer_spans if span.get("kind") == "THINKING"]
+        if not thinking_spans:
+            raise AssertionError("real trace did not produce a THINKING span")
         viewer_thinking_hidden = all(
-            span.get("content_hidden") is True
-            for span in viewer_spans
-            if span.get("kind") == "THINKING"
+            span.get("content_hidden") is True for span in thinking_spans
         )
+        if not viewer_thinking_hidden:
+            raise AssertionError("viewer received visible THINKING content")
         viewer_raw_status, _ = viewer_api.request(
             "POST", f"/api/v1/trace-files/{raw_file['id']}/download-url"
         )
@@ -611,7 +732,7 @@ def main() -> int:
 
         flat_two = _flatten_sessions(trace_two["sessions"])
         children = [item for item in flat_two if item.get("parent_session_id")]
-        evidence = {
+        evidence = _sanitize_evidence({
             "schema_version": "1.0",
             "generated_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
             "environment": {
@@ -619,12 +740,12 @@ def main() -> int:
                 "host": socket.gethostname(),
                 "object_store": args.object_store,
                 "database": "postgresql" if env["DATABASE_URL"].startswith("postgres") else "sqlite",
-                "claude_code_version": "2.1.278",
+                "claude_code_version": evidence_two["runtime_version"],
             },
             "eval_run_id": run_id,
             "case_run_id": case_run_id,
             "runtime_key": "claude-code",
-            "runtime_version": "2.1.278",
+            "runtime_version": evidence_two["runtime_version"],
             "parser_version": "claude-code-2.1.278-v1",
             "capture_status": evidence_two["capture_status"],
             "root_session_id": evidence_two["root_session_id"],
@@ -658,6 +779,27 @@ def main() -> int:
                     "file_ids": [item["id"] for item in files_two],
                 },
             ],
+            "degraded_path": {
+                "eval_run_id": degraded_run_id,
+                "case_run_id": degraded_case_run_id,
+                "trace_status": degraded_trace["trace_status"],
+                "session_count": degraded_trace["stats"]["session_count"],
+                "file_statuses": {
+                    status: sum(
+                        1
+                        for item in degraded_trace["files"]
+                        if item["status"] == status
+                    )
+                    for status in ("ready", "degraded", "failed")
+                },
+                "unknown_format_present": any(
+                    item["format_version"] == "99"
+                    for item in degraded_trace["files"]
+                ),
+                "raw_download_status": degraded_raw_status,
+                "attempt_status": degraded_attempt_status,
+                "result_status": degraded_result_status,
+            },
             "retry": {
                 "attempt_1_terminal": evidence_one["terminal"],
                 "attempt_2_terminal": evidence_two["terminal"],
@@ -693,11 +835,12 @@ def main() -> int:
             },
             "native_file_count": len(evidence_two["native_files"]),
             "child_count": len(children),
+            "thinking_span_count": len(thinking_spans),
             "xss_content_marker": (
                 "<script>window.__m6_xss=1</script>" if xss_visible_as_text else None
             ),
             "sensitive_scan": "passed",
-        }
+        }, host=socket.gethostname())
 
         raw_text = json.dumps(evidence, ensure_ascii=False)
         for forbidden in (

@@ -2,7 +2,7 @@
   "lang": "zh-CN",
   "title": "M6 真实主子 Agent 轨迹端到端验收",
   "eyebrow": "Computer Use + Fixed Runner Smoke",
-  "summary": "固定 Linux Runner 上使用真实 Claude Code 2.1.278、隔离 PostgreSQL 与真实 OSS 完成两次 attempt 的主子 Agent 轨迹闭环，并在本地 Computer Use 中核对三栏查看器、权限、重试隔离和恶意文本安全。",
+  "summary": "固定 Linux Runner 上使用真实 Claude Code 2.1.278、隔离 PostgreSQL 与真实 OSS 完成两次 attempt 的主子 Agent 轨迹闭环，并在本地 Computer Use 中核对三栏查看器、降级、权限、重试隔离和恶意文本安全。评分报告为 synthetic trace fixture，只证明轨迹导入不改变执行与评分终态。",
   "meta": "2026-11-12 · PR #171 · run 43104397400",
   "metrics": [
     { "value": "2", "label": "隔离 attempts" },
@@ -26,7 +26,7 @@
         "id": "01",
         "name": "固定 Runner 真实 OSS 全链路",
         "status": { "kind": "pass", "label": "PASS" },
-        "detail": "真实 Claude CLI 生成原生文件，经 runner 回调、预签名上传、Worker 导入、API 查询成功。",
+        "detail": "真实 Claude CLI 生成原生文件，经 runner 回调、预签名上传、Worker 导入、API 查询成功；评分报告为 synthetic trace payload。",
         "evidence": ["fixed-runner-evidence.json", "trace-e2e job 成功"]
       },
       {
@@ -75,8 +75,15 @@
         "id": "08",
         "name": "降级矩阵",
         "status": { "kind": "pass", "label": "PASS" },
-        "detail": "缺子文件、unknown format/version、stdout-only、orphan fragment 由轨迹 parser/ingestion/API 回归覆盖；真实 GUI 的 degraded/incomplete 路径已在 #94 smoke 验证。",
-        "evidence": ["tests/backend/test_claude_trace_parser.py", "tests/backend/test_trace_ingestion.py", "PR #169 smoke"]
+        "detail": "固定 Runner 额外上传 unknown v99 + stdout-only 清单，平台得到 incomplete、0 sessions、raw 200，执行 succeeded/评分 resolved 不被改变。",
+        "evidence": ["fixed-runner-evidence.json"]
+      },
+      {
+        "id": "09",
+        "name": "评分边界",
+        "status": { "kind": "info", "label": "INFO" },
+        "detail": "本 issue 验证 trace E2E，不运行 SWE-bench 评分容器；synthetic score 仅用于证明导入失败/降级不会改写执行或评分终态。",
+        "evidence": ["report-data.json", "fixed-runner-evidence.json"]
       }
     ]
   },
@@ -133,7 +140,8 @@
       ["重试与幂等", "E2E", "独立 attempts；重复回调；parser replay 不重复。", "继续在发布前运行手动 trace-e2e。"],
       ["API 权限", "E2E", "匿名、viewer、admin、非法深链均按边界返回。", "无。"],
       ["GUI 与安全", "CUA", "三栏联动、raw 弹窗、拒绝提示、恶意文本纯文本显示。", "无。"],
-      ["降级", "UT + prior CUA", "parser/ingestion 回归与 #94 degraded smoke 通过。", "后续真实故障演练可扩展 #95 harness。"]
+      ["降级", "E2E", "unknown v99 + stdout-only 在 fixed runner 链路中 settled。", "无。"],
+      ["真实评分容器", "边界", "本 PR 使用 synthetic score，不执行 SWE-bench scoring。", "真实评分由既有评测流水线与后续评分 E2E 负责。"]
     ]
   },
   "conclusion": {
@@ -143,7 +151,7 @@
     "points": [
       "常规 PR CI 不运行外部 trace-e2e，避免成本和网络不确定性。",
       "测试模型网关是确定性 double，但 Claude Code CLI、原生文件、OSS 与数据库均为真实执行。",
-      "本次未覆盖真实外部模型供应商；该边界不影响轨迹采集与归一化验收。"
+      "本次未覆盖真实外部模型供应商或 SWE-bench 评分容器；该边界不影响轨迹采集与归一化验收。"
     ]
   },
   "footer": "M6-06 · real Claude Code trace E2E · no credentials or private object keys included"

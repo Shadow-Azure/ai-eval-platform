@@ -9,6 +9,7 @@
  * child agents. The resulting trace files are the real CLI-native files.
  */
 import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -22,6 +23,7 @@ import {
 import { fetchManifest } from "../lib/manifest-source.mjs";
 import { LocalObjectStore } from "../lib/object-store.mjs";
 import { runClaudeCode } from "../lib/runtime-claude-code.mjs";
+import { traceE2EClaudeEnv } from "../lib/trace-e2e.mjs";
 import {
   collectTraceBundle,
   dedupeTraceObjects,
@@ -34,6 +36,7 @@ function parseArgs(argv) {
     stateDir: null,
     objectRoot: null,
     terminal: "succeeded",
+    profile: "real",
     gatewayUrl: null,
     gatewayToken: "m6-e2e-gateway-token",
     model: "claude-sonnet-4-20250514",
@@ -53,6 +56,9 @@ function parseArgs(argv) {
       index += 1;
     } else if (arg === "--terminal") {
       args.terminal = next;
+      index += 1;
+    } else if (arg === "--profile") {
+      args.profile = next;
       index += 1;
     } else if (arg === "--gateway-url") {
       args.gatewayUrl = next;
@@ -107,11 +113,27 @@ async function callback(url, payload, eventId, token) {
   return result;
 }
 
+function readClaudeVersion() {
+  const env = traceE2EClaudeEnv();
+  const result = spawnSync("claude", ["--version"], {
+    encoding: "utf8",
+    env,
+    timeout: 15000,
+  });
+  if (result.error) throw new Error(`claude --version failed: ${result.error.message}`);
+  if (result.status !== 0) {
+    throw new Error(`claude --version exited ${result.status}: ${(result.stderr || "").slice(-300)}`);
+  }
+  const match = /(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)/.exec(result.stdout || "");
+  if (!match) throw new Error(`claude --version did not report a semantic version: ${result.stdout}`);
+  return match[1];
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.help || !args.dispatch || !args.gatewayUrl || !args.evidence) {
     console.log(
-      "usage: node runner/scripts/trace-e2e-runner.mjs --dispatch FILE --gateway-url URL --evidence FILE [--terminal succeeded|failed]",
+      "usage: node runner/scripts/trace-e2e-runner.mjs --dispatch FILE --gateway-url URL --evidence FILE [--terminal succeeded|failed] [--profile real|degraded]",
     );
     return 0;
   }
@@ -173,29 +195,72 @@ async function main() {
     tokenHeader,
   );
 
-  let run;
+  let run = { events: [] };
   try {
-    run = await runClaudeCode({
-      prompt:
-        "Launch exactly two Agent subagents in parallel. Alpha must return M6-ALPHA-OK. Beta must return M6-BETA-OK. Do not edit files. After both complete, reply with both values.",
-      model: args.model,
-      workspace,
-      runtimeHome,
-      gatewayBaseUrl: args.gatewayUrl,
-      gatewayToken: args.gatewayToken,
-      maxTurns: 10,
-      timeoutMs: 180000,
-    });
-    if (run.exitCode !== 0) throw new Error(`Claude Code exited ${run.exitCode}`);
-    const bundle = collectTraceBundle({
-      runtimeHome,
-      traceDir: join(workspace, "trace"),
-      runtimeKey: "claude-code",
-      runtimeVersion: "2.1.278",
-      adapterVersion: "claude-code-1.0",
-    });
-    if (bundle.capture_status !== "complete") {
-      throw new Error(`trace capture incomplete: ${bundle.incomplete_reasons.join(",")}`);
+    let bundle;
+    if (args.profile === "degraded") {
+      const stdout = Buffer.from(
+        `${JSON.stringify({ type: "system", subtype: "init", session_id: "degraded-no-native" })}\n`,
+      );
+      const unknown = Buffer.from(
+        `${JSON.stringify({ type: "unknown", note: "unknown future native format" })}\n`,
+      );
+      bundle = {
+        schema_version: "1.0",
+        runtime_key: "claude-code",
+        runtime_version: "2.1.278",
+        adapter_version: "claude-code-1.0",
+        capture_status: "incomplete",
+        incomplete_reasons: ["native_session_missing", "stdout_only"],
+        files: [
+          {
+            logical_path: "diagnostics/stdout.jsonl",
+            artifact_kind: "trace_diagnostic",
+            content_type: "application/x-ndjson",
+            native_format: "claude-code.stdout.stream-json",
+            format_version: "1",
+            runtime_version: "2.1.278",
+            bytes: stdout,
+          },
+          {
+            logical_path: "native/projects/degraded/unknown.trace",
+            artifact_kind: "trace",
+            content_type: "text/plain",
+            native_format: "claude-code.unknown",
+            format_version: "99",
+            runtime_version: "2.1.278",
+            bytes: unknown,
+          },
+        ],
+      };
+    } else {
+      const runtimeVersion = readClaudeVersion();
+      if (runtimeVersion !== "2.1.278") {
+        throw new Error(`unexpected Claude Code version: ${runtimeVersion}`);
+      }
+      run = await runClaudeCode({
+        prompt:
+          "Launch exactly two Agent subagents in parallel. Alpha must return M6-ALPHA-OK. Beta must return M6-BETA-OK. Do not edit files. After both complete, reply with both values.",
+        model: args.model,
+        workspace,
+        runtimeHome,
+        gatewayBaseUrl: args.gatewayUrl,
+        gatewayToken: args.gatewayToken,
+        baseEnv: traceE2EClaudeEnv(),
+        maxTurns: 10,
+        timeoutMs: 180000,
+      });
+      if (run.exitCode !== 0) throw new Error(`Claude Code exited ${run.exitCode}`);
+      bundle = collectTraceBundle({
+        runtimeHome,
+        traceDir: join(workspace, "trace"),
+        runtimeKey: "claude-code",
+        runtimeVersion,
+        adapterVersion: "claude-code-1.0",
+      });
+      if (bundle.capture_status !== "complete") {
+        throw new Error(`trace capture incomplete: ${bundle.incomplete_reasons.join(",")}`);
+      }
     }
     const traceFiles = dedupeTraceObjects(bundle.files);
     const store = new LocalObjectStore(objectRoot);
@@ -354,6 +419,7 @@ async function main() {
       case_run_id: item.case_run_id,
       attempt: dispatch.attempt,
       terminal: args.terminal,
+      profile: args.profile,
       runtime_key: bundle.runtime_key,
       runtime_version: bundle.runtime_version,
       adapter_version: bundle.adapter_version,

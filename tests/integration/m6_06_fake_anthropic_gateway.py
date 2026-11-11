@@ -47,17 +47,42 @@ def _text_response(message_id: str, model: str, text: str) -> list[tuple[str, di
         ("message_start", _message_start(message_id, model)),
         (
             "content_block_start",
-            {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}},
+            {
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {"type": "thinking", "thinking": "", "signature": ""},
+            },
         ),
         (
             "content_block_delta",
             {
                 "type": "content_block_delta",
                 "index": 0,
-                "delta": {"type": "text_delta", "text": text},
+                "delta": {"type": "thinking_delta", "thinking": "M6 deterministic internal reasoning."},
+            },
+        ),
+        (
+            "content_block_delta",
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "signature_delta", "signature": "m6-e2e-signature"},
             },
         ),
         ("content_block_stop", {"type": "content_block_stop", "index": 0}),
+        (
+            "content_block_start",
+            {"type": "content_block_start", "index": 1, "content_block": {"type": "text", "text": ""}},
+        ),
+        (
+            "content_block_delta",
+            {
+                "type": "content_block_delta",
+                "index": 1,
+                "delta": {"type": "text_delta", "text": text},
+            },
+        ),
+        ("content_block_stop", {"type": "content_block_stop", "index": 1}),
         (
             "message_delta",
             {

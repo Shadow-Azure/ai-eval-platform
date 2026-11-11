@@ -139,6 +139,7 @@ export function buildClaudeCommand({
   maxTurns = 40,
   executionImageDigest = null,
   command = "claude",
+  baseEnv = process.env,
 }) {
   if (!prompt || !String(prompt).trim()) throw new RuntimeError("prompt 不能为空");
   if (!model) throw new RuntimeError("model 不能为空");
@@ -169,7 +170,13 @@ export function buildClaudeCommand({
       "--dangerously-skip-permissions",
     ],
     cwd: workspace,
-    env: childEnv({ runtimeHome, gatewayBaseUrl, gatewayToken, model: cliModel }),
+    env: childEnv({
+      runtimeHome,
+      gatewayBaseUrl,
+      gatewayToken,
+      model: cliModel,
+      baseEnv,
+    }),
     executionImageDigest,
   };
 }
@@ -284,6 +291,7 @@ export async function runClaudeCode({
   timeoutMs = 3600_000,
   command = "claude",
   spawnImpl = spawn,
+  baseEnv = process.env,
 }) {
   mkdirSync(join(workspace, "trace"), { recursive: true });
   mkdirSync(runtimeHome, { recursive: true });
@@ -297,6 +305,7 @@ export async function runClaudeCode({
     maxTurns,
     executionImageDigest,
     command,
+    baseEnv,
   });
   const stdoutPath = join(workspace, "trace", "claude-stream.jsonl");
   const stderrPath = join(workspace, "trace", "claude-stderr.log");

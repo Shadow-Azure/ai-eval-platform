@@ -2,6 +2,15 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
+export function traceE2EClaudeEnv(source = process.env) {
+  const allowed = ["PATH", "TMPDIR", "LANG", "LC_ALL", "SHELL"];
+  return Object.fromEntries(
+    allowed
+      .filter((key) => typeof source[key] === "string")
+      .map((key) => [key, source[key]]),
+  );
+}
+
 function canonical(value) {
   if (Array.isArray(value)) return value.map(canonical);
   if (value && typeof value === "object") {
@@ -86,6 +95,9 @@ export function assertTraceE2EEvidence(value) {
   if (!Array.isArray(value.spans) || value.spans.length === 0) {
     throw new Error("span evidence is missing");
   }
+  if (!Number.isInteger(value.thinking_span_count) || value.thinking_span_count < 1) {
+    throw new Error("real THINKING span evidence is missing");
+  }
   if (value.raw_download?.status !== 200) throw new Error("raw download failed");
   if (value.raw_download?.cache_control !== "no-store") {
     throw new Error("raw download is cacheable");
@@ -103,6 +115,17 @@ export function assertTraceE2EEvidence(value) {
   }
   if (!value.attempts.every((attempt) => attempt.session_count === 3)) {
     throw new Error("attempt session counts are not isolated");
+  }
+  if (
+    !value.degraded_path ||
+    !["degraded", "incomplete"].includes(value.degraded_path.trace_status) ||
+    value.degraded_path.session_count !== 0 ||
+    value.degraded_path.unknown_format_present !== true ||
+    value.degraded_path.raw_download_status !== 200 ||
+    value.degraded_path.attempt_status !== "succeeded" ||
+    value.degraded_path.result_status !== "resolved"
+  ) {
+    throw new Error("real degraded trace path is missing or invalid");
   }
 
   const text = collectStrings(value).join("\n");
