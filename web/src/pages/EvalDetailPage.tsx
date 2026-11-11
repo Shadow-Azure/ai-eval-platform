@@ -6,7 +6,6 @@ import {
   Button,
   Card,
   Drawer,
-  Input,
   InputNumber,
   Modal,
   Segmented,
@@ -16,6 +15,7 @@ import {
   Table,
   Tabs,
   Tag,
+  Timeline,
   Tooltip,
   Typography,
 } from "antd";
@@ -35,6 +35,7 @@ import {
   type ConfigurationDifference,
   type EvaluationDetail,
   type EvaluationEvent,
+  type EvaluationShard,
   type MetricDelta,
   type MetricResult,
 } from "../api/evaluations";
@@ -52,11 +53,13 @@ import {
   type EvalConfigSnapshot,
 } from "../api/evalWorkbench";
 import { useEvalEvents, mergeEvents, type EvalEventsState } from "../api/useEvalEvents";
+import { CaseBrowser } from "../components/CaseBrowser";
 import { EmptyState } from "../components/EmptyState";
 import { Icon } from "../components/Icon";
 import { PageHeading } from "../components/PageHeading";
 import { QueryError } from "../components/QueryError";
 import { StatusCard } from "../components/StatusCard";
+import { EVAL_STATUS_META } from "../utils/evalStatus";
 import { formatMoney } from "../utils/money";
 
 const TAB_KEYS = ["overview", "cases", "results", "config", "events"] as const;
@@ -95,19 +98,7 @@ const TRACE_OPTIONS = [
   { value: "unlinked", label: "未关联" },
 ];
 
-const runStatusMeta: Record<string, { label: string; color: string }> = {
-  preparing: { label: "准备中", color: "default" },
-  queued: { label: "排队中", color: "default" },
-  running: { label: "运行中", color: "processing" },
-  finalizing: { label: "收口中", color: "processing" },
-  completed: { label: "已完成", color: "success" },
-  partial: { label: "部分成功", color: "warning" },
-  failed: { label: "失败", color: "error" },
-  cancelling: { label: "取消中", color: "warning" },
-  cancelled: { label: "已取消", color: "default" },
-  pausing_budget: { label: "预算暂停中", color: "warning" },
-  paused_budget: { label: "预算已暂停", color: "warning" },
-};
+const runStatusMeta = EVAL_STATUS_META;
 
 const executionStatusMeta: Record<string, { label: string; color: string }> = {
   queued: { label: "排队", color: "default" },
@@ -411,6 +402,19 @@ function attemptsSummary(attempts: EvalCaseDetail["attempts"], attemptNo: number
   return attempts.find((attempt) => attempt.attempt_no === attemptNo)?.test_summary ?? null;
 }
 
+/** Render one payload value without leaking `[object Object]` into the log. */
+function payloadValue(value: unknown): string {
+  if (value === null || value === undefined) return "—";
+  if (typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    if (typeof record.completed === "number" && typeof record.total === "number") {
+      return `${record.completed}/${record.total}`;
+    }
+    return JSON.stringify(value);
+  }
+  return String(value);
+}
+
 function eventSummary(event: EvaluationEvent, caseKeys: Map<string, string>): string {
   const payload = event.payload;
   const caseKey = event.case_run_id ? caseKeys.get(event.case_run_id) : null;
@@ -443,9 +447,16 @@ function eventSummary(event: EvaluationEvent, caseKeys: Map<string, string>): st
       return `${subject} 执行完成`;
     case "case.artifact_missing":
       return `${subject} 结果对象缺失`;
+    case "case.heartbeat":
+      return `${subject} attempt ${event.attempt_no ?? "?"} · 序号 ${payloadValue(payload.sequence)}${payload.progress ? ` · 进度 ${payloadValue(payload.progress)}` : ""}`;
     default: {
       const keys = Object.keys(payload);
-      return keys.length ? `${keys.slice(0, 3).map((key) => `${key}=${String(payload[key])}`).join(" · ")}` : "—";
+      return keys.length
+        ? `${keys
+            .slice(0, 3)
+            .map((key) => `${key}=${payloadValue(payload[key])}`)
+            .join(" · ")}`
+        : "—";
     }
   }
 }
@@ -498,6 +509,12 @@ export function EvalDetailPage() {
     queryKey: ["evaluation", runId],
     queryFn: ({ signal }) => fetchEvaluationDetail(runId, signal),
     enabled: Boolean(runId),
+    // The server-side progress snapshot (percent, resolve rate, ETA) and shard
+    // reconciliation must stay fresh while the run is active.
+    refetchInterval: (query) =>
+      query.state.data && TERMINAL_EVAL_STATUSES.includes(query.state.data.status)
+        ? false
+        : 3000,
   });
   const results = useQuery({
     queryKey: ["evaluation", runId, "results"],
@@ -637,14 +654,15 @@ export function EvalDetailPage() {
         failed: detail.data?.failed_count ?? 0,
         queued: detail.data?.queued_count ?? 0,
       };
-  const totalCases = detail.data?.total_cases ?? caseCounts.all;
-  const finishedCount = Math.max(0, totalCases - caseCounts.queued - caseCounts.running);
-  const progressPercent = totalCases ? Math.round((finishedCount / totalCases) * 100) : 0;
-  const rateDenominator =
-    caseCounts.resolved + caseCounts.unresolved + caseCounts.failed;
-  const resolveRate = rateDenominator
-    ? (caseCounts.resolved / rateDenominator) * 100
-    : 0;
+  // M5-17: progress, resolve rate and ETA are one server snapshot; do not
+  // recompute them from case rows or wall-clock time in the browser.
+  const progress = detail.data?.progress;
+  const totalCases = progress?.total ?? 0;
+  const finishedCount = progress?.finished ?? 0;
+  const progressPercent = progress?.percent ?? 0;
+  const resolveRate = progress?.resolve_rate ?? 0;
+  const estimatedRemainingSeconds = progress?.estimated_remaining_seconds ?? null;
+  const estimatedFinishAt = progress?.estimated_finish_at ?? null;
   const retryableCount = detail.data?.retryable_count ?? 0;
   const traceCounts = detail.data?.trace_counts ?? {};
   const budgetCny = detail.data?.model_budget_cny;
@@ -837,6 +855,8 @@ export function EvalDetailPage() {
           finishedCount={finishedCount}
           progressPercent={progressPercent}
           resolveRate={resolveRate}
+          estimatedRemainingSeconds={estimatedRemainingSeconds}
+          estimatedFinishAt={estimatedFinishAt}
           retryableCount={retryableCount}
           events={eventState.events}
           eventState={eventState}
@@ -851,19 +871,16 @@ export function EvalDetailPage() {
       ) : null}
 
       {tab === "cases" ? (
-        <Card className="eval-panel-card eval-panel-flush">
-          <div className="card-header eval-cases-head">
-            <div>
-              <h2 className="card-title">用例明细</h2>
-              <p className="card-subtitle">
-                共 {availableCounts.all} 个用例 · 状态计数不受当前页影响 · 点击行查看 attempt 与测试打点
-              </p>
-            </div>
-            <div className="card-actions">
-              <LiveBadge state={eventState} terminal={terminal} />
-            </div>
-          </div>
-          <div className="eval-filter-bar">
+        <CaseBrowser<EvalCaseRow>
+          className="eval-panel-card"
+          tableClassName="eval-case-table"
+          title="用例明细"
+          subtitle={`共 ${availableCounts.all} 个用例 · 状态计数不受当前页影响 · 点击行查看 attempt 与测试打点`}
+          actions={<LiveBadge state={eventState} terminal={terminal} />}
+          searchValue={searchDraft}
+          onSearchChange={setSearchDraft}
+          searchPlaceholder="搜索实例 ID 或仓库"
+          leading={
             <Segmented
               value={status}
               onChange={(value) =>
@@ -879,15 +896,9 @@ export function EvalDetailPage() {
                 ),
               }))}
             />
-            <div className="eval-filter-controls">
-              <Input
-                allowClear
-                value={searchDraft}
-                onChange={(event) => setSearchDraft(event.target.value)}
-                prefix={<Icon name="search" size={14} />}
-                placeholder="搜索实例 ID 或仓库"
-                style={{ width: 210 }}
-              />
+          }
+          filters={
+            <>
               <Select
                 allowClear
                 value={executionFilter || undefined}
@@ -912,58 +923,48 @@ export function EvalDetailPage() {
                 onChange={(value) => updateParams({ trace_status: value ?? null, page: null })}
                 style={{ width: 116 }}
               />
-            </div>
-          </div>
-          {cases.error ? (
-            <QueryError error={cases.error} onRetry={() => cases.refetch()} />
-          ) : (
-            <Table<EvalCaseRow>
-              className="eval-case-table"
-              rowKey="id"
-              size="small"
-              loading={cases.isLoading}
-              dataSource={cases.data?.items ?? []}
-              columns={caseColumns}
-              onRow={(record) => ({
-                onClick: () => openCase(record.id, record.latest_attempt_no),
-                onKeyDown: (event) => {
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    openCase(record.id, record.latest_attempt_no);
-                  }
-                },
-                tabIndex: 0,
-                role: "button",
-                style: { cursor: "pointer" },
-              })}
-              pagination={{
-                current: page,
-                pageSize,
-                total: cases.data?.total ?? 0,
-                showSizeChanger: true,
-                pageSizeOptions: [20, 50, 100],
-                showTotal: (total) => `共 ${total} 个用例`,
-                onChange: (nextPage, nextSize) =>
-                  updateParams({
-                    page: String(nextPage),
-                    pageSize: String(nextSize),
-                    case: null,
-                    attempt: null,
-                  }),
-              }}
-              locale={{
-                emptyText: (
-                  <EmptyState
-                    icon="search"
-                    title="当前筛选下没有用例"
-                    description="调整状态、执行/结果/轨迹筛选或搜索条件后再试。"
-                    compact
-                  />
-                ),
-              }}
+            </>
+          }
+          columns={caseColumns}
+          rows={cases.data?.items ?? []}
+          rowKey="id"
+          total={cases.data?.total ?? 0}
+          page={page}
+          pageSize={pageSize}
+          onPageChange={(nextPage, nextSize) =>
+            updateParams({
+              page: String(nextPage),
+              pageSize: String(nextSize),
+              case: null,
+              attempt: null,
+            })
+          }
+          loading={cases.isLoading || cases.isFetching}
+          error={cases.error}
+          errorTitle="无法加载评测用例"
+          errorEndpoint="GET /api/v1/eval-runs/:id/cases"
+          onRetry={() => cases.refetch()}
+          onRow={(record) => ({
+            onClick: () => openCase(record.id, record.latest_attempt_no),
+            onKeyDown: (event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                openCase(record.id, record.latest_attempt_no);
+              }
+            },
+            tabIndex: 0,
+            role: "button",
+            style: { cursor: "pointer" },
+          })}
+          empty={
+            <EmptyState
+              icon="search"
+              title="当前筛选下没有用例"
+              description="调整状态、执行/结果/轨迹筛选或搜索条件后再试。"
+              compact
             />
-          )}
-        </Card>
+          }
+        />
       ) : null}
 
       {tab === "results" ? (
@@ -999,6 +1000,7 @@ export function EvalDetailPage() {
           runId={runId}
           state={eventState}
           caseKeys={caseKeyById}
+          shards={data.shards}
           terminal={terminal}
           onOpenCase={openCase}
         />
@@ -1041,6 +1043,11 @@ export function EvalDetailPage() {
             ["已完成", `${finishedCount} 个`],
             ["运行中", `${caseCounts.running} 个`],
             ["排队", `${caseCounts.queued} 个`],
+            [
+              "已产生费用",
+              `${formatMoney(data.budget_spent_cny)}（预算口径，结算以模型网关记录为准）`,
+            ],
+            ["不可逆范围", "取消后不会自动恢复；需要继续时必须重新发起评测"],
             ["数据保留", "轨迹、测试打点与旧 attempt 均保留"],
           ]}
         />
@@ -1208,6 +1215,8 @@ interface OverviewPanelProps {
   finishedCount: number;
   progressPercent: number;
   resolveRate: number;
+  estimatedRemainingSeconds: number | null;
+  estimatedFinishAt: string | null;
   retryableCount: number;
   events: EvaluationEvent[];
   eventState: EvalEventsState;
@@ -1228,6 +1237,8 @@ function OverviewPanel(props: OverviewPanelProps) {
     finishedCount,
     progressPercent,
     resolveRate,
+    estimatedRemainingSeconds,
+    estimatedFinishAt,
     retryableCount,
     events,
     eventState,
@@ -1249,18 +1260,6 @@ function OverviewPanel(props: OverviewPanelProps) {
     (item) => item.execution_status === "running",
   );
   const keyCases = [...runningCases, ...failedCases].slice(0, 6);
-  const estimateMinutes =
-    !terminal && detail.started_at && progressPercent >= 5 && progressPercent < 100
-      ? Math.max(
-          1,
-          Math.round(
-            ((Date.now() - new Date(detail.started_at).getTime()) *
-              (100 - progressPercent)) /
-              progressPercent /
-              60000,
-          ),
-        )
-      : null;
   const recentEvents = events.slice(-6).reverse();
   const datasetLabel = config?.dataset
     ? `${config.dataset.dataset_name ?? config.dataset.dataset_slug} · ${config.dataset.version}`
@@ -1315,9 +1314,11 @@ function OverviewPanel(props: OverviewPanelProps) {
               <span>
                 {terminal
                   ? "结果已固化"
-                  : estimateMinutes
-                    ? `预计剩余 ${estimateMinutes} 分钟`
-                    : "按同一状态汇总实时计算"}
+                  : estimatedRemainingSeconds === null
+                    ? "等待服务端估算"
+                    : estimatedRemainingSeconds <= 0
+                      ? "预计即将完成"
+                      : `预计剩余 ${Math.ceil(estimatedRemainingSeconds / 60)} 分钟`}
               </span>
             </div>
             <StackedProgress counts={counts} total={totalCases} />
@@ -1376,6 +1377,12 @@ function OverviewPanel(props: OverviewPanelProps) {
             <div className="eval-context-item">
               <div className="eval-context-label">启动时间</div>
               <div className="eval-context-value">{formatTime(detail.started_at)}</div>
+            </div>
+            <div className="eval-context-item">
+              <div className="eval-context-label">预计完成</div>
+              <div className="eval-context-value">
+                {terminal ? "—" : formatTime(estimatedFinishAt)}
+              </div>
             </div>
           </div>
         </div>
@@ -2297,11 +2304,19 @@ interface EventsPanelProps {
   runId: string;
   state: EvalEventsState;
   caseKeys: Map<string, string>;
+  shards: EvaluationShard[];
   terminal: boolean;
   onOpenCase: (caseRunId: string, attempt?: number | null) => void;
 }
 
-function EventsPanel({ runId, state, caseKeys, terminal, onOpenCase }: EventsPanelProps) {
+const shardStatusMeta: Record<string, { label: string; color: string }> = {
+  pending: { label: "待派发", color: "default" },
+  processing: { label: "派发中", color: "processing" },
+  sent: { label: "已派发", color: "success" },
+  failed: { label: "派发失败", color: "error" },
+};
+
+function EventsPanel({ runId, state, caseKeys, shards, terminal, onOpenCase }: EventsPanelProps) {
   const [older, setOlder] = useState<EvaluationEvent[]>([]);
   const [cursor, setCursor] = useState<number | null>(null);
   const [hasMore, setHasMore] = useState(false);
@@ -2327,6 +2342,46 @@ function EventsPanel({ runId, state, caseKeys, terminal, onOpenCase }: EventsPan
     () => mergeEvents(older, state.events).slice().reverse(),
     [older, state.events],
   );
+  const heartbeats = useMemo(
+    () => displayed.filter((event) => event.event_type === "case.heartbeat").slice(0, 8),
+    [displayed],
+  );
+
+  const shardColumns: TableColumnsType<EvaluationShard> = [
+    {
+      title: "分片",
+      dataIndex: "shard_id",
+      render: (value: string | null) => <span className="mono small">{value ?? "—"}</span>,
+    },
+    { title: "Attempt", dataIndex: "attempt", width: 76 },
+    {
+      title: "Outbox",
+      dataIndex: "status",
+      width: 96,
+      render: (value: string) => {
+        const meta = shardStatusMeta[value] ?? { label: value, color: "default" };
+        return <Tag color={meta.color}>{meta.label}</Tag>;
+      },
+    },
+    {
+      title: "GitHub",
+      dataIndex: "github_status",
+      width: 84,
+      render: (value: number | null) => (value ? `HTTP ${value}` : "—"),
+    },
+    {
+      title: "派发时间",
+      dataIndex: "dispatched_at",
+      width: 160,
+      render: (value: string | null) => <span className="small">{formatTime(value)}</span>,
+    },
+    {
+      title: "最近错误",
+      dataIndex: "last_error",
+      ellipsis: true,
+      render: (value: string | null) => <span className="small">{value ?? "—"}</span>,
+    },
+  ];
 
   const loadOlder = async () => {
     const before = cursor ?? state.olderCursor;
@@ -2402,50 +2457,121 @@ function EventsPanel({ runId, state, caseKeys, terminal, onOpenCase }: EventsPan
   ];
 
   return (
-    <Card className="section-gap eval-panel-card eval-panel-flush">
-      <div className="card-header">
-        <div>
-          <h2 className="card-title">评测事件日志</h2>
-          <p className="card-subtitle">用于排查调度、预算、取消、重试与轨迹处理问题；事件来自数据库游标回放</p>
-        </div>
-        <div className="card-actions">
-          <LiveBadge state={state} terminal={terminal} />
-          <Button
+    <>
+      <div className="eval-events-grid section-gap">
+        <Card className="eval-panel-card eval-panel-flush">
+          <div className="card-header">
+            <div>
+              <h2 className="card-title">分片派发对账</h2>
+              <p className="card-subtitle">
+                每个 dispatch_key 的 outbox 状态与 GitHub 响应；用于核对“用例已创建但未派发”。
+              </p>
+            </div>
+          </div>
+          <Table<EvaluationShard>
+            rowKey="dispatch_key"
             size="small"
-            loading={loadingOlder}
-            disabled={!hasMore && cursor === null}
-            onClick={() => void loadOlder()}
-          >
-            加载更早事件
-          </Button>
-        </div>
+            dataSource={shards}
+            columns={shardColumns}
+            pagination={false}
+            locale={{
+              emptyText: (
+                <EmptyState
+                  icon="boxes"
+                  title="没有分片派发记录"
+                  description="评测创建后，分片 outbox 会出现在这里。"
+                  compact
+                />
+              ),
+            }}
+          />
+        </Card>
+        <Card className="eval-panel-card eval-panel-flush">
+          <div className="card-header">
+            <div>
+              <h2 className="card-title">Attempt 心跳时间线</h2>
+              <p className="card-subtitle">运行中用例的最近心跳；完整历史在下方事件日志。</p>
+            </div>
+          </div>
+          <div className="eval-heartbeat-timeline">
+            {heartbeats.length ? (
+              <Timeline
+                items={heartbeats.map((event) => ({
+                  key: event.id,
+                  children: (
+                    <div>
+                      <div>
+                        <span className="mono small">
+                          {event.case_run_id
+                            ? caseKeys.get(event.case_run_id) ?? event.case_run_id
+                            : "评测"}
+                        </span>
+                        <span className="muted small"> · attempt {event.attempt_no ?? "?"}</span>
+                      </div>
+                      <div className="table-secondary small">
+                        序号 {payloadValue(event.payload.sequence)} · 进度{" "}
+                        {payloadValue(event.payload.progress)} · {formatTime(event.occurred_at)}
+                      </div>
+                    </div>
+                  ),
+                }))}
+              />
+            ) : (
+              <EmptyState
+                icon="pulse"
+                title="暂无运行中心跳"
+                description="用例进入执行后，Runner 心跳会出现在这里。"
+                compact
+              />
+            )}
+          </div>
+        </Card>
       </div>
-      {olderError ? <QueryError error={olderError} onRetry={() => void loadOlder()} /> : null}
-      <Table<EvaluationEvent>
-        rowKey="id"
-        size="small"
-        loading={state.loading}
-        dataSource={displayed}
-        columns={columns}
-        pagination={false}
-        expandable={{
-          expandedRowRender: (record) => (
-            <pre className="eval-pre">{JSON.stringify(record.payload, null, 2)}</pre>
-          ),
-          rowExpandable: (record) => Object.keys(record.payload).length > 0,
-        }}
-        locale={{
-          emptyText: (
-            <EmptyState
-              icon="pulse"
-              title="还没有事件"
-              description="评测创建、派发、预算、取消与用例回调都会写入事件日志。"
-              compact
-            />
-          ),
-        }}
-      />
-    </Card>
+      <Card className="eval-panel-card eval-panel-flush">
+        <div className="card-header">
+          <div>
+            <h2 className="card-title">评测事件日志</h2>
+            <p className="card-subtitle">用于排查调度、预算、取消、重试与轨迹处理问题；事件来自数据库游标回放</p>
+          </div>
+          <div className="card-actions">
+            <LiveBadge state={state} terminal={terminal} />
+            <Button
+              size="small"
+              loading={loadingOlder}
+              disabled={!hasMore && cursor === null}
+              onClick={() => void loadOlder()}
+            >
+              加载更早事件
+            </Button>
+          </div>
+        </div>
+        {olderError ? <QueryError error={olderError} onRetry={() => void loadOlder()} /> : null}
+        <Table<EvaluationEvent>
+          rowKey="id"
+          size="small"
+          loading={state.loading}
+          dataSource={displayed}
+          columns={columns}
+          pagination={false}
+          expandable={{
+            expandedRowRender: (record) => (
+              <pre className="eval-pre">{JSON.stringify(record.payload, null, 2)}</pre>
+            ),
+            rowExpandable: (record) => Object.keys(record.payload).length > 0,
+          }}
+          locale={{
+            emptyText: (
+              <EmptyState
+                icon="pulse"
+                title="还没有事件"
+                description="评测创建、派发、预算、取消与用例回调都会写入事件日志。"
+                compact
+              />
+            ),
+          }}
+        />
+        </Card>
+    </>
   );
 }
 

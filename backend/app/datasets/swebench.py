@@ -116,8 +116,16 @@ class SWEBenchAdapter:
 
     key = "swebench"
     adapter_version = "1"
+    display_name = "SWE-bench Adapter"
+    task_family = "软件工程"
+    environment_kind = "GitHub Issue · Docker"
+    description = "经人工确认的 GitHub Issue 修复任务，适合作为发版验收集。"
+    primary_metric_key = "resolved_rate"
 
     REQUIRED_FIELDS = ("instance_id", "repo", "base_commit", "problem_statement", "patch")
+    # M5-15: field completeness in the upload validation report iterates this
+    # platform-facing alias (the uppercase tuple predates the report).
+    required_fields = REQUIRED_FIELDS
 
     # -- validation ---------------------------------------------------------
 

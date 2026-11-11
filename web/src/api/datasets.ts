@@ -1,4 +1,4 @@
-import { ApiError } from "./types";
+import { ApiError, notifyUnauthorized } from "./types";
 import { request } from "./evaluations";
 
 export interface DatasetSummary {
@@ -10,6 +10,53 @@ export interface DatasetSummary {
   environment_kind: string | null;
   created_at: string;
   version_count?: number;
+}
+
+export interface DatasetLatestVersion {
+  id: string;
+  version: string;
+  status: string;
+  case_count: number;
+  created_at: string;
+}
+
+export interface DatasetPrimaryMetric {
+  metric_key: string;
+  version: number;
+  display_name: string;
+  display_kind: string;
+  unit: string | null;
+  direction: string;
+}
+
+export interface DatasetAdapterRef {
+  key: string;
+  display_name: string;
+  registered: boolean;
+}
+
+/** M5-13 目录卡片：数据集行 + 最新版本 + 主指标 + 适配器元数据。 */
+export interface DatasetCatalogEntry extends DatasetSummary {
+  description: string;
+  updated_at: string | null;
+  latest_version: DatasetLatestVersion | null;
+  primary_metric: DatasetPrimaryMetric | null;
+  adapter: DatasetAdapterRef;
+  status: string;
+}
+
+export interface DatasetAdapterMetadata {
+  key: string;
+  adapter_version: string;
+  display_name: string;
+  task_family: string | null;
+  environment_kind: string | null;
+  description: string;
+  primary_metric_key: string | null;
+  metric_keys: string[];
+  metric_display_names: Record<string, string>;
+  case_visibility: Record<string, string>;
+  dataset_count: number;
 }
 
 export interface DatasetVersion {
@@ -26,6 +73,8 @@ export interface DatasetVersion {
   created_at: string;
 }
 
+export type DatasetDifficultyLevel = "easy" | "medium" | "hard";
+
 export interface DatasetCaseSummary {
   id: string;
   dataset_version_id: string;
@@ -33,7 +82,36 @@ export interface DatasetCaseSummary {
   ordinal: number;
   repo: string | null;
   base_commit: string | null;
+  /** Display level normalized from the adapter difficulty label. */
+  difficulty: DatasetDifficultyLevel | null;
+  /** Raw adapter label (e.g. "15 min - 1 hour"), shown in a tooltip. */
+  difficulty_label: string | null;
+  expected_test_count: number;
   created_at: string;
+}
+
+export interface DatasetDifficultyFacet {
+  value: DatasetDifficultyLevel;
+  count: number;
+}
+
+export interface DatasetImportValidation {
+  import_id: string;
+  status: string;
+  passed: boolean;
+  total_count: number;
+  valid_count: number;
+  invalid_count: number;
+  field_completeness: Record<string, FieldCompleteness>;
+  completeness_percent: number | null;
+  report_available: boolean;
+  error_codes: Record<string, number>;
+  created_at: string | null;
+}
+
+export interface DatasetVersionDetail extends DatasetVersion {
+  metrics: MetricDefinition[];
+  validation: DatasetImportValidation | null;
 }
 
 export interface MetricDefinition {
@@ -56,6 +134,7 @@ interface PageInfo {
   total?: number;
   limit?: number;
   offset?: number;
+  next_offset?: number | null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -113,6 +192,10 @@ function parseVersion(item: Record<string, unknown>): DatasetVersion {
   };
 }
 
+function parseDifficultyLevel(value: unknown): DatasetDifficultyLevel | null {
+  return value === "easy" || value === "medium" || value === "hard" ? value : null;
+}
+
 function parseCase(item: Record<string, unknown>): DatasetCaseSummary {
   return {
     id: text(item.id),
@@ -121,6 +204,9 @@ function parseCase(item: Record<string, unknown>): DatasetCaseSummary {
     ordinal: number(item.ordinal),
     repo: optionalText(item.repo),
     base_commit: optionalText(item.base_commit),
+    difficulty: parseDifficultyLevel(item.difficulty),
+    difficulty_label: optionalText(item.difficulty_label),
+    expected_test_count: number(item.expected_test_count),
     created_at: text(item.created_at),
   };
 }
@@ -146,6 +232,104 @@ export async function fetchDatasets(signal?: AbortSignal): Promise<DatasetSummar
   return items(payload).records.map(parseDataset);
 }
 
+function parseLatestVersion(item: unknown): DatasetLatestVersion | null {
+  if (!isRecord(item)) return null;
+  return {
+    id: text(item.id),
+    version: text(item.version),
+    status: text(item.status),
+    case_count: number(item.case_count),
+    created_at: text(item.created_at),
+  };
+}
+
+function parsePrimaryMetric(item: unknown): DatasetPrimaryMetric | null {
+  if (!isRecord(item)) return null;
+  return {
+    metric_key: text(item.metric_key),
+    version: number(item.version),
+    display_name: text(item.display_name),
+    display_kind: text(item.display_kind),
+    unit: optionalText(item.unit),
+    direction: text(item.direction),
+  };
+}
+
+function parseCatalogEntry(item: Record<string, unknown>): DatasetCatalogEntry {
+  const base = parseDataset(item);
+  const adapter = isRecord(item.adapter)
+    ? {
+        key: text(item.adapter.key),
+        display_name: text(item.adapter.display_name),
+        registered: Boolean(item.adapter.registered),
+      }
+    : { key: base.adapter_key, display_name: base.adapter_key, registered: false };
+  return {
+    ...base,
+    description: text(item.description),
+    updated_at: optionalText(item.updated_at),
+    latest_version: parseLatestVersion(item.latest_version),
+    primary_metric: parsePrimaryMetric(item.primary_metric),
+    adapter,
+    status: text(item.status) || (item.latest_version ? "ready" : "draft"),
+  };
+}
+
+function parseAdapterMetadata(item: Record<string, unknown>): DatasetAdapterMetadata {
+  const names = isRecord(item.metric_display_names) ? item.metric_display_names : {};
+  const visibility = isRecord(item.case_visibility) ? item.case_visibility : {};
+  return {
+    key: text(item.key),
+    adapter_version: text(item.adapter_version),
+    display_name: text(item.display_name),
+    task_family: optionalText(item.task_family),
+    environment_kind: optionalText(item.environment_kind),
+    description: text(item.description),
+    primary_metric_key: optionalText(item.primary_metric_key),
+    metric_keys: Array.isArray(item.metric_keys)
+      ? item.metric_keys.filter((value): value is string => typeof value === "string")
+      : [],
+    metric_display_names: Object.fromEntries(
+      Object.entries(names).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+    ),
+    case_visibility: Object.fromEntries(
+      Object.entries(visibility).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+    ),
+    dataset_count: number(item.dataset_count),
+  };
+}
+
+/** 拉取全部目录条目：按 200/页翻页直到没有下一页，避免 >200 时统计与筛选静默缺数据。 */
+export async function fetchDatasetCatalog(signal?: AbortSignal): Promise<DatasetCatalogEntry[]> {
+  const entries: DatasetCatalogEntry[] = [];
+  let offset = 0;
+  // 上限只防止后端异常时无限循环；正常目录远小于 50 页。
+  for (let page = 0; page < 50; page += 1) {
+    const payload = await request(`/api/v1/datasets?limit=200&offset=${offset}`, { signal });
+    const { records, page: info } = items(payload);
+    entries.push(...records.map(parseCatalogEntry));
+    if (!info.has_more || records.length === 0) break;
+    offset = info.next_offset ?? offset + records.length;
+  }
+  return entries;
+}
+
+export async function fetchDatasetAdapters(signal?: AbortSignal): Promise<DatasetAdapterMetadata[]> {
+  const payload = await request("/api/v1/dataset-adapters", { signal });
+  if (!isRecord(payload) || !Array.isArray(payload.items)) {
+    throw new ApiError("控制面返回了无法识别的适配器注册表", { code: "invalid_response" });
+  }
+  return payload.items.filter(isRecord).map(parseAdapterMetadata);
+}
+
+export async function fetchDatasetImports(
+  limit = 3,
+  signal?: AbortSignal,
+): Promise<DatasetImportRecord[]> {
+  const payload = await request(`/api/v1/dataset-imports?limit=${limit}`, { signal });
+  return items(payload).records.map(parseImportRecord);
+}
+
 export async function fetchDataset(id: string, signal?: AbortSignal): Promise<DatasetSummary> {
   const payload = await request(`/api/v1/datasets/${id}`, { signal });
   if (!isRecord(payload)) throw new ApiError("数据集响应无效", { code: "invalid_response" });
@@ -160,15 +344,47 @@ export async function fetchDatasetVersions(
   return items(payload).records.map(parseVersion);
 }
 
+function parseValidation(value: unknown): DatasetImportValidation | null {
+  if (!isRecord(value)) return null;
+  const completeness: Record<string, FieldCompleteness> = {};
+  if (isRecord(value.field_completeness)) {
+    for (const [field, entry] of Object.entries(value.field_completeness)) {
+      if (!isRecord(entry)) continue;
+      completeness[field] = { present: number(entry.present), percent: number(entry.percent) };
+    }
+  }
+  const errorCodes: Record<string, number> = {};
+  if (isRecord(value.error_codes)) {
+    for (const [code, count] of Object.entries(value.error_codes)) {
+      if (typeof count === "number") errorCodes[code] = count;
+    }
+  }
+  return {
+    import_id: text(value.import_id),
+    status: text(value.status),
+    passed: Boolean(value.passed),
+    total_count: number(value.total_count),
+    valid_count: number(value.valid_count),
+    invalid_count: number(value.invalid_count),
+    field_completeness: completeness,
+    completeness_percent:
+      typeof value.completeness_percent === "number" ? value.completeness_percent : null,
+    report_available: Boolean(value.report_available),
+    error_codes: errorCodes,
+    created_at: optionalText(value.created_at),
+  };
+}
+
 export async function fetchDatasetVersion(
   versionId: string,
   signal?: AbortSignal,
-): Promise<DatasetVersion & { metrics: MetricDefinition[] }> {
+): Promise<DatasetVersionDetail> {
   const payload = await request(`/api/v1/dataset-versions/${versionId}`, { signal });
   if (!isRecord(payload)) throw new ApiError("数据集版本响应无效", { code: "invalid_response" });
   return {
     ...parseVersion(payload),
     metrics: Array.isArray(payload.metrics) ? payload.metrics.filter(isRecord).map(parseMetric) : [],
+    validation: parseValidation(payload.validation),
   };
 }
 
@@ -183,25 +399,88 @@ export async function fetchDatasetCases(
   return items(payload).records.map(parseCase);
 }
 
+export interface DatasetCaseDetail extends DatasetCaseSummary {
+  problem_statement: string;
+  reference_patch: string | null;
+  test_patch: string | null;
+  expected_metrics: Record<string, unknown>;
+  extra: Record<string, unknown>;
+  visibility: Record<string, string>;
+}
+
+export async function fetchDatasetCase(
+  caseId: string,
+  signal?: AbortSignal,
+): Promise<DatasetCaseDetail> {
+  const payload = await request(`/api/v1/dataset-cases/${caseId}`, { signal });
+  if (!isRecord(payload)) throw new ApiError("用例详情响应无效", { code: "invalid_response" });
+  const visibility: Record<string, string> = {};
+  if (isRecord(payload.visibility)) {
+    for (const [field, value] of Object.entries(payload.visibility)) {
+      if (typeof value === "string") visibility[field] = value;
+    }
+  }
+  return {
+    ...parseCase(payload),
+    problem_statement: text(payload.problem_statement),
+    reference_patch: optionalText(payload.reference_patch),
+    test_patch: optionalText(payload.test_patch),
+    expected_metrics: isRecord(payload.expected_metrics) ? payload.expected_metrics : {},
+    extra: isRecord(payload.extra) ? payload.extra : {},
+    visibility,
+  };
+}
+
 export interface DatasetCasePage {
   items: DatasetCaseSummary[];
   total: number;
+  difficulties: DatasetDifficultyFacet[];
 }
 
-/** Server-paginated case list used by the launch wizard's subset picker. */
+export interface DatasetCaseQuery {
+  limit?: number;
+  offset?: number;
+  q?: string;
+  difficulty?: DatasetDifficultyLevel;
+}
+
+/**
+ * Server-paginated case list used by the dataset detail browser and the launch
+ * wizard's subset picker. Search, difficulty and paging all run server-side.
+ */
 export async function fetchDatasetCasesPage(
   versionId: string,
-  params: { limit?: number; offset?: number },
+  params: DatasetCaseQuery,
   signal?: AbortSignal,
 ): Promise<DatasetCasePage> {
-  const limit = params.limit ?? 20;
-  const offset = params.offset ?? 0;
+  const search = new URLSearchParams({
+    limit: String(params.limit ?? 20),
+    offset: String(params.offset ?? 0),
+  });
+  const q = params.q?.trim();
+  if (q) search.set("q", q);
+  if (params.difficulty) search.set("difficulty", params.difficulty);
   const payload = await request(
-    `/api/v1/dataset-versions/${versionId}/cases?limit=${limit}&offset=${offset}`,
+    `/api/v1/dataset-versions/${versionId}/cases?${search.toString()}`,
     { signal },
   );
   const { records, page } = items(payload);
-  return { items: records.map(parseCase), total: page.total ?? records.length };
+  const rawFacets =
+    isRecord(payload) && isRecord(payload.facets) && Array.isArray(payload.facets.difficulties)
+      ? payload.facets.difficulties
+      : [];
+  const difficulties = rawFacets
+    .filter(isRecord)
+    .map((entry) => ({
+      value: parseDifficultyLevel(entry.value),
+      count: number(entry.count),
+    }))
+    .filter((entry): entry is DatasetDifficultyFacet => entry.value !== null);
+  return {
+    items: records.map(parseCase),
+    total: page.total ?? records.length,
+    difficulties,
+  };
 }
 
 export interface ImportResult {
@@ -243,4 +522,194 @@ export async function createDatasetImport(body: {
     dataset: isRecord(payload.dataset) ? parseDataset(payload.dataset) : null,
     version: isRecord(payload.version) ? parseVersion(payload.version) : null,
   };
+}
+
+// ---------------------------------------------------------------------------
+// M5-15 uploaded imports
+// ---------------------------------------------------------------------------
+
+export interface ImportIssue {
+  code: string;
+  field: string | null;
+  message: string;
+  case_index: number | null;
+  case_key: string | null;
+}
+
+export interface FieldCompleteness {
+  present: number;
+  percent: number;
+}
+
+export interface ImportReport {
+  mode?: string;
+  total?: number;
+  valid?: number;
+  invalid?: number;
+  field_completeness?: Record<string, FieldCompleteness>;
+  error_codes?: Record<string, number>;
+  error_fields?: Record<string, number>;
+  errors?: ImportIssue[];
+  errors_truncated?: number;
+  warnings?: string[];
+  fatal?: boolean;
+  fatal_code?: string;
+  fatal_message?: string;
+  generated_at?: string;
+}
+
+export interface DatasetImportRecord {
+  id: string;
+  dataset_id: string | null;
+  dataset_slug: string;
+  adapter_key: string;
+  version: string;
+  source_uri: string;
+  source_revision: string | null;
+  status: string;
+  total_count: number;
+  valid_count: number;
+  invalid_count: number;
+  processed_count: number;
+  file_name: string | null;
+  file_size: number | null;
+  file_digest: string | null;
+  report: ImportReport;
+  error_report: ImportReport;
+  created_by: string;
+  created_at: string;
+  status_updated_at: string | null;
+  dataset?: DatasetSummary | null;
+  version_detail?: DatasetVersion | null;
+}
+
+function parseReport(value: unknown): ImportReport {
+  return isRecord(value) ? (value as unknown as ImportReport) : {};
+}
+
+function parseImportRecord(payload: unknown): DatasetImportRecord {
+  if (!isRecord(payload)) {
+    throw new ApiError("控制面返回了无法识别的导入数据", { code: "invalid_response" });
+  }
+  return {
+    id: text(payload.id),
+    dataset_id: optionalText(payload.dataset_id),
+    dataset_slug: text(payload.dataset_slug),
+    adapter_key: text(payload.adapter_key),
+    version: text(payload.version),
+    source_uri: text(payload.source_uri),
+    source_revision: optionalText(payload.source_revision),
+    status: text(payload.status),
+    total_count: number(payload.total_count),
+    valid_count: number(payload.valid_count),
+    invalid_count: number(payload.invalid_count),
+    processed_count: number(payload.processed_count),
+    file_name: optionalText(payload.file_name),
+    file_size: typeof payload.file_size === "number" ? payload.file_size : null,
+    file_digest: optionalText(payload.file_digest),
+    report: parseReport(payload.report),
+    error_report: parseReport(payload.error_report),
+    created_by: text(payload.created_by),
+    created_at: text(payload.created_at),
+    status_updated_at: optionalText(payload.status_updated_at),
+    dataset: isRecord(payload.dataset) ? parseDataset(payload.dataset) : null,
+    version_detail: isRecord(payload.version_detail) ? parseVersion(payload.version_detail) : null,
+  };
+}
+
+export async function fetchDatasetImport(
+  importId: string,
+  signal?: AbortSignal,
+): Promise<DatasetImportRecord> {
+  const payload = await request(`/api/v1/dataset-imports/${importId}`, { signal });
+  return parseImportRecord(payload);
+}
+
+function apiErrorFromBody(status: number, payload: unknown): ApiError {
+  const detail = isRecord(payload) && isRecord(payload.detail) ? payload.detail : null;
+  const error = detail && isRecord(detail.error) ? detail.error : null;
+  return new ApiError(
+    error && typeof error.message === "string" ? error.message : `导入请求失败（HTTP ${status}）`,
+    {
+      status,
+      code: error && typeof error.code === "string" ? error.code : null,
+      details:
+        error && isRecord(error.details) ? (error.details as Record<string, unknown>) : null,
+    },
+  );
+}
+
+export interface UploadImportMeta {
+  dataset_slug: string;
+  dataset_name: string;
+  adapter_key: string;
+  version: string;
+  source_revision: string;
+  execution_image_digest?: string;
+  scoring_image_digest?: string;
+}
+
+export function uploadDatasetImport(
+  meta: UploadImportMeta,
+  file: File,
+  options: { onProgress?: (ratio: number) => void; signal?: AbortSignal } = {},
+): Promise<DatasetImportRecord> {
+  return new Promise((resolve, reject) => {
+    const form = new FormData();
+    for (const [key, value] of Object.entries(meta)) {
+      if (typeof value === "string" && value.trim()) {
+        form.append(key, value);
+      }
+    }
+    form.append("file", file);
+
+    const xhr = new XMLHttpRequest();
+    let aborted = false;
+    xhr.open("POST", "/api/v1/dataset-imports/uploads");
+    xhr.withCredentials = true;
+    xhr.setRequestHeader("Accept", "application/json");
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable && event.total > 0) {
+        options.onProgress?.(Math.min(1, event.loaded / event.total));
+      }
+    };
+    xhr.onerror = () => {
+      reject(new ApiError("无法连接控制面 API，请确认后端服务已启动。", { code: "network_error" }));
+    };
+    xhr.onabort = () => {
+      aborted = true;
+      reject(new ApiError("已取消上传", { code: "aborted" }));
+    };
+    xhr.onload = () => {
+      let payload: unknown = null;
+      try {
+        payload = JSON.parse(xhr.responseText) as unknown;
+      } catch {
+        payload = null;
+      }
+      if (xhr.status >= 200 && xhr.status < 300 && isRecord(payload) && isRecord(payload.import)) {
+        resolve(parseImportRecord(payload.import));
+        return;
+      }
+      notifyUnauthorized(xhr.status);
+      reject(apiErrorFromBody(xhr.status, payload));
+    };
+    options.signal?.addEventListener("abort", () => {
+      if (!aborted) xhr.abort();
+    });
+    xhr.send(form);
+  });
+}
+
+export async function commitDatasetImport(importId: string): Promise<DatasetImportRecord> {
+  const payload = await request(`/api/v1/dataset-imports/${importId}/commit`, { method: "POST" });
+  if (!isRecord(payload) || !isRecord(payload.import)) {
+    throw new ApiError("提交响应无效", { code: "invalid_response" });
+  }
+  return parseImportRecord(payload.import);
+}
+
+export async function cancelDatasetImport(importId: string): Promise<DatasetImportRecord> {
+  const payload = await request(`/api/v1/dataset-imports/${importId}/cancel`, { method: "POST" });
+  return parseImportRecord(payload);
 }

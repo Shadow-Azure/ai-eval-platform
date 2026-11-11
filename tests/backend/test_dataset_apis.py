@@ -7,9 +7,11 @@
 from __future__ import annotations
 
 import pytest
+from app.models import DatasetImport
 from app.seed import ensure_default_scope
 from dataset_helpers import fixture_records
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 
@@ -308,6 +310,146 @@ def test_version_cases_endpoint_paginates_and_details(
     missing = client.get("/api/v1/dataset-cases/no-such-id")
     assert missing.status_code == 404
     assert missing.json()["detail"]["error"]["code"] == "dataset_case_not_found"
+
+
+def test_version_cases_support_search_and_server_side_pagination(
+    seeded: Session, client: TestClient
+) -> None:
+    records = fixture_records()
+    body = post_import(client, records=records)
+    version_id = body["version"]["id"]
+
+    # Search matches the instance ID or the repository and resets the page.
+    for term, expected in (
+        ("12907", [records[0]["instance_id"]]),
+        (records[2]["repo"], [record["instance_id"] for record in records]),
+        ("ASTROPY-13033", [records[1]["instance_id"]]),
+    ):
+        page = client.get(
+            f"/api/v1/dataset-versions/{version_id}/cases", params={"q": term}
+        ).json()
+        assert [case["case_key"] for case in page["items"]] == expected
+        assert page["page_info"]["total"] == len(expected)
+        assert page["items"][0]["expected_test_count"] > 0
+
+    # A LIKE wildcard is a literal user search, not a match-all shortcut.
+    wildcard = client.get(
+        f"/api/v1/dataset-versions/{version_id}/cases", params={"q": "%"}
+    ).json()
+    assert wildcard["items"] == []
+    assert wildcard["page_info"]["total"] == 0
+
+    # Limit/offset apply to the filtered query and totals stay filtered.
+    second = client.get(
+        f"/api/v1/dataset-versions/{version_id}/cases",
+        params={"limit": 2, "offset": 2},
+    ).json()
+    assert [case["ordinal"] for case in second["items"]] == [3, 4]
+    assert second["page_info"]["total"] == len(records)
+    assert second["page_info"]["has_more"] is True
+
+
+def test_version_cases_filter_by_adapter_provided_difficulty(
+    seeded: Session, client: TestClient
+) -> None:
+    # The vendored SWE-bench Verified slice labels difficulty as solve-time
+    # bands: four "15 min - 1 hour" (easy) and two "1-4 hours" (medium).
+    records = fixture_records()
+    body = post_import(client, records=records, version="difficulty-smoke")
+    version_id = body["version"]["id"]
+
+    page = client.get(
+        f"/api/v1/dataset-versions/{version_id}/cases", params={"difficulty": "easy"}
+    ).json()
+    assert page["page_info"]["total"] == 4
+    assert {case["difficulty"] for case in page["items"]} == {"easy"}
+    assert {case["difficulty_label"] for case in page["items"]} == {"15 min - 1 hour"}
+    # Facets cover the whole version, not only the filtered page.
+    assert page["facets"]["difficulties"] == [
+        {"value": "easy", "count": 4},
+        {"value": "medium", "count": 2},
+    ]
+
+    combined = client.get(
+        f"/api/v1/dataset-versions/{version_id}/cases",
+        params={"q": "12907", "difficulty": "easy"},
+    ).json()
+    assert [case["case_key"] for case in combined["items"]] == [records[0]["instance_id"]]
+    assert combined["page_info"]["total"] == 1
+
+    # Canonical labels and longer bands map deterministically; an unknown
+    # label is left out of facets rather than misclassified.
+    labels = ["easy", "medium", "hard", ">4 hours", "4-8 hours", "unknown"]
+    mixed = [dict(record, difficulty=label) for record, label in zip(fixture_records(), labels, strict=True)]
+    mixed_body = post_import(
+        client, records=mixed, version="labels-smoke", slug="swebench-labels"
+    )
+    mixed_cases = client.get(
+        f"/api/v1/dataset-versions/{mixed_body['version']['id']}/cases"
+    ).json()
+    assert mixed_cases["facets"]["difficulties"] == [
+        {"value": "easy", "count": 1},
+        {"value": "medium", "count": 1},
+        {"value": "hard", "count": 3},
+    ]
+    hard = client.get(
+        f"/api/v1/dataset-versions/{mixed_body['version']['id']}/cases",
+        params={"difficulty": "hard"},
+    ).json()
+    assert hard["page_info"]["total"] == 3
+    assert {case["difficulty_label"] for case in hard["items"]} == {"hard", ">4 hours", "4-8 hours"}
+    # Unknown labels are still browseable in the table, just not filterable.
+    unknown = client.get(
+        f"/api/v1/dataset-versions/{mixed_body['version']['id']}/cases",
+        params={"q": "13579"},
+    ).json()
+    assert len(unknown["items"]) == 1
+    assert unknown["items"][0]["difficulty"] is None
+    assert unknown["items"][0]["difficulty_label"] == "unknown"
+
+
+def test_version_detail_includes_import_validation(seeded: Session, client: TestClient) -> None:
+    body = post_import(client, records=fixture_records())
+    record = seeded.scalar(
+        select(DatasetImport).where(DatasetImport.dataset_id == body["dataset"]["id"])
+    )
+    assert record is not None
+    record.validation_report_json = {
+        "field_completeness": {
+            "instance_id": {"present": 6, "percent": 100.0},
+            "repo": {"present": 6, "percent": 100.0},
+            "problem_statement": {"present": 5, "percent": 83.3},
+        },
+        "error_codes": {},
+        "fatal": False,
+    }
+    seeded.commit()
+
+    detail = client.get(f"/api/v1/dataset-versions/{body['version']['id']}").json()
+    validation = detail["validation"]
+    assert validation["import_id"] == record.id
+    assert validation["status"] == "succeeded"
+    assert validation["passed"] is True
+    assert validation["report_available"] is True
+    assert validation["total_count"] == len(fixture_records())
+    assert validation["valid_count"] == len(fixture_records())
+    assert validation["invalid_count"] == 0
+    # The card reports the weakest required field, not an optimistic average.
+    assert validation["completeness_percent"] == 83.3
+    assert validation["field_completeness"]["problem_statement"]["present"] == 5
+
+
+def test_version_detail_without_report_still_exposes_counts(
+    seeded: Session, client: TestClient
+) -> None:
+    body = post_import(client, records=fixture_records())
+    detail = client.get(f"/api/v1/dataset-versions/{body['version']['id']}").json()
+    validation = detail["validation"]
+    # Legacy JSON imports have counts but no field-completeness report.
+    assert validation["passed"] is True
+    assert validation["report_available"] is False
+    assert validation["completeness_percent"] is None
+    assert validation["field_completeness"] == {}
 
 
 def test_version_metrics_endpoint(seeded: Session, client: TestClient) -> None:

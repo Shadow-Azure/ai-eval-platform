@@ -6,7 +6,7 @@ English | [中文](m6-01-native-trace-capture.md)
 kind: issue
 milestone: m6
 priority: P0
-status: ready
+status: done
 scope:
   - .agents/flow/issues/m6-01-native-trace-capture.*
   - .agents/flow/milestones/m6-trace-diagnosis.*

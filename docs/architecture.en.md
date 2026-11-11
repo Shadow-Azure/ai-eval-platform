@@ -64,6 +64,10 @@ Production deployment binds the Runner callback entry to the VPC private address
 
 Runner archives sessions, metadata and diagnostics, retaining failures; manifest records paths, digest, size, versions and platform object keys. Completion writes `trace_file(pending)`; the worker claims an owner-bound lease, verifies objects, then parses into `trace_session`/`trace_span`; `native_session_key` disambiguates shared `sessionId`, metadata keeps provenance only. Corrupt lines degrade; single-file failures stay isolated. Idempotency is `(attempt, sha256, parser_version)`: replays add no rows, upgrades swap the tree atomically, failure preserves the old tree, and single-file repair of a newer version replays the whole attempt; a reclaimed lease cannot be renewed or completed by its old worker. `trace_status` aggregates failed > incomplete > degraded > ready, an older attempt cannot overwrite the latest, and the publisher locks the case row, re-reads `trace_file`, skips publication while inflight, then writes the deduped `trace.ingestion.updated`; the worker SQL-filters and backfills attempts missing `trace_file`. Ingestion failure never changes scoring or terminal state.
 
+## Dataset import
+
+`/datasets/import` imports a dataset through a three-step wizard: choose an adapter and upload a JSON/JSONL source file (≤1 GB, drag-and-drop), with the version label and data commit submitted alongside the file. The control plane stages the file in a temporary directory, then a bounded subprocess with a wall-clock timeout and address-space limit streams, validates and persists a report (record count, field completeness, per-item errors, duplicate case keys); only after explicit confirmation does one transaction create the immutable version and its cases, so a failed or cancelled import leaves no partial version. The staged file is deleted after commit, validation failure or cancellation, and the worker marks imports whose heartbeat expired as failed instead of leaving the wizard waiting.
+
 ## Extension points
 
 - After the product runtime lands, add its components, data flows, and external dependencies here.

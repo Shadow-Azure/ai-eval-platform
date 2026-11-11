@@ -881,3 +881,31 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* M5-17: shard reconciliation and attempt heartbeats live beside the event log. */
+.eval-events-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.65fr) minmax(300px, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.eval-events-grid .eval-panel-card {
+  margin: 0;
+}
+
+.eval-heartbeat-timeline {
+  max-height: 360px;
+  overflow: auto;
+  padding: 4px 20px 16px;
+}
+
+.eval-heartbeat-timeline .ant-timeline {
+  margin-top: 8px;
+}
+
+@media (max-width: 1100px) {
+  .eval-events-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

@@ -64,6 +64,10 @@ M2 把执行与数据集、Agent 解耦：平台经 repository_dispatch 传 eval
 
 Runner 归档会话、元数据与诊断，失败保留；清单记录路径、digest、size、版本与平台对象键。回调写 `trace_file(pending)`；Worker 以 owner 租约领取并校验原件，解析后写 `trace_session`/`trace_span`；`native_session_key` 区分共享 `sessionId`，元数据只留原件行。坏行降级，单文件失败隔离。幂等键 `(attempt, sha256, parser_version)`：重复不新增，升级单事务换树，失败保留旧树，单文件修复遇新版本也原子重放整 attempt；回收后旧 Worker 不能续租或完成。`trace_status` 按 failed > incomplete > degraded > ready 聚合，旧 attempt 不覆盖最新；发布时锁 case 行并重读 `trace_file`，inflight 不发布终态，由收尾 Worker 写去重 `trace.ingestion.updated`；Worker SQL 过滤后回填缺 `trace_file` 的 attempt。导入不改评分/终态。
 
+## 数据集导入
+
+`/datasets/import` 用三步向导导入数据集：选择适配器并上传 JSON/JSONL 源文件（≤1 GB，拖放），版本标签与数据提交号随文件一起提交；控制面把文件暂存在临时目录，再由带超时与地址空间上限的隔离子进程流式解析、校验并写入持久化报告（识别用例数、字段完整率、逐项错误、重复 case_key）；用户确认后才以单事务生成不可变版本与用例，失败或取消不会留下半成品版本。暂存文件在版本生成、校验失败或取消后删除；进程中断的导入由 Worker 按心跳窗口标记失败，向导不会一直等待。
+
 ## 扩展位置
 
 - 产品运行时落地后在本页补组成、数据流与外部依赖。

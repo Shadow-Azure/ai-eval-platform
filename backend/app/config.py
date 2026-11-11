@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -86,6 +87,18 @@ class Settings(BaseSettings):
     runner_scripts_bundle_sha256: str | None = None
     runner_scripts_bundle_size: int = 0
 
+    # M5-15 dataset import uploads. Source files are staged in a temporary
+    # directory (never in the database) and parsed by an isolated subprocess
+    # with a wall-clock timeout and address-space limit; the stale window
+    # lets the worker mark a crashed run as failed instead of spinning.
+    dataset_import_dir: str = "/tmp/eval-dataset-imports"
+    dataset_import_max_bytes: int = 1024 * 1024 * 1024
+    dataset_import_timeout_seconds: int = 1800
+    dataset_import_memory_limit_mb: int = 2048
+    dataset_import_stale_seconds: int = 7200
+    dataset_import_error_limit: int = 200
+    dataset_import_progress_step: int = 1000
+
     # M2-05 synthetic evaluation loop.
     # Short-term case-token secret (platform signs, runner verifies). When
     # unset the case endpoints are open (development only).
@@ -104,6 +117,10 @@ class Settings(BaseSettings):
     github_repo: str = "Shadow-Azure/ai-eval-platform"
     github_token: str | None = None
     github_dispatch_event_type: str = "eval-shard"
+    # M5-18: deployments page reads and controls the production environment
+    # recorded by the deploy workflow (DEPLOY_ENVIRONMENT in .env).
+    deploy_environment: str = "production"
+    deploy_rollback_event_type: str = "deployment-rollback"
     # Synthetic shard manifest lifetime (dispatch expiry + case deadline).
     eval_shard_ttl_seconds: int = 3600
     eval_shard_deadline_minutes: int = 30
@@ -124,6 +141,10 @@ class Settings(BaseSettings):
     # cheap even when a large queue arrives at once).
     eval_capacity_check_seconds: int = 300
     eval_capacity_batch_size: int = 5
+    # M5-19 resource-pool console: "today's resource cost" aggregates over a
+    # local calendar day. Operators are in China (UTC+8), so the default window
+    # is Asia/Shanghai while every stored timestamp stays UTC.
+    resource_cost_utc_offset_hours: int = Field(default=8, ge=-12, le=14)
     # M4-04 Aliyun ECS spot provisioner. Aliyun quotes CNY/hour and the pool
     # threshold is stored in the same unit (M5-10), so scheduling compares them
     # directly. Credentials come from the encrypted resource connection, never

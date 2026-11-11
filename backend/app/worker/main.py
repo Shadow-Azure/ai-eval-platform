@@ -30,6 +30,7 @@ from ..services import (
     reconciler,
     trace_ingestion,
 )
+from ..services.dataset_imports import reap_stale_imports
 from ..services.operations import record_worker_heartbeat
 from ..services.provisioning import register_builtin_provisioners
 from ..services.runners import sweep_stale_runners
@@ -216,6 +217,13 @@ def main() -> int:
                 print(f"worker: swept {swept} stale runner(s) offline", flush=True)
         except Exception as exc:  # pragma: no cover - retried on the next loop
             print(f"worker: runner sweep failed: {exc}", flush=True)
+        try:
+            with SessionLocal() as session:
+                reaped = reap_stale_imports(session)
+            if reaped:
+                print(f"worker: reaped {reaped} stale dataset import(s)", flush=True)
+        except Exception as exc:  # pragma: no cover - retried on the next loop
+            print(f"worker: dataset import sweep failed: {exc}", flush=True)
         try:
             with SessionLocal() as session:
                 record_worker_heartbeat(session, pending_outbox=pending)

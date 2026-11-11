@@ -1,0 +1,8 @@
+﻿
+# 对比报告与截图等本地产出不入仓
+reports/
+
+.venv/
+.pytest_cache/
+__pycache__/
+*.pyc

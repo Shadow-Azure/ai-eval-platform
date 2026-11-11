@@ -136,10 +136,10 @@ def test_revision_ids_fit_alembic_version_column() -> None:
             "alembic_version.version_num VARCHAR(32)"
         )
 
-def test_trace_tables_migrate_from_trace_capture_head(database_url: str) -> None:
-    """0020 must apply on top of 0019 and reverse without losing 0019 state."""
+def test_trace_tables_migrate_from_dataset_import_head(database_url: str) -> None:
+    """0021 must apply on top of 0020 and reverse without losing earlier state."""
 
-    run_alembic(database_url, "upgrade", "0019_trace_capture_status")
+    run_alembic(database_url, "upgrade", "0020_dataset_import_upload")
     run_alembic(database_url, "upgrade", "head")
     engine = create_engine(database_url, future=True)
     try:
@@ -174,7 +174,7 @@ def test_trace_tables_migrate_from_trace_capture_head(database_url: str) -> None
     finally:
         engine.dispose()
 
-    run_alembic(database_url, "downgrade", "0019_trace_capture_status")
+    run_alembic(database_url, "downgrade", "0020_dataset_import_upload")
     engine = create_engine(database_url, future=True)
     try:
         tables = set(inspect(engine).get_table_names())

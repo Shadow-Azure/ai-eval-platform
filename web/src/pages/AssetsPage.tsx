@@ -68,6 +68,47 @@ function scanPathsOf(value: string): string[] {
     .filter(Boolean);
 }
 
+function runtimeRequirements(assets: ScannedAsset[] | undefined): string[] {
+  const seen = new Set<string>();
+  for (const asset of assets ?? []) {
+    for (const item of asset.metadata.prerequisites ?? []) seen.add(item);
+  }
+  return [...seen].sort();
+}
+
+function generatedCommands(assets: ScannedAsset[] | undefined): ScannedAsset[] {
+  return (assets ?? []).filter(
+    (asset) => asset.asset_type === "command" && (asset.metadata.prerequisites?.length ?? 0) > 0,
+  );
+}
+
+function RuntimeRequirementNote({
+  assets,
+  detail = false,
+}: {
+  assets: ScannedAsset[] | undefined;
+  detail?: boolean;
+}) {
+  const requirements = runtimeRequirements(assets);
+  const generated = generatedCommands(assets);
+  if (!requirements.length && !generated.length) return null;
+  return (
+    <div
+      className={`banner warning asset-requirement${detail ? " asset-requirement-detail" : ""}`}
+      role="status"
+    >
+      <Icon name="alert" size={15} />
+      <div>
+        <strong>运行时前置缺失</strong>
+        {requirements.length ? <> · 执行前需要 {requirements.join(" · ")}。</> : null}
+        {generated.length
+          ? ` 其中 ${generated.length} 个 Command 是生成型资产，启动前需由目标 Runtime adapter 生成并完成项目初始化。`
+          : " 依赖该 CLI 的生成型 Command 需在启动前由目标 Runtime adapter 生成并完成项目初始化。"}
+      </div>
+    </div>
+  );
+}
+
 function metric(label: string, value: number | string, hint: string, tone?: string) {
   return (
     <Card className="asset-metric" key={label}>
@@ -561,6 +602,7 @@ function AssetSourceDetail({
             </span>
             {statusTag(source.status)}
           </div>
+          <RuntimeRequirementNote assets={assets} detail />
           <Card className="asset-detail-card" title="已发现资产" extra={<span className="muted small">{assets.length} 个</span>}>
             <Table<ScannedAsset>
               rowKey={(record) => `${record.asset_type}:${record.path}`}
@@ -702,6 +744,7 @@ export function AssetsPage() {
               <span className={TYPE_TAG_CLASS.command}>Command {source.counts.command}</span>
               <span className={TYPE_TAG_CLASS.subagent}>Subagent {source.counts.subagent}</span>
             </div>
+            <RuntimeRequirementNote assets={source.last_scan.assets} />
             <div className="asset-source-note">
               Command 与 Subagent 由所选 Runtime adapter 映射，不保证跨 Agent 格式一致。
             </div>

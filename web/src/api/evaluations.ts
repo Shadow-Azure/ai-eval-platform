@@ -44,6 +44,12 @@ export interface EvaluationSummary {
   idempotency_key: string;
   created_by: string;
   dataset_version_id?: string | null;
+  dataset_name?: string | null;
+  dataset_version?: string | null;
+  resolved_count?: number | null;
+  scored_count?: number | null;
+  resolve_rate?: number | null;
+  duration_seconds?: number | null;
   runtime_key?: string | null;
   runtime_version?: string | null;
   model_name?: string | null;
@@ -118,9 +124,20 @@ export interface EvaluationShard {
   last_error: string | null;
 }
 
+export interface EvaluationProgress {
+  total: number;
+  finished: number;
+  percent: number;
+  resolve_rate: number | null;
+  estimated_remaining_seconds: number | null;
+  estimated_finish_at: string | null;
+}
+
 export interface EvaluationDetail extends EvaluationSummary {
   cases: EvaluationCase[];
   shards: EvaluationShard[];
+  /** Server-side aggregate snapshot; the page must not recompute these. */
+  progress: EvaluationProgress;
   asset_snapshot?: FrozenAssetSnapshot | null;
   consistency?: Record<string, unknown>;
   case_counts?: Record<string, number>;
@@ -138,10 +155,29 @@ export interface EvaluationEvent {
   occurred_at: string | null;
 }
 
+export interface EvaluationListStats {
+  total: number;
+  active: number;
+  running_cases: number;
+  resolved_cases: number;
+  scored_cases: number;
+  avg_resolve_rate: number | null;
+  avg_duration_seconds: number | null;
+}
+
+export interface EvaluationListQuery {
+  q?: string;
+  status?: string;
+  datasetId?: string;
+  limit?: number;
+  offset?: number;
+}
+
 export interface EvaluationListResponse {
   status: string;
   total: number;
   items: EvaluationSummary[];
+  stats: EvaluationListStats;
 }
 
 export interface CreateEvaluationRequest {
@@ -526,6 +562,33 @@ function readOptionalString(value: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
 
+function readOptionalNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function readStats(payload: unknown): EvaluationListStats {
+  if (!isRecord(payload)) {
+    return {
+      total: 0,
+      active: 0,
+      running_cases: 0,
+      resolved_cases: 0,
+      scored_cases: 0,
+      avg_resolve_rate: null,
+      avg_duration_seconds: null,
+    };
+  }
+  return {
+    total: readCountOrZero(payload.total),
+    active: readCountOrZero(payload.active),
+    running_cases: readCountOrZero(payload.running_cases),
+    resolved_cases: readCountOrZero(payload.resolved_cases),
+    scored_cases: readCountOrZero(payload.scored_cases),
+    avg_resolve_rate: readOptionalNumber(payload.avg_resolve_rate),
+    avg_duration_seconds: readOptionalNumber(payload.avg_duration_seconds),
+  };
+}
+
 export function parseEvaluationSummary(payload: unknown): EvaluationSummary {
   if (!isRecord(payload)) {
     throw new ApiError("控制面返回了无法识别的评测数据", { code: "invalid_response" });
@@ -555,6 +618,12 @@ export function parseEvaluationSummary(payload: unknown): EvaluationSummary {
     idempotency_key: readString(payload.idempotency_key),
     created_by: readString(payload.created_by),
     dataset_version_id: readOptionalString(payload.dataset_version_id),
+    dataset_name: readOptionalString(payload.dataset_name),
+    dataset_version: readOptionalString(payload.dataset_version),
+    resolved_count: readOptionalNumber(payload.resolved_count),
+    scored_count: readOptionalNumber(payload.scored_count),
+    resolve_rate: readOptionalNumber(payload.resolve_rate),
+    duration_seconds: readOptionalNumber(payload.duration_seconds),
     runtime_key: readOptionalString(payload.runtime_key),
     runtime_version: readOptionalString(payload.runtime_version),
     model_name: readOptionalString(payload.model_name),
@@ -580,6 +649,7 @@ export function parseEvaluationList(payload: unknown): EvaluationListResponse {
     status: readString(payload.status),
     total: readCount(payload.total, "total"),
     items: payload.items.map(parseEvaluationSummary),
+    stats: readStats(payload.stats),
   };
 }
 
@@ -596,6 +666,7 @@ export function parseEvaluationDetail(payload: unknown): EvaluationDetail {
     consistency: isRecord(record.consistency) ? record.consistency : undefined,
     case_counts: readNumberMap(record.case_counts),
     trace_counts: readNumberMap(record.trace_counts),
+    progress: readProgress(record.progress),
     retryable_count:
       typeof record.retryable_count === "number" ? record.retryable_count : undefined,
     cases: cases.map((entry) => {
@@ -632,6 +703,23 @@ export function parseEvaluationDetail(payload: unknown): EvaluationDetail {
   };
 }
 
+function readProgress(value: unknown): EvaluationProgress {
+  if (!isRecord(value)) {
+    throw new ApiError("控制面响应缺少 progress 聚合字段", { code: "invalid_response" });
+  }
+  return {
+    total: readCount(value.total, "progress.total"),
+    finished: readCount(value.finished, "progress.finished"),
+    percent: readCount(value.percent, "progress.percent"),
+    resolve_rate: typeof value.resolve_rate === "number" ? value.resolve_rate : null,
+    estimated_remaining_seconds:
+      typeof value.estimated_remaining_seconds === "number"
+        ? value.estimated_remaining_seconds
+        : null,
+    estimated_finish_at: readOptionalString(value.estimated_finish_at),
+  };
+}
+
 function readNumberMap(value: unknown): Record<string, number> | undefined {
   if (!isRecord(value)) return undefined;
   return Object.fromEntries(
@@ -641,8 +729,16 @@ function readNumberMap(value: unknown): Record<string, number> | undefined {
   );
 }
 
-export async function fetchEvaluations(signal?: AbortSignal): Promise<EvaluationListResponse> {
-  return parseEvaluationList(await request(`/api/v1/evaluations?limit=50`, { signal }));
+export async function fetchEvaluations(
+  query: EvaluationListQuery = {},
+  signal?: AbortSignal,
+): Promise<EvaluationListResponse> {
+  const params = new URLSearchParams({ limit: String(query.limit ?? 50) });
+  if (query.offset) params.set("offset", String(query.offset));
+  if (query.q?.trim()) params.set("q", query.q.trim());
+  if (query.status) params.set("status", query.status);
+  if (query.datasetId) params.set("dataset_id", query.datasetId);
+  return parseEvaluationList(await request(`/api/v1/evaluations?${params.toString()}`, { signal }));
 }
 
 export async function fetchEvaluationDetail(

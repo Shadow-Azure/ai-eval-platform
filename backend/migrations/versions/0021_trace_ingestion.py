@@ -1,7 +1,7 @@
 """versioned trace files, sessions and spans
 
-Revision ID: 0020_trace_ingestion
-Revises: 0019_trace_capture_status
+Revision ID: 0021_trace_ingestion
+Revises: 0020_dataset_import_upload
 Create Date: 2026-11-11
 
 M6-02 (design 08 §3/§5): native trace objects become an attempt-owned,
@@ -18,8 +18,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-revision: str = "0020_trace_ingestion"
-down_revision: str | None = "0019_trace_capture_status"
+revision: str = "0021_trace_ingestion"
+down_revision: str | None = "0020_dataset_import_upload"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
