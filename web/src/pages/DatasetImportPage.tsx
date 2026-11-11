@@ -65,6 +65,7 @@ export function DatasetImportPage() {
   const [submitting, setSubmitting] = useState(false);
   const [committing, setCommitting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [pollTick, setPollTick] = useState(0);
   const runtimes = useQuery({ queryKey: ["runtimes"], queryFn: ({ signal }) => fetchRuntimes(signal) });
 
   useEffect(() => {
@@ -88,14 +89,18 @@ export function DatasetImportPage() {
           if (!cancelled) setImportRecord(next);
         })
         .catch((error) => {
-          if (!cancelled) setActionError(errorMessage(error));
+          if (cancelled) return;
+          setActionError(errorMessage(error));
+          // Keep polling after a transient network error instead of leaving
+          // the wizard frozen on its last status.
+          setPollTick((tick) => tick + 1);
         });
     }, 900);
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [importRecord]);
+  }, [importRecord, pollTick]);
 
   useEffect(() => {
     if (!importRecord) return;
@@ -127,7 +132,12 @@ export function DatasetImportPage() {
   }
 
   async function startUpload() {
-    const values = await form.validateFields();
+    let values: FormValues;
+    try {
+      values = await form.validateFields();
+    } catch {
+      return; // Ant Design has already marked the missing fields.
+    }
     if (!file) {
       setFileError("请先选择一份 JSON / JSONL 数据文件");
       return;

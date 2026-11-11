@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import hashlib
 import os
-import resource
 import signal
 import subprocess
 import sys
@@ -26,6 +25,11 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+
+try:  # POSIX only; the limits are optional on other platforms.
+    import resource
+except ImportError:  # pragma: no cover - Windows
+    resource = None  # type: ignore[assignment]
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
@@ -42,7 +46,6 @@ from .datasets import (
 )
 
 ACTIVE_IMPORT_STATUSES = ("queued", "validating", "committing")
-TERMINAL_IMPORT_STATUSES = ("succeeded", "failed", "duplicate", "cancelled")
 MAX_ERRORS_SAFE = 200
 
 
@@ -305,11 +308,25 @@ def mark_worker_failure(
     return True
 
 
-def begin_validation(session: Session, record: DatasetImport) -> None:
-    record.status = "validating"
-    record.processed_count = 0
-    _touch(record)
+def begin_validation(session: Session, record: DatasetImport) -> bool:
+    """Atomically claim a queued import for validation.
+
+    Returns False when another actor (usually a cancel) already moved the row
+    out of ``queued``; the worker then exits without resurrecting it.
+    """
+
+    from sqlalchemy import update
+
+    result = session.execute(
+        update(DatasetImport)
+        .where(DatasetImport.id == record.id, DatasetImport.status == "queued")
+        .values(status="validating", status_updated_at=_now(), processed_count=0)
+    )
     session.commit()
+    if result.rowcount != 1:
+        return False
+    session.refresh(record)
+    return True
 
 
 def validate_uploaded_import(
@@ -321,7 +338,23 @@ def validate_uploaded_import(
     """Validate one uploaded import inside the worker process."""
 
     settings = settings or get_settings()
-    begin_validation(session, record)
+    if not begin_validation(session, record):
+        return ValidationResult(
+            report={
+                "mode": "unknown",
+                "total": 0,
+                "valid": 0,
+                "invalid": 0,
+                "field_completeness": {},
+                "error_codes": {},
+                "error_fields": {},
+                "errors": [],
+                "errors_truncated": 0,
+                "warnings": [],
+                "fatal": False,
+                "generated_at": _now().isoformat(timespec="seconds"),
+            }
+        )
     path = source_path(record, settings)
 
     def on_progress(processed: int) -> None:
@@ -549,8 +582,42 @@ def _backend_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def _worker_env(database_url: str, backend: Path) -> dict[str, str]:
+    """Minimal child environment: no runner, model or session credentials.
+
+    The parser only needs its database connection and import limits; passing
+    the API process's full environment would hand every secret to a process
+    that parses untrusted data.
+    """
+
+    keep = {
+        "PATH",
+        "HOME",
+        "TMPDIR",
+        "LANG",
+        "LC_ALL",
+        "TZ",
+        "PYTHONPATH",
+        "PYTHONUNBUFFERED",
+        "PYTHONIOENCODING",
+        "SSL_CERT_FILE",
+        "SSL_CERT_DIR",
+        "ENVIRONMENT",
+    }
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key in keep or key.startswith(("DATASET_IMPORT_", "PG", "LC_"))
+    }
+    env["DATABASE_URL"] = database_url
+    env["PYTHONPATH"] = str(backend) + (
+        os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else ""
+    )
+    return env
+
+
 def _apply_limits(memory_limit_mb: int, cpu_seconds: int) -> None:
-    if os.name != "posix":
+    if os.name != "posix" or resource is None:
         return
     memory = max(64, memory_limit_mb) * 1024 * 1024
     try:
@@ -582,14 +649,12 @@ def run_import_job(
     settings = get_settings()
     timeout = float(timeout_seconds or settings.dataset_import_timeout_seconds)
     command = [sys.executable, "-m", "app.worker.dataset_import", import_id, stage]
-    env = os.environ.copy()
-    env["DATABASE_URL"] = database_url
-    backend = str(_backend_root())
-    env["PYTHONPATH"] = backend + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+    backend_path = _backend_root()
+    env = _worker_env(database_url, backend_path)
     # Limits are applied by the child itself: preexec_fn is not safe in a
     # threaded API process, and the worker only needs its own address space.
     popen_kwargs: dict[str, Any] = {
-        "cwd": backend,
+        "cwd": str(backend_path),
         "env": env,
         "stdout": subprocess.DEVNULL,
         "stderr": subprocess.PIPE,

@@ -323,6 +323,17 @@ def materialize_dataset_version(
                     invalid_count=1,
                     errors=[conflict],
                 )
+                # The async wizard polls the validation report, so a conflict
+                # must be diagnosable there as well as in error_report_json.
+                report = dict(import_record.validation_report_json or {})
+                report.update(
+                    {
+                        "fatal": True,
+                        "fatal_code": "version_conflict",
+                        "fatal_message": conflict.message,
+                    }
+                )
+                import_record.validation_report_json = report
                 session.commit()
             raise DatasetVersionConflict(
                 f"版本 {version} 已绑定 revision={existing.source_revision}，与本次 revision={source_revision} 冲突",

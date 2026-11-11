@@ -327,6 +327,45 @@ def test_worker_timeout_marks_import_failed(
     assert list(session.scalars(select(DatasetVersion))) == []
 
 
+def test_cancel_wins_before_worker_claim(
+    seeded: Session, session: Session, client: TestClient, import_dir: Path
+) -> None:
+    records = fixture_records()
+    created = upload(client, content=jsonl_bytes(records)).json()["import"]
+    wait_for_import(client, created["id"], {"validated"})
+    record = session.get(DatasetImport, created["id"])
+    record.status = "queued"
+    session.commit()
+
+    assert client.post(f"/api/v1/dataset-imports/{created['id']}/cancel").status_code == 200
+    session.expire_all()
+    record = session.get(DatasetImport, created["id"])
+    # A worker that was already scheduled must not revive a cancelled import.
+    assert import_service.begin_validation(session, record) is False
+    session.expire_all()
+    assert session.get(DatasetImport, created["id"]).status == "cancelled"
+
+
+def test_conflicting_version_commit_reports_conflict(
+    seeded: Session, client: TestClient, import_dir: Path
+) -> None:
+    records = fixture_records()
+    first = upload(client, content=jsonl_bytes(records), version="upload-conflict").json()["import"]
+    wait_for_import(client, first["id"], {"validated"})
+    assert client.post(f"/api/v1/dataset-imports/{first['id']}/commit").status_code == 202
+    wait_for_import(client, first["id"], {"succeeded"})
+
+    second = upload(
+        client, content=jsonl_bytes(records), version="upload-conflict", source_revision="rev-other"
+    ).json()["import"]
+    wait_for_import(client, second["id"], {"validated"})
+    assert client.post(f"/api/v1/dataset-imports/{second['id']}/commit").status_code == 202
+    detail = wait_for_import(client, second["id"], {"failed", "duplicate"})
+    assert detail["status"] == "failed"
+    assert detail["report"]["fatal_code"] == "version_conflict"
+    assert len(list(seeded.scalars(select(DatasetVersion)))) == 1
+
+
 def test_stale_reaper_fails_interrupted_import(
     seeded: Session, session: Session, client: TestClient, import_dir: Path, configure_settings
 ) -> None:

@@ -19,7 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..config import get_settings
-from ..datasets import get_adapter
+from ..datasets import AdapterNotFound, get_adapter
 from ..db import get_session
 from ..defaults import DEFAULT_TENANT_ID
 from ..models import Dataset, DatasetCase, DatasetImport, DatasetVersion, MetricDefinition
@@ -268,7 +268,7 @@ async def upload_dataset_import(
     settings = get_settings()
     try:
         get_adapter(adapter_key)
-    except Exception as exc:
+    except AdapterNotFound as exc:
         raise _upload_error("adapter_not_found", f"未注册的数据集适配器：{adapter_key}") from exc
 
     original_name = Path(file.filename or "").name
@@ -344,7 +344,12 @@ async def upload_dataset_import(
         created_by=context.user.email,
     )
     session.add(record)
-    session.commit()
+    try:
+        session.commit()
+    except Exception:
+        # Do not leave a staged file behind when the import row cannot exist.
+        destination.unlink(missing_ok=True)
+        raise
 
     database_url = _database_url(session)
     background_tasks.add_task(
