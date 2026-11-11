@@ -1,0 +1,1318 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PR #133 分析 · checkout 失败为什么让用例卡在 queued</title>
+<style>
+  :root{
+    --bg:#edf2f8;
+    --paper:#ffffff;
+    --ink:#15202e;
+    --body:#3d4d63;
+    --muted:#5d6d82;
+    --faint:#8b99ab;
+    --line:#dbe3ee;
+    --line-soft:#e9eef6;
+    --accent:#1f5fd6;
+    --accent-2:#0e7490;
+    --accent-wash:#eef4ff;
+    --warn:#b45309;
+    --warn-wash:#fff8eb;
+    --bad:#c0262d;
+    --bad-wash:#fff5f5;
+    --good:#15803d;
+    --good-wash:#f3fbf5;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+    --shadow:0 14px 36px #17202f10;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0;
+    color:var(--ink);
+    font:15px/1.72 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Noto Sans CJK SC","Microsoft YaHei",sans-serif;
+    background:
+      radial-gradient(1100px 480px at 88% -8%,#d9e8ff 0,transparent 60%),
+      radial-gradient(820px 420px at -5% 2%,#eaf4ff 0,transparent 55%),
+      var(--bg);
+    -webkit-font-smoothing:antialiased;
+  }
+  a{color:var(--accent);text-decoration:none}
+  a:hover{text-decoration:underline}
+  code{font-family:var(--mono);font-size:.9em;color:#29456d;overflow-wrap:anywhere}
+  b{font-weight:700}
+  .wrap{max-width:1320px;margin:0 auto;padding:30px 26px 64px}
+
+  /* ---------- hero ---------- */
+  .hero{
+    position:relative;
+    overflow:hidden;
+    padding:38px 40px 32px;
+    border:1px solid #d8e2ee;
+    border-radius:26px;
+    background:linear-gradient(180deg,#fff 0%,#fbfdff 100%);
+    box-shadow:var(--shadow);
+  }
+  .hero::before{
+    content:"";
+    position:absolute;
+    inset:0 0 auto;
+    height:4px;
+    background:linear-gradient(90deg,#1f5fd6,#4f9cf9 55%,#d97706);
+  }
+  .eyebrow{
+    display:flex;
+    align-items:center;
+    gap:8px;
+    margin:0;
+    color:var(--accent);
+    font:800 10.5px/1 var(--mono);
+    letter-spacing:.16em;
+    text-transform:uppercase;
+  }
+  .live{
+    width:7px;height:7px;border-radius:50%;
+    background:var(--accent);
+    box-shadow:0 0 0 4px #dbe8ff;
+  }
+  .hero h1{
+    max-width:920px;
+    margin:15px 0 12px;
+    font-size:clamp(30px,4.2vw,46px);
+    line-height:1.14;
+    letter-spacing:-.045em;
+    font-weight:800;
+  }
+  .hero h1 .accent{color:var(--accent)}
+  .lede{
+    max-width:880px;
+    margin:0;
+    color:#405066;
+    font-size:16px;
+  }
+  .meta{display:flex;flex-wrap:wrap;gap:7px;margin-top:18px}
+  .chip{
+    display:inline-flex;align-items:center;gap:6px;
+    padding:5px 10px;
+    border:1px solid var(--line);
+    border-radius:999px;
+    background:#f8fafc;
+    color:var(--muted);
+    font-size:11.5px;
+    font-weight:600;
+  }
+  .chip code{font-size:11px}
+  .stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:26px}
+  .stat{
+    padding:15px 17px;
+    border:1px solid var(--line);
+    border-radius:16px;
+    background:#f9fbfe;
+  }
+  .stat b{display:block;font-size:28px;line-height:1.1;letter-spacing:-.04em}
+  .stat b small{font-size:14px;color:var(--muted);letter-spacing:0}
+  .stat span{display:block;margin-top:5px;color:var(--faint);font-size:11.5px;line-height:1.45}
+
+  /* ---------- layout + toc ---------- */
+  .layout{
+    display:grid;
+    grid-template-columns:214px minmax(0,1fr);
+    gap:34px;
+    align-items:start;
+    margin-top:26px;
+    min-width:0;
+  }
+  .layout > main{min-width:0}
+  .toc{
+    position:sticky;
+    top:20px;
+    padding:16px 14px;
+    border:1px solid var(--line);
+    border-radius:18px;
+    background:rgba(255,255,255,.78);
+    backdrop-filter:blur(6px);
+    font-size:12.5px;
+  }
+  .toc-title{
+    padding:0 8px 10px;
+    margin-bottom:8px;
+    border-bottom:1px solid var(--line-soft);
+    color:var(--faint);
+    font:800 10.5px/1 var(--mono);
+    letter-spacing:.14em;
+    text-transform:uppercase;
+  }
+  .toc a{display:flex;gap:8px;padding:6px 8px;border-radius:8px;color:#4b5c72}
+  .toc a:hover{background:#eef4ff;color:var(--accent);text-decoration:none}
+  .toc a .n{min-width:18px;color:#a2b0c2;font:700 10.5px/1.7 var(--mono)}
+  .toc-note{
+    margin-top:10px;
+    padding:10px 8px 0;
+    border-top:1px solid var(--line-soft);
+    color:var(--faint);
+    font-size:10.5px;
+    line-height:1.6;
+  }
+
+  /* ---------- sections ---------- */
+  .section{margin-top:48px;scroll-margin-top:24px}
+  .section:first-child{margin-top:0}
+  .section-head{display:flex;gap:14px;align-items:flex-start;margin-bottom:16px}
+  .section-head .num{
+    flex:none;
+    display:inline-flex;align-items:center;justify-content:center;
+    min-width:34px;height:28px;
+    margin-top:3px;
+    border-radius:9px;
+    background:#15202e;
+    color:#fff;
+    font:800 11.5px/1 var(--mono);
+  }
+  .section-head h2{margin:0;font-size:25px;line-height:1.25;letter-spacing:-.035em}
+  .kicker{
+    margin:0 0 3px;
+    color:var(--faint);
+    font-size:10.5px;
+    font-weight:800;
+    letter-spacing:.15em;
+    text-transform:uppercase;
+  }
+  h3{font-size:17px;line-height:1.35;margin:24px 0 9px;letter-spacing:-.015em}
+  h4{font-size:13.5px;margin:0 0 4px}
+  p{margin:9px 0}
+  .lead{color:#405066;font-size:15.5px;margin:0 0 14px}
+  .tight{margin:8px 0 0;padding-left:20px}
+  .tight li{margin:6px 0}
+  .tight li::marker{color:#9fb0c6}
+
+  /* ---------- cards ---------- */
+  .card{
+    border:1px solid var(--line);
+    border-radius:18px;
+    background:var(--paper);
+    padding:20px 22px;
+    box-shadow:0 6px 20px #17202f08;
+    min-width:0;
+  }
+  .card > h3:first-child,.card > h4:first-child{margin-top:0}
+  .grid-2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+  .grid-3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+  .grid-2 > *,.grid-3 > *{min-width:0}
+  .layer,.prio,.review,.verdict,.machine,.stat{min-width:0}
+  .mini-note{margin-top:10px;color:var(--faint);font-size:11.5px}
+
+  /* ---------- callouts ---------- */
+  .callout{
+    margin:15px 0;
+    padding:14px 18px;
+    border:1px solid;
+    border-radius:14px;
+    background:#fff;
+  }
+  .callout .label{
+    display:block;
+    margin-bottom:5px;
+    font:800 10px/1 var(--mono);
+    letter-spacing:.14em;
+    text-transform:uppercase;
+  }
+  .callout.info{border-color:#c8dcfb;background:#f4f8ff}
+  .callout.info .label{color:var(--accent)}
+  .callout.warn{border-color:#f0d3a0;background:var(--warn-wash)}
+  .callout.warn .label{color:var(--warn)}
+  .callout.bad{border-color:#f3c0c0;background:var(--bad-wash)}
+  .callout.bad .label{color:var(--bad)}
+  .callout.good{border-color:#bfe5cb;background:var(--good-wash)}
+  .callout.good .label{color:var(--good)}
+  .callout p:last-child{margin-bottom:0}
+
+  /* ---------- verdict ---------- */
+  .verdict{
+    display:flex;
+    gap:18px;
+    align-items:flex-start;
+    padding:22px 24px;
+    border:1px solid #cfe0fb;
+    border-radius:20px;
+    background:linear-gradient(135deg,#f0f7ff,#fff 62%);
+    box-shadow:0 8px 24px #1f5fd60c;
+  }
+  .verdict-mark{
+    flex:none;
+    padding:6px 9px;
+    border-radius:8px;
+    background:var(--accent);
+    color:#fff;
+    font:800 10.5px/1.3 var(--mono);
+    letter-spacing:.08em;
+  }
+  .verdict p{margin:0 0 6px}
+  .verdict p:last-child{margin-bottom:0}
+  .verdict .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+  .vchip{
+    padding:3px 8px;
+    border-radius:999px;
+    font-size:10.5px;
+    font-weight:800;
+  }
+  .vchip.ok{background:#e7f7ee;color:#146c37}
+  .vchip.warn{background:#fff1d6;color:#94500a}
+  .vchip.bad{background:#ffe7e7;color:#a51f26}
+
+  /* ---------- code ---------- */
+  pre.code{
+    margin:12px 0;
+    padding:15px 17px;
+    overflow:auto;
+    max-width:100%;
+    border:1px solid #1c2c44;
+    border-radius:14px;
+    background:#0d1728;
+    color:#dbe6f7;
+    font:12.5px/1.75 var(--mono);
+    tab-size:2;
+  }
+  pre.code .cm{color:#7f96b8}
+  pre.code .kw{color:#f3b06a}
+  pre.code .str{color:#9fdbac}
+  pre.code .bad{color:#ff9d9d}
+
+  /* ---------- flow ---------- */
+  .flow{
+    display:flex;
+    gap:8px;
+    align-items:stretch;
+    overflow-x:auto;
+    max-width:100%;
+    padding:6px 2px 12px;
+    margin:8px 0 4px;
+  }
+  .step{
+    position:relative;
+    flex:1 0 118px;
+    min-width:118px;
+    padding:11px 12px;
+    border:1px solid var(--line);
+    border-radius:14px;
+    background:#fbfdff;
+  }
+  .step .s-idx{font:800 10px/1 var(--mono);color:#9aabc0}
+  .step b{display:block;margin-top:5px;font:700 12.5px/1.3 var(--mono)}
+  .step small{display:block;margin-top:4px;color:var(--muted);font-size:11.5px;line-height:1.5}
+  .step .step-tag{
+    display:inline-block;
+    margin-top:7px;
+    padding:2px 6px;
+    border-radius:5px;
+    font:700 9.5px/1.5 var(--mono);
+    letter-spacing:.03em;
+  }
+  .step.hot{border-color:#e9b96e;background:#fff9ef;box-shadow:0 0 0 3px #fdf1dd}
+  .step.hot .step-tag{background:#fbe3bd;color:#8a4b06}
+  .step.signal{border-color:#a9c4f2;background:#f1f6ff;box-shadow:0 0 0 3px #eaf1fe}
+  .step.signal .step-tag{background:#dce9ff;color:#1c4fa5}
+  .arrow{flex:none;display:flex;align-items:center;color:#a7b6c8;font-size:16px}
+
+  /* ---------- machines ---------- */
+  .machine{
+    border:1px solid var(--line);
+    border-radius:16px;
+    background:#fff;
+    padding:16px 17px;
+  }
+  .machine h4{margin:0 0 2px;font-size:13px}
+  .machine .hint{margin:0 0 10px;color:var(--muted);font-size:11.5px}
+  .pills{display:flex;flex-wrap:wrap;gap:5px;align-items:center}
+  .pill{
+    padding:4px 8px;
+    border:1px solid var(--line);
+    border-radius:999px;
+    background:#f8fafc;
+    color:#405066;
+    font:600 11px/1.5 var(--mono);
+  }
+  .pill.active{background:#e8f0ff;border-color:#b9ccf4;color:#1e4fa3}
+  .pill.dead{background:#fff1f1;border-color:#f3cccc;color:#a51f26}
+  .pill-muted{color:#a2b0c2;font-size:11px}
+
+  /* ---------- tables ---------- */
+  .table-wrap{
+    overflow:auto;
+    max-width:100%;
+    border:1px solid var(--line);
+    border-radius:16px;
+    background:#fff;
+    box-shadow:0 6px 20px #17202f08;
+  }
+  table{width:100%;border-collapse:collapse;min-width:700px}
+  th{
+    padding:10px 14px;
+    border-bottom:1px solid var(--line);
+    background:#f7faff;
+    color:var(--faint);
+    text-align:left;
+    font-size:10.5px;
+    font-weight:800;
+    letter-spacing:.08em;
+    text-transform:uppercase;
+    white-space:nowrap;
+  }
+  td{
+    padding:11px 14px;
+    border-bottom:1px solid var(--line-soft);
+    vertical-align:top;
+    font-size:13.5px;
+  }
+  tr:last-child td{border-bottom:0}
+  tbody tr:hover{background:#fbfdff}
+  td.nowrap{white-space:nowrap}
+
+  .tag{
+    display:inline-block;
+    padding:2px 7px;
+    border:1px solid transparent;
+    border-radius:6px;
+    font:700 10.5px/1.6 var(--mono);
+    letter-spacing:.02em;
+    white-space:nowrap;
+  }
+  .tag.red{background:#fee7e7;border-color:#f8caca;color:#a51f26}
+  .tag.amber{background:#fff1d6;border-color:#f3d6a2;color:#94500a}
+  .tag.blue{background:#e8f0ff;border-color:#c4d5f6;color:#1e4fa3}
+  .tag.green{background:#e7f7ee;border-color:#bfe5cb;color:#146c37}
+  .tag.gray{background:#f1f4f8;border-color:#e1e7ef;color:#64748b}
+
+  /* ---------- timeline ---------- */
+  .timeline{list-style:none;margin:6px 0 0;padding:0}
+  .timeline li{
+    position:relative;
+    display:grid;
+    grid-template-columns:70px 14px minmax(0,1fr);
+    gap:12px;
+    padding:7px 0;
+  }
+  .timeline li::before{
+    content:"";
+    position:absolute;
+    left:89px;
+    top:0;
+    bottom:0;
+    width:2px;
+    background:#e2e9f2;
+  }
+  .timeline li:first-child::before{top:12px}
+  .timeline li:last-child::before{bottom:calc(100% - 15px)}
+  .timeline time{
+    padding-top:1px;
+    color:var(--muted);
+    text-align:right;
+    font:600 11.5px/1.7 var(--mono);
+  }
+  .timeline .dot{
+    z-index:1;
+    width:10px;height:10px;
+    margin-top:5px;
+    border:2px solid #fff;
+    border-radius:50%;
+    background:#c7d4e3;
+    box-shadow:0 0 0 1px #d5dfea;
+  }
+  .timeline .dot.bad{background:#d33}
+  .timeline .dot.warn{background:#d97706}
+  .timeline .dot.good{background:#16a34a}
+  .timeline .what{font-size:13.5px}
+  .timeline .what b{font-weight:700}
+  .timeline .what small{display:block;margin-top:2px;color:var(--muted);font-size:12px}
+
+  /* ---------- layers ---------- */
+  .layer{
+    display:grid;
+    grid-template-columns:54px minmax(0,1fr);
+    gap:16px;
+    margin-top:12px;
+    padding:18px 20px;
+    border:1px solid var(--line);
+    border-radius:18px;
+    background:#fff;
+    box-shadow:0 6px 20px #17202f08;
+  }
+  .layer .ln{color:#b8c6d8;font:800 20px/1 var(--mono)}
+  .layer h3{margin:0 0 6px;font-size:17px}
+  .layer p{margin:6px 0}
+  .layer p:last-child{margin-bottom:0}
+
+  /* ---------- shards ---------- */
+  .shards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;margin:12px 0}
+  .shard{
+    padding:10px 11px;
+    border:1px solid var(--line);
+    border-radius:12px;
+    background:#fbfdff;
+    font-size:11.5px;
+  }
+  .shard b{display:block;font:700 12px/1.4 var(--mono)}
+  .shard .sub{display:block;margin-top:2px;color:var(--muted);line-height:1.45}
+  .shard .tag{margin-top:7px}
+  .shard.stuck{border-color:#f0b4b4;background:#fff3f3}
+  .shard.held{border-color:#e3e9f1;background:#f7f9fc;color:#8a98aa}
+  .shard.held .sub{color:#9aa7b7}
+  .shard.done{border-color:#bfe3cb;background:#f4fbf6}
+
+  /* ---------- priority ---------- */
+  .prio{
+    display:grid;
+    grid-template-columns:58px minmax(0,1fr);
+    gap:15px;
+    margin-top:11px;
+    padding:17px 19px;
+    border:1px solid var(--line);
+    border-radius:16px;
+    background:#fff;
+    box-shadow:0 6px 20px #17202f08;
+  }
+  .prio .pmark{
+    display:flex;align-items:center;justify-content:center;
+    align-self:start;
+    height:30px;
+    border-radius:8px;
+    color:#fff;
+    font:800 11px/1 var(--mono);
+  }
+  .prio .pmark.p0{background:#b91c1c}
+  .prio .pmark.p1{background:#c2410c}
+  .prio .pmark.p2{background:#1d4ed8}
+  .prio .pmark.p3{background:#0f766e}
+  .prio .pmark.p4{background:#475569}
+  .prio h3{margin:0 0 4px;font-size:15.5px}
+  .prio p{margin:4px 0}
+  .prio .where{color:var(--faint);font-size:11.5px;margin-top:6px}
+
+  /* ---------- review ---------- */
+  .review{
+    display:grid;
+    grid-template-columns:62px minmax(0,1fr);
+    gap:14px;
+    margin-top:10px;
+    padding:15px 18px;
+    border:1px solid var(--line);
+    border-radius:15px;
+    background:#fff;
+  }
+  .review .sev{
+    align-self:start;
+    padding:4px 0;
+    border-radius:7px;
+    text-align:center;
+    font:800 11px/1.6 var(--mono);
+  }
+  .review .sev.p1{background:#fee7e7;color:#a51f26}
+  .review .sev.p2{background:#fff1d6;color:#94500a}
+  .review .sev.p3{background:#e8f0ff;color:#1e4fa3}
+  .review h3{margin:0 0 3px;font-size:15px}
+  .review p{margin:4px 0;color:var(--body);font-size:13.5px}
+  .review .ask{color:var(--accent);font-size:12.5px;font-weight:600}
+
+  /* ---------- misc ---------- */
+  .split-note{
+    display:inline-block;
+    margin-top:6px;
+    padding:5px 9px;
+    border-radius:7px;
+    background:#fff4e6;
+    color:#8a4b06;
+    font-size:11.5px;
+    font-weight:700;
+  }
+  .formula{
+    display:block;
+    margin:10px 0;
+    padding:12px 14px;
+    border:1px dashed #c9d8ec;
+    border-radius:10px;
+    background:#f8fbff;
+    font:12.5px/1.8 var(--mono);
+    color:#29456d;
+    overflow:auto;
+  }
+  .foot{
+    margin-top:48px;
+    padding-top:18px;
+    border-top:1px solid var(--line);
+    color:var(--faint);
+    font-size:12px;
+    line-height:1.7;
+  }
+  .foot b{color:var(--muted)}
+
+  @media (max-width:1040px){
+    .wrap{padding:20px 16px 56px}
+    .hero{padding:28px 24px}
+    .layout{grid-template-columns:1fr}
+    .toc{display:none}
+  }
+  @media (max-width:720px){
+    .stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+    .grid-2,.grid-3{grid-template-columns:1fr}
+    .shards{grid-template-columns:repeat(2,minmax(0,1fr))}
+    .section-head h2{font-size:21px}
+    .timeline li{grid-template-columns:62px 12px minmax(0,1fr);gap:9px}
+    .timeline li::before{left:79px}
+    .layer{grid-template-columns:40px minmax(0,1fr);gap:12px;padding:16px}
+    .prio,.review{grid-template-columns:48px minmax(0,1fr);gap:11px;padding:14px}
+  }
+  @media print{
+    body{background:#fff}
+    .wrap{max-width:none;padding:0}
+    .hero,.card,.layer,.prio,.review,.table-wrap,.verdict{box-shadow:none}
+    .toc{display:none}
+    .layout{grid-template-columns:1fr}
+    .section{break-inside:avoid}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <p class="eyebrow"><span class="live"></span>PR REVIEW · #133 · M5-08</p>
+    <h1>一次 checkout 失败，<br>为什么让用例在 <span class="accent">queued</span> 卡了一小时</h1>
+    <p class="lede">PR #133 给 eval-shard 的 checkout 加了 3 次尝试。它处理的是阿里云 spot Runner 上的一次 TLS 抖动；但要解释“用例一直 queued”，还要看清 <b>started 回调之前</b>的平台可见性盲区，以及 <b>3600s 队列超时</b>这条唯一兜底。</p>
+    <div class="meta">
+      <span class="chip">仓库 <code>Shadow-Azure/ai-eval-platform</code></span>
+      <span class="chip">分支 <code>pr-133</code></span>
+      <span class="chip">提交 <code>1624ed7</code></span>
+      <span class="chip">状态 <b style="color:#b45309">OPEN</b></span>
+      <span class="chip">证据 <code>run 42940436677</code></span>
+      <span class="chip">基线 <code>fe21944..1624ed7</code></span>
+    </div>
+    <div class="stats">
+      <div class="stat"><b>3×</b><span>checkout 尝试<br>prepare 与 execute 各一套</span></div>
+      <div class="stat"><b>3600<small>s</small></b><span>平台队列超时<br><code>eval_queue_timeout_seconds</code> 默认值</span></div>
+      <div class="stat"><b>~48<small>min</small></b><span>job 失败后继续空等<br>到队列超时才收敛</span></div>
+      <div class="stat"><b>76</b><span>混入 PR 的 <code>.pyc</code><br>真正的代码改动只有 1 个 workflow</span></div>
+    </div>
+  </header>
+
+  <div class="layout">
+
+    <aside class="toc" aria-label="目录">
+      <div class="toc-title">目录</div>
+      <a href="#tldr"><span class="n">00</span><span>先给结论</span></a>
+      <a href="#what"><span class="n">01</span><span>PR 改了什么</span></a>
+      <a href="#model"><span class="n">02</span><span>执行链路与盲区</span></a>
+      <a href="#why"><span class="n">03</span><span>四层原因</span></a>
+      <a href="#scenes"><span class="n">04</span><span>具体场景</span></a>
+      <a href="#amplify"><span class="n">05</span><span>放大效应</span></a>
+      <a href="#fix"><span class="n">06</span><span>修复评估</span></a>
+      <a href="#next"><span class="n">07</span><span>根因建议</span></a>
+      <a href="#review"><span class="n">08</span><span>检视意见</span></a>
+      <a href="#align"><span class="n">09</span><span>状态对照</span></a>
+      <a href="#appendix"><span class="n">A</span><span>代码索引</span></a>
+      <div class="toc-note">时间紧：先看 00、03、05、08。</div>
+    </aside>
+
+    <main>
+
+      <!-- ================= 00 ================= -->
+      <section class="section" id="tldr">
+        <div class="section-head">
+          <span class="num">00</span>
+          <div><p class="kicker">Executive summary</p><h2>先给结论</h2></div>
+        </div>
+
+        <div class="verdict">
+          <div class="verdict-mark">结论</div>
+          <div>
+            <p><b>checkout 失败并没有把 runner 卡住；它让平台失去了“用例已开始”的唯一信号。</b></p>
+            <p>runner 侧的 job 已经失败并结束，平台侧的 attempt 仍停在 <code>queued</code>，直到 3600s 队列超时把它判成 <code>timeout</code>。PR #133 用 3 次 checkout 尝试降低“一次抖动就失败”的概率，属于有效的止血；但平台感知不到 job 失败这个根因没有变。</p>
+            <div class="chips">
+              <span class="vchip ok">止血有效</span>
+              <span class="vchip warn">根因未修</span>
+              <span class="vchip bad">PR 描述需改</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid-3" style="margin-top:14px">
+          <div class="card">
+            <h3>它想修什么</h3>
+            <p>阿里云 spot Runner 是全新实例，每次 execute 都要从 github.com 冷克隆。一次 TLS 断连就让 job 在第一步失败，用例永远等不到 <code>started</code>。3 次尝试把“一次就失败”改成“连续三次才失败”。</p>
+          </div>
+          <div class="card">
+            <h3>为什么是 queued</h3>
+            <p><code>queued</code> 的语义是“dispatch 已成功，等 <code>started</code> 回调”，不是“GitHub 还在排队”。checkout 排在 <code>started</code> 之前，失败时没有任何回调能推进 attempt。</p>
+          </div>
+          <div class="card">
+            <h3>还差什么</h3>
+            <p>平台不监听 workflow run 的失败；3600s 后是 <code>timeout</code> 终结，不是自动重排；若 run 已终结，连手动重试都会被拒绝。真正的修复在平台侧，不在 workflow。</p>
+          </div>
+        </div>
+
+        <div class="callout info">
+          <span class="label">阅读路径</span>
+          <p>下文按“事实 → 链路 → 场景 → 放大 → 修复 → 建议 → 检视”展开。先看 01 的事故时间线，再看 03 的四层原因；如果你只关心“什么场景会卡”，直接跳到 04 和 05。</p>
+        </div>
+      </section>
+
+      <!-- ================= 01 ================= -->
+      <section class="section" id="what">
+        <div class="section-head">
+          <span class="num">01</span>
+          <div><p class="kicker">What changed</p><h2>PR #133 改了什么</h2></div>
+        </div>
+
+        <p class="lead">改动只有一个文件：<code>.github/workflows/eval-shard.yml</code>。prepare 与 execute 的 checkout 各从 1 次变成 3 次；后两次重试都靠上一步的 <code>outcome == 'failure'</code> 触发。</p>
+
+        <div class="card">
+          <h3 style="margin-top:0">改动结构</h3>
+<pre class="code"><span class="cm"># 改动前（prepare / execute 各一处）</span>
+- uses: actions/checkout@v4
+
+<span class="cm"># 改动后</span>
+- name: Checkout
+  id: checkout
+  uses: actions/checkout@v4
+  continue-on-error: true
+- name: Checkout (retry 1)
+  id: checkout_retry_1
+  if: steps.checkout.outcome == 'failure'
+  uses: actions/checkout@v4
+  continue-on-error: true
+- name: Checkout (retry 2)
+  if: steps.checkout.outcome == 'failure' &amp;&amp; steps.checkout_retry_1.outcome == 'failure'
+  uses: actions/checkout@v4</pre>
+          <div class="mini-note">位置：prepare <code>:123-134</code>，execute <code>:181-192</code>。</div>
+        </div>
+
+        <div class="grid-2" style="margin-top:14px">
+          <div class="card">
+            <h3 style="margin-top:0">设计意图</h3>
+            <ul class="tight">
+              <li><b>第一次</b>失败不终止 job：<code>continue-on-error: true</code> 让 outcome 记为 failure，但 job 继续。</li>
+              <li><b>retry 1</b> 只在第一次失败时跑；同样 <code>continue-on-error</code>，给最后一次机会。</li>
+              <li><b>retry 2</b> 要求前两次都失败；没有再兜底，失败即 job 失败。</li>
+              <li>prepare 与 execute 各一套：prepare 失败会让整个 matrix 不生成，影响更大。</li>
+            </ul>
+          </div>
+
+          <div class="card">
+            <h3 style="margin-top:0">影响面</h3>
+            <p><b>execute</b>：失败只影响当前 matrix 分支（<code>fail-fast: false</code>），同 shard 的其他用例继续跑。</p>
+            <p><b>prepare</b>：失败后 <code>cases</code> 输出为空，execute 整个 matrix 不创建；一个 shard 的所有用例一起卡。</p>
+            <p><b>共同点</b>：两种情况都不会发出 <code>started</code>，平台都只能等 3600s。</p>
+            <div class="split-note">execute 失败 = 1 个 case；prepare 失败 = 整个 shard。</div>
+          </div>
+        </div>
+
+        <h3>触发它的那次 run</h3>
+        <p>run <code>42940436677</code>（<code>shard_000:1</code>）的 execute job 在 checkout 上失败。日志里，<code>actions/checkout</code> 自己已经重试了两次，仍然没有连上 github.com。</p>
+
+        <div class="card">
+          <ol class="timeline">
+            <li><time>01:38:39</time><span class="dot good"></span><div class="what"><b>workflow run 创建</b><small>repository_dispatch 被接收；平台把 shard_000 的 attempt 写为 queued</small></div></li>
+            <li><time>01:38:58</time><span class="dot good"></span><div class="what"><b>prepare 完成（14 秒）</b><small>matrix 生成，execute job 进入 GitHub 队列，等待 spot Runner</small></div></li>
+            <li><time>01:43:27</time><span class="dot warn"></span><div class="what"><b>execute job 被 Runner 领取</b><small>距离派发约 5 分钟，spot 实例启动并注册完成</small></div></li>
+            <li><time>01:43:33</time><span class="dot warn"></span><div class="what"><b>checkout 开始</b><small>工作目录为空，需要从 github.com 浅克隆</small></div></li>
+            <li><time>01:45:03</time><span class="dot bad"></span><div class="what"><b>fetch 第 1 次失败</b><small>GnuTLS recv error (-110)，TLS 连接被非正常终止</small></div></li>
+            <li><time>01:45:20</time><span class="dot warn"></span><div class="what"><b>fetch 第 2 次（action 内部重试）</b><small>等待 17 秒后重试，仍在 443 上挂住</small></div></li>
+            <li><time>01:48:09</time><span class="dot bad"></span><div class="what"><b>fetch 第 2 次失败</b><small>curl 28，连接 github.com:443 超时 136 秒</small></div></li>
+            <li><time>01:48:19</time><span class="dot warn"></span><div class="what"><b>fetch 第 3 次（action 内部重试）</b><small>等待 10 秒后重试</small></div></li>
+            <li><time>01:50:32</time><span class="dot bad"></span><div class="what"><b>fetch 第 3 次失败，job 结束</b><small>连接超时 133 秒；checkout step 红，后续步骤全部 skipped</small></div></li>
+            <li><time>≈02:38:39</time><span class="dot bad"></span><div class="what"><b>平台队列超时才到期</b><small>按 dispatch 时间推算：3600 秒；届时 case 被判 timeout</small></div></li>
+          </ol>
+        </div>
+
+<pre class="code"><span class="cm"># run 42940436677 / execute job 130260804166 的关键日志</span>
+fatal: unable to access 'https://github.com/Shadow-Azure/ai-eval-platform/':
+  <span class="bad">GnuTLS recv error (-110): The TLS connection was non-properly terminated.</span>
+The process '/usr/bin/git' failed with exit code 128
+Waiting 17 seconds before trying again
+
+error: <span class="bad">RPC failed; curl 28 Failed to connect to github.com port 443
+  after 136102 ms: Could not connect to server</span>
+fatal: expected 'packfile'
+Waiting 10 seconds before trying again
+
+fatal: unable to access 'https://github.com/Shadow-Azure/ai-eval-platform/':
+  <span class="bad">Failed to connect to github.com port 443 after 133346 ms</span></pre>
+
+        <div class="callout warn">
+          <span class="label">容易误判</span>
+          <p>这次 run 的 prepare 14 秒就成功了，execute job 也被 Runner 领取并开始执行 checkout。<b>runner 不是没排上队</b>；它已经在干活，只是第一步克隆仓库时出网失败。平台看到的 <code>queued</code> 是回调缺失造成的“记账滞后”，不是真实的排队。</p>
+        </div>
+      </section>
+
+      <!-- ================= 02 ================= -->
+      <section class="section" id="model">
+        <div class="section-head">
+          <span class="num">02</span>
+          <div><p class="kicker">Mental model</p><h2>先把一次用例的执行链路讲清楚</h2></div>
+        </div>
+
+        <p class="lead">平台、GitHub、runner 脚本是三套状态机。理解卡点，只需要盯住它们交接的三个时刻：dispatch 成功、started 回调、终态回调。</p>
+
+        <div class="flow" role="img" aria-label="一次用例从 pending 到 running 的执行链路">
+          <div class="step"><span class="s-idx">01</span><b>pending</b><small>创建 attempt</small></div>
+          <div class="arrow">→</div>
+          <div class="step"><span class="s-idx">02</span><b>dispatching</b><small>outbox 认领<br>准备 repository_dispatch</small></div>
+          <div class="arrow">→</div>
+          <div class="step"><span class="s-idx">03</span><b>queued</b><small>GitHub 已接收<br>平台开始等 started</small></div>
+          <div class="arrow">→</div>
+          <div class="step"><span class="s-idx">04</span><b>job 领取</b><small>runner 启动<br>工作目录为空</small></div>
+          <div class="arrow">→</div>
+          <div class="step hot"><span class="s-idx">05</span><b>checkout</b><small>从 github.com<br>冷克隆仓库</small><span class="step-tag">失败点</span></div>
+          <div class="arrow">→</div>
+          <div class="step signal"><span class="s-idx">06</span><b>started</b><small>第一条平台回调<br>attempt → running</small><span class="step-tag">平台从这里才看见</span></div>
+          <div class="arrow">→</div>
+          <div class="step"><span class="s-idx">07</span><b>running</b><small>agent 执行<br>心跳 / 上传 / 完成</small></div>
+        </div>
+
+        <div class="callout info">
+          <span class="label">queued 的准确含义</span>
+          <p><code>queued</code> 不是“GitHub 队列里还在排队”。它是平台在 <code>post_repository_dispatch</code> 成功后写入的状态（<code>dispatcher.py:317</code>），语义是 <b>“已交给 GitHub，等待 runner 脚本的 <code>started</code> 回调”</b>。因此 GitHub 上的 job 失败、被取消、甚至 runner 消失，平台都不会自动改写这个状态。</p>
+        </div>
+
+        <div class="grid-2" style="margin-top:14px">
+          <div class="machine">
+            <h4>平台 attempt 状态机</h4>
+            <p class="hint">只在回调点推进；没有 job 级事件。</p>
+            <div class="pills">
+              <span class="pill">pending</span><span class="pill-muted">→</span>
+              <span class="pill">dispatching</span><span class="pill-muted">→</span>
+              <span class="pill active">queued</span><span class="pill-muted">→</span>
+              <span class="pill">running</span><span class="pill-muted">→</span>
+              <span class="pill">scoring / uploading</span><span class="pill-muted">→</span>
+              <span class="pill">succeeded</span>
+            </div>
+            <div class="pills" style="margin-top:7px">
+              <span class="pill-muted">失败分支：</span>
+              <span class="pill dead">failed</span>
+              <span class="pill dead">timeout</span>
+              <span class="pill dead">cancelled</span>
+              <span class="pill dead">artifact_missing</span>
+            </div>
+          </div>
+          <div class="machine">
+            <h4>GitHub run / job 状态机</h4>
+            <p class="hint">平台并不读取它的 conclusion。</p>
+            <div class="pills">
+              <span class="pill">queued</span><span class="pill-muted">→</span>
+              <span class="pill">in_progress</span><span class="pill-muted">→</span>
+              <span class="pill">completed</span>
+              <span class="pill-muted">(success / failure / cancelled)</span>
+            </div>
+            <p class="hint" style="margin-top:10px">checkout 失败时，这套状态机已经走到 <code>failure</code>；平台那套还停在 <code>queued</code>。两套机器之间没有因果同步。</p>
+          </div>
+        </div>
+
+        <h3>代码上的四个锚点</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>锚点</th><th>位置</th><th>说明</th></tr></thead>
+            <tbody>
+              <tr><td>dispatch 成功才写 queued</td><td class="nowrap"><code>dispatcher.py:300-320</code></td><td><code>mark_status(attempt, "queued", now)</code>；<code>phase_changed_at</code> 从这一刻开始计时。</td></tr>
+              <tr><td>started 才进入 running</td><td class="nowrap"><code>case_attempts.py:378-430</code></td><td>写入 <code>started_at</code>、<code>heartbeat_at</code>、<code>runner_id</code> 和 sequence 0。</td></tr>
+              <tr><td>started 由脚本在 checkout 之后发出</td><td class="nowrap"><code>real-task.mjs:564-577</code></td><td>checkout 失败时 <code>real-task.mjs</code> 根本不会执行，started 不会发出。</td></tr>
+              <tr><td>队列超时兜底</td><td class="nowrap"><code>reaper.py:122-133</code></td><td>3600 秒未 started，按 <code>queue_timeout</code> 结算。</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ================= 03 ================= -->
+      <section class="section" id="why">
+        <div class="section-head">
+          <span class="num">03</span>
+          <div><p class="kicker">Root cause</p><h2>四层原因：为什么 checkout 失败 = queued 不结束</h2></div>
+        </div>
+
+        <p class="lead">把因果链拆成四层：谁在报活、失败点在哪、平台缺哪条通道、最后谁来兜底。四层叠在一起，才是“卡一小时”。</p>
+
+        <div class="layer">
+          <div class="ln">01</div>
+          <div>
+            <h3>started 是平台唯一的“开工信号”</h3>
+            <p>在 <code>handle_started</code> 之前，attempt 没有 <code>started_at</code>、没有 <code>heartbeat_at</code>、没有 <code>runner_id</code>，也没有任何 case 事件。平台无法区分“job 还在排队”“runner 正在克隆”“job 已经失败”——三者看起来完全一样。</p>
+            <p><code>handle_started</code> 一次写入 running、started_at、heartbeat_at、runner 绑定和 sequence 0（<code>case_attempts.py:378-430</code>）。在此之前，attempt 对平台来说只是一个已派发的壳。</p>
+          </div>
+        </div>
+
+        <div class="layer">
+          <div class="ln">02</div>
+          <div>
+            <h3>checkout 排在 started 之前</h3>
+            <p>workflow 的步骤顺序是固定的：</p>
+<pre class="code">Checkout
+Materialize and validate the dispatch payload
+Execute exactly one case   <span class="cm"># 这里才运行 real-task.mjs，started 在里面</span></pre>
+            <p>checkout 失败，后两步直接 skipped；<code>real-task.mjs</code> 不会启动，<code>started</code> 不会发出。prepare 更严重：checkout 失败 → <code>plan</code> 不执行 → <code>cases</code> 输出为空 → execute 整个 matrix 不会创建。</p>
+            <div class="split-note">execute 失败 = 1 个 case；prepare 失败 = 整个 shard。</div>
+          </div>
+        </div>
+
+        <div class="layer">
+          <div class="ln">03</div>
+          <div>
+            <h3>平台没有 job 失败的通道</h3>
+            <p>平台与 GitHub 是“回调驱动”，不是“状态同步”。<code>eval-shard.yml</code> 里没有 <code>if: failure()</code> 的兜底回调；worker 也不轮询 workflow run 的 conclusion。<code>find_workflow_run</code> 只在取消流程里用（<code>reconciler.py:126-168</code>），不用于失败检测。</p>
+            <p>所以 GitHub 上 job 已经红了，平台侧的 attempt 仍然是 queued——不是平台“选择等待”，而是它根本没有收到任何能改变状态的事件。</p>
+          </div>
+        </div>
+
+        <div class="layer">
+          <div class="ln">04</div>
+          <div>
+            <h3>唯一兜底：3600s 队列超时</h3>
+<pre class="code">for attempt, case, run in rows("dispatching", "queued"):
+    if _expired(_phase_marker(attempt), settings.eval_queue_timeout_seconds, now):
+        expire(
+            ...,
+            error_code=lifecycle.QUEUE_TIMEOUT,
+            retryable=False,   <span class="cm"># 不创建新 attempt</span>
+        )</pre>
+            <p><code>retryable=False</code> 意味着结算时不会创建新 attempt。attempt 和 case 直接进入 <code>timeout</code>（<code>lifecycle.py:223-330</code>）。</p>
+          </div>
+        </div>
+
+        <div class="callout bad">
+          <span class="label">纠正 PR 描述</span>
+          <p>PR 描述写的是“平台只在 3600s 队列超时后才<b>重排</b>”。按当前分支代码，这句话只对了一半：</p>
+          <p>对的一半是，3600s 内平台确实不会做任何事，因为 <code>queued</code> 只由 <code>started</code> 推进。<br>
+          不对的一半是，3600s 后不是“重排”，而是 <code>queue_timeout</code> <b>终结</b>。<code>reaper.py:122-133</code> 把 <code>retryable=False</code> 传给 <code>settle_attempt_failure</code>，attempt 和 case 直接进入 <code>timeout</code>，不会生成新的 attempt。</p>
+          <p>因此真实影响是：先白等约 48 分钟，再把用例判为 timeout；如果这是最后一个未完成用例，run 还会终结为 partial/failed，连手动重试都会被 <code>run_not_running</code> 拒绝。生产中若确实看到“重排”，需要确认是否走了人工重试、外部脚本或旧版本路径。</p>
+        </div>
+
+        <h3>把时间账摊开</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>时刻</th><th>发生了什么</th><th>平台 attempt</th><th>平台是否知道</th></tr></thead>
+            <tbody>
+              <tr><td class="nowrap">01:38:39</td><td>dispatch 成功，GitHub 接收</td><td><span class="tag blue">queued</span></td><td>知道</td></tr>
+              <tr><td class="nowrap">01:43:27</td><td>execute job 被 Runner 领取</td><td><span class="tag blue">queued</span></td><td>不知道</td></tr>
+              <tr><td class="nowrap">01:50:32</td><td>checkout 失败，job 结束</td><td><span class="tag blue">queued</span></td><td>不知道</td></tr>
+              <tr><td class="nowrap">02:38:39</td><td>3600 秒队列超时到期</td><td><span class="tag red">timeout</span></td><td>补账</td></tr>
+              <tr><td class="nowrap">之后</td><td>run 结算</td><td>终态</td><td>partial / failed</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ================= 04 ================= -->
+      <section class="section" id="scenes">
+        <div class="section-head">
+          <span class="num">04</span>
+          <div><p class="kicker">Scenarios</p><h2>什么场景下 checkout 会让用例一直 queued</h2></div>
+        </div>
+
+        <p class="lead">不是只有“checkout 红”这一种。所有发生在 <code>started</code> 之前的失败，都会长成同一个样子；反过来，不是所有 queued 都是故障。</p>
+
+        <div class="callout warn">
+          <span class="label">术语先对齐</span>
+          <p>如果 UI 显示的是“GitHub job 还在排队”，checkout 不是原因——checkout 只有在 job 被 Runner 领取之后才会执行。这里说的“卡在 queued”是<b>平台 attempt 的状态</b>：job 已经领取、甚至已经失败，平台仍显示 queued。</p>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>#</th><th>场景</th><th>触发条件</th><th>卡住粒度</th><th>能否自愈</th></tr></thead>
+            <tbody>
+              <tr>
+                <td class="nowrap"><b>S1</b></td>
+                <td><b>execute checkout 网络抖动</b><br><span style="color:var(--muted);font-size:12px">本次生产事故</span></td>
+                <td>spot 冷克隆时 TLS 断连 / 443 连接超时</td>
+                <td>1 个 case</td>
+                <td><span class="tag red">否</span> 等 3600s 判 timeout</td>
+              </tr>
+              <tr>
+                <td class="nowrap"><b>S2</b></td>
+                <td><b>prepare checkout 失败</b></td>
+                <td>固定 Runner 上同样出网失败；或 prepare 其他步骤失败</td>
+                <td><b>整个 shard</b></td>
+                <td><span class="tag red">否</span> execute 根本不创建</td>
+              </tr>
+              <tr>
+                <td class="nowrap"><b>S3</b></td>
+                <td><b>spot 实例在 checkout 中被回收 / 失联</b></td>
+                <td>竞价回收、网络隔离、实例重启</td>
+                <td>1 个 case</td>
+                <td><span class="tag red">否</span> 容量控制器还可能补机空转</td>
+              </tr>
+              <tr>
+                <td class="nowrap"><b>S4</b></td>
+                <td><b>checkout 成功，但 started 前失败</b></td>
+                <td>Node 缺失、manifest/token 拉取失败、回调网络不可达</td>
+                <td>1 个 case</td>
+                <td><span class="tag red">否</span> PR 未覆盖</td>
+              </tr>
+              <tr>
+                <td class="nowrap"><b>S5</b></td>
+                <td><b>平台容量 429</b><br><span style="color:var(--muted);font-size:12px">设计内的等待</span></td>
+                <td>达到 per-evaluation 并发 cap，<code>started</code> 返回 429</td>
+                <td>1 个 case（可多个）</td>
+                <td><span class="tag green">是</span> runner 退避重试 started</td>
+              </tr>
+              <tr>
+                <td class="nowrap"><b>S6</b></td>
+                <td><b>在 GitHub 侧手动取消 job</b></td>
+                <td>人工在 Actions 页面 cancel，平台未收到取消请求</td>
+                <td>1 个 case</td>
+                <td><span class="tag red">否</span> 平台不知道</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>三看：现场怎么区分“死 queued”和“正常排队”</h3>
+        <div class="grid-3">
+          <div class="card">
+            <h4>一看 GitHub run</h4>
+            <p>conclusion 是 <code>failure</code>，且失败步骤是 <code>actions/checkout</code> → 基本可判定为 S1 / S2。</p>
+          </div>
+          <div class="card">
+            <h4>二看 attempt</h4>
+            <p><code>started_at</code>、<code>heartbeat_at</code>、<code>runner_id</code> 都为空 → 用例从未开始，不是执行慢。</p>
+          </div>
+          <div class="card">
+            <h4>三看队列原因</h4>
+            <p><code>capacity_waiting</code> / 429 → 合法等待；<code>concurrency_cap</code> → 被 shard 闸门挡住；两者都不是 checkout 故障。</p>
+          </div>
+        </div>
+
+        <div class="callout good">
+          <span class="label">合法的 queued 长什么样</span>
+          <p><code>started</code> 返回 429 <code>capacity_waiting</code> 时，<code>real-task.mjs</code> 会保持 attempt 为 queued，并按 5s → 10s → … → 60s 退避重试同一个 <code>event_id</code>，默认最多 1800 秒（<code>real-task.mjs:70, 81-99</code>）。这时 runner 还活着、脚本正在重试；和 checkout 失败的“死 queued”不是一回事。</p>
+        </div>
+      </section>
+
+      <!-- ================= 05 ================= -->
+      <section class="section" id="amplify">
+        <div class="section-head">
+          <span class="num">05</span>
+          <div><p class="kicker">Blast radius</p><h2>为什么影响不止“晚一小时”</h2></div>
+        </div>
+
+        <p class="lead">一个 queued 的 attempt 不只是占着一条状态记录。它会占住 shard 闸门、拖住 run 的收敛、影响 spot 容量决策，最后还会把“可重试的启动故障”变成“终态的 timeout”。</p>
+
+        <h3>5.1 容量闸门按 shard 计数，不按 case 计数</h3>
+        <p><code>_capacity_decision</code> 用“已经释放过的 shard 数”做闸门，而不是“正在跑的 case 数”。只要 shard 里还有一个 queued，它就一直占着名额。</p>
+<pre class="code">released_shards = count(distinct shard_id)
+    where attempt.status in ("dispatching","queued","leased","running","scoring","uploading")
+
+max_in_flight = max(1, ceil(cap / shard_size))
+
+if released_shards &gt;= max_in_flight:
+    return cap, QUEUE_REASON_CONCURRENCY_CAP   <span class="cm"># 后续 shard 全部等待</span></pre>
+
+        <div class="shards" role="img" aria-label="默认配置下 shard_000 卡住后，后续 shard 全部被闸门挡住">
+          <div class="shard stuck"><b>shard_000</b><span class="sub">63 成功 · 1 queued</span><span class="tag red">占用名额</span></div>
+          <div class="shard held"><b>shard_001</b><span class="sub">concurrency_cap</span><span class="tag gray">等待</span></div>
+          <div class="shard held"><b>shard_002</b><span class="sub">concurrency_cap</span><span class="tag gray">等待</span></div>
+          <div class="shard held"><b>shard_003</b><span class="sub">concurrency_cap</span><span class="tag gray">等待</span></div>
+          <div class="shard held"><b>shard_004</b><span class="sub">concurrency_cap</span><span class="tag gray">等待</span></div>
+          <div class="shard held"><b>shard_005</b><span class="sub">concurrency_cap</span><span class="tag gray">等待</span></div>
+          <div class="shard held"><b>shard_006</b><span class="sub">concurrency_cap</span><span class="tag gray">等待</span></div>
+          <div class="shard held"><b>shard_007</b><span class="sub">concurrency_cap</span><span class="tag gray">等待</span></div>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>配置</th><th>shard_size</th><th>cap</th><th>max_in_flight</th><th>卡住一个 shard 的后果</th></tr></thead>
+            <tbody>
+              <tr><td><b>默认</b></td><td>64</td><td>8</td><td><b>1</b></td><td><span class="tag red">后续 7 个 shard 全停</span> 500 用例的评测只剩 1 个 shard 在飞</td></tr>
+              <tr><td><b>本次生产</b></td><td>1</td><td>由 run 配置</td><td>= cap</td><td><span class="tag amber">少 1 个并发槽</span> 每个 run 只有 1 个 execute job</td></tr>
+              <tr><td><b>中等</b></td><td>16</td><td>32</td><td>2</td><td><span class="tag amber">一半并发停摆</span> 另一个 shard 继续跑</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="mini-note">按 <code>ceil(cap / shard_size)</code> 估算；<code>cap</code> 是 <code>effective_concurrency</code>。默认值来自 <code>config.py:101-102</code>；本次生产按每个 run 只有 1 个 execute job 推断为 1 case/shard。</p>
+
+        <h3>5.2 run 无法收敛，UI 一直显示“排队中”</h3>
+        <p><code>refresh_run_progress</code> 只有在 <code>queued_count == 0 &amp;&amp; running_count == 0</code> 时才结算 run（<code>evaluations.py:930-960</code>）。一个 queued 就足以让 run 停在 running；页面会显示“4/5 完成、1 排队”，而“重试失败用例”按钮不会出现，因为 run 还没结束。</p>
+
+        <h3>5.3 spot 容量控制器会为“幽灵需求”保留或补机器</h3>
+        <p><code>_queued_attempts</code> 把 pending / dispatching / queued 都算作需求；<code>gap = queued - idle - starting * slots</code>（<code>capacity_control.py:296-315</code>）。runner 空闲时，缩容的 <code>excess = idle - queued - keep_for_min</code> 会把它留下；runner 已随 job 失败被回收时，控制器还可能补一台 spot 来满足这个“幽灵需求”。两种情况都是空转成本。</p>
+
+        <h3>5.4 超时之后：不是重排，而是终结</h3>
+        <p>队列超时后 case 变 <code>timeout</code>；如果这是最后一个未完成用例，run 立刻变 partial/failed。<code>retry_case</code> 要求 <code>run.status == "running"</code>（<code>workbench.py:354-370</code>），此时会以 <code>run_not_running</code> 拒绝。若还有其他 shard 在跑，run 仍是 running，才允许人工重试。</p>
+        <div class="callout warn">
+          <span class="label">最坏的结局</span>
+          <p>“卡一小时”不是最坏的。最坏的是：一小时后用例被判 timeout、run 终结、不能原地重试，只能新建评测或走内部修复。对 5 用例的复测来说，这等于这次复测白跑。</p>
+        </div>
+
+        <h3>5.5 与 job timeout 的 3600s 竞态</h3>
+        <p>平台队列时钟从 dispatch 开始，job 时钟从 runner 领取开始，二者都是 3600 秒。pickup 花了约 5 分钟的那次 run，如果 checkout 一直挂到 job 的 60 分钟上限，平台会先超时约 5 分钟；之后即使 job 成功，<code>started</code> 也会因 attempt 已 terminal 被判 stale。这是次要但真实的竞态。</p>
+
+        <h3>影响汇总</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>维度</th><th>表现</th><th>量级</th></tr></thead>
+            <tbody>
+              <tr><td>时间</td><td>job 失败后继续空等</td><td>约 48 分钟（本次事故）</td></tr>
+              <tr><td>收敛</td><td>run 停在 running，无法结算</td><td>直到 3600 秒队列超时</td></tr>
+              <tr><td>吞吐</td><td>shard 闸门挡住后续 shard</td><td>默认配置下后续 shard 全停</td></tr>
+              <tr><td>成本</td><td>spot 保留空闲机 / 补新机</td><td>约 1 小时空转</td></tr>
+              <tr><td>结果</td><td>case 被判 timeout，不是可重试失败</td><td>需人工重试或新建评测</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ================= 06 ================= -->
+      <section class="section" id="fix">
+        <div class="section-head">
+          <span class="num">06</span>
+          <div><p class="kicker">Fix assessment</p><h2>这次修复能解决什么、不能解决什么</h2></div>
+        </div>
+
+        <p class="lead">这是一次合理的工程止血：不改状态机、风险低、直接覆盖最常见的瞬态故障。但它不是根因修复，不能把 MTTR 从 1 小时降下来。</p>
+
+        <div class="grid-2">
+          <div class="card">
+            <h4 style="color:var(--good)">有效</h4>
+            <ul class="tight">
+              <li>3 次独立克隆，覆盖 TLS 断连、443 连接超时这类瞬态故障。</li>
+              <li><code>actions/checkout</code> 自身在单次里还会重试 fetch（本次日志里两次），所以最坏情况下有 3×3 次 fetch 机会。</li>
+              <li>prepare 与 execute 都覆盖；prepare 的保护价值更高（影响整个 shard）。</li>
+              <li>不改平台状态机，风险低，可先合并止血。</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h4 style="color:var(--bad)">边界</h4>
+            <ul class="tight">
+              <li>同一网络路径的故障是相关的，3 次不一定独立；持续 10 分钟以上的断网仍会全部失败。</li>
+              <li>每次 checkout 失败可能耗时 5-7 分钟；3 次会吃掉 job 60 分钟预算的很大一块。</li>
+              <li>只覆盖 checkout；checkout 之后的 Node / manifest / token 失败，仍然是同样的“无 started → queued”。</li>
+              <li>平台侧 MTTR 没变：真失败时仍要等 3600 秒。</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="table-wrap" style="margin-top:14px">
+          <table>
+            <thead><tr><th>场景</th><th>修复前</th><th>修复后</th><th>残余风险</th></tr></thead>
+            <tbody>
+              <tr><td>单次 TLS 抖动</td><td><span class="tag red">job 失败</span></td><td><span class="tag green">大概率重试成功</span></td><td>连续三次失败仍卡</td></tr>
+              <tr><td>持续断网 10+ 分钟</td><td><span class="tag red">job 失败</span></td><td><span class="tag red">仍失败</span></td><td>无平台感知，等 3600s</td></tr>
+              <tr><td>prepare 失败</td><td><span class="tag red">整 shard 卡</span></td><td><span class="tag amber">降低概率</span></td><td>其他 prepare 步骤失败仍卡</td></tr>
+              <tr><td>超时语义</td><td><span class="tag amber">timeout</span></td><td><span class="tag amber">未改</span></td><td>不是自动重排</td></tr>
+              <tr><td>可观测性</td><td><span class="tag red">无</span></td><td><span class="tag red">无</span></td><td>仍要等 3600s 才知道</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="callout warn">
+          <span class="label">不要把 3 次当成 99.9%</span>
+          <p>三次尝试走同一条出口链路、同一个 GitHub 端点，故障高度相关；这次日志里 <code>actions/checkout</code> 内部已经重试两次仍失败，就是相关性的一次现场演示。3 次的价值在于覆盖“短时抖动”，不是覆盖“网络不可用”。</p>
+        </div>
+      </section>
+
+      <!-- ================= 07 ================= -->
+      <section class="section" id="next">
+        <div class="section-head">
+          <span class="num">07</span>
+          <div><p class="kicker">Recommendations</p><h2>如果要补根因，按这个顺序做</h2></div>
+        </div>
+
+        <p class="lead">目标不是“让 checkout 更稳”，而是“job 失败后，平台在分钟级知道并做出正确决策”。前者是概率，后者是 MTTR。</p>
+
+        <div class="prio">
+          <div class="pmark p0">P0</div>
+          <div>
+            <h3>让平台在分钟级感知“job 已失败”</h3>
+            <p><b>推荐做法：</b>reconciler 对 queued 超过 5-10 分钟的 attempt，先用 <code>find_workflow_run</code> 定位 run，再调用 GitHub <code>GET /actions/runs/{id}</code> 读取 <code>status</code>/<code>conclusion</code>；若 <code>conclusion=failure</code> 且该 attempt 没有 <code>case.started</code> 事件，就用新的 <code>start_failed</code>（可重试）结算，立即重排。</p>
+            <p><b>备选：</b>workflow 增加 <code>if: failure()</code> 的失败回调。它最直接，但需要凭据；当前 workflow 测试明确禁止 <code>secrets.</code>，要引入 OIDC 或平台签发的一次性 token，改动更大。</p>
+            <p class="where">落点：<code>reconciler.py</code>、<code>github_dispatch.py</code>、<code>lifecycle.py</code>。收益：MTTR 从 60 分钟降到 5-10 分钟。</p>
+          </div>
+        </div>
+
+        <div class="prio">
+          <div class="pmark p1">P1</div>
+          <div>
+            <h3>区分“从未开始”和“启动失败”</h3>
+            <p><code>queue_timeout</code> 目前一刀切 <code>retryable=False</code>；容量等待和基础设施故障被混在一起。建议新增 <code>start_failed</code> 或 <code>checkout_failed</code> 分类，归入 <code>RETRYABLE_FAILURE_CODES</code>；<code>queue_timeout</code> 只保留给“确实一直没轮到”的场景。</p>
+            <p class="where">落点：<code>lifecycle.py</code> 的失败分类、<code>reaper.py</code> 的结算参数。收益：同类故障可以自动重试，而不是人工介入。</p>
+          </div>
+        </div>
+
+        <div class="prio">
+          <div class="pmark p2">P2</div>
+          <div>
+            <h3>降低对 github.com 冷克隆的依赖</h3>
+            <p>execute 只需要 <code>runner/</code> 脚本；可以把它们打进 runner 镜像，或像 runner 包一样从平台下载。这样 execute 不再需要 checkout，直接消除这一类失败。prepare 仍可保留 checkout + 重试。</p>
+            <p class="where">落点：spot cloud-init / runner 包发布链路、workflow 的 execute 步骤。收益：从“重试提高成功率”变成“没有这个失败模式”。</p>
+          </div>
+        </div>
+
+        <div class="prio">
+          <div class="pmark p3">P3</div>
+          <div>
+            <h3>可观测性与容量口径</h3>
+            <p>指标：<code>queued_age_seconds</code>、<code>checkout_failure_total</code>、<code>no_started_total</code>；告警：queued &gt; 10 分钟且无 started。容量控制器应把“超过 N 分钟没有 started 的 queued”视为可疑需求，避免为幽灵 attempt 补机器。UI 增加 “stuck queued” 标记，直接链到 GitHub run。</p>
+            <p class="where">落点：worker 指标、capacity_control、评测详情页。收益：下次同类故障能在 dashboard 上直接看到。</p>
+          </div>
+        </div>
+
+        <div class="prio">
+          <div class="pmark p4">P4</div>
+          <div>
+            <h3>仓库卫生</h3>
+            <p>删除 76 个 <code>.pyc</code>；补根 <code>.gitignore</code>（<code>__pycache__/</code>、<code>*.pyc</code>）；在 CI 加 <code>git diff --check</code> 或 pre-commit 防回归。</p>
+            <p class="where">收益：review 噪音从 77 个文件回到 1 个文件。</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= 08 ================= -->
+      <section class="section" id="review">
+        <div class="section-head">
+          <span class="num">08</span>
+          <div><p class="kicker">Review notes</p><h2>如果我是 reviewer，会提这些</h2></div>
+        </div>
+
+        <p class="lead">先看改动是否安全，再看它是否解决了描述里的问题，最后看有没有把噪声带进来。这个 PR 在“安全”上没问题，在“描述”和“噪声”上需要返工。</p>
+
+        <div class="review">
+          <div class="sev p1">P1</div>
+          <div>
+            <h3>76 个 <code>.pyc</code> 混入 PR</h3>
+            <p><code>git diff --stat fe21944..HEAD</code> 显示 77 个文件变更、+30/−2；其中 76 个是 <code>__pycache__/*.pyc</code>，真正的代码改动只有 workflow 一个文件。仓库没有根 <code>.gitignore</code>（只有 <code>web/.gitignore</code>），<code>git check-ignore</code> 对 pyc 返回 1。</p>
+            <p class="ask">请求：从 PR 移除这些文件，补 <code>__pycache__/</code>、<code>*.pyc</code> 规则。</p>
+          </div>
+        </div>
+
+        <div class="review">
+          <div class="sev p1">P1</div>
+          <div>
+            <h3>“3600s 后重排”与代码不符</h3>
+            <p>PR 描述和 workflow 注释都写着平台会在 3600s 队列超时后 re-queue。按 <code>reaper.py:122-133</code>，实际是 <code>retryable=False</code> 的 timeout 终结，不会创建新 attempt。</p>
+            <p class="ask">请求：改描述与注释，或把“自动重排”真正实现出来；两者不能只做一半。</p>
+          </div>
+        </div>
+
+        <div class="review">
+          <div class="sev p2">P2</div>
+          <div>
+            <h3>只覆盖 checkout，不覆盖同类前置失败</h3>
+            <p>Node 缺失、manifest/token 拉取失败、回调网络不可达，都会在 <code>started</code> 之前失败，症状完全相同。这个 PR 只把 checkout 的窗口收窄了。</p>
+            <p class="ask">请求：另开 issue 补“job 失败感知”，不要让它停留在 workflow 重试。</p>
+          </div>
+        </div>
+
+        <div class="review">
+          <div class="sev p2">P2</div>
+          <div>
+            <h3>三次重试的时间预算</h3>
+            <p>单次 checkout 失败可能耗时约 7 分钟；3 次约 21 分钟，占 job 60 分钟预算的三分之一。极端情况下会挤压真正的执行时间。</p>
+            <p class="ask">请求：评估是否需要给 checkout step 加 <code>timeout-minutes</code>，或在第 3 次失败时提前给出更明确的诊断。</p>
+          </div>
+        </div>
+
+        <div class="review">
+          <div class="sev p3">P3</div>
+          <div>
+            <h3>测试没有钉住重试结构</h3>
+            <p><code>tests/eval-shard-workflow.test.mjs</code> 断言了 prepare/execute 的结构，但没有断言“恰好 3 个 checkout step”和两个重试条件。未来有人把重试删掉，测试不会红。</p>
+            <p class="ask">请求：加 3 条结构断言（step 数、outcome 条件、retry 2 无 continue-on-error）。</p>
+          </div>
+        </div>
+
+        <div class="review">
+          <div class="sev p3">P3</div>
+          <div>
+            <h3>失败后的工作目录清理</h3>
+            <p>第一次 checkout 失败会留下半初始化的 <code>.git</code>；<code>actions/checkout</code> 默认 <code>clean: true</code> 会清理，但建议显式写出，或在注释里说明依赖这个默认值，避免未来改成 <code>clean: false</code> 时踩坑。</p>
+            <p class="ask">请求：显式 <code>clean: true</code>，或补一行说明。</p>
+          </div>
+        </div>
+
+        <div class="verdict" style="margin-top:18px">
+          <div class="verdict-mark">结论</div>
+          <div>
+            <p><b>方向正确，建议作为止血合并；合并前先删 pyc、修正“重排”表述，并把平台侧感知作为 follow-up。</b></p>
+            <p>否则同类故障只是从“经常发生”变成“偶尔发生”，MTTR 仍是 1 小时。</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= 09 ================= -->
+      <section class="section" id="align">
+        <div class="section-head">
+          <span class="num">09</span>
+          <div><p class="kicker">State alignment</p><h2>把两条状态机对齐看一眼</h2></div>
+        </div>
+
+        <p class="lead">这张表适合贴在排障手册里：看到平台 queued 时，先对照 GitHub 侧到底走到哪一步，再决定是等、修还是重跑。</p>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>阶段</th><th>平台 attempt</th><th>GitHub run / job</th><th>平台是否知道</th><th>动作</th></tr></thead>
+            <tbody>
+              <tr><td>dispatch 成功</td><td><span class="tag blue">queued</span></td><td>run created / job queued</td><td>知道</td><td>等</td></tr>
+              <tr><td>job 被领取</td><td><span class="tag blue">queued</span></td><td>in_progress</td><td><b>不知道</b></td><td>等</td></tr>
+              <tr><td>checkout 失败</td><td><span class="tag blue">queued</span></td><td><span class="tag red">failure</span></td><td><b>不知道</b></td><td>修 / 重跑</td></tr>
+              <tr><td>started</td><td><span class="tag green">running</span></td><td>in_progress</td><td>知道</td><td>等心跳</td></tr>
+              <tr><td>completed</td><td><span class="tag green">succeeded</span> / <span class="tag red">failed</span></td><td>success / failure</td><td>知道</td><td>结算</td></tr>
+              <tr><td>3600s 到期</td><td><span class="tag red">timeout</span></td><td>failure（旧）</td><td>补账</td><td>人工介入</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="card" style="margin-top:16px">
+          <h3 style="margin-top:0">证据与口径</h3>
+          <ul class="tight">
+            <li>代码：工作区分支 <code>pr-133</code>，HEAD <code>6bab939</code>，功能提交 <code>1624ed7</code>，基线 <code>fe21944</code>。</li>
+            <li>事故：run <code>42940436677</code>，execute job <code>130260804166</code>，日志为 GitHub Actions 公开日志。</li>
+            <li>3600s 行为按仓库默认配置与当前代码推断；若生产覆盖 <code>EVAL_QUEUE_TIMEOUT_SECONDS</code>，以实际配置为准。</li>
+            <li>“重排”差异：代码路径是 timeout 终结；生产中若观察到重排，需确认人工重试、外部脚本或旧版本路径。</li>
+            <li>PR 状态：OPEN（2026-11-11 查询）；合并前应以最新 diff 为准。</li>
+          </ul>
+        </div>
+      </section>
+
+      <!-- ================= A ================= -->
+      <section class="section" id="appendix">
+        <div class="section-head">
+          <span class="num">A</span>
+          <div><p class="kicker">Appendix</p><h2>代码索引</h2></div>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>位置</th><th>作用</th><th>本报告用它证明</th></tr></thead>
+            <tbody>
+              <tr><td class="nowrap"><code>.github/workflows/eval-shard.yml:123-134</code></td><td>prepare 的 3 次 checkout</td><td>PR 的修复点；prepare 失败影响整 shard</td></tr>
+              <tr><td class="nowrap"><code>.github/workflows/eval-shard.yml:181-192</code></td><td>execute 的 3 次 checkout</td><td>PR 的修复点；本次事故发生在 execute</td></tr>
+              <tr><td class="nowrap"><code>.github/workflows/eval-shard.yml:136-167</code></td><td>materialize + plan</td><td>checkout 失败后 plan 不执行，cases 为空</td></tr>
+              <tr><td class="nowrap"><code>.github/workflows/eval-shard.yml:194-211</code></td><td>execute 的实际步骤</td><td>started 在 checkout 之后才可能发出</td></tr>
+              <tr><td class="nowrap"><code>backend/app/services/dispatcher.py:300-320</code></td><td>dispatch 成功后写 queued</td><td>queued 的语义是“等 started”</td></tr>
+              <tr><td class="nowrap"><code>backend/app/services/case_attempts.py:378-430</code></td><td>handle_started</td><td>started 之前 attempt 没有活信号</td></tr>
+              <tr><td class="nowrap"><code>runner/scripts/real-task.mjs:564-577</code></td><td>脚本发送 started</td><td>checkout 失败时脚本不会执行</td></tr>
+              <tr><td class="nowrap"><code>backend/app/services/reaper.py:122-133</code></td><td>队列超时规则</td><td>唯一兜底；retryable=False</td></tr>
+              <tr><td class="nowrap"><code>backend/app/services/lifecycle.py:223-330</code></td><td>统一失败结算</td><td>queue_timeout → case timeout，不重排</td></tr>
+              <tr><td class="nowrap"><code>backend/app/services/capacity.py:27-35</code></td><td>已释放 attempt 状态</td><td>queued 也算“已释放”，占 shard 名额</td></tr>
+              <tr><td class="nowrap"><code>backend/app/services/dispatcher.py:45-72</code></td><td>shard 闸门公式</td><td>一个卡住 shard 挡住后续 shard</td></tr>
+              <tr><td class="nowrap"><code>backend/app/services/capacity_control.py:296-315</code></td><td>queued 需求与 gap</td><td>幽灵需求导致保留/补机</td></tr>
+              <tr><td class="nowrap"><code>backend/app/services/workbench.py:354-370</code></td><td>retry_state</td><td>run 不是 running 时拒绝重试</td></tr>
+              <tr><td class="nowrap"><code>backend/app/services/reconciler.py:126-168</code></td><td>find_workflow_run</td><td>平台只在取消流程里查 run，不查失败</td></tr>
+              <tr><td class="nowrap"><code>tests/eval-shard-workflow.test.mjs</code></td><td>workflow 结构测试</td><td>未断言 checkout 重试结构</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="callout info" style="margin-top:16px">
+          <span class="label">一句话记忆</span>
+          <p><b>checkout 失败 → 没有 started → queued 不变 → 等 reaper → timeout。</b> 修复 checkout 只是把第一步的概率降下来；要让 MTTR 降下来，必须在“没有 started”这件事上做检测。</p>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <footer class="foot">
+    <p><b>PR #133 分析</b> · 基于 <code>pr-133</code> 工作区代码（<code>1624ed7</code>）与 GitHub Actions run <code>42940436677</code> 公开日志整理。</p>
+    <p>用于 PR 讨论与排障参考；生产环境若覆盖 <code>EVAL_QUEUE_TIMEOUT_SECONDS</code> 等配置，以实际部署为准。生成日期：2026-11-11。</p>
+  </footer>
+
+</div>
+</body>
+</html>
