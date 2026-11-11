@@ -31,17 +31,20 @@ from . import github_dispatch
 from .object_store import ObjectStoreError, object_store_from_settings
 from .operations import WORKER_HEARTBEAT_NAME
 
-#: The five stages shown on the deployment page. ``build`` happens in GitHub
-#: Actions before the host script starts; the other four are recorded by
-#: ``deploy/deploy.sh``. The tests/docs gate is a separate CI workflow and is
-#: linked from the page instead of being claimed as a deployment stage.
+#: The five stages shown on the deployment page, matching the prototype. The
+#: quality gate is read live from the commit's GitHub Actions runs; ``build``
+#: happens before the host script starts; the other three are recorded by
+#: ``deploy/deploy.sh``.
 STAGE_DEFINITIONS: tuple[tuple[str, str], ...] = (
+    ("quality_gate", "测试与文档门禁"),
     ("build", "构建镜像并推送 ACR"),
     ("database_migration", "执行 PostgreSQL 迁移"),
     ("rolling_update", "ECS Compose 滚动更新"),
     ("health_check", "健康检查"),
-    ("deployment_record", "写入部署记录"),
 )
+
+#: Workflows whose result is the quality gate for a merge commit.
+GATE_WORKFLOWS = frozenset({"Backend & Web CI", "Documentation Gates", "Flow Gates"})
 
 _STAGE_STATUSES = {"success", "running", "failed", "unknown", "skipped"}
 
@@ -119,13 +122,10 @@ def _inferred_status(row: Deployment, key: str) -> tuple[str, str]:
     us where it stopped, so the remaining stages stay ``unknown``.
     """
 
+    if key == "quality_gate":
+        return "unknown", "历史记录未保存 CI 门禁状态"
     if key == "build":
         return "success", "GitHub Actions 构建成功后触发部署"
-    if key == "deployment_record":
-        return ("success", "部署结果已写入记录") if row.finished_at else (
-            "running",
-            "等待部署流程写入结果",
-        )
     if row.status == "succeeded":
         return "success", "已完成（历史记录未保存分阶段耗时）"
     if row.status == "rolled_back":
@@ -133,10 +133,17 @@ def _inferred_status(row: Deployment, key: str) -> tuple[str, str]:
     return "unknown", "历史记录未包含该阶段状态"
 
 
-def stage_payloads(row: Deployment) -> list[dict[str, Any]]:
+def stage_payloads(
+    row: Deployment,
+    *,
+    ci_stage: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     recorded = _recorded_stages(row)
     payload: list[dict[str, Any]] = []
     for key, label in STAGE_DEFINITIONS:
+        if key == "quality_gate" and ci_stage is not None:
+            payload.append(dict(ci_stage))
+            continue
         entry = recorded.get(key)
         if entry is not None:
             status = _stage_status(entry.get("status"))
@@ -182,6 +189,69 @@ def _parse_datetime(value: object) -> datetime | None:
     return parsed
 
 
+def ci_gate_stage(settings: Settings, git_commit: str) -> dict[str, Any]:
+    """Read the test/docs gate for one commit from GitHub Actions.
+
+    The result is informational on the deployment page; an unavailable token,
+    a network failure or a missing run is ``unknown`` — never ``success``.
+    """
+
+    stage: dict[str, Any] = {
+        "key": "quality_gate",
+        "label": "测试与文档门禁",
+        "status": "unknown",
+        "detail": "无法读取该提交的 CI 运行",
+        "started_at": None,
+        "finished_at": None,
+        "duration_seconds": None,
+    }
+    if not settings.github_token:
+        stage["detail"] = "未配置 GitHub 凭据，无法读取 CI 门禁"
+        return stage
+    try:
+        runs = github_dispatch.list_workflow_runs_for_commit(git_commit, settings=settings)
+    except github_dispatch.GitHubDispatchError:
+        stage["detail"] = "GitHub Actions 查询失败，CI 门禁状态未知"
+        return stage
+    matching = [run for run in runs if str(run.get("name") or "") in GATE_WORKFLOWS]
+    if not matching:
+        stage["detail"] = "该提交没有可读取的 CI 运行"
+        return stage
+
+    statuses = {str(run.get("status") or "") for run in matching}
+    conclusions = {str(run.get("conclusion") or "") for run in matching}
+    if statuses & {"queued", "in_progress", "requested", "waiting", "pending"}:
+        stage["status"] = "running"
+    elif conclusions & {"failure", "timed_out", "cancelled", "action_required", "startup_failure"}:
+        stage["status"] = "failed"
+    elif all(
+        str(run.get("status")) == "completed"
+        and str(run.get("conclusion")) in {"success", "neutral", "skipped"}
+        for run in matching
+    ):
+        stage["status"] = "success"
+    else:
+        stage["detail"] = "CI 运行尚未形成最终结论"
+
+    durations: list[int] = []
+    for run in matching:
+        started = _parse_datetime(run.get("run_started_at"))
+        updated = _parse_datetime(run.get("updated_at"))
+        seconds = _seconds(started, updated)
+        if seconds is not None:
+            durations.append(seconds)
+    if durations:
+        stage["duration_seconds"] = max(durations)
+    names = " · ".join(sorted({str(run.get("name")) for run in matching}))
+    if stage["status"] == "running":
+        stage["detail"] = f"{names} · 运行中"
+    elif stage["status"] == "failed":
+        stage["detail"] = f"{names} · 存在失败检查"
+    elif stage["status"] == "success":
+        stage["detail"] = names
+    return stage
+
+
 def github_links(settings: Settings) -> dict[str, str]:
     base = f"https://github.com/{settings.github_repo}"
     return {
@@ -195,6 +265,8 @@ def deployment_item(
     row: Deployment,
     settings: Settings,
     commits: dict[str, str],
+    *,
+    ci_stage: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     detail = row.detail_json if isinstance(row.detail_json, dict) else {}
     links = github_links(settings)
@@ -229,7 +301,7 @@ def deployment_item(
             "run_id": str(run_id) if run_id else None,
             "run_url": run_url,
         },
-        "stages": stage_payloads(row),
+        "stages": stage_payloads(row, ci_stage=ci_stage),
     }
 
 
@@ -399,7 +471,16 @@ def deployments_payload(
 
     db_revision = database_revision(session)
     items = [deployment_item(row, settings, commit_by_id) for row in rows]
-    current_payload = deployment_item(current, settings, commit_by_id) if current else None
+    current_payload = (
+        deployment_item(
+            current,
+            settings,
+            commit_by_id,
+            ci_stage=ci_gate_stage(settings, current.git_commit),
+        )
+        if current
+        else None
+    )
     previous_payload = (
         deployment_item(previous, settings, commit_by_id) if previous else None
     )

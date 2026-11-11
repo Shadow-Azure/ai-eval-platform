@@ -153,16 +153,19 @@ def test_deployments_requires_login_and_returns_pipeline(
 
     stages = {stage["key"]: stage for stage in payload["current"]["stages"]}
     assert list(stages) == [
+        "quality_gate",
         "build",
         "database_migration",
         "rolling_update",
         "health_check",
-        "deployment_record",
     ]
+    assert stages["quality_gate"]["status"] == "unknown"
+    assert "GitHub" in stages["quality_gate"]["detail"]
     assert stages["database_migration"]["duration_seconds"] == 18
     assert stages["health_check"]["status"] == "success"
 
     failed_stages = {stage["key"]: stage for stage in payload["latest"]["stages"]}
+    assert failed_stages["quality_gate"]["status"] == "unknown"
     assert failed_stages["build"]["status"] == "success"
     assert failed_stages["health_check"]["status"] == "unknown"
 
@@ -309,3 +312,28 @@ def test_record_deployment_parses_stage_lines() -> None:
     assert stages[1]["detail"] == "Alembic head"
     assert stages[0]["started_at"] is None
     assert stages[1]["finished_at"] == "2026-11-11T01:00:18Z"
+
+
+def test_current_deployment_reads_the_live_ci_gate(
+    client: TestClient, session: Session, configure_settings, monkeypatch
+) -> None:
+    seed_successful_pair(session)
+    configure_settings(GITHUB_TOKEN="test-token")
+    monkeypatch.setattr(
+        deployment_service,
+        "ci_gate_stage",
+        lambda settings, commit: {
+            "key": "quality_gate",
+            "label": "测试与文档门禁",
+            "status": "success",
+            "detail": "Backend & Web CI · Documentation Gates",
+            "started_at": "2026-11-11T01:00:00Z",
+            "finished_at": "2026-11-11T01:01:18Z",
+            "duration_seconds": 78,
+        },
+    )
+    payload = client.get("/api/v1/deployments").json()
+    gate = payload["current"]["stages"][0]
+    assert gate["key"] == "quality_gate"
+    assert gate["status"] == "success"
+    assert gate["duration_seconds"] == 78

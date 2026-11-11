@@ -182,3 +182,50 @@ def cancel_workflow_run(
         raise GitHubDispatchError(
             f"GitHub 取消工作流失败：HTTP {status} {text.strip()[:200]}", status=status
         )
+
+
+def list_workflow_runs_for_commit(
+    commit: str,
+    *,
+    settings: Settings | None = None,
+    transport: DispatchTransport | None = None,
+    timeout: float = 5,
+) -> list[dict]:
+    """Return the Actions workflow runs for one commit (M5-18 quality gate).
+
+    The deployment page shows the real test/docs gate for the deployed commit;
+    a missing token or a failed probe is handled by the caller as ``unknown``,
+    never as success.
+    """
+
+    settings = settings or get_settings()
+    if not settings.github_token:
+        raise GitHubDispatchError("GITHUB_TOKEN 未配置，无法查询 CI 门禁", status=0)
+
+    url = (
+        f"{settings.github_api_url.rstrip('/')}/repos/{settings.github_repo}"
+        f"/actions/runs?head_sha={commit}&per_page=50"
+    )
+    headers = _headers(settings)
+    try:
+        if transport is not None:
+            status, text = transport(url, method="GET", body=b"", headers=headers, timeout=timeout)
+        else:
+            status, text = _default_transport(
+                url, method="GET", body=b"", headers=headers, timeout=timeout
+            )
+    except Exception as exc:
+        raise GitHubDispatchError(f"GitHub CI 查询传输失败：{exc}", status=0) from exc
+
+    if status < 200 or status >= 300:
+        raise GitHubDispatchError(
+            f"GitHub CI 查询失败：HTTP {status} {text.strip()[:200]}", status=status
+        )
+    try:
+        payload = json.loads(text or "{}")
+    except json.JSONDecodeError as exc:
+        raise GitHubDispatchError("GitHub CI 查询返回非 JSON", status=status) from exc
+    runs = payload.get("workflow_runs")
+    if not isinstance(runs, list):
+        raise GitHubDispatchError("GitHub CI 查询缺少 workflow_runs", status=status)
+    return [run for run in runs if isinstance(run, dict)]
