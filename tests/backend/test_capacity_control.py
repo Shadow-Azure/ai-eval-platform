@@ -620,6 +620,25 @@ def test_scale_down_respects_min_capacity(
     assert len(fake.releases) == 1
 
 
+def test_scale_down_keeps_runners_needed_by_queued_cases(
+    session: Session, scope: dict[str, str]
+) -> None:
+    """M5-08: an idle runner must not be released while shards are waiting."""
+
+    fake = _RecordingProvisioner()
+    pool = _spot_pool_with_connection(session, scope, min_capacity=0, max_capacity=4)
+    _runner(session, scope, pool, name="runner-idle", heartbeat_at=datetime.now(UTC))
+    _queued_cases(session, scope, pool, 5)
+
+    state = capacity_control.reconcile_pool(
+        session, pool, settings=get_settings(), now=datetime.now(UTC), provisioner=fake
+    )
+
+    assert state["queued_attempts"] == 5
+    assert state["scaled_down"] == 0
+    assert fake.releases == []
+
+
 def test_release_failure_keeps_instance_and_continues(
     session: Session, scope: dict[str, str]
 ) -> None:
