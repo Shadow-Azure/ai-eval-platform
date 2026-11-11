@@ -44,6 +44,12 @@ export interface EvaluationSummary {
   idempotency_key: string;
   created_by: string;
   dataset_version_id?: string | null;
+  dataset_name?: string | null;
+  dataset_version?: string | null;
+  resolved_count?: number | null;
+  scored_count?: number | null;
+  resolve_rate?: number | null;
+  duration_seconds?: number | null;
   runtime_key?: string | null;
   runtime_version?: string | null;
   model_name?: string | null;
@@ -138,10 +144,29 @@ export interface EvaluationEvent {
   occurred_at: string | null;
 }
 
+export interface EvaluationListStats {
+  total: number;
+  active: number;
+  running_cases: number;
+  resolved_cases: number;
+  scored_cases: number;
+  avg_resolve_rate: number | null;
+  avg_duration_seconds: number | null;
+}
+
+export interface EvaluationListQuery {
+  q?: string;
+  status?: string;
+  datasetId?: string;
+  limit?: number;
+  offset?: number;
+}
+
 export interface EvaluationListResponse {
   status: string;
   total: number;
   items: EvaluationSummary[];
+  stats: EvaluationListStats;
 }
 
 export interface CreateEvaluationRequest {
@@ -526,6 +551,33 @@ function readOptionalString(value: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
 
+function readOptionalNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function readStats(payload: unknown): EvaluationListStats {
+  if (!isRecord(payload)) {
+    return {
+      total: 0,
+      active: 0,
+      running_cases: 0,
+      resolved_cases: 0,
+      scored_cases: 0,
+      avg_resolve_rate: null,
+      avg_duration_seconds: null,
+    };
+  }
+  return {
+    total: readCountOrZero(payload.total),
+    active: readCountOrZero(payload.active),
+    running_cases: readCountOrZero(payload.running_cases),
+    resolved_cases: readCountOrZero(payload.resolved_cases),
+    scored_cases: readCountOrZero(payload.scored_cases),
+    avg_resolve_rate: readOptionalNumber(payload.avg_resolve_rate),
+    avg_duration_seconds: readOptionalNumber(payload.avg_duration_seconds),
+  };
+}
+
 export function parseEvaluationSummary(payload: unknown): EvaluationSummary {
   if (!isRecord(payload)) {
     throw new ApiError("控制面返回了无法识别的评测数据", { code: "invalid_response" });
@@ -555,6 +607,12 @@ export function parseEvaluationSummary(payload: unknown): EvaluationSummary {
     idempotency_key: readString(payload.idempotency_key),
     created_by: readString(payload.created_by),
     dataset_version_id: readOptionalString(payload.dataset_version_id),
+    dataset_name: readOptionalString(payload.dataset_name),
+    dataset_version: readOptionalString(payload.dataset_version),
+    resolved_count: readOptionalNumber(payload.resolved_count),
+    scored_count: readOptionalNumber(payload.scored_count),
+    resolve_rate: readOptionalNumber(payload.resolve_rate),
+    duration_seconds: readOptionalNumber(payload.duration_seconds),
     runtime_key: readOptionalString(payload.runtime_key),
     runtime_version: readOptionalString(payload.runtime_version),
     model_name: readOptionalString(payload.model_name),
@@ -580,6 +638,7 @@ export function parseEvaluationList(payload: unknown): EvaluationListResponse {
     status: readString(payload.status),
     total: readCount(payload.total, "total"),
     items: payload.items.map(parseEvaluationSummary),
+    stats: readStats(payload.stats),
   };
 }
 
@@ -641,8 +700,16 @@ function readNumberMap(value: unknown): Record<string, number> | undefined {
   );
 }
 
-export async function fetchEvaluations(signal?: AbortSignal): Promise<EvaluationListResponse> {
-  return parseEvaluationList(await request(`/api/v1/evaluations?limit=50`, { signal }));
+export async function fetchEvaluations(
+  query: EvaluationListQuery = {},
+  signal?: AbortSignal,
+): Promise<EvaluationListResponse> {
+  const params = new URLSearchParams({ limit: String(query.limit ?? 50) });
+  if (query.offset) params.set("offset", String(query.offset));
+  if (query.q?.trim()) params.set("q", query.q.trim());
+  if (query.status) params.set("status", query.status);
+  if (query.datasetId) params.set("dataset_id", query.datasetId);
+  return parseEvaluationList(await request(`/api/v1/evaluations?${params.toString()}`, { signal }));
 }
 
 export async function fetchEvaluationDetail(

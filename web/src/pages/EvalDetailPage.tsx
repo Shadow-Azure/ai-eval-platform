@@ -57,6 +57,7 @@ import { Icon } from "../components/Icon";
 import { PageHeading } from "../components/PageHeading";
 import { QueryError } from "../components/QueryError";
 import { StatusCard } from "../components/StatusCard";
+import { EVAL_STATUS_META } from "../utils/evalStatus";
 import { formatMoney } from "../utils/money";
 
 const TAB_KEYS = ["overview", "cases", "results", "config", "events"] as const;
@@ -95,19 +96,7 @@ const TRACE_OPTIONS = [
   { value: "unlinked", label: "未关联" },
 ];
 
-const runStatusMeta: Record<string, { label: string; color: string }> = {
-  preparing: { label: "准备中", color: "default" },
-  queued: { label: "排队中", color: "default" },
-  running: { label: "运行中", color: "processing" },
-  finalizing: { label: "收口中", color: "processing" },
-  completed: { label: "已完成", color: "success" },
-  partial: { label: "部分成功", color: "warning" },
-  failed: { label: "失败", color: "error" },
-  cancelling: { label: "取消中", color: "warning" },
-  cancelled: { label: "已取消", color: "default" },
-  pausing_budget: { label: "预算暂停中", color: "warning" },
-  paused_budget: { label: "预算已暂停", color: "warning" },
-};
+const runStatusMeta = EVAL_STATUS_META;
 
 const executionStatusMeta: Record<string, { label: string; color: string }> = {
   queued: { label: "排队", color: "default" },

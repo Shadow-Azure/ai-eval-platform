@@ -10,6 +10,7 @@ status: ready
 scope:
   - .agents/flow/issues/m5-16-eval-list-overview.*
   - .agents/flow/milestones/m5-product-workflows.*
+  - .agents/notes/**
   - backend/**
   - web/**
   - tests/**
@@ -18,7 +19,8 @@ scope:
   - plans/**
   - scripts/doc-budgets.manifest.json
   - .gitignore
-adr: []
+adr:
+  - ../../notes/0001-eval-run-status-enum.md
 github:
   number: 144
   url: https://github.com/Shadow-Azure/ai-eval-platform/issues/144
