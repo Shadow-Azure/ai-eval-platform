@@ -6,12 +6,14 @@ English | [中文](m6-02-trace-ingestion-model.md)
 kind: issue
 milestone: m6
 priority: P0
-status: ready
+status: in-progress
 scope:
   - .agents/flow/issues/m6-02-trace-ingestion-model.*
   - .agents/flow/milestones/m6-trace-diagnosis.*
   - backend/**
   - tests/**
+  - plans/**
+  - reports/**
   - docs/**
   - scripts/doc-budgets.manifest.json
 adr: []
