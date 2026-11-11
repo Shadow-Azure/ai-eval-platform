@@ -1043,6 +1043,11 @@ export function EvalDetailPage() {
             ["已完成", `${finishedCount} 个`],
             ["运行中", `${caseCounts.running} 个`],
             ["排队", `${caseCounts.queued} 个`],
+            [
+              "已产生费用",
+              `${formatMoney(data.budget_spent_cny)}（预算口径，结算以模型网关记录为准）`,
+            ],
+            ["不可逆范围", "取消后不会自动恢复；需要继续时必须重新发起评测"],
             ["数据保留", "轨迹、测试打点与旧 attempt 均保留"],
           ]}
         />

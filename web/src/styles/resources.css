@@ -208,6 +208,15 @@
   font-size: 11.5px;
 }
 
+.connection-lock {
+  flex: 0 0 auto;
+  gap: 4px;
+}
+
+.connection-lock-note {
+  color: #865b00;
+}
+
 .connection-facts {
   display: flex;
   flex-direction: column;
