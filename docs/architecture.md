@@ -62,7 +62,7 @@ M2 把执行与数据集、Agent 解耦：平台经 repository_dispatch 传 eval
 
 ## 轨迹采集
 
-Runner 在用例结束时归档 Claude Code 原生文件：主/子 Agent 会话 JSONL、`subagents/*.meta.json` 关系元数据与 stdout/stderr 诊断日志进入 attempt 级多文件清单；失败执行保留文件。每项记录安全逻辑路径、artifact kind、digest、size、content type、Runtime 与格式版本，对象键仍由平台生成。后端校验回调 token 的 attempt 绑定、轨迹对象归属、逻辑路径和 digest 格式，按 object key 合并去重；内容 sha256 校验由后续导入流程完成，旧单文件 `trace_manifest` 继续可读。Runner 发现缺少主会话或子 Agent 元数据时标记采集不完整，后端也不允许仅凭诊断文件声称完整；`degraded` 由后续解析写入，不伪装成完整轨迹。
+Runner 归档会话、元数据与诊断，失败保留；清单记录路径、digest、size、版本与平台对象键。回调写 `trace_file(pending)`；Worker 以 owner 租约领取并校验原件，解析后写 `trace_session`/`trace_span`；`native_session_key` 区分共享 `sessionId`，元数据只留原件行。坏行降级，单文件失败隔离。幂等键 `(attempt, sha256, parser_version)`：重复不新增，升级单事务换树，失败保留旧树，单文件修复遇新版本也原子重放整 attempt；回收后旧 Worker 不能续租或完成。`trace_status` 按 failed > incomplete > degraded > ready 聚合，旧 attempt 不覆盖最新；发布时锁 case 行并重读 `trace_file`，inflight 不发布终态，由收尾 Worker 写去重 `trace.ingestion.updated`；Worker SQL 过滤后回填缺 `trace_file` 的 attempt。导入不改评分/终态。
 
 ## 数据集导入
 

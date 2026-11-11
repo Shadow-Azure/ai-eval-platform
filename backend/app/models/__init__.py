@@ -61,6 +61,14 @@ from .scoring import (
     ScoreArtifact,
     TestCaseResult,
 )
+from .trace import (
+    TRACE_FILE_STATUSES,
+    TRACE_SESSION_STATUSES,
+    TRACE_SPAN_KINDS,
+    TraceFile,
+    TraceSession,
+    TraceSpan,
+)
 
 __all__ = [
     "Base",
@@ -126,4 +134,10 @@ __all__ = [
     "TRACE_STATUSES",
     "ATTEMPT_STATUSES",
     "PREPARATION_STATUSES",
+    "TraceFile",
+    "TraceSession",
+    "TraceSpan",
+    "TRACE_FILE_STATUSES",
+    "TRACE_SESSION_STATUSES",
+    "TRACE_SPAN_KINDS",
 ]

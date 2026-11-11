@@ -70,6 +70,10 @@ EXPECTED_TABLES = {
     "agent_asset_source",
     "agent_asset_snapshot",
     "agent_asset",
+    # M6-02 版本化轨迹原件、session 与 span
+    "trace_file",
+    "trace_session",
+    "trace_span",
 }
 
 
@@ -131,3 +135,54 @@ def test_revision_ids_fit_alembic_version_column() -> None:
             f"{path.name}: revision id {revision!r} exceeds "
             "alembic_version.version_num VARCHAR(32)"
         )
+
+def test_trace_tables_migrate_from_dataset_import_head(database_url: str) -> None:
+    """0021 must apply on top of 0020 and reverse without losing earlier state."""
+
+    run_alembic(database_url, "upgrade", "0020_dataset_import_upload")
+    run_alembic(database_url, "upgrade", "head")
+    engine = create_engine(database_url, future=True)
+    try:
+        tables = set(inspect(engine).get_table_names())
+        assert {"trace_file", "trace_session", "trace_span"} <= tables
+        assert "trace_status" in {
+            column["name"] for column in inspect(engine).get_columns("eval_case_run")
+        }
+        session_columns = {
+            column["name"] for column in inspect(engine).get_columns("trace_session")
+        }
+        assert "native_session_key" in session_columns
+        file_columns = {
+            column["name"] for column in inspect(engine).get_columns("trace_file")
+        }
+        assert "lease_owner" in file_columns
+        session_fks = inspect(engine).get_foreign_keys("trace_session")
+        assert any(
+            fk["constrained_columns"] == ["tenant_id", "parent_session_id"]
+            and fk["referred_columns"] == ["tenant_id", "id"]
+            for fk in session_fks
+        )
+        span_fks = inspect(engine).get_foreign_keys("trace_span")
+        assert any(
+            fk["constrained_columns"] == ["tenant_id", "parent_span_id"]
+            and fk["referred_columns"] == ["tenant_id", "id"]
+            for fk in span_fks
+        )
+        span_indexes = {index["name"]: index for index in inspect(engine).get_indexes("trace_span")}
+        assert span_indexes["uq_trace_span_session_event"]["unique"] == 1
+        assert "ix_trace_span_parent_span_id" in span_indexes
+    finally:
+        engine.dispose()
+
+    run_alembic(database_url, "downgrade", "0020_dataset_import_upload")
+    engine = create_engine(database_url, future=True)
+    try:
+        tables = set(inspect(engine).get_table_names())
+        assert not {"trace_file", "trace_session", "trace_span"} & tables
+        assert "trace_status" in {
+            column["name"] for column in inspect(engine).get_columns("eval_case_run")
+        }
+    finally:
+        engine.dispose()
+
+    run_alembic(database_url, "upgrade", "head")
