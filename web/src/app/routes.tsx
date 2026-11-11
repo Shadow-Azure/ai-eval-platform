@@ -15,6 +15,7 @@ import { NotFoundPage } from "../pages/NotFoundPage";
 import { OperationsPage } from "../pages/OperationsPage";
 import { OverviewPage } from "../pages/OverviewPage";
 import { ResourcesPage } from "../pages/ResourcesPage";
+import { TracePage } from "../pages/TracePage";
 
 export function AppRoutes() {
   return (
@@ -26,6 +27,7 @@ export function AppRoutes() {
           <Route path="/overview" element={<OverviewPage />} />
           <Route path="/evals" element={<EvalsPage />} />
           <Route path="/evals/new" element={<EvalWizardPage />} />
+          <Route path="/evals/:runId/cases/:caseRunId/trace" element={<TracePage />} />
           <Route path="/evals/:runId" element={<EvalDetailPage />} />
           <Route path="/datasets" element={<DatasetsPage />} />
           <Route path="/datasets/import" element={<DatasetImportPage />} />

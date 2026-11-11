@@ -12,6 +12,7 @@ import "./styles/datasets.css";
 import "./styles/assets.css";
 import "./styles/resources.css";
 import "./styles/eval-detail.css";
+import "./styles/trace-viewer.css";
 import "./styles/login.css";
 import "./styles/wizard.css";
 import "./styles/datasets.css";

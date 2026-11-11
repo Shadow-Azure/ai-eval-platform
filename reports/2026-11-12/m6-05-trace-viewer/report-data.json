@@ -1,0 +1,263 @@
+{
+  "title": "M6-05 三栏轨迹查看器 smoke",
+  "eyebrow": "Computer Use + trace API integration",
+  "summary": "在隔离 SQLite、真实 FastAPI、Vite 前端和本地对象存储链路上验证 attempt 级轨迹页。覆盖三栏联动、深链刷新与浏览器返回、快速切换、分页、degraded/unlinked、时钟回退、root fragment、大内容/raw 权限、恶意文本和窄屏布局；未发现新的集成缺陷。",
+  "meta": "2026-11-12 · macOS · Google Chrome + Node 25",
+  "metrics": [
+    { "value": "14", "label": "GUI 场景" },
+    { "value": "13", "label": "截图/下载证据" },
+    { "value": "77", "label": "Node 测试" },
+    { "value": "0", "label": "新增 smoke 缺陷" }
+  ],
+  "facts": [
+    { "label": "Issue", "value": "#94" },
+    { "label": "Runtime", "value": "claude-code 2.1.278" },
+    { "label": "Frontend", "value": "Vite + React Router + TanStack Query" },
+    { "label": "Database", "value": "isolated SQLite" },
+    { "label": "Object store", "value": "local SigV4 URL + HTTPServer" },
+    { "label": "Viewer", "value": "admin + read-only member" }
+  ],
+  "matrix": {
+    "columns": ["#", "场景", "结果", "断言", "证据"],
+    "rows": [
+      {
+        "id": "01",
+        "name": "Ready 三栏联动",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "3 个 session、12 个 span；session tree、waterfall 与 inspector 同时可见，选中态与原型一致。",
+        "evidence": ["01-ready-three-pane.jpeg"]
+      },
+      {
+        "id": "02",
+        "name": "Session 深链",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "点击 Explore 后 URL 写入 session/span，waterfall 切到该 session 的 9 个 span；刷新后恢复同一选择，浏览器返回恢复 root。",
+        "evidence": ["02-child-session-deep-link.png"]
+      },
+      {
+        "id": "03",
+        "name": "管理员签名地址",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "raw 地址通过受控弹窗确认，不进入应用 URL；管理员随后真实打开对象并获得 HTTP 200。",
+        "evidence": ["02-raw-signed-url-modal.jpeg", "08-raw-downloaded.jpeg"]
+      },
+      {
+        "id": "04",
+        "name": "Degraded + unlinked",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "缺少主文件调用证据时页面明确显示“已降级”，session 进入 UNLINKED SESSIONS，不伪装为正常树。",
+        "evidence": ["03-degraded-clock.jpeg"]
+      },
+      {
+        "id": "05",
+        "name": "时钟不可比",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "倒置时间触发页面 banner 与 waterfall 内提示，布局退回 ordinal timeline。",
+        "evidence": ["03-degraded-clock.jpeg"]
+      },
+      {
+        "id": "06",
+        "name": "Root fragment",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "缺失父 span 的 LLM 节点标为 ROOT FRAGMENT，inspector 解释父节点缺失但不猜测关系。",
+        "evidence": ["04-root-fragment.jpeg"]
+      },
+      {
+        "id": "07",
+        "name": "失败/空 attempt",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "failed attempt 显示执行错误与“没有可用轨迹”，session/span 为 0，未显示错误假数据。",
+        "evidence": ["05-empty-attempt.jpeg"]
+      },
+      {
+        "id": "08",
+        "name": "404 错误态",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "不存在的 attempt 返回 404、attempt_not_found 和重试操作，错误上下文可恢复。",
+        "evidence": ["06-error.jpeg"]
+      },
+      {
+        "id": "09",
+        "name": "处理中状态",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "无 trace_file 的 pending attempt 显示处理中说明并自动刷新，不渲染猜测 session。",
+        "evidence": ["04-incomplete-processing.png"]
+      },
+      {
+        "id": "10",
+        "name": "恶意文本安全渲染",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "包含 script/img onerror 的 fixture 仅作为纯文本显示，未执行脚本或事件处理器。",
+        "evidence": ["01-ready-three-pane.jpeg"]
+      },
+      {
+        "id": "11",
+        "name": "只读 thinking 权限",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "只读成员选择 THINKING 后看到权限锁定说明，完整推理正文未返回页面。",
+        "evidence": ["07-readonly-thinking.jpeg"]
+      },
+      {
+        "id": "12",
+        "name": "只读 raw 拒绝",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "只读成员点击原件按钮收到“当前账号没有写入权限”，未打开对象地址。",
+        "evidence": ["08-viewer-raw-denied.png"]
+      },
+      {
+        "id": "13",
+        "name": "窄屏布局",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "浏览器放大到 175% 后 inspector 下移，session 以选择器替代左树，主操作仍可访问。",
+        "evidence": ["05-narrow-175-percent.png"]
+      },
+      {
+        "id": "14",
+        "name": "跨 session 深链隔离",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "构造 session=root、span=child 的 URL 后，页面丢弃不同 session 的 span，恢复 root session 的首个合法 span，waterfall 与 inspector 保持一致。",
+        "evidence": ["13-cross-session-deep-link-safe.png"]
+      }
+    ]
+  },
+  "issues": [],
+  "screenshots": [
+    {
+      "src": "01-ready-three-pane.jpeg",
+      "alt": "Ready 轨迹的三栏查看器",
+      "label": "01 · Ready",
+      "caption": "左侧 session tree、中间 waterfall、右侧 span inspector 与原型保持同一信息层级。",
+      "variant": "wide"
+    },
+    {
+      "src": "02-child-session-deep-link.png",
+      "alt": "子 session 深链选择",
+      "label": "02 · Deep link",
+      "caption": "子 session 与首个 span 已写入 URL，刷新和返回均可恢复。",
+      "variant": "wide"
+    },
+    {
+      "src": "02-raw-signed-url-modal.jpeg",
+      "alt": "管理员原始文件短时地址弹窗",
+      "label": "03 · Signed raw",
+      "caption": "短时地址通过受控确认打开，不进入应用 URL 或持久缓存。",
+      "variant": "normal"
+    },
+    {
+      "src": "03-degraded-clock.jpeg",
+      "alt": "降级未关联和时钟不可比状态",
+      "label": "04 · Degraded",
+      "caption": "降级、unlinked 和时钟异常均有独立文本提示。",
+      "variant": "wide"
+    },
+    {
+      "src": "04-root-fragment.jpeg",
+      "alt": "缺失父 span 的 root fragment",
+      "label": "05 · Root fragment",
+      "caption": "缺失父节点不会触发前端推测，明确标记为 root fragment。",
+      "variant": "wide"
+    },
+    {
+      "src": "05-empty-attempt.jpeg",
+      "alt": "失败 attempt 的空轨迹状态",
+      "label": "06 · Failed empty",
+      "caption": "失败原因与测试结果语义保留，不合成轨迹。",
+      "variant": "wide"
+    },
+    {
+      "src": "06-error.jpeg",
+      "alt": "不存在 attempt 的错误状态",
+      "label": "07 · Error",
+      "caption": "404 有稳定的错误代码、端点上下文和重试按钮。",
+      "variant": "wide"
+    },
+    {
+      "src": "04-incomplete-processing.png",
+      "alt": "轨迹处理中状态",
+      "label": "08 · Processing",
+      "caption": "pending attempt 显示处理中并自动轮询，不显示猜测数据。",
+      "variant": "wide"
+    },
+    {
+      "src": "07-readonly-thinking.jpeg",
+      "alt": "只读成员无法查看完整 thinking",
+      "label": "09 · Thinking locked",
+      "caption": "只读角色得到明确权限说明，完整推理正文不进入页面。",
+      "variant": "wide"
+    },
+    {
+      "src": "08-viewer-raw-denied.png",
+      "alt": "只读成员 raw 下载被拒绝",
+      "label": "10 · Raw denied",
+      "caption": "只读成员的 raw 请求被服务端拒绝，页面展示安全提示。",
+      "variant": "wide"
+    },
+    {
+      "src": "08-raw-downloaded.jpeg",
+      "alt": "管理员打开原始轨迹文件",
+      "label": "11 · Raw object",
+      "caption": "短时地址实际返回原生 JSONL 内容，下载链路 200。",
+      "variant": "wide"
+    },
+    {
+      "src": "09-content-signed-url.jpeg",
+      "alt": "大内容短时地址确认",
+      "label": "12 · Large content",
+      "caption": "完整 span 内容仅在点击后签发短时地址。",
+      "variant": "normal"
+    },
+    {
+      "src": "05-narrow-175-percent.png",
+      "alt": "175% 缩放下的窄屏轨迹布局",
+      "label": "13 · Narrow",
+      "caption": "窄视口下 inspector 下移并使用 session 选择器，避免主操作不可达。",
+      "variant": "wide"
+      },
+      {
+        "src": "13-cross-session-deep-link-safe.png",
+        "alt": "跨 session 深链被安全纠正",
+        "label": "14 · Session guard",
+        "caption": "跨 session span ID 被清除，URL 与当前 session 的 inspector 不会混用。",
+        "variant": "wide"
+    }
+  ],
+  "coverage": {
+    "columns": ["区域", "自动化覆盖", "结论", "建议"],
+    "rows": [
+      {
+        "area": "URL/选择状态",
+        "coverage": "Node model tests",
+        "conclusion": "attempt/session/span/kind 恢复、跨 session span 隔离、非法值回退和 stale request generation 已覆盖。",
+        "recommendation": "后续可用 jsdom 或浏览器测试补组件级 back/forward。"
+      },
+      {
+        "area": "树与 waterfall",
+        "coverage": "Node model tests + GUI",
+        "conclusion": "flatten、missing parent、ordinal fallback 和分页去重已验证。",
+        "recommendation": "span 数超过单页时保持真实长列表 smoke。"
+      },
+      {
+        "area": "安全与权限",
+        "coverage": "Node tests + backend API + GUI",
+        "conclusion": "恶意文本为纯文本；thinking 和 raw 的只读拒绝均可见。",
+        "recommendation": "未来引入 sanitized Markdown 时继续保留纯文本默认值。"
+      },
+      {
+        "area": "响应式",
+        "coverage": "GUI zoom smoke",
+        "conclusion": "175% 缩放时 inspector 下移、session 选择器可用。",
+        "recommendation": "正式支持移动端前增加 1024/768 视觉基线。"
+      }
+    ]
+  },
+  "conclusion": {
+    "kind": "pass",
+    "label": "Ready for review",
+    "summary": "13 个 GUI/集成场景完成，未发现新的 smoke 缺陷；三栏查看器和状态边界与原型及设计一致。",
+    "points": [
+      "真实 API、数据库、对象存储和浏览器链路均已执行。",
+      "正式 PR review 仍需结合自动化测试与代码 diff 独立复核。"
+    ]
+  },
+  "footer": "M6-05 · attempt-level trace viewer · 2026-11-12"
+}

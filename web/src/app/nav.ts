@@ -49,6 +49,7 @@ const breadcrumbs: Array<{ test: (path: string) => boolean; crumbs: [string, str
   { test: (path) => path === "/datasets", crumbs: ["评测", "数据集"] },
   { test: (path) => path === "/datasets/import", crumbs: ["评测", "导入数据集"] },
   { test: (path) => path.startsWith("/datasets/"), crumbs: ["评测", "数据集详情"] },
+  { test: (path) => path.includes("/trace"), crumbs: ["评测", "会话轨迹"] },
   { test: (path) => path.startsWith("/evals/") && path !== "/evals/new", crumbs: ["评测", "评测详情"] },
   { test: (path) => path === "/assets", crumbs: ["配置", "Agent 资产"] },
   { test: (path) => path === "/models", crumbs: ["配置", "模型凭据"] },
