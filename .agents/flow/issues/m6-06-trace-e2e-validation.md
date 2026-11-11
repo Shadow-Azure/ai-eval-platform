@@ -15,6 +15,7 @@ scope:
   - runner-contract/**
   - web/**
   - tests/**
+  - plans/**
   - reports/**
   - docs/**
   - .github/workflows/eval-shard.yml
