@@ -127,11 +127,12 @@ test("production runner callback entry stays VPC-only and keeps loopback", () =>
   assert.ok(common.includes("127.0.0.1"), "the override must be skipped for loopback");
 
   const workflow = read(".github/workflows/deploy.yml");
+  const writer = read("deploy/write-managed-env.sh");
   assert.ok(workflow.includes("secrets.API_BIND_ADDRESS"));
   assert.ok(workflow.includes("secrets.RUNNER_CALLBACK_BASE_URL"));
   assert.ok(workflow.includes("printf 'API_BIND_ADDRESS=%s\\n'"));
   assert.ok(workflow.includes("printf 'RUNNER_CALLBACK_BASE_URL=%s\\n'"));
-  assert.ok(workflow.includes("|API_BIND_ADDRESS|RUNNER_CALLBACK_BASE_URL|"));
+  assert.ok(writer.includes("|API_BIND_ADDRESS|RUNNER_CALLBACK_BASE_URL|"));
   assert.ok(
     workflow.includes('callback_base_url="${RUNNER_CALLBACK_BASE_URL:-}"'),
     "callback base URL should accept an explicit override",
@@ -170,6 +171,7 @@ test("eval-shard executes on the runner labels frozen in the dispatch", () => {
 
 test("deploy builds and injects the content-addressed runner scripts bundle", () => {
   const workflow = read(".github/workflows/deploy.yml");
+  const writer = read("deploy/write-managed-env.sh");
   for (const expected of [
     "scripts-bundle:",
     "scripts/cache-runner-scripts.py",
@@ -178,12 +180,12 @@ test("deploy builds and injects the content-addressed runner scripts bundle", ()
     "RUNNER_SCRIPTS_BUNDLE_SHA256: ${{ needs.scripts-bundle.outputs.sha256 }}",
     "RUNNER_SCRIPTS_BUNDLE_SIZE: ${{ needs.scripts-bundle.outputs.size }}",
     "printf 'RUNNER_SCRIPTS_BUNDLE_NAME=%s\\n'",
-    "|RUNNER_SCRIPTS_BUNDLE_NAME|",
     "runner-contract/schemas/**",
     "runner/**",
   ]) {
     assert.ok(workflow.includes(expected), `scripts bundle deploy missing ${expected}`);
   }
+  assert.ok(writer.includes("|RUNNER_SCRIPTS_BUNDLE_NAME|"));
   const compose = read("deploy/docker-compose.prod.yml");
   for (const name of ["NAME", "MD5", "SHA256", "SIZE"]) {
     const fallback = name === "SIZE" ? "0" : "";
@@ -192,4 +194,108 @@ test("deploy builds and injects the content-addressed runner scripts bundle", ()
     assert.equal(mappings, 2, `compose must pass RUNNER_SCRIPTS_BUNDLE_${name} to api and worker`);
   }
   assert.ok(!workflow.includes("presign_put_url"), "the deploy must not inject an expiring presigned URL");
+});
+
+const LONG_LIVED_SECRETS = [
+  "SECRET_BOX_KEY",
+  "POSTGRES_PASSWORD",
+  "AUTH_SESSION_SECRET",
+  "GATEWAY_TOKEN_SECRET",
+  "RUNNER_TASK_SECRET",
+  "RUNNER_HEARTBEAT_TOKEN",
+  "RUNNER_ADMIN_TOKEN",
+];
+
+test("deploy workflow requires and injects every long-lived secret", () => {
+  const workflow = read(".github/workflows/deploy.yml");
+  for (const name of LONG_LIVED_SECRETS) {
+    assert.ok(
+      workflow.includes(`${name}: \${{ secrets.${name} }}`),
+      `deploy workflow must read ${name} from GitHub Secrets`,
+    );
+    assert.ok(
+      workflow.includes(`: "\${${name}:?${name} secret is required}"`),
+      `deploy workflow must fail fast when ${name} is missing`,
+    );
+    assert.ok(
+      workflow.includes(`printf '${name}=%s\\n'`),
+      `deploy workflow must write ${name} to the host env`,
+    );
+  }
+});
+
+test("host deploy never generates or silently replaces long-lived secrets", () => {
+  const script = read("deploy/deploy.sh");
+  assert.equal(script.includes("openssl rand"), false);
+  assert.equal(script.includes("ensure_secret"), false);
+  assert.equal(script.includes("ensure_fernet_secret"), false);
+  for (const name of LONG_LIVED_SECRETS) {
+    assert.ok(
+      script.includes(`require_secret ${name}`),
+      `deploy.sh must require secret-backed ${name}`,
+    );
+  }
+});
+
+test("host env replacement is atomic and preserves unmanaged keys", () => {
+  const writer = read("deploy/write-managed-env.sh");
+  assert.ok(writer.includes("mktemp"), "the remote writer must stage a temporary env file");
+  assert.ok(writer.includes('grep -Ev "^(S3_ENDPOINT|'), "managed keys must be filtered");
+  assert.ok(writer.includes('>>"$output_file"'), "managed values must append to the staged env");
+  assert.ok(writer.includes('chmod 600 "$output_file"'), "the staged env must be private");
+  assert.ok(writer.includes('mv "$output_file" "$env_file"'), "the staged env must replace .env atomically");
+  const workflow = read(".github/workflows/deploy.yml");
+  assert.equal(
+    workflow.includes("cat .env.tmp > .env"),
+    false,
+    "truncating the live .env before all values are staged risks a partial file",
+  );
+});
+
+test("deploy refuses to rotate an existing host away from the GitHub secrets", () => {
+  const workflow = read(".github/workflows/deploy.yml");
+  const writer = read("deploy/write-managed-env.sh");
+  assert.ok(workflow.includes("write-managed-env.sh"), "the host writer must be a testable script");
+  assert.ok(workflow.includes("payload_digest"), "the workflow must pass a payload digest");
+  assert.ok(writer.includes("sha256sum"), "secret equality must be checked by digest");
+  assert.ok(
+    writer.includes("Existing host long-lived secret"),
+    "mismatches must fail before the host env is replaced",
+  );
+  assert.ok(writer.includes("partially populated"), "a partial old host must fail before replacement");
+  assert.ok(writer.includes("checksum mismatch"), "truncated payloads must fail before replacement");
+});
+
+test("production compose passes long-lived secrets to api and worker", () => {
+  const compose = read("deploy/docker-compose.prod.yml");
+  const apiStart = compose.indexOf("\n  api:");
+  const workerStart = compose.indexOf("\n  worker:");
+  const webStart = compose.indexOf("\n  web:");
+  assert.ok(apiStart >= 0 && workerStart > apiStart && webStart > workerStart);
+  const api = compose.slice(apiStart, workerStart);
+  const worker = compose.slice(workerStart, webStart);
+  for (const name of [
+    "SECRET_BOX_KEY",
+    "AUTH_SESSION_SECRET",
+    "GATEWAY_TOKEN_SECRET",
+    "RUNNER_TASK_SECRET",
+    "RUNNER_HEARTBEAT_TOKEN",
+    "RUNNER_ADMIN_TOKEN",
+  ]) {
+    assert.ok(api.includes(`${name}: \${${name}:-`), `api must receive ${name}`);
+  }
+  for (const name of ["SECRET_BOX_KEY", "RUNNER_HEARTBEAT_TOKEN", "RUNNER_ADMIN_TOKEN"]) {
+    assert.ok(worker.includes(`${name}: \${${name}:-`), `worker must receive ${name}`);
+  }
+  assert.ok(api.includes("${POSTGRES_PASSWORD:?}"), "api database URL must require the secret password");
+  assert.ok(worker.includes("${POSTGRES_PASSWORD:?}"), "worker database URL must require the secret password");
+});
+
+test("AGENTS keeps the host-migration secret constraint", () => {
+  const agents = read("AGENTS.md");
+  assert.ok(agents.includes("部署必须支持换机迁移"));
+  for (const name of LONG_LIVED_SECRETS) {
+    assert.ok(agents.includes(name), `AGENTS.md must name ${name}`);
+  }
+  assert.ok(agents.includes("禁止依赖主机 `.env` 首次部署随机生成"));
 });
