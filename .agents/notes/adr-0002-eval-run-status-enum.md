@@ -1,6 +1,6 @@
-# ADR 0001：评测任务状态枚举与「部分成功」语义
+# ADR 0002 · 评测任务状态枚举与「部分成功」语义
 
-[English](0001-eval-run-status-enum.en.md) | 中文
+[English](adr-0002-eval-run-status-enum.en.md) | 中文
 
 - 状态：已采纳
 - 日期：2026-11-11

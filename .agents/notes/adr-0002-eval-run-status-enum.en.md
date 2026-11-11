@@ -1,6 +1,6 @@
-# ADR 0001: Evaluation run status enum and "partial success" semantics
+# ADR 0002 · Evaluation run status enum and "partial success" semantics
 
-English | [中文](0001-eval-run-status-enum.md)
+English | [中文](adr-0002-eval-run-status-enum.md)
 
 - Status: accepted
 - Date: 2026-11-11

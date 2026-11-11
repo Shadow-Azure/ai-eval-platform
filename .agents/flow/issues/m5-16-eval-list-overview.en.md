@@ -20,7 +20,7 @@ scope:
   - scripts/doc-budgets.manifest.json
   - .gitignore
 adr:
-  - ../../notes/0001-eval-run-status-enum.md
+  - ../../notes/adr-0002-eval-run-status-enum.md
 github:
   number: 144
   url: https://github.com/Shadow-Azure/ai-eval-platform/issues/144

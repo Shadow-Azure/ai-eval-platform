@@ -1,0 +1,5 @@
+# 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
+# git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
+#   pnpm run record:i18n -- .agents/notes/adr-0002-eval-run-status-enum.md
+adr-0002-eval-run-status-enum.md: 9c777f88904c68f1cd4fc254566f7ee861c0b431
+adr-0002-eval-run-status-enum.en.md: 8e7cdadaaf0b739bf4788e407f4a7a6d6386042d
