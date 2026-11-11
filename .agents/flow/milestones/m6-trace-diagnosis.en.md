@@ -8,7 +8,7 @@ Add raw trace preservation, versioned normalization, and main/sub-agent relation
 kind: milestone
 id: m6
 title: 轨迹诊断闭环
-status: planned
+status: active
 github:
   number: 6
   url: https://github.com/Shadow-Azure/ai-eval-platform/milestone/6
