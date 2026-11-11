@@ -29,7 +29,7 @@ test("eval-shard prepare job plans one matrix entry per manifest case", () => {
   const prepare = jobBlock(text, "prepare");
   for (const expected of [
     "if: github.event_name == 'repository_dispatch'",
-    "timeout-minutes: 5",
+    "timeout-minutes: 10",
     "outputs:",
     "cases: ${{ steps.plan.outputs.cases }}",
     "runner/lib/contracts.mjs dispatch",
@@ -112,4 +112,31 @@ test("eval-shard workflow carries no secret material or demo tokens", () => {
 
 test("500 cases at the default shard size of 64 form 8 dispatches", () => {
   assert.equal(Math.ceil(500 / 64), 8);
+});
+
+test("eval-shard downloads the scripts bundle and gates checkout as a fallback", () => {
+  const text = workflow();
+  for (const name of ["prepare", "execute"]) {
+    const job = jobBlock(text, name);
+    for (const expected of [
+      "name: Fetch the scripts bundle",
+      "id: bundle",
+      "steps.bundle.outputs.ok != 'true'",
+      "manifestUrl.pathname.replace(/\\/manifest$/, \"/scripts\")",
+      "metadataUrl = manifestUrl.toString()",
+      "$EVAL_SCRIPTS_DIR",
+      "tar -xzf",
+      "md5",
+      "sha256",
+    ]) {
+      assert.ok(job.includes(expected), `${name} missing ${expected}`);
+    }
+    const checkouts = job.match(/uses: actions\/checkout@v4/g) ?? [];
+    assert.equal(checkouts.length, 2, `${name} must keep a two-attempt checkout fallback`);
+    assert.ok(job.includes("if: steps.bundle.outputs.ok != 'true'"), `${name} checkout must be gated`);
+    assert.ok(job.includes("steps.fallback_checkout.outcome == 'failure'"), `${name} must retry the fallback`);
+    assert.ok(job.includes("EVAL_SCRIPTS_DIR=$GITHUB_WORKSPACE"), `${name} must resolve fallback root`);
+  }
+  const total = text.match(/uses: actions\/checkout@v4/g) ?? [];
+  assert.equal(total.length, 4, "only prepare/execute may retain two checkout fallback attempts");
 });

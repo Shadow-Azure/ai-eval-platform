@@ -58,6 +58,19 @@ def test_bootstrap_contains_jit_and_installs_runner_once() -> None:
     assert "https://oss.example/actions-runner.tar.gz" in bootstrap
     assert "run.sh --jitconfig \"$JIT_CONFIG\"" in bootstrap
     assert "systemctl enable --now github-runner.service" in bootstrap
+    # The eval-shard workflow runs Node on the runner host; without it the
+    # prepare job dies with `node: command not found` and cases never start.
+    assert "npmmirror.com/mirrors/node" in bootstrap
+    assert "node-v${NODE_VERSION}-linux-x64.tar.xz" in bootstrap
+    assert "node --version" in bootstrap
+    # GitHub downloads from Aliyun are slow; allow retries before giving up.
+    assert "--max-time 600 --retry 3" in bootstrap
+    # An ephemeral runner exits after one job; the heartbeat must stop with it
+    # or the platform keeps seeing a phantom online runner.
+    assert "BindsTo=github-runner.service" in bootstrap
+    assert bootstrap.index("systemctl enable --now github-runner.service") < bootstrap.index(
+        "systemctl enable --now eval-heartbeat.service"
+    )
 
 
 def test_cleanup_removes_jit_env_and_cloud_init_user_data() -> None:
@@ -93,3 +106,42 @@ def test_heartbeat_payload_includes_pool_binding() -> None:
     assert '"resource_pool_id":"%s"' in heartbeat
     assert "pool-1" in heartbeat
     assert "heartbeat-token" not in heartbeat
+
+
+def test_bootstrap_carries_the_runner_token_for_the_platform_proxy() -> None:
+    document = yaml.safe_load(
+        render_cloud_init(
+            platform_base_url="http://10.0.0.5:8000",
+            runner_name="spot-abc",
+            resource_pool_id="pool-1",
+            labels=["self-hosted"],
+            encoded_jit="jit",
+            heartbeat_token="heartbeat-token",
+            runner_tarball_url="http://10.0.0.5:8000/runner/v1/runner-tarball/2.338.2.tar.gz",
+            runner_tarball_token="heartbeat-token",
+        )
+    )
+    bootstrap = _files(document)["/etc/eval/bootstrap.sh"]
+    assert "http://10.0.0.5:8000/runner/v1/runner-tarball/2.338.2.tar.gz" in bootstrap
+    assert "RUNNER_TARBALL_TOKEN=heartbeat-token" in bootstrap
+    assert 'authorization: Bearer $RUNNER_TARBALL_TOKEN' in bootstrap
+
+
+def test_bootstrap_sends_no_token_to_an_external_mirror() -> None:
+    document = yaml.safe_load(
+        render_cloud_init(
+            platform_base_url="http://10.0.0.5:8000",
+            runner_name="spot-abc",
+            resource_pool_id="pool-1",
+            labels=["self-hosted"],
+            encoded_jit="jit",
+            heartbeat_token="heartbeat-token",
+            runner_tarball_url="https://mirror.example/runner.tar.gz",
+        )
+    )
+    bootstrap = _files(document)["/etc/eval/bootstrap.sh"]
+    assert "https://mirror.example/runner.tar.gz" in bootstrap
+    # Empty token selects the unauthenticated curl branch; the runner token
+    # never reaches this script for an external mirror.
+    assert "RUNNER_TARBALL_TOKEN=''" in bootstrap
+    assert "heartbeat-token" not in bootstrap

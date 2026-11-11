@@ -17,7 +17,7 @@ from decimal import Decimal
 from urllib.parse import parse_qs, quote
 
 import pytest
-from app.config import get_settings
+from app.config import Settings, get_settings
 from app.models import (
     Connection,
     Credential,
@@ -691,3 +691,71 @@ def test_cloud_assistant_diagnostic_round_trip(
     invoke = client.run_shell_command("cn-hangzhou", "i-test-1", "cloud-init status")
     assert invoke == "inv-test-1"
     assert client.describe_invocation_result("cn-hangzhou", invoke, "i-test-1") == "diag output"
+
+
+def test_create_uses_the_permanent_proxy_url_for_the_runner_tarball(
+    session: Session, scope: dict[str, str], clock: datetime
+) -> None:
+    connection = _connection(session, scope)
+    pool = _pool(session, scope, connection)
+    transport = FakeAliyun()
+    settings = Settings(
+        s3_endpoint="https://oss-cn-hangzhou.aliyuncs.com",
+        s3_bucket="eval-artifacts",
+        s3_access_key="ak",
+        s3_secret_key="sk",
+        s3_region="oss-cn-hangzhou",
+        s3_addressing_style="virtual",
+        runner_callback_base_url="http://10.0.0.5:8000",
+        runner_heartbeat_token="heartbeat-token",
+        runner_spot_runner_version="2.338.2",
+    )
+
+    _provisioner(settings=settings, transport=transport).create(
+        session=session,
+        connection=connection,
+        pool=pool,
+        spec=InstanceSpec(instance_type="ecs.g7.large"),
+        now=clock,
+    )
+
+    run_call = next(call for call in transport.calls if call[0] == "RunInstances")
+    user_data = base64.b64decode(run_call[1]["UserData"][0]).decode()
+    bootstrap = _write_file_content(user_data, "/etc/eval/bootstrap.sh")
+    # M5-11: no seven-day presigned URL; the fixed api proxy must stay valid.
+    assert "http://10.0.0.5:8000/runner/v1/runner-tarball/2.338.2.tar.gz" in bootstrap
+    assert "RUNNER_TARBALL_TOKEN=heartbeat-token" in bootstrap
+
+
+def test_create_sends_no_runner_token_to_an_explicit_mirror(
+    session: Session, scope: dict[str, str], clock: datetime
+) -> None:
+    connection = _connection(session, scope)
+    pool = _pool(session, scope, connection)
+    transport = FakeAliyun()
+    settings = Settings(
+        s3_endpoint="https://oss-cn-hangzhou.aliyuncs.com",
+        s3_bucket="eval-artifacts",
+        s3_access_key="ak",
+        s3_secret_key="sk",
+        runner_callback_base_url="http://10.0.0.5:8000",
+        runner_heartbeat_token="heartbeat-token",
+        runner_spot_runner_tarball_url="https://mirror.example/runner.tar.gz",
+    )
+
+    _provisioner(settings=settings, transport=transport).create(
+        session=session,
+        connection=connection,
+        pool=pool,
+        spec=InstanceSpec(instance_type="ecs.g7.large"),
+        now=clock,
+    )
+
+    run_call = next(call for call in transport.calls if call[0] == "RunInstances")
+    user_data = base64.b64decode(run_call[1]["UserData"][0]).decode()
+    bootstrap = _write_file_content(user_data, "/etc/eval/bootstrap.sh")
+    assert "https://mirror.example/runner.tar.gz" in bootstrap
+    # Empty token selects the unauthenticated curl branch; the runner token
+    # never reaches this script for an external mirror.
+    assert "RUNNER_TARBALL_TOKEN=''" in bootstrap
+    assert "heartbeat-token" not in bootstrap

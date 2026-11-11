@@ -27,12 +27,27 @@ LABEL_KEYS: tuple[str, ...] = ("runs_on", "runner_labels", "labels")
 #: truncated identically on both sides instead of breaking the contract.
 MAX_LABELS = 64
 
+#: ``ensure_fixed_pool`` used to write its provider marker into ``labels_json``
+#: before pool labels were a user-facing setting. The key is metadata, not a
+#: Runner label; treating it as one made every fixed-pool shard wait for a
+#: runner labeled ``kind`` and never start.
+LEGACY_FIXED_LABELS: dict[str, str] = {"kind": "fixed"}
+
 
 def _labels(value: Any) -> list[str]:
     if isinstance(value, str):
         return [item.strip() for item in value.split(",") if item.strip()]
     if isinstance(value, (list, tuple)):
         return [str(item).strip() for item in value if str(item).strip()]
+    # The console stores labels as ``{label: true}`` (or ``{label: "k=v"}``)
+    # because its form parses a comma-separated list into a map. Treat truthy
+    # keys as labels so UI-entered labels reach both registration and dispatch.
+    if isinstance(value, Mapping):
+        return [
+            str(key).strip()
+            for key, flag in value.items()
+            if flag and str(key).strip()
+        ]
     return []
 
 
@@ -56,5 +71,17 @@ def pool_runner_labels(
                 labels = _labels(source.get(key))
                 if labels:
                     return labels[:MAX_LABELS]
+        # Console format: the whole ``labels_json`` is the label map
+        # (``{label: true}``). Only use it when no documented label key is
+        # present, so an explicit ``runs_on``/``labels`` list still wins.
+        if isinstance(pool.labels_json, Mapping) and not any(
+            key in pool.labels_json for key in LABEL_KEYS
+        ):
+            if pool.provisioning_mode == "fixed" and pool.labels_json == LEGACY_FIXED_LABELS:
+                labels = []
+            else:
+                labels = _labels(pool.labels_json)
+            if labels:
+                return labels[:MAX_LABELS]
     labels = [str(item).strip() for item in fallback if str(item).strip()]
     return labels[:MAX_LABELS] or list(DEFAULT_RUNS_ON)

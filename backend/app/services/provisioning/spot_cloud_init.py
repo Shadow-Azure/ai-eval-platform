@@ -61,6 +61,7 @@ def _bootstrap_script(
     *,
     encoded_jit: str,
     runner_tarball_url: str,
+    runner_tarball_token: str | None,
 ) -> str:
     # The JIT blob is a single-use GitHub registration credential. It is
     # written 0600 and removed by the cleanup service after the runner reads
@@ -68,14 +69,45 @@ def _bootstrap_script(
     return f"""#!/bin/bash
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
+# The platform proxy endpoint reuses the heartbeat token for downloads; an
+# explicitly configured external mirror URL leaves it empty so no credential
+# is sent to a third party.
+RUNNER_TARBALL_TOKEN={shlex.quote(runner_tarball_token or "")}
 apt-get update -y
-apt-get install -y --no-install-recommends ca-certificates curl git jq docker.io libicu-dev
+apt-get install -y --no-install-recommends ca-certificates curl git jq docker.io libicu-dev xz-utils
 systemctl enable --now docker
+
+# The eval-shard workflow runs Node on the runner host: the prepare job
+# validates the dispatch contract and plans the matrix (contracts.mjs,
+# plan-cases.mjs) and every execute job runs real-task.mjs. Install Node 22
+# from the npmmirror CDN: NodeSource/apt rate-limits a burst of five fresh
+# instances sharing one NAT, which left most boots without Node. Keep the
+# download bounded so a slow mirror cannot hang cloud-init past the runner
+# registration timeout; a bootstrap failure leaves a diagnosable
+# register_timeout instead of a silently idle instance.
+NODE_VERSION=22.11.0
+curl -fsSL --max-time 300 --retry 3 --retry-delay 5 -o /tmp/node.tar.xz \\
+  "https://npmmirror.com/mirrors/node/v${{NODE_VERSION}}/node-v${{NODE_VERSION}}-linux-x64.tar.xz"
+tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1
+rm -f /tmp/node.tar.xz
+node --version
 
 mkdir -p /opt/actions-runner /etc/eval
 cd /opt/actions-runner
-curl -fsSL --max-time 180 --retry 1 -o runner.tar.gz \\
-  "{runner_tarball_url}"
+# Runner tarball: the deploy pipeline caches it in OSS and the platform's fixed
+# proxy endpoint streams it. GitHub releases are slow or unreachable from
+# Aliyun, and a 3-minute cap used to abort the download for whole instance
+# batches; allow 10 minutes with retries before giving up. The proxy path
+# carries the heartbeat token, while an external mirror URL gets no credential.
+if [ -n "$RUNNER_TARBALL_TOKEN" ]; then
+  curl -fsSL --max-time 600 --retry 3 --retry-delay 5 \\
+    -H "authorization: Bearer $RUNNER_TARBALL_TOKEN" \\
+    -o runner.tar.gz "{runner_tarball_url}"
+else
+  curl -fsSL --max-time 600 --retry 3 --retry-delay 5 \\
+    -o runner.tar.gz "{runner_tarball_url}"
+fi
+unset RUNNER_TARBALL_TOKEN
 tar -xzf runner.tar.gz
 rm -f runner.tar.gz
 
@@ -105,7 +137,12 @@ RUNNER_UNIT
 cat > /etc/systemd/system/eval-heartbeat.service <<'HEARTBEAT_UNIT'
 [Unit]
 Description=AI Eval Platform spot runner heartbeat
-After=network-online.target
+# The GitHub runner is ephemeral: it exits after one job. Bind the heartbeat to
+# its lifetime so the platform stops seeing a phantom online runner once the
+# runner is gone (otherwise the capacity gate keeps counting a runner GitHub no
+# longer has, and queued execute jobs never get picked).
+BindsTo=github-runner.service
+After=network-online.target github-runner.service
 Wants=network-online.target
 
 [Service]
@@ -128,8 +165,10 @@ ExecStart=/bin/bash /etc/eval/cleanup.sh
 CLEANUP_UNIT
 
 systemctl daemon-reload
-systemctl enable --now eval-heartbeat.service
+# Start the runner first: the heartbeat unit is bound to it and must not linger
+# after the ephemeral runner exits.
 systemctl enable --now github-runner.service
+systemctl enable --now eval-heartbeat.service
 systemctl enable --now runner-cleanup.service
 """
 
@@ -153,6 +192,7 @@ def render_cloud_init(
     encoded_jit: str,
     heartbeat_token: str | None,
     runner_tarball_url: str,
+    runner_tarball_token: str | None = None,
 ) -> str:
     """Return a cloud-config document (base64 payload + runcmd).
 
@@ -167,6 +207,7 @@ def render_cloud_init(
     bootstrap = _bootstrap_script(
         encoded_jit=encoded_jit,
         runner_tarball_url=runner_tarball_url,
+        runner_tarball_token=runner_tarball_token,
     )
     cleanup = _cleanup_script()
     # Cloud-init write_files runs as a single document; keep each file in a

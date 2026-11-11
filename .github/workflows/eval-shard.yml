@@ -112,26 +112,115 @@ jobs:
   prepare:
     if: github.event_name == 'repository_dispatch'
     runs-on: [self-hosted, linux, eval]
-    timeout-minutes: 5
+    timeout-minutes: 10
     outputs:
       cases: ${{ steps.plan.outputs.cases }}
       runs_on: ${{ steps.plan.outputs.runs_on }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Fetch the scripts bundle
+        id: bundle
+        env:
+          DISPATCH_PAYLOAD: ${{ toJson(github.event.client_payload) }}
+        run: |
+          set -uo pipefail
+          mkdir -p "$RUNNER_TEMP/eval-dispatch"
+          printf '%s' "$DISPATCH_PAYLOAD" > "$RUNNER_TEMP/eval-dispatch/dispatch.json"
+          rm -rf "$RUNNER_TEMP/eval-scripts"
+          mkdir -p "$RUNNER_TEMP/eval-scripts"
+          if node - "$RUNNER_TEMP/eval-dispatch/dispatch.json" "$RUNNER_TEMP/eval-scripts.tar.gz" <<'NODE'
+          const fs = require("node:fs");
+          const crypto = require("node:crypto");
+
+          const dispatch = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const archive = process.argv[3];
+          const manifestUrl = new URL(dispatch.manifest_url);
+          manifestUrl.pathname = manifestUrl.pathname.replace(/\/manifest$/, "/scripts");
+          const metadataUrl = manifestUrl.toString();
+          const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+          async function get(url, options = {}, timeout = 15000) {
+            let lastError;
+            for (let attempt = 0; attempt < 3; attempt += 1) {
+              try {
+                const response = await fetch(url, {
+                  ...options,
+                  signal: AbortSignal.timeout(timeout),
+                });
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                return response;
+              } catch (error) {
+                lastError = error;
+                if (attempt < 2) await sleep(1000 * (attempt + 1));
+              }
+            }
+            throw lastError;
+          }
+
+          (async () => {
+            const metadata = await (await get(metadataUrl)).json();
+            if (!metadata.url || !metadata.token) throw new Error("metadata missing url/token");
+            const response = await get(
+              metadata.url,
+              { headers: { authorization: `Bearer ${metadata.token}` } },
+              120000,
+            );
+            const bytes = Buffer.from(await response.arrayBuffer());
+            if (metadata.size && bytes.length !== metadata.size) {
+              throw new Error(`size ${bytes.length} != ${metadata.size}`);
+            }
+            if (metadata.md5 && crypto.createHash("md5").update(bytes).digest("hex") !== metadata.md5) {
+              throw new Error("md5 mismatch");
+            }
+            if (metadata.sha256 && crypto.createHash("sha256").update(bytes).digest("hex") !== metadata.sha256) {
+              throw new Error("sha256 mismatch");
+            }
+            fs.writeFileSync(archive, bytes);
+            console.log(`scripts bundle ${metadata.name} size=${bytes.length}`);
+          })().catch((error) => {
+            console.error(`scripts bundle unavailable: ${error.message}`);
+            process.exit(1);
+          });
+          NODE
+          then
+            if tar -xzf "$RUNNER_TEMP/eval-scripts.tar.gz" -C "$RUNNER_TEMP/eval-scripts"; then
+              echo "EVAL_SCRIPTS_DIR=$RUNNER_TEMP/eval-scripts" >> "$GITHUB_ENV"
+              echo "ok=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "ok=false" >> "$GITHUB_OUTPUT"
+              echo "::warning title=scripts-bundle-fallback::脚本包解压失败，回退 actions/checkout"
+            fi
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=scripts-bundle-fallback::脚本包不可用，回退 actions/checkout"
+          fi
+      - name: Checkout (fallback)
+        id: fallback_checkout
+        if: steps.bundle.outputs.ok != 'true'
+        uses: actions/checkout@v4
+        continue-on-error: true
+      - name: Checkout (fallback retry)
+        id: fallback_retry
+        if: steps.bundle.outputs.ok != 'true' && steps.fallback_checkout.outcome == 'failure'
+        uses: actions/checkout@v4
+      - name: Use the checked-out repository scripts
+        if: steps.bundle.outputs.ok != 'true' && (steps.fallback_checkout.outcome == 'success' || steps.fallback_retry.outcome == 'success')
+        run: echo "EVAL_SCRIPTS_DIR=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
 
       - name: Materialize and validate the dispatch payload
         env:
           DISPATCH_PAYLOAD: ${{ toJson(github.event.client_payload) }}
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/eval-dispatch"
-          printf '%s' "$DISPATCH_PAYLOAD" > "$RUNNER_TEMP/eval-dispatch/dispatch.json"
+          : "${EVAL_SCRIPTS_DIR:?EVAL_SCRIPTS_DIR is not set}"
+          cd "$EVAL_SCRIPTS_DIR"
           node runner/lib/contracts.mjs dispatch "$RUNNER_TEMP/eval-dispatch/dispatch.json"
 
       - name: Plan one matrix entry per case
         id: plan
         run: |
           set -euo pipefail
+          : "${EVAL_SCRIPTS_DIR:?EVAL_SCRIPTS_DIR is not set}"
+          cd "$EVAL_SCRIPTS_DIR"
           # M5-08: a spot pool may register custom labels; execute must target
           # the same labels the dispatch froze. The contract makes the field
           # optional so older dispatches keep their historical default.
@@ -161,7 +250,94 @@ jobs:
       matrix:
         case: ${{ fromJson(needs.prepare.outputs.cases) }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Fetch the scripts bundle
+        id: bundle
+        env:
+          DISPATCH_PAYLOAD: ${{ toJson(github.event.client_payload) }}
+        run: |
+          set -uo pipefail
+          mkdir -p "$RUNNER_TEMP/eval-dispatch"
+          printf '%s' "$DISPATCH_PAYLOAD" > "$RUNNER_TEMP/eval-dispatch/dispatch.json"
+          rm -rf "$RUNNER_TEMP/eval-scripts"
+          mkdir -p "$RUNNER_TEMP/eval-scripts"
+          if node - "$RUNNER_TEMP/eval-dispatch/dispatch.json" "$RUNNER_TEMP/eval-scripts.tar.gz" <<'NODE'
+          const fs = require("node:fs");
+          const crypto = require("node:crypto");
+
+          const dispatch = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const archive = process.argv[3];
+          const manifestUrl = new URL(dispatch.manifest_url);
+          manifestUrl.pathname = manifestUrl.pathname.replace(/\/manifest$/, "/scripts");
+          const metadataUrl = manifestUrl.toString();
+          const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+          async function get(url, options = {}, timeout = 15000) {
+            let lastError;
+            for (let attempt = 0; attempt < 3; attempt += 1) {
+              try {
+                const response = await fetch(url, {
+                  ...options,
+                  signal: AbortSignal.timeout(timeout),
+                });
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                return response;
+              } catch (error) {
+                lastError = error;
+                if (attempt < 2) await sleep(1000 * (attempt + 1));
+              }
+            }
+            throw lastError;
+          }
+
+          (async () => {
+            const metadata = await (await get(metadataUrl)).json();
+            if (!metadata.url || !metadata.token) throw new Error("metadata missing url/token");
+            const response = await get(
+              metadata.url,
+              { headers: { authorization: `Bearer ${metadata.token}` } },
+              120000,
+            );
+            const bytes = Buffer.from(await response.arrayBuffer());
+            if (metadata.size && bytes.length !== metadata.size) {
+              throw new Error(`size ${bytes.length} != ${metadata.size}`);
+            }
+            if (metadata.md5 && crypto.createHash("md5").update(bytes).digest("hex") !== metadata.md5) {
+              throw new Error("md5 mismatch");
+            }
+            if (metadata.sha256 && crypto.createHash("sha256").update(bytes).digest("hex") !== metadata.sha256) {
+              throw new Error("sha256 mismatch");
+            }
+            fs.writeFileSync(archive, bytes);
+            console.log(`scripts bundle ${metadata.name} size=${bytes.length}`);
+          })().catch((error) => {
+            console.error(`scripts bundle unavailable: ${error.message}`);
+            process.exit(1);
+          });
+          NODE
+          then
+            if tar -xzf "$RUNNER_TEMP/eval-scripts.tar.gz" -C "$RUNNER_TEMP/eval-scripts"; then
+              echo "EVAL_SCRIPTS_DIR=$RUNNER_TEMP/eval-scripts" >> "$GITHUB_ENV"
+              echo "ok=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "ok=false" >> "$GITHUB_OUTPUT"
+              echo "::warning title=scripts-bundle-fallback::脚本包解压失败，回退 actions/checkout"
+            fi
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=scripts-bundle-fallback::脚本包不可用，回退 actions/checkout"
+          fi
+      - name: Checkout (fallback)
+        id: fallback_checkout
+        if: steps.bundle.outputs.ok != 'true'
+        uses: actions/checkout@v4
+        continue-on-error: true
+      - name: Checkout (fallback retry)
+        id: fallback_retry
+        if: steps.bundle.outputs.ok != 'true' && steps.fallback_checkout.outcome == 'failure'
+        uses: actions/checkout@v4
+      - name: Use the checked-out repository scripts
+        if: steps.bundle.outputs.ok != 'true' && (steps.fallback_checkout.outcome == 'success' || steps.fallback_retry.outcome == 'success')
+        run: echo "EVAL_SCRIPTS_DIR=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
 
       # runner.temp is per job: never read the prepare job's dispatch file.
       - name: Materialize and validate the dispatch payload
@@ -169,8 +345,8 @@ jobs:
           DISPATCH_PAYLOAD: ${{ toJson(github.event.client_payload) }}
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/eval-dispatch"
-          printf '%s' "$DISPATCH_PAYLOAD" > "$RUNNER_TEMP/eval-dispatch/dispatch.json"
+          : "${EVAL_SCRIPTS_DIR:?EVAL_SCRIPTS_DIR is not set}"
+          cd "$EVAL_SCRIPTS_DIR"
           node runner/lib/contracts.mjs dispatch "$RUNNER_TEMP/eval-dispatch/dispatch.json"
 
       - name: Execute exactly one case
@@ -180,6 +356,8 @@ jobs:
           RUNNER_OBJECT_ROOT: ${{ runner.temp }}/eval-objects
         run: |
           set -euo pipefail
+          : "${EVAL_SCRIPTS_DIR:?EVAL_SCRIPTS_DIR is not set}"
+          cd "$EVAL_SCRIPTS_DIR"
           node runner/scripts/real-task.mjs \
             --dispatch "$RUNNER_TEMP/eval-dispatch/dispatch.json" \
             --case "${{ matrix.case.id }}" \

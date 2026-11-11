@@ -1,5 +1,5 @@
 # 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
 # git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
 #   pnpm run record:i18n -- .agents/flow/issues/m5-10-unified-cny-billing.md
-m5-10-unified-cny-billing.md: a3421dea87af27a308ad3a49435c11d9f0801c9d
-m5-10-unified-cny-billing.en.md: 7afabadeb349fb6a9ea891f23c9dfffdc8617704
+m5-10-unified-cny-billing.md: 5faeadcd514fbfea60c89ebb4a5b4a4dd26174f5
+m5-10-unified-cny-billing.en.md: 670b8fb69ddf88c5be783289dc4ecb386ad124b0

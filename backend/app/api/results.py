@@ -8,6 +8,7 @@ from ..db import get_session
 from ..models import EvalCaseAttempt, EvalCaseRun, EvalRun, MetricDefinition, MetricResult, TestCaseResult
 from ..scoring.service import case_test_summary
 from ..seed import ensure_default_scope
+from ..services import comparison
 from ..services.evaluations import iso_utc
 
 router = APIRouter(tags=["results"])
@@ -80,6 +81,25 @@ def get_eval_results(
         "is_final": bool(final_rows),
         "items": items,
     }
+
+
+@router.get("/api/v1/eval-runs/{run_id}/compare")
+def compare_eval_run(
+    run_id: str,
+    baseline_run_id: str | None = Query(default=None, max_length=36),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    tenant_id = _scope(session)
+    run = _run_or_404(session, tenant_id, run_id)
+    try:
+        return comparison.compare_run(
+            session,
+            run,
+            tenant_id=tenant_id,
+            baseline_run_id=baseline_run_id or None,
+        )
+    except comparison.ComparisonInvalid as exc:
+        raise _error(exc.status_code, exc.code, str(exc)) from exc
 
 
 @router.get("/api/v1/eval-case-runs/{case_run_id}/tests")

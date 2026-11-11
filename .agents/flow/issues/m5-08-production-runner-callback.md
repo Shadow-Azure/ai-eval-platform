@@ -6,7 +6,7 @@
 kind: issue
 milestone: m5
 priority: P0
-status: in-progress
+status: done
 scope:
   - .agents/flow/issues/m5-08-production-runner-callback.*
   - .agents/flow/issues/m5-05-eval-results-workbench.*
@@ -19,6 +19,7 @@ scope:
   - .github/**
   - runner-contract/**
   - scripts/doc-budgets.manifest.json
+  - scripts/**
   - plans/**
 adr: []
 github:
