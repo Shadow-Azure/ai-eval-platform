@@ -6,10 +6,9 @@ import base64
 import binascii
 import json
 from collections import defaultdict
-from datetime import datetime
 from typing import Any
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session
 
 from ..models import (
@@ -394,6 +393,12 @@ def attempt_trace(
                 func.sum(TraceSpan.cost),
                 func.min(TraceSpan.started_at),
                 func.max(TraceSpan.ended_at),
+                func.sum(
+                    case(
+                        (TraceSpan.ended_at < TraceSpan.started_at, 1),
+                        else_=0,
+                    )
+                ),
             )
             .where(
                 TraceSpan.tenant_id == tenant_id,
@@ -409,6 +414,7 @@ def attempt_trace(
                 "cost": str(row[4]) if row[4] is not None else None,
                 "started_at": row[5],
                 "ended_at": row[6],
+                "clock_invalid": int(row[7] or 0),
             }
             for row in rows
         }
@@ -449,11 +455,7 @@ def attempt_trace(
         tree.append(body)
 
     clock_comparable = all(
-        not (
-            isinstance(stats.get("started_at"), datetime)
-            and isinstance(stats.get("ended_at"), datetime)
-            and stats["ended_at"] < stats["started_at"]
-        )
+        int(stats.get("clock_invalid") or 0) == 0
         for stats in span_rows.values()
     )
     total_spans = sum(int(stats["span_count"]) for stats in span_rows.values())
@@ -618,6 +620,7 @@ def span_detail(
             select(TraceSpan.id).where(
                 TraceSpan.id == span.parent_span_id,
                 TraceSpan.tenant_id == tenant_id,
+                TraceSpan.session_id == span.session_id,
             )
         )
         body["parent_missing"] = parent is None

@@ -16,6 +16,7 @@ from ..models import Project
 from ..models.trace import TRACE_SPAN_KINDS
 from ..services import identity, trace_queries
 from ..services.object_store import object_store_from_settings
+from ..services.trace_redaction import redact_text
 from .dependencies import require_admin, require_session
 from .errors import error_detail
 
@@ -155,7 +156,11 @@ def create_trace_file_download_url(
         "expires_at": expires_at.isoformat().replace("+00:00", "Z"),
         "file": {
             "id": trace_file.id,
-            "logical_path": trace_file.logical_path,
+            "logical_path": (
+                redact_text(trace_file.logical_path, limit=512)
+                if trace_file.logical_path
+                else None
+            ),
             "sha256": trace_file.sha256,
             "size": trace_file.size,
             "native_format": trace_file.native_format,

@@ -606,3 +606,55 @@ def test_session_tree_query_count_does_not_scale_with_session_count(
     assert response.status_code == 200
     assert response.json()["stats"]["session_count"] == 42
     assert selects <= 15
+
+
+def test_cross_session_parent_span_is_reported_as_missing(
+    client: TestClient, session: Session, trace_api_env
+) -> None:
+    root = trace_api_env["seeded"].root
+    child = trace_api_env["seeded"].child
+    root_span = session.scalar(
+        select(TraceSpan).where(
+            TraceSpan.session_id == root.id,
+            TraceSpan.native_event_id == "root-tool",
+        )
+    )
+    child_span = session.scalar(
+        select(TraceSpan).where(
+            TraceSpan.session_id == child.id,
+            TraceSpan.native_event_id == "child-message",
+        )
+    )
+    child_span.parent_span_id = root_span.id
+    session.commit()
+
+    response = client.get(f"/api/v1/trace-spans/{child_span.id}")
+
+    assert response.status_code == 200
+    assert response.json()["parent_missing"] is True
+
+
+def test_negative_span_duration_marks_clock_incomparable(
+    client: TestClient, session: Session, trace_api_env
+) -> None:
+    root = trace_api_env["seeded"].root
+    session.add(
+        TraceSpan(
+            tenant_id=str(DEFAULT_TENANT_ID),
+            session_id=root.id,
+            native_event_id="clock-anomaly",
+            ordinal=99,
+            kind="MESSAGE",
+            started_at=datetime(2026, 11, 11, 0, 0, 9, tzinfo=UTC),
+            ended_at=datetime(2026, 11, 11, 0, 0, 8, tzinfo=UTC),
+            attributes_json={},
+        )
+    )
+    session.commit()
+
+    response = client.get(
+        f"/api/v1/eval-case-runs/{trace_api_env['case'].id}/trace?attempt=1"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["quality"]["clock_comparable"] is False
