@@ -33,6 +33,15 @@ def _labels(value: Any) -> list[str]:
         return [item.strip() for item in value.split(",") if item.strip()]
     if isinstance(value, (list, tuple)):
         return [str(item).strip() for item in value if str(item).strip()]
+    # The console stores labels as ``{label: true}`` (or ``{label: "k=v"}``)
+    # because its form parses a comma-separated list into a map. Treat truthy
+    # keys as labels so UI-entered labels reach both registration and dispatch.
+    if isinstance(value, Mapping):
+        return [
+            str(key).strip()
+            for key, flag in value.items()
+            if flag and str(key).strip()
+        ]
     return []
 
 
@@ -56,5 +65,14 @@ def pool_runner_labels(
                 labels = _labels(source.get(key))
                 if labels:
                     return labels[:MAX_LABELS]
+        # Console format: the whole ``labels_json`` is the label map
+        # (``{label: true}``). Only use it when no documented label key is
+        # present, so an explicit ``runs_on``/``labels`` list still wins.
+        if isinstance(pool.labels_json, Mapping) and not any(
+            key in pool.labels_json for key in LABEL_KEYS
+        ):
+            labels = _labels(pool.labels_json)
+            if labels:
+                return labels[:MAX_LABELS]
     labels = [str(item).strip() for item in fallback if str(item).strip()]
     return labels[:MAX_LABELS] or list(DEFAULT_RUNS_ON)

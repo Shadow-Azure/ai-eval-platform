@@ -61,9 +61,47 @@ jobs:
           sbom: false
           tags: ${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/ai-eval-platform-web:${{ github.sha }}
 
+  # M5-08: keep one stable actions-runner archive in OSS and inject its URL into
+  # the deployment. Spot cloud-init cannot reliably pull ~10 MB from GitHub
+  # inside its timeout, so every deploy reuses (or uploads) the cached object
+  # and passes a presigned URL to api/worker via the host .env.
+  runner-cache:
+    name: cache runner tarball in OSS
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      S3_ENDPOINT: ${{ secrets.OSS_ENDPOINT }}
+      S3_BUCKET: ${{ secrets.OSS_BUCKET }}
+      S3_ACCESS_KEY: ${{ secrets.S3_ACCESS_KEY }}
+      S3_SECRET_KEY: ${{ secrets.S3_SECRET_KEY }}
+      S3_ADDRESSING_STYLE: virtual
+    outputs:
+      url: ${{ steps.cache.outputs.url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Derive the OSS region from the Aliyun region
+        id: region
+        run: |
+          region="${{ secrets.ALIYUN_REGION }}"
+          case "$region" in
+            oss-*) ;;
+            *) region="oss-$region" ;;
+          esac
+          echo "value=$region" >> "$GITHUB_OUTPUT"
+      - name: Ensure the runner tarball exists in OSS
+        id: cache
+        env:
+          S3_REGION: ${{ steps.region.outputs.value }}
+        run: python scripts/cache-runner-tarball.py
+
   deploy:
     name: migrate and deploy to ECS
-    needs: build
+    needs: [build, runner-cache]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: production
@@ -89,7 +127,9 @@ jobs:
       # production environment to let spot runners reach the API.
       API_BIND_ADDRESS: ${{ secrets.API_BIND_ADDRESS }}
       RUNNER_CALLBACK_BASE_URL: ${{ secrets.RUNNER_CALLBACK_BASE_URL }}
-      RUNNER_SPOT_RUNNER_TARBALL_URL: ${{ secrets.RUNNER_SPOT_RUNNER_TARBALL_URL }}
+      # M5-08: the runner-cache job presigns the OSS object; an explicit
+      # repository secret still overrides it (e.g. a public mirror).
+      RUNNER_SPOT_RUNNER_TARBALL_URL: ${{ needs.runner-cache.outputs.url || secrets.RUNNER_SPOT_RUNNER_TARBALL_URL }}
     steps:
       - uses: actions/checkout@v4
       - name: Install SSH key

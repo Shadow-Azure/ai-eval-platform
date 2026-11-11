@@ -142,6 +142,17 @@ test("production runner callback entry stays VPC-only and keeps loopback", () =>
   );
 });
 
+test("deploy pipeline caches the runner tarball in OSS and injects the URL", () => {
+  const workflow = read(".github/workflows/deploy.yml");
+  assert.ok(workflow.includes("runner-cache:"), "missing runner-cache job");
+  assert.ok(workflow.includes("scripts/cache-runner-tarball.py"), "missing cache script");
+  assert.ok(workflow.includes("needs: [build, runner-cache]"), "deploy must depend on the cache job");
+  assert.ok(
+    workflow.includes("needs.runner-cache.outputs.url"),
+    "deploy env must use the presigned cache URL",
+  );
+});
+
 test("eval-shard executes on the runner labels frozen in the dispatch", () => {
   const workflow = read(".github/workflows/eval-shard.yml");
   assert.ok(workflow.includes("runs_on: ${{ steps.plan.outputs.runs_on }}"));

@@ -36,6 +36,15 @@ def test_accepts_string_and_list_forms() -> None:
     ]
 
 
+def test_accepts_console_mapping_labels() -> None:
+    """The console stores labels as ``{label: true}``; use the keys."""
+
+    pool = make_pool(
+        labels_json={"self-hosted": True, "linux": True, "eval": True, "m5-08-spot": True}
+    )
+    assert pool_runner_labels(pool) == ["self-hosted", "linux", "eval", "m5-08-spot"]
+
+
 def test_instance_config_wins_and_truncates_to_contract_limit() -> None:
     pool = make_pool(
         instance_config_json={"runs_on": [f"label-{index}" for index in range(80)]},

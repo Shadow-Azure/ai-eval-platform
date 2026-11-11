@@ -58,6 +58,13 @@ def test_bootstrap_contains_jit_and_installs_runner_once() -> None:
     assert "https://oss.example/actions-runner.tar.gz" in bootstrap
     assert "run.sh --jitconfig \"$JIT_CONFIG\"" in bootstrap
     assert "systemctl enable --now github-runner.service" in bootstrap
+    # The eval-shard workflow runs Node on the runner host; without it the
+    # prepare job dies with `node: command not found` and cases never start.
+    assert "setup_22.x" in bootstrap
+    assert "apt-get install -y --no-install-recommends nodejs" in bootstrap
+    assert "node --version" in bootstrap
+    # GitHub downloads from Aliyun are slow; allow retries before giving up.
+    assert "--max-time 600 --retry 3" in bootstrap
 
 
 def test_cleanup_removes_jit_env_and_cloud_init_user_data() -> None:
