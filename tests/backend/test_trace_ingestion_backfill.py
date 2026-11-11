@@ -134,6 +134,51 @@ def test_backfill_limit_resumes_without_skipping_eligible_attempts(trace_env) ->
     }
 
 
+def test_backfill_limit_larger_than_page_scans_all_pages(trace_env) -> None:
+    session = trace_env["session"]
+    first = trace_env["attempt"]
+    case = trace_env["case"]
+    now = datetime.now(UTC)
+    attempts = [first]
+    for offset in range(100):
+        attempt = EvalCaseAttempt(
+            tenant_id=first.tenant_id,
+            eval_case_run_id=case.id,
+            attempt_no=200 + offset,
+            status="succeeded",
+            shard_id=first.shard_id,
+            created_at=now + timedelta(seconds=offset),
+        )
+        session.add(attempt)
+        attempts.append(attempt)
+    first.status = "succeeded"
+    first.created_at = now + timedelta(seconds=120)
+    obj = trace_object(
+        trace_env,
+        logical_path="native/shared-backfill.jsonl",
+        content=jsonl([{"type": "message", "sessionId": "shared", "uuid": "shared-1"}]),
+    )
+    manifest = {
+        "manifest_version": "1.0",
+        "capture_status": "complete",
+        "incomplete_reasons": [],
+        "runtime_version": "2.1.278",
+        "format_version": "1",
+        "objects": [obj],
+    }
+    for attempt in attempts:
+        attempt.artifact_manifest_json = {
+            "trace_manifest": manifest,
+            "objects": [obj],
+        }
+    session.commit()
+
+    assert trace_ingestion.backfill_missing(session, limit=101) == {
+        "attempts": 101,
+        "files": 101,
+    }
+
+
 def test_backfill_keyset_skips_diagnostics_beyond_old_window(trace_env) -> None:
     session = trace_env["session"]
     attempt = trace_env["attempt"]

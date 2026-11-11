@@ -1716,7 +1716,7 @@ def backfill_missing(
         chunk = list(session.scalars(stmt))
         if not chunk:
             break
-        exhausted = len(chunk) < target
+        exhausted = len(chunk) < chunk_size
         for attempt in chunk:
             if touched >= target:
                 break
