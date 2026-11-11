@@ -6,8 +6,12 @@ English | [中文](m7-fixed-pool-runner-labels.md)
 kind: issue
 milestone: m7
 priority: P1
-status: ready
+status: in-progress
 scope:
+  - plans/**
+  - reports/**
+  - runner/**
+  - tests/**
   - backend/app/services/runner_labels.py
   - backend/app/services/runners.py
   - tests/backend/test_runner_labels.py
@@ -37,3 +41,10 @@ At 15:25 on 2026-11-11 (Asia/Shanghai) the user started evaluation 707bb3bc on t
 - A pool created by ensure_fixed_pool stores an explicit runs_on in labels_json.
 - After deployment a newly launched evaluation lands on the real online fixed Runner; the timed-out 707bb3bc must be relaunched.
 - The relevant pytest, flow and documentation gates pass.
+
+## Verification
+
+- The production fixed-linux pool retains the legacy `{"kind": "fixed"}` marker, while the deployed resolver returns self-hosted, linux, eval.
+- New evaluation `64e90bd2-e715-4c34-94ff-489782fc9041` launched on 2026-11-12 was picked up by fixed-linux-eval and entered running state; its eval-shard run is 43121931498.
+- The real run exposed an independent post-container permission issue: host-side scoring and trace capture could not read Claude native files. This branch restores traversal/read/write access to `/testbed` as root before removing the container and adds a permission regression.
+- The original 707bb3bc remains an immutable historical failure and is not rewritten as a recoverable task.

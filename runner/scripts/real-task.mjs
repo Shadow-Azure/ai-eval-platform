@@ -293,6 +293,13 @@ async function realCase(dispatch, item, task, { modelToken, runnerRoot }) {
     } catch (error) {
       agent = { status: 1, stdout: "", stderr: error.message };
     } finally {
+      // Claude Code may create session files with restrictive modes. The
+      // scoring and trace-capture steps run on the host, so normalize access
+      // while the container still exists and root can traverse every path.
+      dockerRun(
+        ["exec", agentName, "chmod", "-R", "a+rwX", "/testbed"],
+        { allowFailure: true, timeout: 60_000 },
+      );
       dockerRun(["rm", "-f", agentName], { allowFailure: true });
     }
 
