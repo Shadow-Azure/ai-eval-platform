@@ -6,7 +6,7 @@ English | [中文](m6-06-trace-e2e-validation.md)
 kind: issue
 milestone: m6
 priority: P0
-status: ready
+status: done
 scope:
   - .agents/flow/issues/m6-06-trace-e2e-validation.*
   - .agents/flow/milestones/m6-trace-diagnosis.*
