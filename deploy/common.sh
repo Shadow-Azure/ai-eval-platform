@@ -16,7 +16,50 @@ COMPOSE=(docker compose --env-file "$ENV_FILE" "${COMPOSE_FILES[@]}")
 STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 DEPLOY_ENVIRONMENT="${DEPLOY_ENVIRONMENT:-production}"
 DEPLOY_TRIGGERED_BY="${DEPLOY_TRIGGERED_BY:-github-actions}"
-MIGRATION_REVISION="${MIGRATION_REVISION:-0002_deployment}"
+MIGRATION_REVISION="${MIGRATION_REVISION:-unknown}"
+# M5-18: newline-separated "key|status|started_at|finished_at|detail" records
+# rendered by the deployments page. Older rows without stages stay unknown.
+DEPLOY_STAGES="${DEPLOY_STAGES:-}"
+CURRENT_STAGE="${CURRENT_STAGE:-}"
+STAGE_STARTED_AT=""
+STAGE_OPEN=0
+
+stage_now() {
+  date -u +%Y-%m-%dT%H:%M:%SZ
+}
+
+stage_begin() {
+  CURRENT_STAGE="$1"
+  STAGE_STARTED_AT="$(stage_now)"
+  STAGE_OPEN=1
+}
+
+stage_finish() {
+  local status="$1"
+  local detail="${2:-}"
+  if [ "$STAGE_OPEN" != "1" ] || [ -z "$CURRENT_STAGE" ]; then
+    return 0
+  fi
+  DEPLOY_STAGES="${DEPLOY_STAGES}${CURRENT_STAGE}|${status}|${STAGE_STARTED_AT}|$(stage_now)|${detail}"$'\n'
+  STAGE_OPEN=0
+}
+
+stage_record() {
+  # stage_record <key> <status> <started_at> <finished_at> <detail>
+  DEPLOY_STAGES="${DEPLOY_STAGES}${1}|${2}|${3}|${4}|${5:-}"$'\n'
+}
+
+current_database_revision() {
+  # Alembic is the only source of truth for the applied migration revision;
+  # the old hard-coded default drifted from the actual head. Read the role and
+  # database from the same .env Compose interpolates so custom names still work.
+  local user db
+  user="$(sed -n 's/^POSTGRES_USER=//p' "$ENV_FILE" 2>/dev/null | tail -1)"
+  db="$(sed -n 's/^POSTGRES_DB=//p' "$ENV_FILE" 2>/dev/null | tail -1)"
+  "${COMPOSE[@]}" exec -T postgres psql \
+    -U "${user:-eval}" -d "${db:-eval}" \
+    -tAc 'SELECT version_num FROM alembic_version' 2>/dev/null | tr -d '[:space:]' || true
+}
 
 set_env() {
   local key="$1" value="$2"
@@ -52,6 +95,10 @@ record_deployment() {
   DEPLOY_TRIGGERED_BY="$DEPLOY_TRIGGERED_BY" \
   DEPLOY_ENVIRONMENT="$DEPLOY_ENVIRONMENT" \
   DEPLOY_ROLLBACK_OF_ID="${DEPLOY_ROLLBACK_OF_ID:-}" \
+  DEPLOY_STAGES="$DEPLOY_STAGES" \
+  DEPLOY_STAGE="${CURRENT_STAGE:-}" \
+  DEPLOY_RUN_ID="${DEPLOY_RUN_ID:-}" \
+  DEPLOY_RUN_URL="${DEPLOY_RUN_URL:-}" \
   DEPLOY_DETAIL_API_IMAGE="${API_IMAGE:-unknown}" \
   DEPLOY_DETAIL_WEB_IMAGE="${WEB_IMAGE:-unknown}" \
   DEPLOY_DETAIL_GIT_COMMIT="${GIT_COMMIT:-unknown}" \

@@ -110,6 +110,10 @@ class Settings(BaseSettings):
     github_repo: str = "Shadow-Azure/ai-eval-platform"
     github_token: str | None = None
     github_dispatch_event_type: str = "eval-shard"
+    # M5-18: deployments page reads and controls the production environment
+    # recorded by the deploy workflow (DEPLOY_ENVIRONMENT in .env).
+    deploy_environment: str = "production"
+    deploy_rollback_event_type: str = "deployment-rollback"
     # Synthetic shard manifest lifetime (dispatch expiry + case deadline).
     eval_shard_ttl_seconds: int = 3600
     eval_shard_deadline_minutes: int = 30
