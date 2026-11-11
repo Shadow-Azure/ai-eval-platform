@@ -48,7 +48,7 @@
         "id": "04",
         "name": "重复回调与 parser 重放",
         "status": { "kind": "pass", "label": "PASS" },
-        "detail": "upload/failure/completion 均重复投递；重放后 sessions 3→3、spans 23→23，原件 ID 保留。",
+        "detail": "upload/failure/completion 均重复投递；重放后 sessions 3→3、spans 27→27，原件 ID 保留。",
         "evidence": ["fixed-runner-evidence.json"]
       },
       {
