@@ -1918,4 +1918,3 @@ def parser_version_for(runtime_key: str, detected_format: str) -> str:
     return DEFAULT_REGISTRY.resolve(
         runtime_key=runtime_key, detected_format=detected_format
     ).parser_version
-
