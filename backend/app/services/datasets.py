@@ -17,12 +17,13 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from ..config import get_settings
@@ -615,11 +616,188 @@ def get_dataset_case(session: Session, case_id: str) -> DatasetCase:
     return case
 
 
+def _escape_like(term: str) -> str:
+    """Escape LIKE metacharacters so a user search is always a literal substring."""
+
+    return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+DIFFICULTY_LEVELS = ("easy", "medium", "hard")
+_DURATION_PATTERN = re.compile(
+    r"(\d+(?:\.\d+)?)\s*(h|hr|hrs|hour|hours|m|min|mins|minute|minutes)"
+)
+
+
+def difficulty_level(label: str | None) -> str | None:
+    """Normalize an adapter difficulty label to the prototype's three levels.
+
+    SWE-bench Verified labels difficulty as an estimated human solve-time band
+    (``15 min - 1 hour``, ``1-4 hours``, ...), while the UI product language is
+    easy/medium/hard. The band stays untouched in ``difficulty_label``; this
+    presentation level uses the upper bound (≤1h easy, ≤4h medium, >4h hard)
+    so no new data is invented. Labels already using easy/medium/hard pass
+    through, and an unrecognized label stays ``None`` instead of guessing.
+    """
+
+    if not label:
+        return None
+    text = " ".join(label.strip().lower().split())
+    if not text:
+        return None
+    if text in DIFFICULTY_LEVELS:
+        return text
+    for level in DIFFICULTY_LEVELS:
+        if text.startswith(f"{level} ") or text.startswith(f"{level}(") or text.startswith(f"{level}（"):
+            return level
+    matches = _DURATION_PATTERN.findall(text)
+    if not matches:
+        return None
+    minutes = [float(amount) * (60 if unit.startswith("h") else 1) for amount, unit in matches]
+    upper = max(minutes)
+    if any(marker in text for marker in (">", "≥", "more than", "+")):
+        upper += 1
+    if upper <= 60:
+        return "easy"
+    if upper <= 240:
+        return "medium"
+    return "hard"
+
+
+def case_difficulty_label(case: DatasetCase) -> str | None:
+    """Raw adapter-provided difficulty label carried in ``extra_json``."""
+
+    value = (case.extra_json or {}).get("difficulty")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def case_expected_test_count(case: DatasetCase) -> int:
+    """Number of expected checks frozen with the case (F2P + P2P for SWE-bench)."""
+
+    metrics = case.expected_metrics_json or {}
+    return sum(len(value) for value in metrics.values() if isinstance(value, list))
+
+
+def _version_difficulty_labels(session: Session, version_id: str) -> list[tuple[str, int]]:
+    label_expr = func.lower(func.trim(DatasetCase.extra_json["difficulty"].as_string()))
+    rows = session.execute(
+        select(label_expr, func.count())
+        .where(
+            DatasetCase.dataset_version_id == version_id,
+            label_expr.is_not(None),
+            label_expr != "",
+        )
+        .group_by(label_expr)
+    ).all()
+    return [(str(label), int(count)) for label, count in rows if label]
+
+
 def list_version_cases(
-    session: Session, version_id: str, *, limit: int = 20, offset: int = 0
+    session: Session,
+    version_id: str,
+    *,
+    limit: int = 20,
+    offset: int = 0,
+    q: str | None = None,
+    difficulty: str | None = None,
 ) -> tuple[list[DatasetCase], int]:
-    query = select(DatasetCase).where(DatasetCase.dataset_version_id == version_id).order_by(DatasetCase.ordinal)
+    query = select(DatasetCase).where(DatasetCase.dataset_version_id == version_id)
+    term = (q or "").strip()
+    if term:
+        # Case-insensitive substring over the instance ID and repository. The
+        # search stays in SQL so the server never loads the whole version.
+        pattern = f"%{_escape_like(term.lower())}%"
+        query = query.where(
+            or_(
+                func.lower(DatasetCase.case_key).like(pattern, escape="\\"),
+                func.lower(func.coalesce(DatasetCase.repo, "")).like(pattern, escape="\\"),
+            )
+        )
+    difficulty_value = (difficulty or "").strip().lower()
+    if difficulty_value:
+        # Map the requested level back to the raw labels that represent it, so
+        # the filter remains a single SQL predicate over the paginated query.
+        labels = [
+            label
+            for label, _count in _version_difficulty_labels(session, version_id)
+            if difficulty_level(label) == difficulty_value
+        ]
+        label_expr = func.lower(func.trim(DatasetCase.extra_json["difficulty"].as_string()))
+        query = (
+            query.where(label_expr.in_(labels))
+            if labels
+            else query.where(DatasetCase.id.is_(None))
+        )
+    query = query.order_by(DatasetCase.ordinal, DatasetCase.id)
     return paginate(session, query, limit=limit, offset=offset)
+
+
+def version_difficulty_facets(session: Session, version_id: str) -> list[dict[str, Any]]:
+    """Distinct difficulty levels of a whole version, with case counts.
+
+    Facets come from all cases (not the current search page) so the filter
+    options stay stable while the user searches or pages. Labels that cannot
+    be mapped to a level are omitted rather than misclassified.
+    """
+
+    counts = dict.fromkeys(DIFFICULTY_LEVELS, 0)
+    for label, count in _version_difficulty_labels(session, version_id):
+        level = difficulty_level(label)
+        if level is not None:
+            counts[level] += count
+    return [
+        {"value": level, "count": counts[level]}
+        for level in DIFFICULTY_LEVELS
+        if counts[level] > 0
+    ]
+
+
+def version_import_validation(session: Session, version: DatasetVersion) -> dict[str, Any] | None:
+    """Import-time validation record that produced this immutable version.
+
+    The card must show a real record, so this reuses the succeeded/duplicate
+    ``dataset_import`` row and its persisted report; nothing is recomputed or
+    guessed. Legacy JSON imports predate the report and therefore expose only
+    their counts with ``completeness_percent=None``.
+    """
+
+    record = session.scalar(
+        select(DatasetImport)
+        .where(
+            DatasetImport.dataset_id == version.dataset_id,
+            DatasetImport.version == version.version,
+            DatasetImport.status.in_(("succeeded", "duplicate")),
+        )
+        .order_by(DatasetImport.created_at.desc(), DatasetImport.id.desc())
+        .limit(1)
+    )
+    if record is None:
+        return None
+
+    report = record.validation_report_json or {}
+    completeness = report.get("field_completeness")
+    if not isinstance(completeness, dict):
+        completeness = {}
+    percents = [
+        entry["percent"]
+        for entry in completeness.values()
+        if isinstance(entry, dict) and isinstance(entry.get("percent"), (int, float))
+    ]
+    error_codes = report.get("error_codes")
+    return {
+        "import_id": record.id,
+        "status": record.status,
+        "passed": record.invalid_count == 0 and not report.get("fatal"),
+        "total_count": record.total_count,
+        "valid_count": record.valid_count,
+        "invalid_count": record.invalid_count,
+        "field_completeness": completeness,
+        "completeness_percent": min(percents) if percents else None,
+        "report_available": bool(report),
+        "error_codes": error_codes if isinstance(error_codes, dict) else {},
+        "created_at": _iso(record.created_at),
+    }
 
 
 def list_version_metrics(session: Session, version_id: str) -> list[MetricDefinition]:
