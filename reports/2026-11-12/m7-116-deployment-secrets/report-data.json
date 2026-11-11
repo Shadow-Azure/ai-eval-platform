@@ -1,0 +1,124 @@
+{
+  "title": "生产密钥注入与换机迁移 Smoke 报告",
+  "eyebrow": "M7-116 · DEPLOYMENT SECRETS",
+  "summary": "GitHub Secrets 注入、宿主机摘要一致性检查、原子 .env 替换、数据库迁移、ECS 滚动更新和部署页面健康检查均通过；未发现未解决缺陷。",
+  "meta": "2026-11-12 · macOS Chrome + 生产 ECS",
+  "metrics": [
+    { "value": "7/7", "label": "长期 Secret 名称" },
+    { "value": "27/27", "label": "部署行为/契约测试" },
+    { "value": "5/5", "label": "生产健康检查" },
+    { "value": "0", "label": "未解决缺陷" }
+  ],
+  "facts": [
+    { "label": "功能 PR", "value": "#173" },
+    { "label": "生产提交", "value": "a9804164eda1209b61a5773244985fc1d19048a1" },
+    { "label": "Deploy run", "value": "43120745433 · success" },
+    { "label": "数据库版本", "value": "0021_trace_ingestion" },
+    { "label": "Secrets 核验", "value": "只核验名称存在，未读取或记录任何值" },
+    { "label": "写入策略", "value": "SHA-256 完整性校验 + 目标目录暂存 + 0600 原子 rename" }
+  ],
+  "matrix": {
+    "columns": ["#", "场景", "结果", "说明", "证据"],
+    "rows": [
+      {
+        "id": "01",
+        "name": "Secrets 名称完整性",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "SECRET_BOX_KEY、POSTGRES_PASSWORD、AUTH_SESSION_SECRET、GATEWAY_TOKEN_SECRET、RUNNER_TASK_SECRET、RUNNER_HEARTBEAT_TOKEN、RUNNER_ADMIN_TOKEN 均存在。",
+        "evidence": ["GitHub Secrets name list", "deploy workflow contract"]
+      },
+      {
+        "id": "02",
+        "name": "现有主机摘要一致性",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "Deploy 在覆盖 .env 前通过 SHA-256 比较成功；不一致会在写入前终止。",
+        "evidence": ["Deploy run 43120745433", "Write object-store, dispatch and long-lived credentials"]
+      },
+      {
+        "id": "03",
+        "name": "空模板与部分密钥边界",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "无 .env、空模板、仅未受管键均可初始化；部分长期密钥存在时安全拒绝。",
+        "evidence": ["managed-env-writer 9 tests", "deploy-contract 18 tests"]
+      },
+      {
+        "id": "04",
+        "name": "截断与原子替换",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "截断或摘要错误不替换旧 env；成功路径保留未受管键并保持 0600。",
+        "evidence": ["deploy/write-managed-env.sh", "managed-env-writer behavior tests"]
+      },
+      {
+        "id": "05",
+        "name": "api/worker 环境矩阵",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "api/worker 均获得所需长期密钥；database URL 强制使用 POSTGRES_PASSWORD。",
+        "evidence": ["docker-compose.prod.yml", "deployment contract"]
+      },
+      {
+        "id": "06",
+        "name": "自动部署与迁移",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "镜像构建、PostgreSQL 迁移、ECS 滚动更新和健康检查完成。",
+        "evidence": ["Deploy run 43120745433"]
+      },
+      {
+        "id": "07",
+        "name": "生产 GUI 健康状态",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "生产版本 a980416，数据库版本一致，API/PostgreSQL/Redis/对象存储/Worker 5/5 健康。",
+        "evidence": ["01-deployment-success-redacted.jpeg"]
+      }
+    ]
+  },
+  "issues": [],
+  "screenshots": [
+    {
+      "src": "screenshots/01-deployment-success-redacted.jpeg",
+      "alt": "生产交付流水线显示部署成功和 5/5 健康检查",
+      "label": "01 · 生产部署成功",
+      "caption": "当前部署 a980416 完成迁移和滚动更新，数据库版本一致，五个生产组件全部健康；用户标识已遮挡。",
+      "variant": "wide"
+    }
+  ],
+  "coverage": {
+    "columns": ["范围", "自动化", "结论", "后续建议"],
+    "rows": [
+      {
+        "area": "载荷完整性",
+        "coverage": "Behavior test",
+        "conclusion": "截断、错误摘要、空文件与部分密钥均有执行级断言。",
+        "recommendation": "保留为部署契约门禁。"
+      },
+      {
+        "area": "主机写入",
+        "coverage": "Behavior test + Deploy",
+        "conclusion": "未受管键保留、0600、同目录原子替换和摘要比较均通过。",
+        "recommendation": "换新主机时先跑同一 Deploy workflow。"
+      },
+      {
+        "area": "容器环境",
+        "coverage": "Contract test",
+        "conclusion": "api/worker 的长期密钥矩阵由静态契约守护。",
+        "recommendation": "新增长期密钥时同步扩展矩阵。"
+      },
+      {
+        "area": "生产健康",
+        "coverage": "Computer Use + Deploy",
+        "conclusion": "真实 Deploy 与生产交付页均显示全绿。",
+        "recommendation": "Secret 主动轮换另建带密文迁移和验证步骤的 runbook。"
+      }
+    ]
+  },
+  "conclusion": {
+    "kind": "pass",
+    "label": "可以合并并换机复现",
+    "summary": "部署密钥已从 GitHub Secrets 可复现注入，现有主机值在覆盖前完成摘要校验，主机 .env 原子替换，生产部署与健康检查通过。",
+    "points": [
+      "长期密钥值未在报告、日志、argv 或截图中暴露。",
+      "当前生产 .env 与 Secrets 的摘要比较在真实 Deploy 中成功。",
+      "主动轮换仍应按独立 runbook 处理历史密文迁移。"
+    ]
+  },
+  "footer": "AI Eval Platform · M7-116 deployment smoke · evidence generated from Computer Use and GitHub Actions"
+}
