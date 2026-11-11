@@ -10,6 +10,9 @@ status: ready
 scope:
   - .agents/flow/issues/m5-18-deployments-page.*
   - .agents/flow/milestones/m5-product-workflows.*
+  - .agents/notes/**
+  - .github/workflows/**
+  - deploy/**
   - backend/**
   - web/**
   - tests/**
@@ -18,7 +21,8 @@ scope:
   - plans/**
   - scripts/doc-budgets.manifest.json
   - .gitignore
-adr: []
+adr:
+  - ../../notes/adr-0002-deployment-health-boundary.md
 github:
   number: 146
   url: https://github.com/Shadow-Azure/ai-eval-platform/issues/146

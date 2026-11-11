@@ -64,6 +64,10 @@ M2 把执行与数据集、Agent 解耦：平台经 repository_dispatch 传 eval
 
 Runner 在用例结束时归档 Claude Code 原生文件：主/子 Agent 会话 JSONL、`subagents/*.meta.json` 关系元数据与 stdout/stderr 诊断日志进入 attempt 级多文件清单；失败执行保留文件。每项记录安全逻辑路径、artifact kind、digest、size、content type、Runtime 与格式版本，对象键仍由平台生成。后端校验回调 token 的 attempt 绑定、轨迹对象归属、逻辑路径和 digest 格式，按 object key 合并去重；内容 sha256 校验由后续导入流程完成，旧单文件 `trace_manifest` 继续可读。Runner 发现缺少主会话或子 Agent 元数据时标记采集不完整，后端也不允许仅凭诊断文件声称完整；`degraded` 由后续解析写入，不伪装成完整轨迹。
 
+## 数据集导入
+
+`/datasets/import` 用三步向导导入数据集：选择适配器并上传 JSON/JSONL 源文件（≤1 GB，拖放），版本标签与数据提交号随文件一起提交；控制面把文件暂存在临时目录，再由带超时与地址空间上限的隔离子进程流式解析、校验并写入持久化报告（识别用例数、字段完整率、逐项错误、重复 case_key）；用户确认后才以单事务生成不可变版本与用例，失败或取消不会留下半成品版本。暂存文件在版本生成、校验失败或取消后删除；进程中断的导入由 Worker 按心跳窗口标记失败，向导不会一直等待。
+
 ## 扩展位置
 
 - 产品运行时落地后在本页补组成、数据流与外部依赖。

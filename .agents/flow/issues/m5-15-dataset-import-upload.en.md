@@ -6,7 +6,7 @@ English | [中文](m5-15-dataset-import-upload.md)
 kind: issue
 milestone: m5
 priority: P1
-status: ready
+status: in-progress
 scope:
   - .agents/flow/issues/m5-15-dataset-import-upload.*
   - .agents/flow/milestones/m5-product-workflows.*
@@ -17,6 +17,9 @@ scope:
   - reports/**
   - plans/**
   - scripts/doc-budgets.manifest.json
+  - pyproject.toml
+  - docker-compose.yml
+  - deploy/**
   - .gitignore
 adr: []
 github:

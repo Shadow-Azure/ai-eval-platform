@@ -10,8 +10,12 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from sqlalchemy import (
+    BigInteger,
     CheckConstraint,
+    DateTime,
     ForeignKeyConstraint,
     Index,
     Integer,
@@ -28,7 +32,19 @@ AGGREGATOR_WHITELIST = ("ratio", "sum", "mean", "percentile", "histogram")
 METRIC_DISPLAY_KINDS = ("number", "percentage", "histogram", "ms", "cny")
 METRIC_DIRECTIONS = ("higher_is_better", "lower_is_better")
 DATASET_VERSION_STATUSES = ("active", "archived")
-DATASET_IMPORT_STATUSES = ("succeeded", "failed", "duplicate")
+# M5-15: an uploaded source file is validated in an isolated worker before the
+# user confirms the immutable version. The extra states make each phase
+# observable instead of hiding the whole flow behind one request.
+DATASET_IMPORT_STATUSES = (
+    "queued",
+    "validating",
+    "validated",
+    "committing",
+    "succeeded",
+    "failed",
+    "duplicate",
+    "cancelled",
+)
 
 
 def _in_clause(column: str, values: tuple[str, ...]) -> str:
@@ -140,6 +156,7 @@ class DatasetImport(Base, CreatedAtMixin):
     tenant_id: Mapped[str] = tenant_fk()
     dataset_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     dataset_slug: Mapped[str] = mapped_column(String(128), nullable=False)
+    dataset_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     adapter_key: Mapped[str] = mapped_column(String(64), nullable=False)
     version: Mapped[str] = mapped_column(String(64), nullable=False)
     source_uri: Mapped[str] = mapped_column(String(500), nullable=False, default="")
@@ -148,6 +165,18 @@ class DatasetImport(Base, CreatedAtMixin):
     total_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     valid_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     invalid_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # M5-15: uploaded source file metadata. The file itself lives outside the
+    # database (temporary import directory); only its identity and digest are
+    # persisted so a version can never be built from an unknown file.
+    file_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    file_size: Mapped[int | None] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), nullable=True)
+    file_digest: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    storage_key: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    execution_image_digest: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    scoring_image_digest: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    validation_report_json: Mapped[dict] = mapped_column(json_type(), default=dict, nullable=False)
+    processed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    status_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     error_report_json: Mapped[dict] = mapped_column(json_type(), default=dict, nullable=False)
     created_by: Mapped[str] = mapped_column(String(128), nullable=False, default="console")
 

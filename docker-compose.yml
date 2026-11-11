@@ -76,6 +76,16 @@ services:
       AUTH_SESSION_SECRET: ${AUTH_SESSION_SECRET:-local-development-auth-secret}
       AUTH_BOOTSTRAP_ADMIN_EMAIL: ${AUTH_BOOTSTRAP_ADMIN_EMAIL:-admin@acme.local}
       AUTH_BOOTSTRAP_ADMIN_PASSWORD: ${AUTH_BOOTSTRAP_ADMIN_PASSWORD:-eval-demo}
+      # M5-15: uploaded dataset sources are staged in this container and
+      # parsed by a bounded subprocess (1 GB / 30 min / 1 GB address space).
+      DATASET_IMPORT_DIR: ${DATASET_IMPORT_DIR:-/tmp/eval-dataset-imports}
+      DATASET_IMPORT_MAX_BYTES: ${DATASET_IMPORT_MAX_BYTES:-1073741824}
+      DATASET_IMPORT_TIMEOUT_SECONDS: ${DATASET_IMPORT_TIMEOUT_SECONDS:-1800}
+      DATASET_IMPORT_MEMORY_LIMIT_MB: ${DATASET_IMPORT_MEMORY_LIMIT_MB:-2048}
+    volumes:
+      # Shared with the worker so stale-import reaping can delete the staged
+      # source file; both services must see the same path.
+      - dataset_imports:/tmp/eval-dataset-imports
     ports:
       - "8000:8000"
     depends_on:
@@ -107,6 +117,11 @@ services:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-eval}:${POSTGRES_PASSWORD:-eval}@postgres:5432/${POSTGRES_DB:-eval}
       REDIS_URL: redis://redis:6379/0
       WORKER_HEARTBEAT_PATH: /tmp/worker-heartbeat
+      # M5-15: fail imports whose worker vanished instead of spinning forever.
+      DATASET_IMPORT_STALE_SECONDS: ${DATASET_IMPORT_STALE_SECONDS:-7200}
+      DATASET_IMPORT_DIR: ${DATASET_IMPORT_DIR:-/tmp/eval-dataset-imports}
+    volumes:
+      - dataset_imports:/tmp/eval-dataset-imports
     depends_on:
       api:
         condition: service_healthy
@@ -131,6 +146,7 @@ services:
         condition: service_healthy
 
 volumes:
+  dataset_imports:
   pgdata:
   redisdata:
   miniodata:

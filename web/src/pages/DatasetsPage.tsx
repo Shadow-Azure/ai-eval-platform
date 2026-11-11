@@ -181,6 +181,15 @@ function importStatus(record: DatasetImportRecord): {
   if (record.status === "duplicate") {
     return { label: "重复导入", className: "tag tag-neutral", icon: "refresh" };
   }
+  if (record.status === "queued" || record.status === "validating") {
+    return { label: "校验中", className: "tag tag-primary", icon: "refresh" };
+  }
+  if (record.status === "validated" || record.status === "committing") {
+    return { label: "待生成", className: "tag tag-primary", icon: "refresh" };
+  }
+  if (record.status === "cancelled") {
+    return { label: "已取消", className: "tag tag-neutral", icon: "refresh" };
+  }
   return { label: "失败", className: "tag tag-danger", icon: "alert" };
 }
 

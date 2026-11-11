@@ -6,10 +6,11 @@ English | [中文](m5-16-eval-list-overview.md)
 kind: issue
 milestone: m5
 priority: P1
-status: ready
+status: done
 scope:
   - .agents/flow/issues/m5-16-eval-list-overview.*
   - .agents/flow/milestones/m5-product-workflows.*
+  - .agents/notes/**
   - backend/**
   - web/**
   - tests/**
@@ -18,7 +19,8 @@ scope:
   - plans/**
   - scripts/doc-budgets.manifest.json
   - .gitignore
-adr: []
+adr:
+  - ../../notes/adr-0002-eval-run-status-enum.md
 github:
   number: 144
   url: https://github.com/Shadow-Azure/ai-eval-platform/issues/144
