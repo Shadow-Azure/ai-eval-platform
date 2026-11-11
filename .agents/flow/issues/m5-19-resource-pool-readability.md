@@ -6,7 +6,7 @@
 kind: issue
 milestone: m5
 priority: P2
-status: ready
+status: done
 scope:
   - .agents/flow/issues/m5-19-resource-pool-readability.*
   - .agents/flow/milestones/m5-product-workflows.*
