@@ -1,5 +1,5 @@
 # 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
 # git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
 #   pnpm run record:i18n -- .agents/flow/issues/m5-11-runner-tarball-proxy.md
-m5-11-runner-tarball-proxy.md: 4ff70a1cccb2521fe3cd9488ac343c53f26f7c40
-m5-11-runner-tarball-proxy.en.md: 6fa75d1b4a6094561485bb7b444561477f82078d
+m5-11-runner-tarball-proxy.md: 2ccf379359b6972052fe50b6749005f226613595
+m5-11-runner-tarball-proxy.en.md: 9b3f3d6ebc500f93057ffe309245825836501ea2

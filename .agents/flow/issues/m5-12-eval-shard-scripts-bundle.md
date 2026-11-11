@@ -6,7 +6,7 @@
 kind: issue
 milestone: m5
 priority: P1
-status: in-progress
+status: done
 scope:
   - .agents/flow/issues/m5-12-eval-shard-scripts-bundle.*
   - .agents/flow/milestones/m5-product-workflows.*
