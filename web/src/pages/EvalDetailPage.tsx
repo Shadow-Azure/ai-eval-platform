@@ -25,13 +25,17 @@ import {
   TERMINAL_EVAL_STATUSES,
   cancelEvaluation,
   fetchCaseTests,
+  fetchEvaluationComparison,
   fetchEvaluationDetail,
   fetchEvaluationEvents,
   fetchEvaluationResults,
   resumeEvaluationBudget,
+  type BaselineComparison,
   type CaseTestResult,
+  type ConfigurationDifference,
   type EvaluationDetail,
   type EvaluationEvent,
+  type MetricDelta,
   type MetricResult,
 } from "../api/evaluations";
 import {
@@ -210,23 +214,41 @@ function formatSeconds(seconds: number | null | undefined): string {
   return `${Math.round(seconds / 60)} 分钟`;
 }
 
-function formatMetricValue(metric: MetricResult): string {
-  const value = metric.value;
+function formatMetricDisplay(
+  kind: string,
+  value: unknown,
+  unit: string | null | undefined,
+): string {
   if (value === null || value === undefined) return "N/A";
-  if (metric.display_kind === "percentage" && typeof value === "number") {
+  if (kind === "percentage" && typeof value === "number") {
     return `${(value * 100).toFixed(1)}%`;
   }
-  if (metric.display_kind === "number" && typeof value === "number") {
+  if (kind === "number" && typeof value === "number") {
     return value.toFixed(2).replace(/\.00$/, "");
   }
-  if (metric.display_kind === "ms" && typeof value === "number") {
+  if (kind === "ms" && typeof value === "number") {
     return formatDuration(value);
   }
-  if (metric.display_kind === "cny" && typeof value === "number") {
+  if (kind === "cny" && typeof value === "number") {
     return formatMoney(value);
   }
+  if (kind === "histogram" && typeof value === "object" && !Array.isArray(value)) {
+    const entries = Object.entries(value as Record<string, unknown>);
+    if (!entries.length) return "—";
+    return entries
+      .map(([key, item]) => {
+        if (typeof item !== "number") return `${key} ${String(item)}`;
+        const isDuration = unit === "ms" || (unit == null && (key === "p50" || key === "p95"));
+        return `${key} ${isDuration ? formatDuration(item) : `${item}${unit ? ` ${unit}` : ""}`}`;
+      })
+      .join(" · ");
+  }
   if (typeof value === "object") return JSON.stringify(value);
-  return metric.unit ? `${String(value)} ${metric.unit}` : String(value);
+  return unit ? `${String(value)} ${unit}` : String(value);
+}
+
+function formatMetricValue(metric: MetricResult): string {
+  return formatMetricDisplay(metric.display_kind, metric.value, metric.unit);
 }
 
 function formatDecimal(value: string | number | null | undefined): string {
@@ -266,7 +288,7 @@ function directionLabel(value: string): string {
 }
 
 function isKnownMetricKind(kind: string): boolean {
-  return ["number", "percentage", "ms", "cny"].includes(kind);
+  return ["number", "percentage", "ms", "cny", "histogram"].includes(kind);
 }
 
 function SummaryList({ items }: { items: Array<[string, React.ReactNode]> }) {
@@ -441,6 +463,8 @@ export function EvalDetailPage() {
   const [bulkRetryOpen, setBulkRetryOpen] = useState(false);
   const [resumeOpen, setResumeOpen] = useState(false);
   const [additionalBudget, setAdditionalBudget] = useState(10);
+  const [compareOpen, setCompareOpen] = useState(false);
+  const [baselineRunId, setBaselineRunId] = useState<string | null>(null);
 
   const updateParams = (patch: Record<string, string | null>) => {
     setSearchParams(
@@ -465,6 +489,12 @@ export function EvalDetailPage() {
     queryKey: ["evaluation", runId, "results"],
     queryFn: ({ signal }) => fetchEvaluationResults(runId, signal),
     enabled: Boolean(runId) && tab === "results",
+  });
+  const comparison = useQuery({
+    queryKey: ["evaluation", runId, "comparison", baselineRunId],
+    queryFn: ({ signal }) => fetchEvaluationComparison(runId, baselineRunId, signal),
+    enabled: Boolean(runId) && (tab === "results" || compareOpen),
+    retry: false,
   });
   const config = useQuery({
     queryKey: ["evaluation", runId, "config"],
@@ -694,6 +724,11 @@ export function EvalDetailPage() {
         description={`${headerDatasetLabel} · ${data.runtime_key ?? "synthetic"} · 创建人 ${data.created_by}`}
         actions={
           <Space wrap>
+            {terminal ? (
+              <Button icon={<Icon name="sparkles" size={14} />} onClick={() => setCompareOpen(true)}>
+                对比基线
+              </Button>
+            ) : null}
             <Button icon={<Icon name="refresh" size={14} />} onClick={() => {
               void detail.refetch();
               queryClient.invalidateQueries({ queryKey: ["evaluation", runId] });
@@ -928,6 +963,11 @@ export function EvalDetailPage() {
           finishedCount={finishedCount}
           progressPercent={progressPercent}
           onOpenCases={() => updateParams({ tab: "cases", status: null, page: null })}
+          comparison={comparison.data}
+          comparisonLoading={comparison.isLoading}
+          comparisonError={comparison.error}
+          onRetryComparison={() => comparison.refetch()}
+          onOpenComparison={() => setCompareOpen(true)}
         />
       ) : null}
 
@@ -1057,6 +1097,17 @@ export function EvalDetailPage() {
           恢复后总预算约 {nextBudgetCny} CNY；实际费用仍以模型网关记录为准。
         </div>
       </Modal>
+
+      <BaselineCompareModal
+        open={compareOpen}
+        onClose={() => setCompareOpen(false)}
+        comparison={comparison.data}
+        loading={comparison.isLoading}
+        error={comparison.error}
+        onRetry={() => comparison.refetch()}
+        baselineRunId={baselineRunId}
+        onSelectBaseline={setBaselineRunId}
+      />
     </section>
   );
 }
@@ -1457,10 +1508,30 @@ interface ResultsPanelProps {
   finishedCount: number;
   progressPercent: number;
   onOpenCases: () => void;
+  comparison: BaselineComparison | undefined;
+  comparisonLoading: boolean;
+  comparisonError: Error | null;
+  onRetryComparison: () => void;
+  onOpenComparison: () => void;
 }
 
 function ResultsPanel(props: ResultsPanelProps) {
-  const { results, loading, error, onRetry, counts, totalCases, finishedCount, progressPercent, onOpenCases } = props;
+  const {
+    results,
+    loading,
+    error,
+    onRetry,
+    counts,
+    totalCases,
+    finishedCount,
+    progressPercent,
+    onOpenCases,
+    comparison,
+    comparisonLoading,
+    comparisonError,
+    onRetryComparison,
+    onOpenComparison,
+  } = props;
   if (error) {
     return <Card><QueryError error={error} onRetry={onRetry} /></Card>;
   }
@@ -1470,6 +1541,7 @@ function ResultsPanel(props: ResultsPanelProps) {
   const metrics = results?.items ?? [];
   const known = metrics.filter((metric) => isKnownMetricKind(metric.display_kind));
   const unknown = metrics.filter((metric) => !isKnownMetricKind(metric.display_kind));
+  const deltaByKey = new Map((comparison?.metric_deltas ?? []).map((item) => [item.metric_key, item]));
   return (
     <>
       {results && !results.is_final ? (
@@ -1494,6 +1566,7 @@ function ResultsPanel(props: ResultsPanelProps) {
               <div className="eval-metric-value" title={formatMetricValue(metric)}>
                 {formatMetricValue(metric)}
               </div>
+              <MetricDeltaLine delta={deltaByKey.get(metric.metric_key)} />
               <div className="eval-metric-meta">
                 {formatDecimal(metric.numerator)} / {formatDecimal(metric.denominator)} · 分母：
                 {denominatorPolicyLabel(metric.denominator_policy)}
@@ -1519,41 +1592,59 @@ function ResultsPanel(props: ResultsPanelProps) {
           </Card>
         )}
       </div>
-      <Card title="用例结果分布" className="section-gap eval-panel-card eval-panel-flush">
-        <div className="card-body">
-          <div className="row-between">
-            <div>
-              <h2 className="card-title">{counts.resolved} / {totalCases} 个用例已解决</h2>
-              <p className="card-subtitle">按数据集注册的评分口径统计，分母与口径就近展示</p>
+      <div className="eval-results-layout section-gap">
+        <Card title="用例结果分布" className="eval-panel-card eval-panel-flush">
+          <div className="card-body">
+            <div className="row-between">
+              <div>
+                <h2 className="card-title">{counts.resolved} / {totalCases} 个用例已解决</h2>
+                <p className="card-subtitle">按数据集注册的评分口径统计，分母与口径就近展示</p>
+              </div>
+              <Tag color={results?.is_final ? "success" : "processing"}>
+                {progressPercent}% 已结束
+              </Tag>
             </div>
-            <Tag color={results?.is_final ? "success" : "processing"}>
-              {progressPercent}% 已结束
-            </Tag>
+            <div style={{ marginTop: 16 }}>
+              <StackedProgress counts={counts} total={totalCases} />
+            </div>
+            <div className="eval-result-actions">
+              <Button onClick={onOpenCases}>打开用例明细</Button>
+            </div>
           </div>
-          <div style={{ marginTop: 16 }}>
-            <StackedProgress counts={counts} total={totalCases} />
-          </div>
-          <div className="eval-result-actions">
-            <Button onClick={onOpenCases}>打开用例明细</Button>
-          </div>
-        </div>
-      </Card>
+        </Card>
+        <BaselineQualityCard
+          comparison={comparison}
+          loading={comparisonLoading}
+          error={comparisonError}
+          onRetry={onRetryComparison}
+          onOpen={onOpenComparison}
+        />
+      </div>
       {unknown.length ? (
         <Card title="未知指标类型（安全降级）" className="section-gap eval-panel-card">
           <p className="muted small">
-            这些指标声明了前端未注册的 display_kind；页面只展示原始值，不执行动态组件代码。
+            这些指标声明了前端未注册的 display_kind；页面只展示原始值，不执行动态组件代码，
+            对比时也只展示基线原值，不计算差值。
           </p>
           <div className="eval-unknown-metrics">
-            {unknown.map((metric) => (
-              <div className="eval-unknown-metric" key={metric.metric_key}>
-                <div className="eval-metric-head">
-                  <span className="eval-metric-name">{metric.display_name}</span>
-                  <Tag>{metric.display_kind}</Tag>
+            {unknown.map((metric) => {
+              const delta = deltaByKey.get(metric.metric_key);
+              return (
+                <div className="eval-unknown-metric" key={metric.metric_key}>
+                  <div className="eval-metric-head">
+                    <span className="eval-metric-name">{metric.display_name}</span>
+                    <Tag>{metric.display_kind}</Tag>
+                  </div>
+                  <pre className="eval-pre">{JSON.stringify(metric.value, null, 2)}</pre>
+                  <div className="muted small">{metric.metric_key} · v{metric.metric_version}</div>
+                  {delta ? (
+                    <div className="muted small">
+                      基线原值：{JSON.stringify(delta.baseline_value)} · 该类型暂不计算差值
+                    </div>
+                  ) : null}
                 </div>
-                <pre className="eval-pre">{JSON.stringify(metric.value, null, 2)}</pre>
-                <div className="muted small">{metric.metric_key} · v{metric.metric_version}</div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </Card>
       ) : null}
@@ -1567,6 +1658,413 @@ function ResultsPanel(props: ResultsPanelProps) {
         </Card>
       ) : null}
     </>
+  );
+}
+
+function deltaTone(improvement: MetricDelta["improvement"]): "up" | "down" | "flat" {
+  if (improvement === true) return "up";
+  if (improvement === false) return "down";
+  if (improvement && typeof improvement === "object") {
+    const values = Object.values(improvement).filter(
+      (item): item is boolean => typeof item === "boolean",
+    );
+    if (values.length > 0 && values.every(Boolean)) return "up";
+    if (values.length > 0 && values.every((item) => !item)) return "down";
+  }
+  return "flat";
+}
+
+function formatSignedNumber(value: number, digits: number): string {
+  const sign = value > 0 ? "+" : value < 0 ? "−" : "";
+  return `${sign}${Math.abs(value).toFixed(digits)}`;
+}
+
+function formatSignedMetric(kind: string, delta: number, unit: string | null): string {
+  if (kind === "percentage") return `${formatSignedNumber(delta * 100, 1)} pp`;
+  if (kind === "number") return formatSignedNumber(delta, 2).replace(/\.00$/, "");
+  if (kind === "cny") {
+    return `${delta > 0 ? "+" : delta < 0 ? "−" : ""}${formatMoney(Math.abs(delta))}`;
+  }
+  if (kind === "ms") {
+    return `${delta > 0 ? "+" : delta < 0 ? "−" : ""}${formatDuration(Math.abs(delta))}`;
+  }
+  return unit ? `${formatSignedNumber(delta, 2)} ${unit}` : formatSignedNumber(delta, 2);
+}
+
+function formatDeltaText(delta: MetricDelta): string {
+  const value = delta.delta;
+  if (value === null || value === undefined) return "—";
+  if (typeof value === "number") {
+    return formatSignedMetric(delta.display_kind, value, delta.unit);
+  }
+  const isDuration = delta.unit === "ms" || delta.metric_key.includes("duration");
+  return Object.entries(value)
+    .map(([key, item]) => {
+      if (isDuration) {
+        const sign = item > 0 ? "+" : item < 0 ? "−" : "";
+        return `${key} ${sign}${formatDuration(Math.abs(item))}`;
+      }
+      return `${key} ${formatSignedMetric(delta.display_kind, item, delta.unit)}`;
+    })
+    .join(" · ");
+}
+
+function MetricDeltaLine({ delta }: { delta: MetricDelta | undefined }) {
+  if (!delta) return null;
+  if (!delta.comparable) {
+    return (
+      <div className="eval-metric-delta flat">
+        <Tooltip title={delta.incomparable_reason ?? "该指标不可直接比较"}>
+          <Tag color="warning" style={{ marginInlineEnd: 0 }}>不可比</Tag>
+        </Tooltip>
+      </div>
+    );
+  }
+  return (
+    <div className={`eval-metric-delta ${deltaTone(delta.improvement)}`}>
+      <span className="eval-metric-delta-value">{formatDeltaText(delta)}</span>
+      <span className="eval-metric-delta-base">
+        基线 {formatMetricDisplay(delta.display_kind, delta.baseline_value, delta.unit)}
+      </span>
+    </div>
+  );
+}
+
+interface BaselineQualityCardProps {
+  comparison: BaselineComparison | undefined;
+  loading: boolean;
+  error: Error | null;
+  onRetry: () => void;
+  onOpen: () => void;
+}
+
+function BaselineQualityCard(props: BaselineQualityCardProps) {
+  const { comparison, loading, error, onRetry, onOpen } = props;
+  if (error) {
+    return (
+      <Card title="质量摘要" className="eval-quality-card">
+        <QueryError error={error} onRetry={onRetry} />
+      </Card>
+    );
+  }
+  if (loading && !comparison) {
+    return (
+      <Card title="质量摘要" className="eval-quality-card">
+        <Skeleton active paragraph={{ rows: 5 }} />
+      </Card>
+    );
+  }
+  const baseline = comparison?.baseline ?? null;
+  const deltas = comparison?.metric_deltas ?? [];
+  const main =
+    deltas.find((item) => item.metric_key === "resolved_rate") ??
+    deltas.find((item) => item.display_kind === "percentage") ??
+    deltas[0];
+  if (!baseline || !main) {
+    return (
+      <Card title="质量摘要" className="eval-quality-card">
+        <EmptyState
+          icon="sparkles"
+          title="暂无可比基线"
+          description={
+            comparison?.empty_state?.message ??
+            "还没有同配置的最终评测可作基线；不会自动选择不可比评测。"
+          }
+          compact
+        />
+        <div className="eval-quality-actions">
+          <Button size="small" onClick={onOpen}>手动选择基线</Button>
+        </div>
+      </Card>
+    );
+  }
+  const changedConfigs = (comparison?.configuration_differences ?? []).filter((row) => row.changed).length;
+  return (
+    <Card
+      title="质量摘要"
+      className="eval-quality-card"
+      extra={
+        <Tag color={comparison?.is_final ? "success" : "processing"}>
+          {comparison?.is_final ? "相对可比基线" : "快照对比"}
+        </Tag>
+      }
+    >
+      <div className="eval-quality-hero">
+        <span className="eval-quality-value">
+          {formatMetricDisplay(main.display_kind, main.current_value, main.unit)}
+        </span>
+        <span className={`eval-quality-delta ${main.comparable ? deltaTone(main.improvement) : "flat"}`}>
+          {main.comparable ? formatDeltaText(main) : "不可比"}
+        </span>
+        <span className="muted small">
+          {main.display_name} · 基线 {formatMetricDisplay(main.display_kind, main.baseline_value, main.unit)}
+        </span>
+      </div>
+      <SummaryList
+        items={[
+          ["基线", baseline.name],
+          ["基线完成", formatTime(baseline.finished_at)],
+          [
+            "用例集合",
+            comparison?.case_set.comparable
+              ? "一致"
+              : `${comparison?.case_set.current_count} vs ${comparison?.case_set.baseline_count}`,
+          ],
+          ["配置差异", `${changedConfigs} 项`],
+        ]}
+      />
+      <p className="eval-quality-reason">
+        <Icon name="sparkles" size={13} />
+        <span>{comparison?.recommendation?.reason ?? "手动选择的基线"}</span>
+      </p>
+      {comparison && !comparison.comparable ? (
+        <Alert
+          type="warning"
+          showIcon
+          message="指标不可直接比较"
+          description={comparison.incomparable_reasons.join("；")}
+        />
+      ) : null}
+      <div className="eval-quality-actions">
+        <Button size="small" onClick={onOpen}>查看完整对比</Button>
+      </div>
+    </Card>
+  );
+}
+
+interface BaselineCompareModalProps {
+  open: boolean;
+  onClose: () => void;
+  comparison: BaselineComparison | undefined;
+  loading: boolean;
+  error: Error | null;
+  onRetry: () => void;
+  baselineRunId: string | null;
+  onSelectBaseline: (runId: string | null) => void;
+}
+
+function BaselineCompareModal(props: BaselineCompareModalProps) {
+  const { open, onClose, comparison, loading, error, onRetry, baselineRunId, onSelectBaseline } = props;
+  const baseline = comparison?.baseline ?? null;
+  const candidates = comparison?.candidates ?? [];
+  const options = [
+    { value: "auto", label: baseline ? `自动推荐（${baseline.name}）` : "自动推荐" },
+    ...candidates.map((candidate) => ({
+      value: candidate.id,
+      label: `${candidate.name} · ${formatTime(candidate.finished_at)}${candidate.comparable ? "" : " · 用例集不同"}`,
+    })),
+  ];
+  if (baseline && !options.some((option) => option.value === baseline.id)) {
+    options.push({ value: baseline.id, label: baseline.name });
+  }
+  const metricColumns: TableColumnsType<MetricDelta> = [
+    {
+      title: "指标",
+      dataIndex: "display_name",
+      width: 230,
+      render: (_value: unknown, item: MetricDelta) => (
+        <div className="compare-metric-name">
+          <strong>{item.display_name}</strong>
+          <span className="muted small">
+            {item.metric_key} · v{item.metric_version ?? "—"} ·{" "}
+            {directionLabels[item.direction] ?? item.direction}
+          </span>
+        </div>
+      ),
+    },
+    {
+      title: "当前",
+      width: 150,
+      render: (_value: unknown, item: MetricDelta) => (
+        <span className="mono">{formatMetricDisplay(item.display_kind, item.current_value, item.unit)}</span>
+      ),
+    },
+    {
+      title: "基线",
+      width: 150,
+      render: (_value: unknown, item: MetricDelta) => (
+        <span className="mono">{formatMetricDisplay(item.display_kind, item.baseline_value, item.unit)}</span>
+      ),
+    },
+    {
+      title: "差值",
+      width: 180,
+      render: (_value: unknown, item: MetricDelta) =>
+        item.comparable ? (
+          <span className={`compare-delta ${deltaTone(item.improvement)}`}>{formatDeltaText(item)}</span>
+        ) : (
+          <Tag color="warning">不可比</Tag>
+        ),
+    },
+    {
+      title: "可比性",
+      width: 230,
+      render: (_value: unknown, item: MetricDelta) =>
+        item.comparable ? (
+          <Tag color="success">可比</Tag>
+        ) : (
+          <Tooltip title={item.incomparable_reason ?? "指标不可直接比较"}>
+            <Tag color="warning">不可比</Tag>
+          </Tooltip>
+        ),
+    },
+  ];
+  const configColumns: TableColumnsType<ConfigurationDifference> = [
+    {
+      title: "配置项",
+      dataIndex: "label",
+      width: 210,
+      render: (_value: unknown, row: ConfigurationDifference) => (
+        <div className="compare-metric-name">
+          <strong>{row.label}</strong>
+          <span className="muted small">{row.category}</span>
+        </div>
+      ),
+    },
+    {
+      title: "当前评测",
+      render: (_value: unknown, row: ConfigurationDifference) => (
+        <span className="mono small">{row.current}</span>
+      ),
+    },
+    {
+      title: "基线",
+      render: (_value: unknown, row: ConfigurationDifference) => (
+        <span className="mono small">{row.baseline}</span>
+      ),
+    },
+    {
+      title: "状态",
+      width: 170,
+      render: (_value: unknown, row: ConfigurationDifference) => {
+        if (row.incomparable) {
+          return (
+            <Tooltip title={row.note ?? "该字段不可比"}>
+              <Tag color="warning">不可比</Tag>
+            </Tooltip>
+          );
+        }
+        if (row.changed) {
+          return (
+            <Tooltip title={row.note ?? "配置不同"}>
+              <Tag color="processing">不同</Tag>
+            </Tooltip>
+          );
+        }
+        return <Tag>一致</Tag>;
+      },
+    },
+  ];
+  return (
+    <Modal
+      open={open}
+      onCancel={onClose}
+      width={1120}
+      title="与基线对比"
+      footer={<Button onClick={onClose}>关闭</Button>}
+      destroyOnClose
+    >
+      <div className="compare-toolbar">
+        <div className="compare-baseline-picker">
+          <span className="muted small">基线</span>
+          <Select
+            value={baselineRunId ?? "auto"}
+            onChange={(value) => onSelectBaseline(value === "auto" ? null : String(value))}
+            options={options}
+            style={{ minWidth: 380 }}
+            placeholder="选择基线评测"
+          />
+        </div>
+        {baseline ? (
+          <Tag color={comparison?.manual ? "default" : "success"}>
+            {comparison?.manual ? "手动基线" : "自动推荐"}
+          </Tag>
+        ) : null}
+      </div>
+      {loading ? (
+        <Skeleton active paragraph={{ rows: 8 }} />
+      ) : error ? (
+        <QueryError error={error} onRetry={onRetry} />
+      ) : !comparison ? null : (
+        <>
+          {comparison.recommendation ? (
+            <Alert
+              className="compare-banner"
+              type="info"
+              showIcon
+              icon={<Icon name="sparkles" size={15} />}
+              message={comparison.recommendation.reason}
+              description={
+                baseline ? `基线：${baseline.name} · ${formatTime(baseline.finished_at)}` : undefined
+              }
+            />
+          ) : null}
+          {!comparison.is_final ? (
+            <Alert
+              className="compare-banner"
+              type="warning"
+              showIcon
+              message="当前结果尚未固化"
+              description="当前展示的是快照指标；最终结果写入后差值可能变化。"
+            />
+          ) : null}
+          {!comparison.comparable ? (
+            <Alert
+              className="compare-banner"
+              type="warning"
+              showIcon
+              message="指标不可直接比较"
+              description={comparison.incomparable_reasons.join("；")}
+            />
+          ) : null}
+          {baseline ? (
+            <>
+              <section className="compare-section">
+                <div className="compare-section-head">
+                  <h3>指标差值</h3>
+                  <span className="muted small">
+                    当前 {comparison.case_set.current_count} 个用例 vs 基线{" "}
+                    {comparison.case_set.baseline_count} 个用例
+                  </span>
+                </div>
+                <Table<MetricDelta>
+                  rowKey="metric_key"
+                  size="small"
+                  columns={metricColumns}
+                  dataSource={comparison.metric_deltas}
+                  pagination={false}
+                  scroll={{ x: 940 }}
+                />
+              </section>
+              <section className="compare-section">
+                <div className="compare-section-head">
+                  <h3>配置差异</h3>
+                  <span className="muted small">
+                    {comparison.configuration_differences.filter((row) => row.changed).length} 项不同
+                  </span>
+                </div>
+                <Table<ConfigurationDifference>
+                  rowKey="key"
+                  size="small"
+                  columns={configColumns}
+                  dataSource={comparison.configuration_differences}
+                  pagination={false}
+                  rowClassName={(row) =>
+                    row.incomparable ? "compare-row-incomparable" : row.changed ? "compare-row-changed" : ""
+                  }
+                />
+              </section>
+            </>
+          ) : (
+            <EmptyState
+              icon="sparkles"
+              title="暂无可比基线"
+              description={comparison.empty_state?.message ?? "没有同配置的最终评测可作基线。"}
+            />
+          )}
+        </>
+      )}
+    </Modal>
   );
 }
 
