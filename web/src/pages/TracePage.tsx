@@ -39,9 +39,11 @@ import {
   buildSpanWindows,
   flattenSessionTree,
   markMissingParents,
+  mergeSelectedSpan,
   mergeSpanPages,
   readSpanFilter,
   readTraceSelection,
+  spanBelongsToSession,
   traceStatusForAttempt,
 } from "../features/traces/traceModel";
 
@@ -175,6 +177,7 @@ function Waterfall({
 }: WaterfallProps) {
   const windows = useMemo(() => buildSpanWindows(spans, clockComparable), [spans, clockComparable]);
   const ids = useMemo(() => new Set(spans.map((item) => item.id)), [spans]);
+  const byId = useMemo(() => new Map(spans.map((item) => [item.id, item])), [spans]);
   const depthById = useMemo(() => {
     const result = new Map<string, number>();
     const resolveDepth = (span: TraceSpan, seen = new Set<string>()): number => {
@@ -183,7 +186,7 @@ function Waterfall({
         result.set(span.id, 0);
         return 0;
       }
-      const parent = spans.find((item) => item.id === span.parent_span_id);
+      const parent = byId.get(span.parent_span_id);
       seen.add(span.id);
       const depth = parent ? Math.min(3, resolveDepth(parent, seen) + 1) : 0;
       result.set(span.id, depth);
@@ -191,7 +194,7 @@ function Waterfall({
     };
     for (const span of spans) resolveDepth(span);
     return result;
-  }, [ids, spans]);
+  }, [byId, ids, spans]);
   const counts = useMemo(() => {
     const result: Record<string, number> = { all: spans.length };
     for (const span of spans) result[span.kind] = (result[span.kind] ?? 0) + 1;
@@ -594,13 +597,29 @@ export function TracePage() {
     enabled: Boolean(selectedSpanId),
     retry: false,
   });
-  const span = detailQuery.data ?? visibleSpan;
+  const detailSpan = spanBelongsToSession(detailQuery.data, selectedSessionId)
+    ? detailQuery.data
+    : null;
+
+  useEffect(() => {
+    if (!detailQuery.data || !selectedSessionId) return;
+    if (
+      !spanBelongsToSession(detailQuery.data, selectedSessionId) ||
+      (filter !== "all" && detailQuery.data.kind !== filter)
+    ) {
+      setSignedLink(null);
+      updateSelection({ span: null }, true);
+    }
+  }, [detailQuery.data, filter, selectedSessionId]);
+
+  const span = detailSpan ?? visibleSpan;
   const waterfallSpans = useMemo(() => {
-    if (!span?.parent_missing) return spans;
-    return spans.map((item) =>
+    const merged = mergeSelectedSpan(spans, span, selectedSessionId, filter);
+    if (!span?.parent_missing) return merged;
+    return merged.map((item) =>
       item.id === span.id ? { ...item, parent_missing: true } : item,
     );
-  }, [span, spans]);
+  }, [filter, selectedSessionId, span, spans]);
 
   const fileDownload = useMutation({
     mutationFn: (fileId: string) => createTraceFileDownloadUrl(fileId),
@@ -622,15 +641,19 @@ export function TracePage() {
   });
 
   const selectAttempt = (attemptNo: number) => {
+    setSignedLink(null);
     updateSelection({ attempt: attemptNo, session: null, span: null, kind: null });
   };
   const selectSession = (session: TraceSession) => {
+    setSignedLink(null);
     updateSelection({ session: session.id, span: null, kind: null });
   };
   const selectSpan = (spanItem: TraceSpan) => {
+    setSignedLink(null);
     updateSelection({ session: spanItem.session_id, span: spanItem.id });
   };
   const changeFilter = (value: string) => {
+    setSignedLink(null);
     updateSelection({ span: null, kind: value === "all" ? null : value });
   };
 

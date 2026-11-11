@@ -4,11 +4,13 @@ import test from "node:test";
 import {
   buildSpanWindows,
   flattenSessionTree,
+  mergeSelectedSpan,
   mergeSpanPages,
   markMissingParents,
   readSpanFilter,
   readTraceSelection,
   requestIsCurrent,
+  spanBelongsToSession,
   traceStatusForAttempt,
 } from "../web/src/features/traces/traceModel.ts";
 
@@ -124,6 +126,24 @@ test("missing span parents become explicit root fragments", () => {
   assert.equal(marked[0].parent_missing, false);
   assert.equal(marked[1].parent_missing, false);
   assert.equal(marked[2].parent_missing, true);
+});
+
+test("a deep-link span is accepted only inside the selected session and filter", () => {
+  const rootSpan = { id: "root-span", session_id: "root", ordinal: 0, kind: "AGENT" };
+  const childSpan = { id: "child-span", session_id: "child", ordinal: 5, kind: "TOOL" };
+  assert.equal(spanBelongsToSession(rootSpan, "root"), true);
+  assert.equal(spanBelongsToSession(rootSpan, "child"), false);
+  assert.equal(spanBelongsToSession(null, "root"), false);
+
+  const merged = mergeSelectedSpan(
+    [{ id: "loaded", session_id: "root", ordinal: 1, kind: "LLM" }],
+    rootSpan,
+    "root",
+    "all",
+  );
+  assert.deepEqual(merged.map((span) => span.id), ["root-span", "loaded"]);
+  assert.equal(mergeSelectedSpan([], childSpan, "root", "all").length, 0);
+  assert.equal(mergeSelectedSpan([], rootSpan, "root", "TOOL").length, 0);
 });
 
 test("attempt trace status never inherits an unrelated case status", () => {

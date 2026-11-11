@@ -44,6 +44,10 @@ export interface SpanLike {
   ended_at?: string | null;
 }
 
+export interface SessionSpanLike extends SpanLike {
+  session_id: string;
+}
+
 export interface SpanWindow<T extends SpanLike> {
   span: T;
   leftPercent: number;
@@ -124,6 +128,33 @@ export function mergeSpanPages<T extends { id: string }>(
   const byId = new Map(current.map((item) => [item.id, item]));
   for (const item of incoming) byId.set(item.id, item);
   return [...byId.values()];
+}
+
+export function spanBelongsToSession<T extends { session_id: string }>(
+  span: T | null | undefined,
+  sessionId: string | null,
+): span is T {
+  return Boolean(span && sessionId && span.session_id === sessionId);
+}
+
+export function mergeSelectedSpan<T extends SessionSpanLike>(
+  spans: T[],
+  selected: T | null | undefined,
+  sessionId: string | null,
+  filter = "all",
+): T[] {
+  if (
+    !spanBelongsToSession(selected, sessionId) ||
+    (filter !== "all" && selected.kind !== filter)
+  ) {
+    return spans;
+  }
+  const byId = new Map(spans.map((span) => [span.id, span]));
+  byId.set(selected.id, selected);
+  return [...byId.values()].sort((left, right) => {
+    if (left.ordinal !== right.ordinal) return left.ordinal - right.ordinal;
+    return left.id.localeCompare(right.id);
+  });
 }
 
 export function markMissingParents<T extends SpanLike>(spans: T[]): T[] {
