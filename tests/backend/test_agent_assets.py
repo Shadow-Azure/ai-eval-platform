@@ -164,6 +164,70 @@ def test_create_scan_and_tree_roundtrip(
     assert tree["counts"]["skill"] == 2
     assert any(item["path"] == "docs/readme.md" for item in tree["unclassified"])
     assert any(item["path"] == "src/commands/deploy.md" for item in tree["unclassified"])
+    # The opsx command declares a CLI dependency, so the source needs runtime
+    # preparation even though the scan found assets.
+    refreshed = client.get(f"/api/v1/agent-asset-sources/{source['id']}").json()
+    assert refreshed["status"] == "requires_setup"
+
+
+def _install_repo(monkeypatch: pytest.MonkeyPatch, files: dict[str, bytes]) -> FakeRepo:
+    repo = FakeRepo(files=files)
+    factory = lambda token=None, **_kwargs: FakeGitHubClient(repo, token)  # noqa: E731
+    monkeypatch.setattr(agent_assets, "GitHubClient", factory)
+    return repo
+
+
+OPENSPEC_FILES = {
+    "skills/openspec-explore/SKILL.md": (
+        b"---\n"
+        b"name: openspec-explore\n"
+        b"description: Explore OpenSpec changes\n"
+        b"compatibility: Requires openspec CLI.\n"
+        b"---\n# Explore\n"
+    ),
+    "skills/brainstorming/SKILL.md": (
+        b"---\nname: brainstorming\ndescription: Explore options\n---\n# Brainstorm\n"
+    ),
+    ".claude/commands/opsx/propose.md": b"# openspec propose\n",
+}
+
+PLAIN_FILES = {
+    "skills/plain/SKILL.md": (
+        b"---\nname: plain\ndescription: No runtime dependency\n---\n# Plain\n"
+    ),
+}
+
+
+def test_scan_marks_runtime_prerequisites(
+    client: TestClient, seeded: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_repo(monkeypatch, dict(OPENSPEC_FILES))
+    source = create_source(
+        client, name="openspec", scan_paths=["skills", ".claude"], selection_mode="directory"
+    )
+    scanned = scan_source(client, source["id"])
+    assert scanned["counts"] == {"skill": 2, "command": 1, "subagent": 0}
+    by_path = {asset["path"]: asset for asset in scanned["assets"]}
+    assert by_path["skills/openspec-explore"]["metadata"]["prerequisites"] == ["openspec CLI"]
+    assert by_path["skills/brainstorming"]["metadata"]["prerequisites"] == []
+    assert by_path[".claude/commands/opsx/propose.md"]["metadata"]["prerequisites"] == [
+        "openspec CLI"
+    ]
+
+    refreshed = client.get(f"/api/v1/agent-asset-sources/{source['id']}").json()
+    assert refreshed["status"] == "requires_setup"
+
+
+def test_scan_without_prerequisites_is_ready(
+    client: TestClient, seeded: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_repo(monkeypatch, dict(PLAIN_FILES))
+    source = create_source(
+        client, name="plain", scan_paths=["skills"], selection_mode="directory"
+    )
+    scan_source(client, source["id"])
+    refreshed = client.get(f"/api/v1/agent-asset-sources/{source['id']}").json()
+    assert refreshed["status"] == "ready"
 
 
 def test_scan_preview_does_not_persist_source(

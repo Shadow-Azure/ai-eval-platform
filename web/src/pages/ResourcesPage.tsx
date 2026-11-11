@@ -271,6 +271,9 @@ export function ResourcesPage() {
   } | null>(null);
   const [detailPoolId, setDetailPoolId] = useState<string | null>(null);
   const [testPoolId, setTestPoolId] = useState<string | null>(null);
+  const [permissionConnection, setPermissionConnection] = useState<ResourceConnection | null>(
+    null,
+  );
 
   const poolsQuery = useQuery({
     queryKey: ["resource-pools"],
@@ -320,6 +323,26 @@ export function ResourcesPage() {
   };
 
   const loading = poolsQuery.isLoading || connectionsQuery.isLoading;
+
+  function copyAccessRequest(): void {
+    if (!permissionConnection) return;
+    const text = [
+      "资源连接权限申请",
+      `连接：${permissionConnection.name}`,
+      `提供方：${providerLabel(permissionConnection.provider)}`,
+      `当前角色：${session?.roleLabel ?? "只读成员"}`,
+      "需要的权限：只读验证、轮换云账号密钥、创建资源池",
+      "说明：请组织 Owner 在成员管理中将我的角色调整为平台管理员。",
+    ].join("\n");
+    if (!navigator.clipboard) {
+      message.warning("当前浏览器不支持自动复制，请手动记录申请信息");
+      return;
+    }
+    void navigator.clipboard
+      .writeText(text)
+      .then(() => message.success("申请信息已复制，请发送给组织 Owner"))
+      .catch(() => message.error("复制失败，请手动记录申请信息"));
+  }
 
   function renderPools() {
     if (poolsQuery.isError && !poolsQuery.data) {
@@ -504,7 +527,7 @@ export function ResourcesPage() {
           <div className="banner resource-note" role="status">
             <Icon name="lock" size={15} />
             <div>
-              当前角色可以引用资源连接创建资源池，但不能验证连接或替换云账号密钥。页面只显示脱敏凭据。
+              当前角色是只读成员：可以查看资源连接状态与脱敏凭据，但执行只读验证、轮换云账号密钥和创建资源池需要平台管理员权限。
             </div>
           </div>
         ) : null}
@@ -528,6 +551,7 @@ export function ResourcesPage() {
                 key={connection.id}
                 connection={connection}
                 isAdmin={isAdmin}
+                onRequestAccess={(target) => setPermissionConnection(target)}
                 onCreatePool={() =>
                   setPoolModal({ connectionId: connection.id })
                 }
@@ -690,6 +714,36 @@ export function ResourcesPage() {
           }
         }}
       />
+      <Modal
+        open={permissionConnection !== null}
+        title="申请资源连接权限"
+        onCancel={() => setPermissionConnection(null)}
+        footer={
+          <>
+            <Button onClick={() => setPermissionConnection(null)}>关闭</Button>
+            <Button type="primary" onClick={copyAccessRequest}>
+              复制申请信息
+            </Button>
+          </>
+        }
+      >
+        {permissionConnection ? (
+          <>
+            <div className="banner warning" role="status">
+              <Icon name="lock" size={15} />
+              <div>
+                当前账号（{session?.roleLabel ?? "只读成员"}）可以查看连接状态与脱敏凭据，
+                但不能执行只读验证、轮换云账号密钥或创建资源池。
+              </div>
+            </div>
+            <p className="small muted" style={{ marginTop: 14 }}>
+              申请连接 <span className="mono">{permissionConnection.name}</span> 的写入权限：
+              联系组织 Owner 在成员管理中把该账号调整为平台管理员，授权后重新登录生效。
+              点击“复制申请信息”可把连接与所需权限发送给对方。
+            </p>
+          </>
+        ) : null}
+      </Modal>
     </section>
   );
 }
@@ -754,10 +808,12 @@ function ConnectionCard({
   connection,
   isAdmin,
   onCreatePool,
+  onRequestAccess,
 }: {
   connection: ResourceConnection;
   isAdmin: boolean;
   onCreatePool: () => void;
+  onRequestAccess: (connection: ResourceConnection) => void;
 }) {
   const queryClient = useQueryClient();
   const [verifying, setVerifying] = useState(false);
@@ -793,7 +849,13 @@ function ConnectionCard({
             {providerLabel(connection.provider)} · {connection.region ?? "全局"}
           </div>
         </div>
-        {statusTag(connection.status, connectionStatusMeta)}
+        {isAdmin ? (
+          statusTag(connection.status, connectionStatusMeta)
+        ) : (
+          <span className="tag tag-neutral connection-lock">
+            <Icon name="lock" size={11} /> 无权限
+          </span>
+        )}
       </div>
 
       <div className="connection-facts">
@@ -811,6 +873,12 @@ function ConnectionCard({
             )}
           </div>
         </div>
+        {!isAdmin ? (
+          <div className="connection-fact-row">
+            <span className="muted small">连接状态</span>
+            <span>{statusTag(connection.status, connectionStatusMeta)}</span>
+          </div>
+        ) : null}
         <div className="connection-fact-row">
           <span className="muted small">最近验证</span>
           <span>{formatDateTime(connection.last_verified_at)}</span>
@@ -828,6 +896,15 @@ function ConnectionCard({
         </div>
       ) : null}
 
+      {!isAdmin ? (
+        <div className="banner warning resource-reason connection-lock-note" role="status">
+          <Icon name="lock" size={15} />
+          <div>
+            你的角色可以查看此连接的脱敏凭据与状态，但不能执行只读验证、轮换云账号密钥或创建资源池。
+          </div>
+        </div>
+      ) : null}
+
       <div className="pool-footer row-between">
         <span className="small muted">
           {SUPPORTED_SPOT_PROVIDERS.has(connection.provider) &&
@@ -837,15 +914,19 @@ function ConnectionCard({
         </span>
         <Space size={8}>
           {isAdmin ? (
-            <Button size="small" onClick={() => void verify()} loading={verifying}>
-              只读验证
+            <>
+              <Button size="small" onClick={() => void verify()} loading={verifying}>
+                只读验证
+              </Button>
+              <Button size="small" type="primary" onClick={onCreatePool}>
+                新建资源池
+              </Button>
+            </>
+          ) : (
+            <Button size="small" onClick={() => onRequestAccess(connection)}>
+              申请管理员权限
             </Button>
-          ) : null}
-          {isAdmin ? (
-            <Button size="small" type="primary" onClick={onCreatePool}>
-              新建资源池
-            </Button>
-          ) : null}
+          )}
         </Space>
       </div>
     </article>

@@ -162,6 +162,15 @@
   line-height: 1.5;
 }
 
+.asset-requirement {
+  margin-top: 12px;
+  margin-bottom: 0;
+}
+
+.asset-requirement-detail {
+  margin: 0 0 12px;
+}
+
 .asset-source-footer {
   display: flex;
   align-items: center;

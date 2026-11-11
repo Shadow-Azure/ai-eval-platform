@@ -20,6 +20,7 @@ import base64
 import gzip
 import hashlib
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import PurePosixPath
@@ -148,13 +149,50 @@ def _frontmatter(text: str) -> dict[str, str]:
             continue
         key, _, value = line.partition(":")
         normalized = key.strip()
-        if normalized in ("name", "description"):
+        if normalized in ("name", "description", "compatibility"):
             values[normalized] = value.strip().strip("\"'")
     return values
 
 
 def _decode_text(content: bytes) -> str:
     return content.decode("utf-8", errors="replace")
+
+
+_REQUIRES_CLI = re.compile(r"requires?\s+([A-Za-z0-9_.-]+)\s+cli\b", re.IGNORECASE)
+
+
+def _runtime_prerequisites(*, path: str, front: dict[str, str], content: str) -> list[str]:
+    """Return the CLI dependencies an asset declares or clearly references.
+
+    The SKILL.md frontmatter is the authoritative source: an OpenSpec skill
+    carries ``compatibility: Requires openspec CLI.``. Content/path keywords
+    are the fallback for repositories that omit that field (for example the
+    generated ``opsx/*`` commands). No prerequisites are invented when the
+    manifest says nothing and the body does not mention a known CLI.
+    """
+
+    found: list[str] = []
+    match = _REQUIRES_CLI.search(front.get("compatibility", ""))
+    if match:
+        found.append(f"{match.group(1)} CLI")
+    lowered = f"{path}\n{content}".lower()
+    if "openspec" in lowered and "openspec CLI" not in found:
+        found.append("openspec CLI")
+    return found
+
+
+def _scan_status(assets: tuple[ScannedAsset, ...] | list[ScannedAsset]) -> str:
+    """Map scanned assets onto the persisted source status.
+
+    ``requires_setup`` means the assets exist but need runtime preparation
+    (CLI and/or generated commands); an empty scan also stays
+    ``requires_setup`` so the operator has to act instead of seeing a ready
+    source with no assets.
+    """
+
+    if not assets:
+        return "requires_setup"
+    return "requires_setup" if any(asset.metadata.get("prerequisites") for asset in assets) else "ready"
 
 
 _RUNTIME_DIRS = (".claude", ".agents", ".codex", ".opencode", ".pi")
@@ -332,7 +370,9 @@ def scan_repository(
                     "files": len(owned),
                     "size": total_size,
                     "runtime_path": f"skills/{name}",
-                    "prerequisites": [],
+                    "prerequisites": _runtime_prerequisites(
+                        path=directory, front=front, content=_decode_text(content)
+                    ),
                 },
             )
         )
@@ -346,10 +386,10 @@ def scan_repository(
             asset_type, runtime_path = runtime_asset
             content = read_blob(path)
             name = runtime_path.split("/", 1)[1].removesuffix(".md")
-            prerequisites = (
-                ["openspec CLI"]
-                if "openspec" in path.lower() or "openspec" in _decode_text(content).lower()
-                else []
+            prerequisites = _runtime_prerequisites(
+                path=path,
+                front=_frontmatter(_decode_text(content)),
+                content=_decode_text(content),
             )
             assets.append(
                 ScannedAsset(
@@ -570,7 +610,7 @@ def scan_source(
         if owns_client:
             client.close()
     source.last_scanned_commit = result.resolved_commit
-    source.status = "ready" if result.assets else "requires_setup"
+    source.status = _scan_status(result.assets)
     source.last_scan_json = _scan_payload(result, ref)
     session.commit()
     return result
@@ -913,7 +953,7 @@ def resolve_assets(
             # A repeated resolve is still a successful scan: keep the source
             # view consistent even when no new bundle is written.
             source.last_scanned_commit = commit
-            source.status = "ready" if scan.assets else "requires_setup"
+            source.status = _scan_status(scan.assets)
             source.last_scan_json = _scan_payload(scan, ref)
             session.commit()
             return existing, snapshot_assets(session, existing.id), False
@@ -1027,7 +1067,7 @@ def resolve_assets(
                 )
             )
         source.last_scanned_commit = commit
-        source.status = "ready" if scan.assets else "requires_setup"
+        source.status = _scan_status(scan.assets)
         source.last_scan_json = _scan_payload(scan, ref)
         try:
             session.commit()
