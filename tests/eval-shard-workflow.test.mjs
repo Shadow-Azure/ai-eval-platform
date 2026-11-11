@@ -113,3 +113,28 @@ test("eval-shard workflow carries no secret material or demo tokens", () => {
 test("500 cases at the default shard size of 64 form 8 dispatches", () => {
   assert.equal(Math.ceil(500 / 64), 8);
 });
+
+test("eval-shard downloads the scripts bundle and gates checkout as a fallback", () => {
+  const text = workflow();
+  for (const name of ["prepare", "execute"]) {
+    const job = jobBlock(text, name);
+    for (const expected of [
+      "name: Fetch the scripts bundle",
+      "id: bundle",
+      "steps.bundle.outputs.ok != 'true'",
+      "/runner/v1/shards/",
+      "$EVAL_SCRIPTS_DIR",
+      "tar -xzf",
+      "md5",
+      "sha256",
+    ]) {
+      assert.ok(job.includes(expected), `${name} missing ${expected}`);
+    }
+    const checkouts = job.match(/uses: actions\/checkout@v4/g) ?? [];
+    assert.equal(checkouts.length, 1, `${name} must keep exactly one checkout fallback`);
+    assert.ok(job.includes("if: steps.bundle.outputs.ok != 'true'"), `${name} checkout must be gated`);
+    assert.ok(job.includes("EVAL_SCRIPTS_DIR=$GITHUB_WORKSPACE"), `${name} must resolve fallback root`);
+  }
+  const total = text.match(/uses: actions\/checkout@v4/g) ?? [];
+  assert.equal(total.length, 2, "only prepare/execute may retain a checkout fallback");
+});

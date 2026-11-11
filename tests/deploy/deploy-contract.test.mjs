@@ -146,7 +146,7 @@ test("deploy pipeline caches the runner tarball and leaves the URL to the api pr
   const workflow = read(".github/workflows/deploy.yml");
   assert.ok(workflow.includes("runner-cache:"), "missing runner-cache job");
   assert.ok(workflow.includes("scripts/cache-runner-tarball.py"), "missing cache script");
-  assert.ok(workflow.includes("needs: [build, runner-cache]"), "deploy must depend on the cache job");
+  assert.ok(workflow.includes("needs: [build, runner-cache, scripts-bundle]"), "deploy must depend on both cache jobs");
   assert.ok(
     !workflow.includes("needs.runner-cache.outputs.url"),
     "the deploy must not inject an expiring presigned cache URL",
@@ -166,4 +166,29 @@ test("eval-shard executes on the runner labels frozen in the dispatch", () => {
   assert.ok(workflow.includes("runs_on: ${{ steps.plan.outputs.runs_on }}"));
   assert.ok(workflow.includes("fromJson(needs.prepare.outputs.runs_on"));
   assert.ok(workflow.includes("dispatch.runs_on"));
+});
+
+test("deploy builds and injects the content-addressed runner scripts bundle", () => {
+  const workflow = read(".github/workflows/deploy.yml");
+  for (const expected of [
+    "scripts-bundle:",
+    "scripts/cache-runner-scripts.py",
+    "needs: [build, runner-cache, scripts-bundle]",
+    "RUNNER_SCRIPTS_BUNDLE_NAME: ${{ needs.scripts-bundle.outputs.name }}",
+    "RUNNER_SCRIPTS_BUNDLE_SHA256: ${{ needs.scripts-bundle.outputs.sha256 }}",
+    "RUNNER_SCRIPTS_BUNDLE_SIZE: ${{ needs.scripts-bundle.outputs.size }}",
+    "printf 'RUNNER_SCRIPTS_BUNDLE_NAME=%s\\n'",
+    "|RUNNER_SCRIPTS_BUNDLE_NAME|",
+    "runner-contract/schemas/**",
+    "runner/**",
+  ]) {
+    assert.ok(workflow.includes(expected), `scripts bundle deploy missing ${expected}`);
+  }
+  const compose = read("deploy/docker-compose.prod.yml");
+  for (const name of ["NAME", "MD5", "SHA256", "SIZE"]) {
+    const expected = `RUNNER_SCRIPTS_BUNDLE_${name}: \${RUNNER_SCRIPTS_BUNDLE_${name}:-}`;
+    const mappings = compose.split("\n").filter((line) => line.includes(expected)).length;
+    assert.equal(mappings, 2, `compose must pass RUNNER_SCRIPTS_BUNDLE_${name} to api and worker`);
+  }
+  assert.ok(!workflow.includes("presign_put_url"), "the deploy must not inject an expiring presigned URL");
 });

@@ -288,6 +288,19 @@ def _dispatch_row(
     session.commit()
 
     _refresh_dispatch_window(row, run, settings=settings, now=now)
+    # M5-12: pin the current content-addressed scripts bundle on the shard row.
+    # prepare and execute then read the same version even if a deploy changes
+    # the platform default while the workflow is in flight.
+    if settings.runner_scripts_bundle_name:
+        row.payload_json = {
+            **row.payload_json,
+            "scripts_bundle": {
+                "name": settings.runner_scripts_bundle_name,
+                "md5": settings.runner_scripts_bundle_md5,
+                "sha256": settings.runner_scripts_bundle_sha256,
+                "size": settings.runner_scripts_bundle_size,
+            },
+        }
     session.commit()
 
     try:
