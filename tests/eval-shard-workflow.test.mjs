@@ -104,7 +104,13 @@ test("eval-shard workflow carries no secret material or demo tokens", () => {
   }
   // OpenAI-style API keys (but NOT the legitimate "Task-Token" wording).
   assert.doesNotMatch(text, /sk-[A-Za-z0-9]{16}/, "workflow must not contain API keys");
-  assert.ok(!text.includes("secrets."), "workflow must not reference repository secrets");
+  const traceE2e = jobBlock(text, "trace-e2e");
+  const withoutTraceE2e = text.replace(traceE2e, "");
+  assert.ok(
+    !withoutTraceE2e.includes("secrets."),
+    "only the explicit trace-e2e job may reference repository secrets",
+  );
+  assert.ok(traceE2e.includes("secrets.OSS_ENDPOINT"));
   // The dispatch payload stays a reference: only the opaque matrix case id is
   // interpolated into shell, never case data or credentials.
   assert.doesNotMatch(text, /\$\{\{\s*github\.event\.client_payload\.(?!dispatch_key)/, "only dispatch_key may be interpolated");
@@ -138,5 +144,9 @@ test("eval-shard downloads the scripts bundle and gates checkout as a fallback",
     assert.ok(job.includes("EVAL_SCRIPTS_DIR=$GITHUB_WORKSPACE"), `${name} must resolve fallback root`);
   }
   const total = text.match(/uses: actions\/checkout@v4/g) ?? [];
-  assert.equal(total.length, 4, "only prepare/execute may retain two checkout fallback attempts");
+  assert.equal(
+    total.length,
+    5,
+    "prepare/execute keep two checkout fallbacks and trace-e2e keeps its single checkout",
+  );
 });

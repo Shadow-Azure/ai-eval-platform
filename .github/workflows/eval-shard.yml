@@ -40,9 +40,9 @@ on:
         description: "Number of synthetic cases in the bootstrap evaluation"
         default: "2"
       mode:
-        description: "eval = bootstrap an evaluation; runner-smoke = prove a spot runner executes a job"
+        description: "eval = bootstrap an evaluation; runner-smoke = prove a spot runner executes a job; trace-e2e = real Claude trace validation"
         type: choice
-        options: [eval, runner-smoke]
+        options: [eval, runner-smoke, trace-e2e]
         default: eval
       smoke_id:
         description: "Unique id embedded in the run title for the runner smoke"
@@ -78,8 +78,81 @@ jobs:
           docker version
           echo "runner smoke job completed"
 
+  trace-e2e:
+    if: github.event_name == 'workflow_dispatch' && inputs.mode == 'trace-e2e'
+    runs-on: [self-hosted, linux, eval]
+    timeout-minutes: 30
+    env:
+      S3_ENDPOINT: ${{ secrets.OSS_ENDPOINT }}
+      S3_BUCKET: ${{ secrets.OSS_BUCKET }}
+      S3_ACCESS_KEY: ${{ secrets.S3_ACCESS_KEY }}
+      S3_SECRET_KEY: ${{ secrets.S3_SECRET_KEY }}
+      S3_REGION: ${{ secrets.ALIYUN_REGION }}
+      S3_ADDRESSING_STYLE: virtual
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install backend dependencies
+        run: python -m pip install -e ".[dev]"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Install pinned Claude Code 2.1.278
+        run: |
+          set -euo pipefail
+          npm install --prefix "$RUNNER_TEMP/m6-claude-cli" \
+            @anthropic-ai/claude-code@2.1.278 \
+            --registry=https://registry.npmmirror.com
+          echo "$RUNNER_TEMP/m6-claude-cli/node_modules/.bin" >> "$GITHUB_PATH"
+      - name: Start disposable PostgreSQL
+        env:
+          PG_CONTAINER: m6-trace-e2e-pg
+        run: |
+          set -euo pipefail
+          docker rm -f "$PG_CONTAINER" >/dev/null 2>&1 || true
+          docker run -d --rm --name "$PG_CONTAINER" \
+            -e POSTGRES_PASSWORD=m6-e2e-pg \
+            -p 127.0.0.1:55432:5432 \
+            postgres:16-alpine
+          for _ in $(seq 1 60); do
+            docker exec "$PG_CONTAINER" pg_isready -U postgres && exit 0
+            sleep 1
+          done
+          docker logs "$PG_CONTAINER"
+          exit 1
+      - name: Run real Claude trace E2E against OSS
+        env:
+          TRACE_E2E_DATABASE_URL: postgresql+psycopg://postgres:m6-e2e-pg@127.0.0.1:55432/postgres
+          TMPDIR: ${{ runner.temp }}/m6-e2e-work
+          RUNNER_NAME: ${{ runner.name }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$TMPDIR" reports/2026-11-12/m6-06-trace-e2e-validation
+          python tests/integration/m6_06_trace_e2e.py \
+            --object-store oss \
+            --keep-workdir \
+            --out reports/2026-11-12/m6-06-trace-e2e-validation/evidence.json
+          node runner/lib/trace-e2e.mjs \
+            reports/2026-11-12/m6-06-trace-e2e-validation/evidence.json
+      - name: Upload trace E2E evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m6-trace-e2e-${{ github.run_id }}
+          path: |
+            reports/2026-11-12/m6-06-trace-e2e-validation/**
+            ${{ runner.temp }}/m6-e2e-work/**/*.log
+          if-no-files-found: warn
+      - name: Stop disposable PostgreSQL
+        if: always()
+        env:
+          PG_CONTAINER: m6-trace-e2e-pg
+        run: docker rm -f "$PG_CONTAINER" >/dev/null 2>&1 || true
+
   bootstrap:
-    if: github.event_name == 'workflow_dispatch' && inputs.mode != 'runner-smoke'
+    if: github.event_name == 'workflow_dispatch' && inputs.mode == 'eval'
     runs-on: [self-hosted, linux, eval]
     timeout-minutes: 5
     steps:
