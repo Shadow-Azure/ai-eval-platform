@@ -7,7 +7,7 @@ actions, including their guard rails.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from app.config import get_settings
@@ -476,6 +476,58 @@ def test_detail_exposes_case_and_trace_counts(seeded: Session, client: TestClien
     assert body["trace_counts"] == {"pending": 2, "ready": 1}
     assert body["retryable_count"] == 2
     assert body["cases"][0]["trace_status"] == "ready"
+
+
+def test_detail_progress_snapshot_is_aggregated_server_side(seeded: Session) -> None:
+    """Percent, resolve rate and ETA come from one server snapshot (M5-17)."""
+
+    run = _create_run(
+        seeded,
+        case_keys=("case-a", "case-b", "case-c", "case-d"),
+        idempotency_key="progress-run",
+    )
+    cases = _cases(seeded, run)
+    now = datetime(2026, 11, 11, 12, 0, tzinfo=UTC)
+    run.status = "running"
+    run.started_at = now - timedelta(seconds=600)
+    run.queued_count = 0
+    run.running_count = 1
+    run.succeeded_count = 2
+    run.failed_count = 1
+    statuses = [
+        ("succeeded", "resolved"),
+        ("succeeded", "resolved"),
+        ("failed", "not_scored"),
+        ("running", "not_scored"),
+    ]
+    for case, (execution, result) in zip(cases, statuses, strict=True):
+        case.execution_status = execution
+        case.result_status = result
+    seeded.commit()
+
+    progress = evaluations.evaluation_detail(seeded, run, now=now)["progress"]
+    assert progress == {
+        "total": 4,
+        "finished": 3,
+        "percent": 75,
+        "resolve_rate": 66.7,
+        "estimated_remaining_seconds": 200,
+        "estimated_finish_at": "2026-11-11T12:03:20.000000+00:00",
+    }
+
+    # A terminal run returns a final snapshot without a moving ETA.
+    for case in cases:
+        case.execution_status = "succeeded"
+        case.result_status = "resolved"
+    run.status = "completed"
+    run.queued_count = 0
+    run.running_count = 0
+    seeded.commit()
+    final = evaluations.evaluation_detail(seeded, run, now=now)["progress"]
+    assert final["percent"] == 100
+    assert final["resolve_rate"] == 100.0
+    assert final["estimated_remaining_seconds"] is None
+    assert final["estimated_finish_at"] is None
 
 
 def test_retry_conflict_maps_to_409(seeded: Session, client: TestClient) -> None:
