@@ -820,7 +820,17 @@ def evaluation_summary(
     }
 
 
-def evaluation_detail(session: Session, run: EvalRun) -> dict:
+def evaluation_detail(
+    session: Session, run: EvalRun, *, now: datetime | None = None
+) -> dict:
+    """Run detail plus one server-side progress snapshot (M5-17).
+
+    Percent, resolve rate and the remaining-time estimate are aggregated here
+    so every client shows the same numbers instead of stitching them together
+    from different polling windows.
+    """
+
+    now = _now(now)
     cases = list(
         session.scalars(
             select(EvalCaseRun)
@@ -877,6 +887,38 @@ def evaluation_detail(session: Session, run: EvalRun) -> dict:
             and case.latest_attempt_no < run.max_attempts
         ):
             retryable_count += 1
+
+    total = int(run.total_cases or len(cases))
+    finished = max(0, total - case_counts["queued"] - case_counts["running"])
+    # Never round up to "100%" while a case is still queued/running.
+    percent = (
+        100
+        if total and finished >= total
+        else (min(99, round(finished / total * 100)) if total else 0)
+    )
+    resolve_denominator = (
+        case_counts["resolved"] + case_counts["unresolved"] + case_counts["failed"]
+    )
+    resolve_rate = (
+        round(case_counts["resolved"] / resolve_denominator * 100, 1)
+        if resolve_denominator
+        else None
+    )
+    estimated_remaining_seconds = None
+    estimated_finish_at = None
+    started_at = run.started_at
+    if started_at is not None and started_at.tzinfo is None:
+        started_at = started_at.replace(tzinfo=UTC)
+    # Only an actively running evaluation gets a moving ETA. Paused budget,
+    # cancelling and terminal runs keep the last progress snapshot but must not
+    # promise a completion time that the scheduler is not advancing toward.
+    if run.status == "running" and started_at is not None and 0 < finished < total:
+        elapsed = max(0.0, (now - started_at).total_seconds())
+        estimated_remaining_seconds = max(
+            0, round(elapsed / finished * (total - finished))
+        )
+        estimated_finish_at = now + timedelta(seconds=estimated_remaining_seconds)
+
     return {
         **evaluation_summary(run, spent_cny=live_spent),
         "asset_snapshot": run.asset_snapshot_json or {},
@@ -886,6 +928,14 @@ def evaluation_detail(session: Session, run: EvalRun) -> dict:
         "case_counts": case_counts,
         "trace_counts": trace_counts,
         "retryable_count": retryable_count,
+        "progress": {
+            "total": total,
+            "finished": finished,
+            "percent": percent,
+            "resolve_rate": resolve_rate,
+            "estimated_remaining_seconds": estimated_remaining_seconds,
+            "estimated_finish_at": iso_utc(estimated_finish_at),
+        },
         "cases": [
             {
                 "id": case.id,
