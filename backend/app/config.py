@@ -118,6 +118,10 @@ class Settings(BaseSettings):
     # cheap even when a large queue arrives at once).
     eval_capacity_check_seconds: int = 300
     eval_capacity_batch_size: int = 5
+    # M5-19 resource-pool console: "today's resource cost" aggregates over a
+    # local calendar day. Operators are in China (UTC+8), so the default window
+    # is Asia/Shanghai while every stored timestamp stays UTC.
+    resource_cost_utc_offset_hours: int = 8
     # M4-04 Aliyun ECS spot provisioner. Aliyun quotes CNY/hour and the pool
     # threshold is stored in the same unit (M5-10), so scheduling compares them
     # directly. Credentials come from the encrypted resource connection, never
