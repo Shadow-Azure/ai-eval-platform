@@ -1,0 +1,199 @@
+{
+  "title": "M5-16 评测列表统计筛选与部分成功 · 集成冒烟报告",
+  "eyebrow": "Local stack · FastAPI / SQLite / Vite / Chrome",
+  "summary": "在本地开发栈上验证 M5-16：评测列表新增 4 张服务端统计卡、搜索与状态/数据集筛选，补齐 Agent/模型、数据集版本、解决率、开始时间与耗时列，并按状态枚举渲染「部分成功」。7 条演示评测覆盖运行中、排队、完成、部分成功、失败与取消；13 项页面断言全部通过，状态筛选后统计卡同步重算，搜索与数据集筛选可叠加，空态与筛选无结果态均有截图。",
+  "meta": "2026-11-11 · AI Eval Platform · M5-16 (#144) · 对比基线 52be752",
+  "metrics": [
+    { "label": "后端测试", "value": "584 passed / 1 skipped" },
+    { "label": "前端构建", "value": "typecheck + vite build 通过" },
+    { "label": "冒烟断言", "value": "13 通过 · 0 失败" },
+    { "label": "缺陷", "value": "0" }
+  ],
+  "facts": [
+    { "label": "应用", "value": "AI Eval Platform · M5-16 评测列表" },
+    { "label": "提交", "value": "7c9d990" },
+    { "label": "栈", "value": "FastAPI + SQLite + Vite dev server + Chrome" },
+    { "label": "数据", "value": "7 条评测：running / queued / completed×2 / partial / failed / cancelled" },
+    { "label": "对比基线", "value": "52be752（origin/main，改造前页面）" },
+    { "label": "设计依据", "value": "plans/m1-02-fullstack-design/06 §2；.agents/notes/adr-0002-eval-run-status-enum.md" },
+    { "label": "外部资源", "value": "未接入模型、云 Runner 或对象存储；本页只读聚合" }
+  ],
+  "matrix": {
+    "columns": ["#", "场景", "结果", "说明", "证据"],
+    "rows": [
+      {
+        "id": "01",
+        "name": "初始空态",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "无评测时显示 4 张统计卡的零值与带「发起评测」入口的空态；改造前只有 antd 默认「暂无数据」。",
+        "evidence": ["01-empty-state.png", "00-before-empty.png"]
+      },
+      {
+        "id": "02",
+        "name": "列表与统计卡",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "7 条评测显示为全部任务 7、运行中 2（12 个用例执行中）、平均解决率 38.2%（570/1493）、平均耗时 1h 30m。",
+        "evidence": ["02-populated.png", "00-before-populated.png"]
+      },
+      {
+        "id": "03",
+        "name": "部分成功状态",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "同时含成功与失败用例的评测显示「部分成功」，解决率 29.8%，不折叠为失败或已完成。",
+        "evidence": ["02-populated.png"]
+      },
+      {
+        "id": "04",
+        "name": "状态筛选联动统计",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "筛选「部分成功」后仅 1 行；统计卡重算为全部任务 1、运行中 0、平均解决率 29.8%。",
+        "evidence": ["03-filter-partial.png"]
+      },
+      {
+        "id": "05",
+        "name": "数据集筛选",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "筛选 SWE-bench Verified 后 4 行，统计卡与解决率同步按筛选范围重算。",
+        "evidence": ["05-filter-dataset.png"]
+      },
+      {
+        "id": "06",
+        "name": "搜索叠加筛选",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "在数据集筛选上叠加关键字 GLM，命中 2 行；搜索覆盖名称、Agent 与模型，查询在服务端完成。",
+        "evidence": ["05-filter-dataset.png"]
+      },
+      {
+        "id": "07",
+        "name": "筛选无结果态",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "搜索 zzz-no-match 时展示「没有符合条件的评测」与「清除筛选」，区别于真正的空态。",
+        "evidence": ["04-filtered-empty.png"]
+      },
+      {
+        "id": "08",
+        "name": "原型 UI 对齐",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "同视口对比原型：4 卡布局、筛选栏（状态：全部/数据集：全部）、列顺序与「部分成功/已完成」标签一致；保留线上行内取消。",
+        "evidence": ["proto-evals.png", "02-populated.png"]
+      },
+      {
+        "id": "09",
+        "name": "服务端过滤与聚合",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "pytest 覆盖 q/status/dataset_id/offset、非法状态 422、解决率与平均耗时聚合、部分成功与数据集/Agent 列。",
+        "evidence": []
+      },
+      {
+        "id": "10",
+        "name": "真实 Runner / 模型执行",
+        "status": { "kind": "manual", "label": "NOT IN SCOPE" },
+        "detail": "列表页只读控制面聚合，本 issue 不创建模型调用或云资源；真实执行链路由 #145 及后续详情页验收。",
+        "evidence": []
+      }
+    ]
+  },
+  "issues": [
+    {
+      "severity": "P3",
+      "title": "issue #144 中引用的审计基线截图已 404",
+      "facts": [
+        { "label": "Actual", "value": "raw.githubusercontent.com/.../ui-vs-prototype-audit/reports/.../live_evals.png 返回 404。" },
+        { "label": "Expected", "value": "改造前列表截图可用于 Before/After 对照。" },
+        { "label": "Workaround", "value": "从 origin/main 52be752 新建临时 worktree，用同一份 SQLite 数据重新截取真实基线。" }
+      ],
+      "state": { "kind": "info", "label": "Recorded · baseline regenerated" }
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "shots/proto-evals.png",
+      "alt": "prototype 评测列表页面",
+      "label": "原型 · 评测列表",
+      "caption": "prototype/index.html#/evals：4 张统计卡、筛选栏与评测列表列。",
+      "variant": "wide"
+    },
+    {
+      "src": "shots/00-before-populated.png",
+      "alt": "改造前评测列表",
+      "label": "Before · 52be752",
+      "caption": "改造前只有状态/进展/创建/操作四列，没有统计卡与筛选。",
+      "variant": "wide"
+    },
+    {
+      "src": "shots/02-populated.png",
+      "alt": "改造后评测列表",
+      "label": "After · 列表与统计卡",
+      "caption": "服务端统计卡、筛选栏与完整列；部分成功按枚举渲染。",
+      "variant": "wide"
+    },
+    {
+      "src": "shots/03-filter-partial.png",
+      "alt": "部分成功状态筛选",
+      "label": "After · 状态筛选",
+      "caption": "筛选部分成功后统计卡与列表同步重算。",
+      "variant": "wide"
+    },
+    {
+      "src": "shots/05-filter-dataset.png",
+      "alt": "数据集筛选",
+      "label": "After · 数据集筛选",
+      "caption": "数据集筛选后 4 行，平均解决率与耗时按筛选范围重算。",
+      "variant": "wide"
+    },
+    {
+      "src": "shots/01-empty-state.png",
+      "alt": "无评测空态",
+      "label": "After · 空态",
+      "caption": "空库下显示零值统计卡与发起评测入口。",
+      "variant": "wide"
+    },
+    {
+      "src": "shots/04-filtered-empty.png",
+      "alt": "筛选无结果态",
+      "label": "After · 无结果态",
+      "caption": "搜索无命中时提供清除筛选入口，与真正空态区分。",
+      "variant": "wide"
+    }
+  ],
+  "coverage": {
+    "columns": ["领域", "覆盖", "结论", "建议"],
+    "rows": [
+      {
+        "area": "列表过滤与聚合 API",
+        "coverage": "pytest（SQLite）",
+        "conclusion": "q/status/dataset_id/offset、非法枚举 422、解决率/耗时聚合与部分成功均有断言。",
+        "recommendation": "CI 在 PostgreSQL 上跑同一套测试。"
+      },
+      {
+        "area": "列表/筛选/统计卡 UI",
+        "coverage": "Chrome + Playwright 冒烟",
+        "conclusion": "13 项断言覆盖统计卡数值、状态筛选、数据集筛选、搜索叠加与空态。",
+        "recommendation": "后续 m5-20 边界状态可复用脚本。"
+      },
+      {
+        "area": "原型一致性",
+        "coverage": "同视口截图对比",
+        "conclusion": "布局与列顺序一致；保留线上行内取消与「合成评测」入口。",
+        "recommendation": "详情路由由 #145 对齐原型。"
+      },
+      {
+        "area": "真实执行/模型链路",
+        "coverage": "未覆盖",
+        "conclusion": "列表页只读，不触发 Runner；真实执行不在本 issue 范围。",
+        "recommendation": "在 #145 详情页与执行链路验收时联调。"
+      }
+    ]
+  },
+  "conclusion": {
+    "kind": "pass",
+    "label": "Ready for review",
+    "summary": "统计卡、搜索/状态/数据集筛选、完整列与部分成功状态均按原型和 ADR 落地，自动化断言与构建全绿。",
+    "points": [
+      "PR 描述包含原型、改造前、改造后的同视口截图对照。",
+      "真实 Runner/模型调用不在本页范围，由执行链路验收覆盖。",
+      "空态与筛选无结果态均已截图留证。"
+    ]
+  },
+  "footer": "本报告由 computer-use-smoke-reporting 生成；截图与数据仅来自本地演示环境。"
+}

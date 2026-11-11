@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>M5-16 评测列表统计筛选与部分成功 · 集成冒烟报告</title>
+  <style>
+    :root{
+      color-scheme:light;
+      --bg:#f4f7fb;--card:#fff;--ink:#16202f;--ink2:#55637a;--ink3:#7b869b;
+      --line:#dde4ee;--accent:#2563eb;--accent-wash:#e8efff;--good:#157347;
+      --good-wash:#e7f6ee;--warn:#b45309;--warn-wash:#fff2dd;--bad:#c9282e;
+      --bad-wash:#ffeded;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:radial-gradient(circle at 8% 0,#dbe9ff 0,transparent 32rem),radial-gradient(circle at 92% 4%,#e7f1ff 0,transparent 28rem),var(--bg);color:var(--ink);font:14px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Noto Sans CJK SC",sans-serif}
+    main{max-width:1220px;margin:auto;padding:36px 28px 72px}
+    .hero{padding:30px 34px;border:1px solid #dbe3ee;border-radius:24px;background:rgba(255,255,255,.92);box-shadow:0 18px 44px #17202f12}
+    .eyebrow{margin:0;color:var(--accent);font-size:12px;font-weight:800;letter-spacing:.16em;text-transform:uppercase}
+    h1{margin:10px 0 8px;font-size:clamp(28px,4vw,44px);letter-spacing:-.04em}
+    .summary{margin:0;max-width:850px;color:var(--ink2);font-size:15px}
+    .meta{display:block;margin-top:8px;color:var(--ink3);font-size:12px}
+    .metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-top:26px}
+    .metric{padding:16px 18px;border:1px solid var(--line);border-radius:16px;background:#fafbfd}
+    .metric b{display:block;font-size:30px;letter-spacing:-.04em}
+    .metric span{display:block;margin-top:2px;color:var(--ink3);font-size:12px}
+    section{margin-top:28px}
+    .head{display:flex;align-items:baseline;justify-content:space-between;gap:16px;margin:0 4px 14px}
+    h2{margin:0;font-size:21px;letter-spacing:-.03em}
+    .head small{color:var(--ink3);white-space:nowrap}
+    .card{padding:22px;border:1px solid var(--line);border-radius:20px;background:var(--card);box-shadow:0 5px 22px #17202f08}
+    .facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin:0}
+    .fact{padding:13px 16px;border:1px solid #eceff5;border-radius:12px;background:#fafbfd}
+    .fact dt{color:var(--ink3);font-size:11px;font-weight:700}
+    .fact dd{margin:3px 0 0;overflow-wrap:anywhere}
+    code{font-family:var(--mono);font-size:.9em;color:#29456d;overflow-wrap:anywhere}
+    .status{display:inline-flex;padding:3px 8px;border-radius:999px;font-size:11px;font-weight:800;white-space:nowrap;background:#eef1f6;color:var(--ink2)}
+    .status.pass,.status.fixed{background:var(--good-wash);color:var(--good)}
+    .status.warn,.status.manual{background:var(--warn-wash);color:var(--warn)}
+    .status.fail{background:var(--bad-wash);color:var(--bad)}
+    .tableWrap{overflow:auto;border:1px solid var(--line);border-radius:18px;background:var(--card);box-shadow:0 5px 22px #17202f08}
+    table{width:100%;min-width:920px;border-collapse:collapse}
+    th,td{padding:12px 15px;border-bottom:1px solid #edf0f5;text-align:left;vertical-align:top}
+    th{position:sticky;top:0;background:#fafbfe;color:var(--ink2);font-size:12px}
+    tr:last-child td{border-bottom:0}
+    tr:hover{background:#fcfdff}
+    .num{color:var(--ink3);font-family:var(--mono);font-size:12px}
+    .evidence{color:var(--ink3);font-size:12px}
+    .issues{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px}
+    .issueCard{padding:18px 21px;border:1px solid #ffcece;border-left:5px solid var(--bad);border-radius:16px;background:#fffbfb}
+    .issueCard h3{margin:0;color:#b91c1c;font-size:16px}
+    .issueCard p{margin:8px 0;color:var(--ink2)}
+    .issueCard dt{color:var(--ink3);font-size:11px;font-weight:700}
+    .issueCard dd{margin:2px 0 0;color:var(--ink2)}
+    .tag{float:right;padding:3px 8px;border-radius:999px;background:#fee4e4;color:#9a1b21;font-size:11px;font-weight:800}
+    .fixed{display:inline-flex;gap:5px;align-items:center;margin-top:11px;padding:6px 10px;border-radius:999px;background:var(--good-wash);color:var(--good);font-size:12px;font-weight:800}
+    .shots{display:grid;grid-template-columns:repeat(auto-fit,minmax(430px,1fr));gap:16px}
+    figure{margin:0;overflow:hidden;border:1px solid var(--line);border-radius:18px;background:#fff;box-shadow:0 6px 22px #17202f08}
+    figure.wide{grid-column:1/-1}
+    img{display:block;width:100%;max-height:500px;object-fit:contain;background:#eef2f7}
+    figcaption{display:flex;gap:9px;align-items:flex-start;padding:11px 14px;border-top:1px solid #edf0f5;background:#fafbfd;color:var(--ink2);font-size:12.5px}
+    figcaption b{flex:none;color:var(--ink)}
+    .issue-shot{border-color:#ffcece}
+    .conclusion{border:1px solid #c8e5d2;border-radius:20px;background:linear-gradient(135deg,#f2fbf6,white 54%)}
+    .conclusion.warn{border-color:#f1d9a4;background:linear-gradient(135deg,#fff8e8,white 54%)}
+    .conclusion.fail{border-color:#ffc9c9;background:linear-gradient(135deg,#fff5f5,white 54%)}
+    .conclusion ul{margin:12px 0 0;padding-left:20px;color:#344155}
+    .conclusion li+li{margin-top:7px}
+    .empty{padding:20px;text-align:center;color:var(--ink3);background:#fafbfd;border:1px dashed var(--line);border-radius:12px}
+    .foot{margin-top:24px;color:var(--ink3);font-size:12px;text-align:center}
+    @media(max-width:860px){main{padding:22px 14px 52px}.hero{padding:23px}.shots{grid-template-columns:1fr}.head{align-items:flex-start;flex-direction:column;gap:4px}}
+    @media print{body{background:white}main{max-width:none;padding:0}.card,.issueCard,figure,.tableWrap{box-shadow:none;break-inside:avoid}img{max-height:420px}}
+  </style>
+</head>
+<body>
+<main>
+  <header class="hero">
+    <p class="eyebrow">Local stack · FastAPI / SQLite / Vite / Chrome</p>
+    <h1>M5-16 评测列表统计筛选与部分成功 · 集成冒烟报告</h1>
+    <p class="summary">在本地开发栈上验证 M5-16：评测列表新增 4 张服务端统计卡、搜索与状态/数据集筛选，补齐 Agent/模型、数据集版本、解决率、开始时间与耗时列，并按状态枚举渲染「部分成功」。7 条演示评测覆盖运行中、排队、完成、部分成功、失败与取消；13 项页面断言全部通过，状态筛选后统计卡同步重算，搜索与数据集筛选可叠加，空态与筛选无结果态均有截图。</p>
+    <span class="meta">2026-11-11 · AI Eval Platform · M5-16 (#144) · 对比基线 52be752</span>
+    <div class="metrics"><div class="metric"><b>584 passed / 1 skipped</b><span>后端测试</span></div><div class="metric"><b>typecheck + vite build 通过</b><span>前端构建</span></div><div class="metric"><b>13 通过 · 0 失败</b><span>冒烟断言</span></div><div class="metric"><b>0</b><span>缺陷</span></div></div>
+  </header>
+
+  <section>
+    <div class="head"><h2>Environment and Artifact</h2><small>2026-11-11 · AI Eval Platform · M5-16 (#144) · 对比基线 52be752</small></div>
+    <article class="card"><dl class="facts"><div class="fact"><dt>应用</dt><dd>AI Eval Platform · M5-16 评测列表</dd></div><div class="fact"><dt>提交</dt><dd>7c9d990</dd></div><div class="fact"><dt>栈</dt><dd>FastAPI + SQLite + Vite dev server + Chrome</dd></div><div class="fact"><dt>数据</dt><dd>7 条评测：running / queued / completed×2 / partial / failed / cancelled</dd></div><div class="fact"><dt>对比基线</dt><dd>52be752（origin/main，改造前页面）</dd></div><div class="fact"><dt>设计依据</dt><dd>plans/m1-02-fullstack-design/06 §2；.agents/notes/adr-0002-eval-run-status-enum.md</dd></div><div class="fact"><dt>外部资源</dt><dd>未接入模型、云 Runner 或对象存储；本页只读聚合</dd></div></dl></article>
+  </section>
+
+  <section>
+    <div class="head"><h2>Scenario Matrix</h2><small>9 pass · 1 manual</small></div>
+    <div class="tableWrap"><table><table><thead><tr><th>#</th><th>场景</th><th>结果</th><th>说明</th><th>证据</th></tr></thead><tbody><tr><td class="num">01</td><td>初始空态</td><td><span class="status pass">PASS</span></td><td>无评测时显示 4 张统计卡的零值与带「发起评测」入口的空态；改造前只有 antd 默认「暂无数据」。</td><td class="evidence">01-empty-state.png<br>00-before-empty.png</td></tr><tr><td class="num">02</td><td>列表与统计卡</td><td><span class="status pass">PASS</span></td><td>7 条评测显示为全部任务 7、运行中 2（12 个用例执行中）、平均解决率 38.2%（570/1493）、平均耗时 1h 30m。</td><td class="evidence">02-populated.png<br>00-before-populated.png</td></tr><tr><td class="num">03</td><td>部分成功状态</td><td><span class="status pass">PASS</span></td><td>同时含成功与失败用例的评测显示「部分成功」，解决率 29.8%，不折叠为失败或已完成。</td><td class="evidence">02-populated.png</td></tr><tr><td class="num">04</td><td>状态筛选联动统计</td><td><span class="status pass">PASS</span></td><td>筛选「部分成功」后仅 1 行；统计卡重算为全部任务 1、运行中 0、平均解决率 29.8%。</td><td class="evidence">03-filter-partial.png</td></tr><tr><td class="num">05</td><td>数据集筛选</td><td><span class="status pass">PASS</span></td><td>筛选 SWE-bench Verified 后 4 行，统计卡与解决率同步按筛选范围重算。</td><td class="evidence">05-filter-dataset.png</td></tr><tr><td class="num">06</td><td>搜索叠加筛选</td><td><span class="status pass">PASS</span></td><td>在数据集筛选上叠加关键字 GLM，命中 2 行；搜索覆盖名称、Agent 与模型，查询在服务端完成。</td><td class="evidence">05-filter-dataset.png</td></tr><tr><td class="num">07</td><td>筛选无结果态</td><td><span class="status pass">PASS</span></td><td>搜索 zzz-no-match 时展示「没有符合条件的评测」与「清除筛选」，区别于真正的空态。</td><td class="evidence">04-filtered-empty.png</td></tr><tr><td class="num">08</td><td>原型 UI 对齐</td><td><span class="status pass">PASS</span></td><td>同视口对比原型：4 卡布局、筛选栏（状态：全部/数据集：全部）、列顺序与「部分成功/已完成」标签一致；保留线上行内取消。</td><td class="evidence">proto-evals.png<br>02-populated.png</td></tr><tr><td class="num">09</td><td>服务端过滤与聚合</td><td><span class="status pass">PASS</span></td><td>pytest 覆盖 q/status/dataset_id/offset、非法状态 422、解决率与平均耗时聚合、部分成功与数据集/Agent 列。</td><td class="evidence">—</td></tr><tr><td class="num">10</td><td>真实 Runner / 模型执行</td><td><span class="status manual">NOT IN SCOPE</span></td><td>列表页只读控制面聚合，本 issue 不创建模型调用或云资源；真实执行链路由 #145 及后续详情页验收。</td><td class="evidence">—</td></tr></tbody></table></table></div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Issues and Observations</h2><small>P3 issue #144 中引用的审计基线截图已 404</small></div>
+    <div class="issues"><article class="issueCard"><span class="tag">P3</span><h3>issue #144 中引用的审计基线截图已 404</h3><dl><div><dt>Actual</dt><dd>raw.githubusercontent.com/.../ui-vs-prototype-audit/reports/.../live_evals.png 返回 404。</dd></div><div><dt>Expected</dt><dd>改造前列表截图可用于 Before/After 对照。</dd></div><div><dt>Workaround</dt><dd>从 origin/main 52be752 新建临时 worktree，用同一份 SQLite 数据重新截取真实基线。</dd></div></dl><div class="fixed">Recorded · baseline regenerated</div></article></div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Evidence</h2><small>7 screenshots</small></div>
+    <div class="shots"><figure class="wide"><img loading="lazy" src="shots/proto-evals.png" alt="prototype 评测列表页面"><figcaption><b>原型 · 评测列表</b><span>prototype/index.html#/evals：4 张统计卡、筛选栏与评测列表列。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="shots/00-before-populated.png" alt="改造前评测列表"><figcaption><b>Before · 52be752</b><span>改造前只有状态/进展/创建/操作四列，没有统计卡与筛选。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="shots/02-populated.png" alt="改造后评测列表"><figcaption><b>After · 列表与统计卡</b><span>服务端统计卡、筛选栏与完整列；部分成功按枚举渲染。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="shots/03-filter-partial.png" alt="部分成功状态筛选"><figcaption><b>After · 状态筛选</b><span>筛选部分成功后统计卡与列表同步重算。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="shots/05-filter-dataset.png" alt="数据集筛选"><figcaption><b>After · 数据集筛选</b><span>数据集筛选后 4 行，平均解决率与耗时按筛选范围重算。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="shots/01-empty-state.png" alt="无评测空态"><figcaption><b>After · 空态</b><span>空库下显示零值统计卡与发起评测入口。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="shots/04-filtered-empty.png" alt="筛选无结果态"><figcaption><b>After · 无结果态</b><span>搜索无命中时提供清除筛选入口，与真正空态区分。</span></figcaption></figure></div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Automated Coverage Assessment</h2><small>4 areas reviewed</small></div>
+    <div class="tableWrap"><table><table><thead><tr><th>领域</th><th>覆盖</th><th>结论</th><th>建议</th></tr></thead><tbody><tr><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td></tr></tbody></table></table></div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Conclusion</h2><small>Ready for review</small></div>
+    <article class="card conclusion pass"><p><strong>统计卡、搜索/状态/数据集筛选、完整列与部分成功状态均按原型和 ADR 落地，自动化断言与构建全绿。</strong></p><ul><li>PR 描述包含原型、改造前、改造后的同视口截图对照。</li><li>真实 Runner/模型调用不在本页范围，由执行链路验收覆盖。</li><li>空态与筛选无结果态均已截图留证。</li></ul></article>
+  </section>
+
+  <p class="foot">本报告由 computer-use-smoke-reporting 生成；截图与数据仅来自本地演示环境。</p>
+</main>
+</body>
+</html>
