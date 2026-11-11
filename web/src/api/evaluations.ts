@@ -321,6 +321,100 @@ export interface MetricResult {
   generated_at: string | null;
 }
 
+export interface MetricDelta {
+  metric_key: string;
+  metric_version: number | null;
+  baseline_metric_version: number | null;
+  display_name: string;
+  description: string | null;
+  formula_text: string | null;
+  display_kind: string;
+  unit: string | null;
+  direction: string;
+  denominator_policy: string | null;
+  current_value: unknown;
+  baseline_value: unknown;
+  current_numerator: string | null;
+  current_denominator: string | null;
+  baseline_numerator: string | null;
+  baseline_denominator: string | null;
+  delta: number | Record<string, number> | null;
+  delta_ratio: number | Record<string, number> | null;
+  improvement: boolean | Record<string, boolean | null> | null;
+  comparable: boolean;
+  incomparable_reason: string | null;
+  current_is_final: boolean;
+  baseline_is_final: boolean;
+}
+
+export interface ConfigurationDifference {
+  key: string;
+  label: string;
+  category: string;
+  current: string;
+  baseline: string;
+  changed: boolean;
+  incomparable: boolean;
+  note: string | null;
+}
+
+export interface BaselineCandidate {
+  id: string;
+  name: string;
+  status: string;
+  created_at: string | null;
+  finished_at: string | null;
+  dataset_version_id: string | null;
+  dataset_label: string;
+  runtime_key: string | null;
+  runtime_version: string | null;
+  model_name: string;
+  asset_resolved_commit: string | null;
+  case_count: number;
+  comparable: boolean;
+  reasons: string[];
+}
+
+export interface BaselineSummary {
+  id: string;
+  name: string;
+  status: string;
+  created_at: string | null;
+  finished_at: string | null;
+  dataset_version_id: string | null;
+  dataset_label: string;
+  runtime_key: string | null;
+  runtime_version: string | null;
+  model_name: string;
+  asset_resolved_commit: string | null;
+  resource_pool_id: string | null;
+  case_count: number;
+  case_digest: string;
+}
+
+export interface BaselineComparison {
+  run_id: string;
+  run_name: string;
+  status: string;
+  is_final: boolean;
+  manual: boolean;
+  baseline_run_id: string | null;
+  recommendation: { tier: string; reason: string } | null;
+  baseline: BaselineSummary | null;
+  candidates: BaselineCandidate[];
+  comparable: boolean;
+  incomparable_reasons: string[];
+  case_set: {
+    comparable: boolean;
+    current_count: number;
+    baseline_count: number;
+  };
+  metric_deltas: MetricDelta[];
+  configuration_differences: ConfigurationDifference[];
+  empty_state: { code: string; message: string } | null;
+  generated_at: string | null;
+}
+
 export interface CaseTestResult {
   id: string;
   suite_name: string;
@@ -870,6 +964,182 @@ export async function fetchEvaluationResults(
       };
     }),
   };
+}
+
+function parseNumberRecord(value: unknown): Record<string, number> | null {
+  if (!isRecord(value)) return null;
+  const entries = Object.entries(value).filter(
+    (entry): entry is [string, number] =>
+      typeof entry[1] === "number" && Number.isFinite(entry[1]),
+  );
+  return entries.length > 0 ? Object.fromEntries(entries) : null;
+}
+
+function parseDeltaValue(value: unknown): number | Record<string, number> | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  return parseNumberRecord(value);
+}
+
+function parseImprovement(
+  value: unknown,
+): boolean | Record<string, boolean | null> | null {
+  if (typeof value === "boolean") return value;
+  if (isRecord(value)) {
+    const entries = Object.entries(value).map(
+      ([key, item]) => [key, typeof item === "boolean" ? item : null] as const,
+    );
+    return entries.length > 0 ? (Object.fromEntries(entries) as Record<string, boolean | null>) : null;
+  }
+  return null;
+}
+
+function parseStringList(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+}
+
+function parseBaselineCandidate(value: unknown): BaselineCandidate {
+  const item = (value ?? {}) as Record<string, unknown>;
+  return {
+    id: readString(item.id),
+    name: readString(item.name),
+    status: readString(item.status),
+    created_at: readOptionalString(item.created_at),
+    finished_at: readOptionalString(item.finished_at),
+    dataset_version_id: readOptionalString(item.dataset_version_id),
+    dataset_label: readString(item.dataset_label),
+    runtime_key: readOptionalString(item.runtime_key),
+    runtime_version: readOptionalString(item.runtime_version),
+    model_name: readString(item.model_name),
+    asset_resolved_commit: readOptionalString(item.asset_resolved_commit),
+    case_count: readCountOrZero(item.case_count),
+    comparable: Boolean(item.comparable),
+    reasons: parseStringList(item.reasons),
+  };
+}
+
+function parseBaselineSummary(value: unknown): BaselineSummary | null {
+  if (!isRecord(value)) return null;
+  return {
+    id: readString(value.id),
+    name: readString(value.name),
+    status: readString(value.status),
+    created_at: readOptionalString(value.created_at),
+    finished_at: readOptionalString(value.finished_at),
+    dataset_version_id: readOptionalString(value.dataset_version_id),
+    dataset_label: readString(value.dataset_label),
+    runtime_key: readOptionalString(value.runtime_key),
+    runtime_version: readOptionalString(value.runtime_version),
+    model_name: readString(value.model_name),
+    asset_resolved_commit: readOptionalString(value.asset_resolved_commit),
+    resource_pool_id: readOptionalString(value.resource_pool_id),
+    case_count: readCountOrZero(value.case_count),
+    case_digest: readString(value.case_digest),
+  };
+}
+
+function parseMetricDelta(value: unknown): MetricDelta {
+  const item = (value ?? {}) as Record<string, unknown>;
+  return {
+    metric_key: readString(item.metric_key),
+    metric_version: readFiniteNumber(item.metric_version),
+    baseline_metric_version: readFiniteNumber(item.baseline_metric_version),
+    display_name: readString(item.display_name),
+    description: readOptionalString(item.description),
+    formula_text: readOptionalString(item.formula_text),
+    display_kind: readString(item.display_kind),
+    unit: readOptionalString(item.unit),
+    direction: readString(item.direction),
+    denominator_policy: readOptionalString(item.denominator_policy),
+    current_value: item.current_value,
+    baseline_value: item.baseline_value,
+    current_numerator: readOptionalString(item.current_numerator),
+    current_denominator: readOptionalString(item.current_denominator),
+    baseline_numerator: readOptionalString(item.baseline_numerator),
+    baseline_denominator: readOptionalString(item.baseline_denominator),
+    delta: parseDeltaValue(item.delta),
+    delta_ratio: parseDeltaValue(item.delta_ratio),
+    improvement: parseImprovement(item.improvement),
+    comparable: Boolean(item.comparable),
+    incomparable_reason: readOptionalString(item.incomparable_reason),
+    current_is_final: Boolean(item.current_is_final),
+    baseline_is_final: Boolean(item.baseline_is_final),
+  };
+}
+
+function parseConfigurationDifference(value: unknown): ConfigurationDifference {
+  const item = (value ?? {}) as Record<string, unknown>;
+  return {
+    key: readString(item.key),
+    label: readString(item.label),
+    category: readString(item.category),
+    current: readString(item.current),
+    baseline: readString(item.baseline),
+    changed: Boolean(item.changed),
+    incomparable: Boolean(item.incomparable),
+    note: readOptionalString(item.note),
+  };
+}
+
+export function parseComparison(payload: unknown): BaselineComparison {
+  if (!isRecord(payload) || typeof payload.run_id !== "string") {
+    throw new ApiError("控制面返回了无法识别的基线对比数据", { code: "invalid_response" });
+  }
+  const emptyState = isRecord(payload.empty_state)
+    ? {
+        code: readString(payload.empty_state.code),
+        message: readString(payload.empty_state.message),
+      }
+    : null;
+  const recommendation = isRecord(payload.recommendation)
+    ? {
+        tier: readString(payload.recommendation.tier),
+        reason: readString(payload.recommendation.reason),
+      }
+    : null;
+  const caseSet = isRecord(payload.case_set) ? payload.case_set : {};
+  return {
+    run_id: payload.run_id,
+    run_name: readString(payload.run_name),
+    status: readString(payload.status),
+    is_final: Boolean(payload.is_final),
+    manual: Boolean(payload.manual),
+    baseline_run_id: readOptionalString(payload.baseline_run_id),
+    recommendation,
+    baseline: parseBaselineSummary(payload.baseline),
+    candidates: Array.isArray(payload.candidates)
+      ? payload.candidates.map(parseBaselineCandidate)
+      : [],
+    comparable: Boolean(payload.comparable),
+    incomparable_reasons: parseStringList(payload.incomparable_reasons),
+    case_set: {
+      comparable: Boolean(caseSet.comparable),
+      current_count: readCountOrZero(caseSet.current_count),
+      baseline_count: readCountOrZero(caseSet.baseline_count),
+    },
+    metric_deltas: Array.isArray(payload.metric_deltas)
+      ? payload.metric_deltas.map(parseMetricDelta)
+      : [],
+    configuration_differences: Array.isArray(payload.configuration_differences)
+      ? payload.configuration_differences.map(parseConfigurationDifference)
+      : [],
+    empty_state: emptyState,
+    generated_at: readOptionalString(payload.generated_at),
+  };
+}
+
+export async function fetchEvaluationComparison(
+  runId: string,
+  baselineRunId?: string | null,
+  signal?: AbortSignal,
+): Promise<BaselineComparison> {
+  const params = new URLSearchParams();
+  if (baselineRunId) params.set("baseline_run_id", baselineRunId);
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return parseComparison(
+    await request(`/api/v1/eval-runs/${runId}/compare${suffix}`, { signal }),
+  );
 }
 
 export async function fetchCaseTests(

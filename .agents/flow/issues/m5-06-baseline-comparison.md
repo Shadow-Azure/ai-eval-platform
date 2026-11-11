@@ -15,6 +15,11 @@ scope:
   - tests/**
   - docs/**
   - scripts/doc-budgets.manifest.json
+  - plans/**
+  - .agents/flow/issues/m5-09-optional-evaluation-assets.*
+  - .agents/flow/issues/m5-10-unified-cny-billing.*
+  - .agents/flow/issues/m5-11-runner-tarball-proxy.*
+  - .agents/flow/issues/m5-12-eval-shard-scripts-bundle.*
 adr: []
 github:
   number: 88

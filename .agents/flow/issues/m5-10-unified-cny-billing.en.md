@@ -6,7 +6,7 @@ English | [中文](m5-10-unified-cny-billing.md)
 kind: issue
 milestone: m5
 priority: P1
-status: in-progress
+status: done
 scope:
   - .agents/flow/issues/m5-10-unified-cny-billing.*
   - .agents/flow/milestones/m5-product-workflows.*
