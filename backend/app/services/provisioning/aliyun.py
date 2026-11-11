@@ -37,7 +37,7 @@ from sqlalchemy.orm import Session
 
 from ...config import Settings
 from ...models import Connection, Credential, ProvisionedInstance, ResourcePool, Runner
-from ...money import UNIT_PRICE, Money
+from ...money import UNIT_PRICE, Money, money_str
 from ...secrets import SecretBoxError, get_secret_box
 from .. import runner_cache
 from ..object_store import object_store_from_settings
@@ -848,6 +848,10 @@ class AliyunEcsProvisioner:
                 "vswitch_id": vswitch_id,
                 "security_group_id": security_group_id,
                 "requested_at": _iso(now),
+                # CNY/hour quote captured at creation (M5-19); today's pool
+                # cost is recomputed from this snapshot and the instance
+                # lifetime instead of re-quoting the provider on every read.
+                "price_cny": money_str(pool.price_cny),
             },
         )
         session.add(instance)
