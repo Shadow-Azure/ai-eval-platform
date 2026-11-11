@@ -1,0 +1,39 @@
+# 修复固定资源池标签被误解析导致评测分片永久排队
+
+[English](m7-fixed-pool-runner-labels.en.md) | 中文
+
+```yaml flow
+kind: issue
+milestone: m7
+priority: P1
+status: ready
+scope:
+  - backend/app/services/runner_labels.py
+  - backend/app/services/runners.py
+  - tests/backend/test_runner_labels.py
+  - tests/backend/test_evaluations.py
+  - tests/backend/test_runners.py
+  - .agents/flow/issues/m7-fixed-pool-runner-labels.*
+adr: []
+github:
+  number: 136
+  url: https://github.com/Shadow-Azure/ai-eval-platform/issues/136
+```
+
+## 背景
+
+2026-11-11 15:25（北京时间）用户在 fixed-linux 系统资源池发起评测 707bb3bc，execute 作业一直排队。排查发现系统固定池的 labels_json 被写成 `{"kind": "fixed"}`，而分片派发把 labels_json 的键当作 Runner 标签，生成的 runs_on 为 `["kind"]`；实际 Runner 只注册 self-hosted/linux/eval，作业永远等不到机器。该问题影响所有选择固定系统池的评测，队列超时后整次评测失败。
+
+## 目标
+
+- 将 `{"kind": "fixed"}` 识别为历史 provider 标记而非 Runner 标签；未显式配置 runs_on/labels 的固定池回退到 self-hosted、linux、eval。
+- ensure_fixed_pool 新建系统池时写入显式 runs_on，避免继续产生占位标记。
+- 补充分片 manifest/dispatch 与固定池创建的回归测试，防止再次回归。
+
+## 验收
+
+- labels_json 为 `{"kind": "fixed"}` 的固定池派发出 runs_on `["self-hosted", "linux", "eval"]`。
+- 固定池显式配置 runs_on 或 labels 时仍优先生效。
+- ensure_fixed_pool 新建的池 labels_json 含显式 runs_on。
+- 部署后新建评测能落到实际在线的固定 Runner；已超时的 707bb3bc 需重新发起。
+- 相关 pytest、flow 与文档门禁通过。

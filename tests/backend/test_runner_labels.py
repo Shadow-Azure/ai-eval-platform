@@ -22,6 +22,24 @@ def test_defaults_to_fixed_runner_labels() -> None:
     assert pool_runner_labels(make_pool()) == ["self-hosted", "linux", "eval"]
 
 
+def test_ignores_legacy_fixed_pool_provider_marker() -> None:
+    """A fixed pool's ``{"kind": "fixed"}`` is metadata, not a Runner label."""
+
+    legacy = make_pool(
+        provider_key="fixed",
+        provisioning_mode="fixed",
+        labels_json={"kind": "fixed"},
+    )
+    assert pool_runner_labels(legacy) == list(DEFAULT_RUNS_ON)
+
+    explicit = make_pool(
+        provider_key="fixed",
+        provisioning_mode="fixed",
+        labels_json={"runs_on": ["self-hosted", "gpu"]},
+    )
+    assert pool_runner_labels(explicit) == ["self-hosted", "gpu"]
+
+
 def test_accepts_string_and_list_forms() -> None:
     assert pool_runner_labels(make_pool(labels_json={"runs_on": "self-hosted, gpu"})) == [
         "self-hosted",
