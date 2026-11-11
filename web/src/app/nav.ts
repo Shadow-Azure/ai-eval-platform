@@ -22,19 +22,19 @@ export const navGroups: NavGroup[] = [
     items: [{ label: "运营状态", to: "/operations", icon: "pulse", adminOnly: true }],
   },
   {
-    section: "配置",
-    items: [
-      { label: "数据集", to: "/datasets", icon: "database" },
-      { label: "Agent 资产", to: "/assets", icon: "boxes" },
-      { label: "模型凭据", to: "/models", icon: "key" },
-      { label: "资源池", to: "/resources", icon: "server" },
-    ],
-  },
-  {
     section: "评测",
     items: [
       { label: "评测任务", to: "/evals", icon: "play" },
+      { label: "数据集", to: "/datasets", icon: "database" },
       { label: "发起评测", to: "/evals/new", icon: "plus" },
+    ],
+  },
+  {
+    section: "配置",
+    items: [
+      { label: "Agent 资产", to: "/assets", icon: "boxes" },
+      { label: "模型凭据", to: "/models", icon: "key" },
+      { label: "资源池", to: "/resources", icon: "server" },
     ],
   },
   {
@@ -46,9 +46,9 @@ export const navGroups: NavGroup[] = [
 const breadcrumbs: Array<{ test: (path: string) => boolean; crumbs: [string, string] }> = [
   { test: (path) => path === "/overview", crumbs: ["工作台", "总览"] },
   { test: (path) => path === "/operations", crumbs: ["运营", "运营状态"] },
-  { test: (path) => path === "/datasets", crumbs: ["配置", "数据集"] },
-  { test: (path) => path === "/datasets/import", crumbs: ["配置", "导入数据集"] },
-  { test: (path) => path.startsWith("/datasets/"), crumbs: ["配置", "数据集详情"] },
+  { test: (path) => path === "/datasets", crumbs: ["评测", "数据集"] },
+  { test: (path) => path === "/datasets/import", crumbs: ["评测", "导入数据集"] },
+  { test: (path) => path.startsWith("/datasets/"), crumbs: ["评测", "数据集详情"] },
   { test: (path) => path.startsWith("/evals/") && path !== "/evals/new", crumbs: ["评测", "评测详情"] },
   { test: (path) => path === "/assets", crumbs: ["配置", "Agent 资产"] },
   { test: (path) => path === "/models", crumbs: ["配置", "模型凭据"] },

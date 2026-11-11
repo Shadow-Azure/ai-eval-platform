@@ -209,6 +209,19 @@ def create_dataset_import(
     return response
 
 
+@router.get("/api/v1/dataset-imports")
+def list_dataset_imports(
+    limit: Annotated[int, Query(ge=1, le=200)] = 20,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    session: Session = Depends(get_session),
+) -> dict:
+    items, total = dataset_service.list_imports(session, limit=limit, offset=offset)
+    return {
+        "items": [import_summary(record) for record in items],
+        "page_info": dataset_service.page_info(limit=limit, offset=offset, total=total),
+    }
+
+
 @router.get("/api/v1/dataset-imports/{import_id}")
 def get_dataset_import(import_id: str, session: Session = Depends(get_session)) -> dict:
     try:
@@ -452,11 +465,16 @@ def list_datasets(
     offset: Annotated[int, Query(ge=0)] = 0,
     session: Session = Depends(get_session),
 ) -> dict:
-    items, total = dataset_service.list_datasets(session, limit=limit, offset=offset)
+    items, total = dataset_service.dataset_catalog(session, limit=limit, offset=offset)
     return {
-        "items": [dataset_summary(dataset) for dataset in items],
+        "items": items,
         "page_info": dataset_service.page_info(limit=limit, offset=offset, total=total),
     }
+
+
+@router.get("/api/v1/dataset-adapters")
+def list_dataset_adapters(session: Session = Depends(get_session)) -> dict:
+    return {"items": dataset_service.adapter_catalog(session)}
 
 
 @router.get("/api/v1/datasets/{dataset_id}")

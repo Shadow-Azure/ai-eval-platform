@@ -90,6 +90,13 @@ class DatasetAdapter(Protocol):
     # Fields whose presence drives the upload validation report's completeness
     # section; adapters may leave it empty when every field is optional.
     required_fields: tuple[str, ...]
+    # M5-13：平台适配器应声明以下自描述字段，目录卡片与导入默认值都读它。
+    # 第三方/旧适配器缺失时 adapter_metadata() 用 getattr 兜底，不改变首选契约。
+    display_name: str
+    task_family: str
+    environment_kind: str
+    description: str
+    primary_metric_key: str
 
     def validate_case(self, raw: Mapping[str, Any]) -> list[CaseIssue]: ...
 
@@ -104,12 +111,36 @@ class DatasetAdapter(Protocol):
         ...
 
 
+def adapter_metadata(adapter: DatasetAdapter) -> dict[str, Any]:
+    """读取适配器自描述元数据，供目录卡片与“适配器规范”入口使用。
+
+    元数据字段是 M5-13 新增的可选契约；用 ``getattr`` 读取，第三方/旧适配器
+    没有声明时回退到 key，避免注册表被破坏。
+    """
+
+    return {
+        "key": adapter.key,
+        "adapter_version": adapter.adapter_version,
+        "display_name": getattr(adapter, "display_name", adapter.key),
+        "task_family": getattr(adapter, "task_family", None),
+        "environment_kind": getattr(adapter, "environment_kind", None),
+        "description": getattr(adapter, "description", ""),
+        "primary_metric_key": getattr(adapter, "primary_metric_key", None),
+        "metric_keys": list(adapter.metric_keys()),
+        "metric_display_names": {
+            key: config.get("display_name", key) for key, config in adapter.metric_configs().items()
+        },
+        "case_visibility": dict(adapter.case_visibility()),
+    }
+
+
 __all__ = [
     "AdapterNotFound",
     "CaseIssue",
     "DatasetAdapter",
     "ISSUE_CODES",
     "NormalizedCase",
+    "adapter_metadata",
     "get_adapter",
     "register_adapter",
     "registered_adapter_keys",
