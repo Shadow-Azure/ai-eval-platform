@@ -890,7 +890,12 @@ def evaluation_detail(
 
     total = int(run.total_cases or len(cases))
     finished = max(0, total - case_counts["queued"] - case_counts["running"])
-    percent = round(finished / total * 100) if total else 0
+    # Never round up to "100%" while a case is still queued/running.
+    percent = (
+        100
+        if total and finished >= total
+        else (min(99, round(finished / total * 100)) if total else 0)
+    )
     resolve_denominator = (
         case_counts["resolved"] + case_counts["unresolved"] + case_counts["failed"]
     )
