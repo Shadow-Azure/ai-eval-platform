@@ -56,6 +56,14 @@ def test_record_deployment_script_inserts_a_row(database_url: str) -> None:
             "DEPLOY_DETAIL_API_IMAGE": "registry.example/api@sha256:" + "1" * 64,
             "DEPLOY_DETAIL_WEB_IMAGE": "registry.example/web@sha256:" + "2" * 64,
             "DEPLOY_DETAIL_GIT_COMMIT": "abc1234",
+            "DEPLOY_RUN_ID": "12345",
+            "DEPLOY_RUN_URL": "https://github.com/Shadow-Azure/ai-eval-platform/actions/runs/12345",
+            "DEPLOY_STAGE": "health_check",
+            "DEPLOY_STAGES": (
+                "build|success|||GitHub Actions 构建成功\n"
+                "database_migration|success|2026-11-11T01:00:00Z|"
+                "2026-11-11T01:00:18Z|Alembic 0019\n"
+            ),
         }
     )
     result = subprocess.run(
@@ -82,6 +90,27 @@ def test_record_deployment_script_inserts_a_row(database_url: str) -> None:
                 "api_image": "registry.example/api@sha256:" + "1" * 64,
                 "web_image": "registry.example/web@sha256:" + "2" * 64,
                 "git_commit": "abc1234",
+                "run_id": "12345",
+                "run_url": (
+                    "https://github.com/Shadow-Azure/ai-eval-platform/actions/runs/12345"
+                ),
+                "stage": "health_check",
+                "stages": [
+                    {
+                        "key": "build",
+                        "status": "success",
+                        "started_at": None,
+                        "finished_at": None,
+                        "detail": "GitHub Actions 构建成功",
+                    },
+                    {
+                        "key": "database_migration",
+                        "status": "success",
+                        "started_at": "2026-11-11T01:00:00Z",
+                        "finished_at": "2026-11-11T01:00:18Z",
+                        "detail": "Alembic 0019",
+                    },
+                ],
             }
     finally:
         engine.dispose()

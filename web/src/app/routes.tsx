@@ -2,8 +2,8 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import { RequireAdmin, RequireAuth } from "./auth";
 import { AppShell } from "../components/AppShell";
 import { AssetsPage } from "../pages/AssetsPage";
-import { PlaceholderPage } from "../components/PlaceholderPage";
 import { DatasetDetailPage } from "../pages/DatasetDetailPage";
+import { DeploymentsPage } from "../pages/DeploymentsPage";
 import { DatasetImportPage } from "../pages/DatasetImportPage";
 import { DatasetsPage } from "../pages/DatasetsPage";
 import { EvalDetailPage } from "../pages/EvalDetailPage";
@@ -15,15 +15,6 @@ import { NotFoundPage } from "../pages/NotFoundPage";
 import { OperationsPage } from "../pages/OperationsPage";
 import { OverviewPage } from "../pages/OverviewPage";
 import { ResourcesPage } from "../pages/ResourcesPage";
-
-const placeholders = [
-  {
-    path: "deployments",
-    eyebrow: "Delivery · Deployments",
-    title: "交付流水线",
-    description: "查看构建、迁移、部署与受控回滚记录。",
-  },
-];
 
 export function AppRoutes() {
   return (
@@ -42,22 +33,10 @@ export function AppRoutes() {
           <Route path="/models" element={<ModelsPage />} />
           <Route path="/assets" element={<AssetsPage />} />
           <Route path="/resources" element={<ResourcesPage />} />
+          <Route path="/deployments" element={<DeploymentsPage />} />
           <Route element={<RequireAdmin />}>
             <Route path="/operations" element={<OperationsPage />} />
           </Route>
-          {placeholders.map((page) => (
-            <Route
-              key={page.path}
-              path={`/${page.path}`}
-              element={
-                <PlaceholderPage
-                  eyebrow={page.eyebrow}
-                  title={page.title}
-                  description={page.description}
-                />
-              }
-            />
-          ))}
           <Route path="/deployment" element={<Navigate to="/deployments" replace />} />
           <Route path="*" element={<NotFoundPage />} />
         </Route>

@@ -6,6 +6,7 @@ import "./styles/global.css";
 import "./styles/shell.css";
 import "./styles/overview.css";
 import "./styles/operations.css";
+import "./styles/deployments.css";
 import "./styles/models.css";
 import "./styles/datasets.css";
 import "./styles/assets.css";

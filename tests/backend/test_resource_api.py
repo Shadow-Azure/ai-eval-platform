@@ -563,6 +563,7 @@ def test_test_provisioning_creates_one_instance_and_audit_event(
     assert instances[0].id == payload["instance"]["id"]
     assert instances[0].status == "released"
     assert instances[0].released_at is not None
+    assert instances[0].cost_json["price_cny"] == "0.1000"
 
     events = list(
         session.scalars(

@@ -12,6 +12,11 @@ on:
       - "scripts/cache-runner-scripts.py"
       - "docker-compose.yml"
       - ".github/workflows/deploy.yml"
+  # M5-18: a console administrator can ask for the previous application
+  # images to be restored. The API dispatches this event; the rollback job
+  # below runs deploy/rollback.sh on the host. Database downgrade never runs.
+  repository_dispatch:
+    types: [deployment-rollback]
   workflow_dispatch:
 
 permissions:
@@ -28,6 +33,7 @@ env:
 jobs:
   build:
     name: build and push images
+    if: github.event_name != 'repository_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     outputs:
@@ -71,6 +77,7 @@ jobs:
   # URL is injected into the deployment.
   runner-cache:
     name: cache runner tarball in OSS
+    if: github.event_name != 'repository_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -106,6 +113,7 @@ jobs:
   # platform repository.
   scripts-bundle:
     name: cache runner scripts bundle in OSS
+    if: github.event_name != 'repository_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     outputs:
@@ -143,6 +151,7 @@ jobs:
 
   deploy:
     name: migrate and deploy to ECS
+    if: github.event_name != 'repository_dispatch'
     needs: [build, runner-cache, scripts-bundle]
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -254,14 +263,61 @@ jobs:
           WEB_IMAGE: ${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/ai-eval-platform-web@${{ needs.build.outputs.web_digest }}
           GIT_COMMIT: ${{ github.sha }}
           DEPLOY_TRIGGERED_BY: ${{ github.actor }}
+          DEPLOY_RUN_ID: ${{ github.run_id }}
+          DEPLOY_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           ssh "root@${{ secrets.ECS_HOST }}" \
-            "cd /opt/ai-eval-platform && API_IMAGE='$API_IMAGE' WEB_IMAGE='$WEB_IMAGE' GIT_COMMIT='$GIT_COMMIT' DEPLOY_TRIGGERED_BY='$DEPLOY_TRIGGERED_BY' bash deploy/deploy.sh"
+            "cd /opt/ai-eval-platform && API_IMAGE='$API_IMAGE' WEB_IMAGE='$WEB_IMAGE' GIT_COMMIT='$GIT_COMMIT' DEPLOY_TRIGGERED_BY='$DEPLOY_TRIGGERED_BY' DEPLOY_RUN_ID='$DEPLOY_RUN_ID' DEPLOY_RUN_URL='$DEPLOY_RUN_URL' bash deploy/deploy.sh"
       - name: Provision initial administrator
         if: env.AUTH_BOOTSTRAP_ADMIN_PASSWORD != ''
         run: |
           printf '%s' "$AUTH_BOOTSTRAP_ADMIN_PASSWORD" \
             | ssh "root@${{ secrets.ECS_HOST }}" \
               "cd /opt/ai-eval-platform && docker compose --env-file .env -f deploy/docker-compose.prod.yml exec -T api python -m app.manage create-admin --email '${AUTH_BOOTSTRAP_ADMIN_EMAIL:-admin@acme.local}' --password-stdin"
+      - name: Verify public health
+        run: curl -fsS "http://${{ secrets.ECS_HOST }}:8080/readyz"
+
+  # M5-18 controlled rollback: restore the application images saved in
+  # .state/previous.env by the last deploy. rollback.sh records a
+  # ``rolled_back`` row (with target id, actor and stage timeline); it never
+  # runs a database downgrade.
+  rollback:
+    name: rollback to previous images
+    if: github.event_name == 'repository_dispatch' && github.event.client_payload.deployment_id != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    env:
+      DEPLOYMENT_ID: ${{ github.event.client_payload.deployment_id }}
+      ROLLBACK_COMMIT: ${{ github.event.client_payload.git_commit }}
+      REQUESTED_BY: ${{ github.event.client_payload.requested_by }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate rollback payload
+        run: |
+          [[ "$DEPLOYMENT_ID" =~ ^[A-Za-z0-9-]+$ ]] || { echo "invalid deployment_id" >&2; exit 1; }
+          [[ "$ROLLBACK_COMMIT" =~ ^[0-9a-f]{7,64}$ ]] || { echo "invalid git_commit" >&2; exit 1; }
+          [[ "$REQUESTED_BY" =~ ^[A-Za-z0-9@._+-]+$ ]] || { echo "invalid requested_by" >&2; exit 1; }
+      - name: Install SSH key
+        env:
+          ECS_SSH_KEY: ${{ secrets.ECS_SSH_KEY }}
+          ECS_KNOWN_HOSTS: ${{ secrets.ECS_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s' "$ECS_SSH_KEY" | awk '1' > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$ECS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+      - name: Copy deploy scripts
+        run: |
+          ssh "root@${{ secrets.ECS_HOST }}" 'rm -rf /opt/ai-eval-platform/deploy'
+          scp -r deploy "root@${{ secrets.ECS_HOST }}:/opt/ai-eval-platform/"
+      - name: Roll back application images
+        env:
+          DEPLOY_RUN_ID: ${{ github.run_id }}
+          DEPLOY_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          ssh "root@${{ secrets.ECS_HOST }}" \
+            "cd /opt/ai-eval-platform && DEPLOY_ROLLBACK_OF_ID='$DEPLOYMENT_ID' GIT_COMMIT='$ROLLBACK_COMMIT' DEPLOY_TRIGGERED_BY='$REQUESTED_BY' DEPLOY_RUN_ID='$DEPLOY_RUN_ID' DEPLOY_RUN_URL='$DEPLOY_RUN_URL' DEPLOY_ENVIRONMENT=production bash deploy/rollback.sh"
       - name: Verify public health
         run: curl -fsS "http://${{ secrets.ECS_HOST }}:8080/readyz"

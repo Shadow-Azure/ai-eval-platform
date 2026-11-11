@@ -31,7 +31,7 @@ from ..db import get_session
 from ..defaults import DEFAULT_PROJECT_ID
 from ..models import Connection, Credential, ResourceEvent, ResourcePool, Runner
 from ..money import money_str
-from ..services import capacity_control, identity
+from ..services import capacity_control, identity, resource_usage
 from ..services.provisioning import (
     ProvisionerError,
     get_provisioner,
@@ -235,10 +235,30 @@ def _runner_payload(runner: Runner) -> dict[str, Any]:
     }
 
 
-def _pool_state_payload(
+def _pool_console_payload(
     session: Session, pool: ResourcePool, settings: Settings
 ) -> dict[str, Any]:
-    return {**pool_payload(pool), "capacity_state": _capacity_state(session, pool, settings)}
+    """Pool row plus the read models the console card renders.
+
+    List and detail share this shape so a card never needs a second request
+    and the two endpoints cannot drift. ``usage`` is computed from persisted
+    runners and provisioned instances (M5-19), not from request-time guesses.
+    """
+
+    capacity_state = _capacity_state(session, pool, settings)
+    runners = _runner_summary(session, pool)
+    return {
+        **pool_payload(pool),
+        "capacity_state": capacity_state,
+        "runners": runners,
+        "usage": resource_usage.pool_usage(
+            session,
+            pool,
+            runners=runners,
+            capacity_state=capacity_state,
+            settings=settings,
+        ),
+    }
 
 
 def _resolve_connection_for_write(
@@ -406,15 +426,7 @@ def list_resource_pools(
     # The product page needs capacity plus runner state for every card. The
     # detail endpoint repeats the same shape; keeping list and detail
     # identical avoids a second request per pool and a divergent UI model.
-    return {
-        "items": [
-            {
-                **_pool_state_payload(session, pool, settings),
-                "runners": _runner_summary(session, pool),
-            }
-            for pool in pools
-        ]
-    }
+    return {"items": [_pool_console_payload(session, pool, settings) for pool in pools]}
 
 
 @router.post("/api/v1/resource-pools", status_code=status.HTTP_201_CREATED)
@@ -494,9 +506,8 @@ def get_resource_pool(
         )
     )
     return {
-        **_pool_state_payload(session, pool, settings),
+        **_pool_console_payload(session, pool, settings),
         "events": [_event_payload(event) for event in events],
-        "runners": _runner_summary(session, pool),
     }
 
 
@@ -650,6 +661,12 @@ def test_provisioning(
             spec=capacity_control.instance_spec(pool),
             now=now,
         )
+        # The probe is released immediately but still carries the quote used
+        # for the probe, so the same cost recomputation applies (M5-19).
+        instance.cost_json = {
+            **(instance.cost_json if isinstance(instance.cost_json, dict) else {}),
+            "price_cny": money_str(quote.price_cny),
+        }
     except ProvisionerError as exc:
         raise _http_error(422, exc.code, exc.message, details=exc.details or None) from exc
 

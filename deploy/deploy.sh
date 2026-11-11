@@ -57,6 +57,7 @@ set_env DEPLOY_ENVIRONMENT "$DEPLOY_ENVIRONMENT"
 
 on_error() {
   echo "deploy: failed, rolling back" >&2
+  stage_finish failed "部署失败"
   record_deployment failed
   if [ -f "$DEPLOY_DIR/.state/previous.env" ]; then
     bash "$DEPLOY_DIR/deploy/rollback.sh" || true
@@ -67,14 +68,31 @@ on_error() {
 }
 trap on_error ERR
 
-"${COMPOSE[@]}" pull api web
-"${COMPOSE[@]}" --profile tools run --rm migrate
-"${COMPOSE[@]}" up -d --remove-orphans
+# The host script only runs after the GitHub Actions build job pushed the
+# images, so the build stage is a real precondition rather than a guess.
+stage_record build success "" "" "GitHub Actions 构建成功后触发部署"
 
+"${COMPOSE[@]}" pull api web
+stage_begin database_migration
+"${COMPOSE[@]}" --profile tools run --rm migrate
+MIGRATION_REVISION="$(current_database_revision)"
+if [ -z "$MIGRATION_REVISION" ]; then
+  MIGRATION_REVISION="unknown"
+fi
+stage_finish success "Alembic ${MIGRATION_REVISION}"
+
+stage_begin rolling_update
+"${COMPOSE[@]}" up -d --remove-orphans
+stage_finish success "API/Web 容器替换完成"
+
+stage_begin health_check
 if ! wait_ready 30; then
   echo "deploy: health check failed" >&2
   false
 fi
+stage_finish success "/readyz 通过"
 
+stage_begin deployment_record
+stage_finish success "部署结果已写入记录"
 record_deployment succeeded
 echo "deploy: succeeded ${GIT_COMMIT}"
