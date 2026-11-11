@@ -8,7 +8,7 @@ Turn datasets, model credentials, Git assets, resource pools, evaluation launch,
 kind: milestone
 id: m5
 title: 配置与结果产品化
-status: planned
+status: done
 github:
   number: 5
   url: https://github.com/Shadow-Azure/ai-eval-platform/milestone/5

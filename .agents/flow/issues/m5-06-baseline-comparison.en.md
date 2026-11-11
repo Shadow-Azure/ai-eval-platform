@@ -6,7 +6,7 @@ English | [中文](m5-06-baseline-comparison.md)
 kind: issue
 milestone: m5
 priority: P1
-status: ready
+status: done
 scope:
   - .agents/flow/issues/m5-06-baseline-comparison.*
   - .agents/flow/milestones/m5-product-workflows.*
