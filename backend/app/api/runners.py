@@ -3,16 +3,19 @@
 Routes consumed by the deployed fixed-runner heartbeat agent:
 
 - POST /runner/v1/runners/heartbeat          — agent liveness + busy state
+- GET  /runner/v1/runner-tarball/{version}.tar.gz — permanent runner archive proxy
 - GET  /api/v1/runners, /api/v1/runners/{id} — console queries (status/labels/heartbeat/task)
 """
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Literal
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Response
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -27,7 +30,8 @@ from ..services import case_attempts
 from ..services import runners as runner_service
 from ..services.case_attempts import CaseCallbackError
 from ..services.evaluations import SHARD_DISPATCH_TOPIC
-from ..services.object_store import object_store_from_settings
+from ..services.object_store import ObjectMissing, ObjectStoreError, object_store_from_settings
+from ..services.runner_cache import runner_cache_key
 from ..services.short_token import ShortTokenInvalid, issue_short_token, verify_short_token
 from .dependencies import require_session
 from .errors import error_detail
@@ -116,6 +120,63 @@ def runner_heartbeat(
         "runner_id": runner.provider_runner_id,
         "last_heartbeat_at": runner_service.runner_payload(runner)["last_heartbeat_at"],
     }
+
+
+_RUNNER_TARBALL_NAME = re.compile(r"^(?P<version>\d+\.\d+\.\d+)\.tar\.gz$")
+
+
+@router.get(
+    "/runner/v1/runner-tarball/{filename}",
+    dependencies=[Depends(require_runner_token)],
+)
+def runner_tarball(
+    filename: str,
+    settings: Settings = Depends(get_settings),
+) -> StreamingResponse:
+    """Stream the cached actions-runner archive through a permanent URL (M5-11).
+
+    The deploy pipeline still caches one version-stable object in OSS, but spot
+    cloud-init no longer receives a seven-day presigned URL: this endpoint reads
+    the private object with the platform credentials and streams it, so the
+    address stays valid across deploy gaps. The runner heartbeat token gates
+    the download and the OSS bucket keeps no public-read access.
+    """
+
+    match = _RUNNER_TARBALL_NAME.fullmatch(filename)
+    if match is None:
+        raise HTTPException(
+            status_code=404,
+            detail=error_detail("runner_tarball_not_found", "Runner 安装包不存在"),
+        )
+    store = object_store_from_settings(settings)
+    if store is None:
+        raise HTTPException(
+            status_code=503,
+            detail=error_detail(
+                "runner_tarball_unavailable", "平台未配置对象存储，无法提供 Runner 安装包"
+            ),
+        )
+    key = runner_cache_key(match.group("version"))
+    try:
+        size = store.head_object(key)
+    except ObjectMissing as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=error_detail("runner_tarball_not_found", "Runner 安装包不存在"),
+        ) from exc
+    except ObjectStoreError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=error_detail("runner_tarball_unavailable", "对象存储读取失败"),
+        ) from exc
+    return StreamingResponse(
+        store.iter_object(key),
+        media_type="application/gzip",
+        headers={
+            "Content-Length": str(size),
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
+    )
 
 
 @router.get("/api/v1/runners", dependencies=[Depends(require_session)])

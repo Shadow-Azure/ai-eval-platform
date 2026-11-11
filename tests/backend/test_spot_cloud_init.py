@@ -106,3 +106,42 @@ def test_heartbeat_payload_includes_pool_binding() -> None:
     assert '"resource_pool_id":"%s"' in heartbeat
     assert "pool-1" in heartbeat
     assert "heartbeat-token" not in heartbeat
+
+
+def test_bootstrap_carries_the_runner_token_for_the_platform_proxy() -> None:
+    document = yaml.safe_load(
+        render_cloud_init(
+            platform_base_url="http://10.0.0.5:8000",
+            runner_name="spot-abc",
+            resource_pool_id="pool-1",
+            labels=["self-hosted"],
+            encoded_jit="jit",
+            heartbeat_token="heartbeat-token",
+            runner_tarball_url="http://10.0.0.5:8000/runner/v1/runner-tarball/2.338.2.tar.gz",
+            runner_tarball_token="heartbeat-token",
+        )
+    )
+    bootstrap = _files(document)["/etc/eval/bootstrap.sh"]
+    assert "http://10.0.0.5:8000/runner/v1/runner-tarball/2.338.2.tar.gz" in bootstrap
+    assert "RUNNER_TARBALL_TOKEN=heartbeat-token" in bootstrap
+    assert 'authorization: Bearer $RUNNER_TARBALL_TOKEN' in bootstrap
+
+
+def test_bootstrap_sends_no_token_to_an_external_mirror() -> None:
+    document = yaml.safe_load(
+        render_cloud_init(
+            platform_base_url="http://10.0.0.5:8000",
+            runner_name="spot-abc",
+            resource_pool_id="pool-1",
+            labels=["self-hosted"],
+            encoded_jit="jit",
+            heartbeat_token="heartbeat-token",
+            runner_tarball_url="https://mirror.example/runner.tar.gz",
+        )
+    )
+    bootstrap = _files(document)["/etc/eval/bootstrap.sh"]
+    assert "https://mirror.example/runner.tar.gz" in bootstrap
+    # Empty token selects the unauthenticated curl branch; the runner token
+    # never reaches this script for an external mirror.
+    assert "RUNNER_TARBALL_TOKEN=''" in bootstrap
+    assert "heartbeat-token" not in bootstrap
