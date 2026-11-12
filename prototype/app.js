@@ -2326,7 +2326,7 @@ function tracePage(runId, caseId) {
         eyebrow: "Session trace",
         title: caseInfo.id,
         description: `${caseInfo.repo} · ${caseInfo.difficulty} · 结果 ${caseInfo.score} · 主 Agent 与子 Agent 已归一化为统一 span 树`,
-        actions: `<button class="btn" data-action="download-trace">${icon("download", 14)} 原始会话文件</button><button class="btn" data-action="open-raw-trace">${icon("file", 14)} 查看原始格式</button>`,
+        actions: `<button class="btn btn-primary" data-action="open-trace-export">${icon("download", 14)} 下载轨迹包</button><button class="btn" data-action="open-raw-trace">${icon("file", 14)} 查看原始格式</button>`,
       })}
       <section class="card trace-shell">
         <div class="trace-top">
@@ -2350,6 +2350,8 @@ function tracePage(runId, caseId) {
             <div class="review-box small" style="margin:0 7px">
               <div class="row">${icon("file", 14)}<span class="mono">rollout-…-01J9K4.jsonl</span></div>
               <div class="muted" style="margin-top:4px">Codex JSONL + SQLite · OSS 已归档</div>
+              <div class="muted" style="margin-top:4px">主 Agent + 1 个子 Agent · 3 个原始文件</div>
+              <button class="btn btn-sm" style="margin-top:8px" data-action="open-trace-export">${icon("download", 12)} 打包下载</button>
             </div>
           </aside>
           <section class="trace-timeline">
@@ -3560,6 +3562,61 @@ function handleAction(action, target) {
   }
   if (action === "download-trace") {
     toast("已生成原始会话文件的限时下载地址");
+    return;
+  }
+  if (action === "open-trace-export") {
+    const caseId = decodeURIComponent(currentRoute().parts.slice(2).join("/")) || "django__django-11019";
+    modal({
+      title: "下载轨迹包",
+      subtitle: `当前会话组 · sess_01J9K4F8Q6 · ${caseId}`,
+      wide: true,
+      className: "trace-export-modal",
+      body: `
+        <div class="banner">${icon("shield", 15)}<div><strong>主 Agent 与全部子 Agent 打包下载。</strong> 原始会话文件会打进同一个 ZIP，不重新序列化，保留原生 JSONL；未关联会话会在清单中标记。</div></div>
+        <div class="export-stats">
+          <div class="export-stat"><strong>1</strong><span>主 Agent</span></div>
+          <div class="export-stat"><strong>1</strong><span>子 Agent</span></div>
+          <div class="export-stat"><strong>3</strong><span>原始文件</span></div>
+          <div class="export-stat"><strong>1.8 MB</strong><span>ZIP 预估</span></div>
+        </div>
+        <div class="export-section">
+          <div class="export-section-head">包含的会话<span class="muted">2</span></div>
+          <div class="export-session-list">
+            <div class="export-session">
+              <span class="tree-type agent">A</span>
+              <div class="export-session-main"><div class="export-session-name">Main agent</div><div class="export-session-meta">主 Agent · sess_01J9K4F8Q6 · 17 spans</div></div>
+              <span class="tag tag-violet">主 Agent</span>
+              <span class="export-session-size">2 个文件 · 1.2 MB</span>
+            </div>
+            <div class="export-session">
+              <span class="tree-type agent">A</span>
+              <div class="export-session-main"><div class="export-session-name">test_runner</div><div class="export-session-meta">子 Agent · parent sess_01J9K4F8Q6 · 4 spans</div></div>
+              <span class="tag tag-primary">子 Agent</span>
+              <span class="export-session-size">1 个文件 · 612 KB</span>
+            </div>
+          </div>
+          <div class="small muted" style="margin-top:7px">从子 Agent 会话发起下载时，仍会导出它所属的完整会话组，避免只拿到半条轨迹。</div>
+        </div>
+        <div class="export-section">
+          <div class="export-section-head">ZIP 目录<span class="muted">原始 JSONL + 清单</span></div>
+          <pre class="code-block export-tree">trace-${caseId}-attempt-1/
+├── manifest.json
+├── main/
+│   ├── rollout-2026-11-08T14-26-41-01J9K4.jsonl
+│   └── session-01J9K4.sqlite
+└── subagents/
+    └── test_runner/
+        └── agent-47c9.jsonl</pre>
+          <div class="small muted" style="margin-top:7px">manifest.json 记录 case、attempt、parser 版本、session / span 数量与每个文件的 sha256；文件缺失或会话未关联时会在清单中标注，不生成坏包。</div>
+        </div>
+      `,
+      footer: `<button class="btn" data-action="close-modal">取消</button><button class="btn btn-primary" data-action="confirm-download-trace">${icon("download", 13)} 下载 ZIP · 1.8 MB</button>`,
+    });
+    return;
+  }
+  if (action === "confirm-download-trace") {
+    closeOverlay();
+    toast("轨迹包生成中，完成后自动下载（2 个会话 / 3 个文件）");
     return;
   }
   if (action === "open-raw-trace") {
