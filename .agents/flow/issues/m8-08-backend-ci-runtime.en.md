@@ -91,11 +91,11 @@ The root cause is the test isolation strategy, not the test logic itself: 550 of
 
 | Metric | Before | After (A) |
 |---|---|---|
-| backend job | 15m08s | 5m13s |
-| pytest step | 14m36s | 4m36s |
-| pytest self-report | 722 passed in 865.48s | 728 passed in 263.32s |
+| backend job | 15m08s | 4m38s |
+| pytest step | 14m36s | 4m07s |
+| pytest self-report | 722 passed in 865.48s | 728 passed in 238.10s |
 
-- Before: [run 43183921424](https://github.com/Shadow-Azure/ai-eval-platform/actions/runs/43183921424) / job 131073760686; after: [run 43193007271](https://github.com/Shadow-Azure/ai-eval-platform/actions/runs/43193007271) / job 131096856802.
+- Before: [run 43183921424](https://github.com/Shadow-Azure/ai-eval-platform/actions/runs/43183921424) / job 131073760686; after: [run 43194162421](https://github.com/Shadow-Azure/ai-eval-platform/actions/runs/43194162421) / job 131100771689.
 - The local SQLite suite takes 2m15s; the PostgreSQL `CREATE DATABASE ... TEMPLATE` clone cost no longer appears in the slowest 20 durations.
 - D was verified against the file list of PR #191: when every file is under `web/**`, the changes job outputs `backend=false` and the backend job is skipped; backend-related changes still output `true`.
 

@@ -91,11 +91,11 @@ github:
 
 | 指标 | 改动前 | 改动后（A） |
 |---|---|---|
-| backend job | 15m08s | 5m13s |
-| pytest 步骤 | 14m36s | 4m36s |
-| pytest 自报 | 722 passed in 865.48s | 728 passed in 263.32s |
+| backend job | 15m08s | 4m38s |
+| pytest 步骤 | 14m36s | 4m07s |
+| pytest 自报 | 722 passed in 865.48s | 728 passed in 238.10s |
 
-- 改动前：[run 43183921424](https://github.com/Shadow-Azure/ai-eval-platform/actions/runs/43183921424) / job 131073760686；改动后：[run 43193007271](https://github.com/Shadow-Azure/ai-eval-platform/actions/runs/43193007271) / job 131096856802。
+- 改动前：[run 43183921424](https://github.com/Shadow-Azure/ai-eval-platform/actions/runs/43183921424) / job 131073760686；改动后：[run 43194162421](https://github.com/Shadow-Azure/ai-eval-platform/actions/runs/43194162421) / job 131100771689。
 - 本地 SQLite 完整套件 2m15s；PostgreSQL 的 `CREATE DATABASE ... TEMPLATE` 克隆成本已不在最慢 20 项内。
 - D 按 PR #191 的文件列表验证：全部为 `web/**` 时 changes job 输出 `backend=false`，backend job 被跳过；backend 相关改动仍输出 `true`。
 
