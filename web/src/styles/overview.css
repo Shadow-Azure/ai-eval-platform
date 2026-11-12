@@ -368,6 +368,10 @@
   font-size: 11px;
 }
 
+.recent-error {
+  margin: 12px 14px 0;
+}
+
 .table-primary {
   color: var(--ink);
   font-weight: 650;

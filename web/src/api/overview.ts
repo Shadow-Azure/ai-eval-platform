@@ -5,7 +5,7 @@ import { fetchOverview, fetchReadyz } from "./client";
 export const overviewQueryKey = ["overview"] as const;
 export const readyzQueryKey = ["readyz"] as const;
 export const recentEvaluationsQueryKey = (page: number, pageSize: number) =>
-  ["overview", "recent-evaluations", page, pageSize] as const;
+  ["evaluations", "recent", page, pageSize] as const;
 
 export function useOverviewQuery() {
   return useQuery({
@@ -40,6 +40,7 @@ export function useRecentEvaluationsQuery(page: number, pageSize = 5) {
       fetchEvaluations({ limit: pageSize, offset: (page - 1) * pageSize }, signal),
     placeholderData: keepPreviousData,
     staleTime: 15_000,
+    refetchInterval: 15_000,
     retry: 1,
   });
 }

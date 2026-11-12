@@ -97,10 +97,11 @@ export function OverviewPage() {
   const recentQuery = useRecentEvaluationsQuery(recentPage, RECENT_EVAL_PAGE_SIZE);
   const recentTotal = recentQuery.data?.total ?? 0;
   const recentPageCount = Math.max(1, Math.ceil(recentTotal / RECENT_EVAL_PAGE_SIZE));
+  const visiblePage = recentQuery.data ? Math.min(recentPage, recentPageCount) : recentPage;
 
   useEffect(() => {
-    if (recentPage > recentPageCount) setRecentPage(recentPageCount);
-  }, [recentPage, recentPageCount]);
+    if (recentQuery.data && recentPage > recentPageCount) setRecentPage(recentPageCount);
+  }, [recentQuery.data, recentPage, recentPageCount]);
 
   const counts = data?.counts;
   const online = counts?.runners_online ?? 0;
@@ -138,10 +139,7 @@ export function OverviewPage() {
       render: (_value, row) => (
         <div>
           <div className="table-primary">{row.name}</div>
-          <div className="table-secondary">
-            {row.id.slice(0, 8)}
-            {row.resource_pool_id ? ` · ${row.resource_pool_id.slice(0, 8)}` : ""}
-          </div>
+          <div className="table-secondary">{row.id.slice(0, 8)}</div>
         </div>
       ),
     },
@@ -407,14 +405,30 @@ export function OverviewPage() {
                 ) : null}
               </div>
             </div>
+            {recentQuery.isError && recentQuery.data ? (
+              <div className="banner warning recent-error" role="alert">
+                <Icon name="alert" size={15} />
+                <div className="overview-note-body">
+                  <span>最近评测刷新失败，以下为上次成功数据。</span>
+                  <Button
+                    type="link"
+                    size="small"
+                    onClick={() => void recentQuery.refetch()}
+                    loading={recentQuery.isFetching}
+                  >
+                    重试
+                  </Button>
+                </div>
+              </div>
+            ) : null}
             <Table<EvaluationSummary>
               className="recent-table"
               columns={recentColumns}
-              dataSource={recentQuery.isError ? [] : (recentQuery.data?.items ?? [])}
+              dataSource={recentQuery.data?.items ?? []}
               rowKey="id"
               loading={recentQuery.isFetching}
               pagination={{
-                current: Math.min(recentPage, recentPageCount),
+                current: visiblePage,
                 pageSize: RECENT_EVAL_PAGE_SIZE,
                 total: recentTotal,
                 showSizeChanger: false,
@@ -423,7 +437,7 @@ export function OverviewPage() {
                 onChange: (nextPage) => setRecentPage(nextPage),
               }}
               locale={{
-                emptyText: recentQuery.isError ? (
+                emptyText: recentQuery.isError && !recentQuery.data ? (
                   <EmptyState
                     compact
                     inline
