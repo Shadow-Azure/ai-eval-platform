@@ -108,11 +108,18 @@ export function parseAssetBundle(bytes, assetSnapshot) {
 
 /**
  * Replace the workspace `.claude` asset roots with exactly the snapshot files.
- * Returns the written paths. An empty/missing snapshot means "no injection".
+ * Returns the written paths. A snapshot without assets means "no injection";
+ * declared assets missing snapshot_id/bundle metadata fail explicitly.
  */
 export async function materializeSnapshot(assetSnapshot, workspace, options = {}) {
-  if (!assetSnapshot || !assetSnapshot.snapshot_id || Number(assetSnapshot.asset_count || 0) === 0) {
+  const assetCount = Number(assetSnapshot?.asset_count || 0);
+  if (!assetSnapshot || assetCount === 0) {
     return [];
+  }
+  if (!assetSnapshot.snapshot_id) {
+    // Never silently drop declared assets: a missing snapshot_id means the
+    // frozen metadata is incomplete (or the task payload was trimmed).
+    throw new RuntimeError("资产快照缺少 snapshot_id", { code: "asset_snapshot_missing" });
   }
   const bytes = await downloadAssetBundle(assetSnapshot, options);
   const { files, modes } = parseAssetBundleDetailed(bytes, assetSnapshot);

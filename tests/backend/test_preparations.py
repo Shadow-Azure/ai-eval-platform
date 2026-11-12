@@ -263,6 +263,36 @@ def test_prepare_and_create_without_agent_assets(
     assert stored.runtime_key == "claude-code"
 
 
+def test_create_from_preparation_freezes_asset_bundle_metadata(
+    client: TestClient, session: Session
+) -> None:
+    """The wizard path must keep the runner bundle contract on the frozen run."""
+
+    ids = seed_launch(session)
+    snapshot = seed_asset_snapshot(session)
+    prepared = client.post(
+        "/api/v1/evaluations/prepare",
+        json=prepare_body(ids, asset_snapshot_id=snapshot.id),
+    ).json()
+    assert prepared["ready"] is True, prepared
+    assert prepared["asset_snapshot"]["snapshot_id"] == snapshot.id
+    assert prepared["asset_snapshot"]["bundle_key"] == snapshot.bundle_key
+
+    created = client.post(
+        "/api/v1/evaluations",
+        json={"preparation_id": prepared["preparation_id"], "name": "资产评测"},
+        headers={"Idempotency-Key": "idem-asset-bundle"},
+    )
+    assert created.status_code == 201, created.text
+    stored = session.get(EvalRun, created.json()["id"])
+    frozen = stored.asset_snapshot_json
+    assert frozen["snapshot_id"] == snapshot.id
+    assert frozen["bundle_key"] == snapshot.bundle_key
+    assert frozen["bundle_digest"] == snapshot.bundle_digest
+    assert frozen["bundle_size"] == snapshot.bundle_size
+    assert frozen["file_count"] == snapshot.file_count
+
+
 def test_create_from_preparation_uses_frozen_subset_and_policy(
     client: TestClient, session: Session
 ) -> None:
