@@ -6,7 +6,7 @@ English | [中文](m8-04-trace-viewer-redesign.md)
 kind: issue
 milestone: m8
 priority: P2
-status: in-progress
+status: done
 scope:
   - .agents/flow/issues/m8-04-trace-viewer-redesign.*
   - .agents/flow/milestones/m8-bug-fixes.*

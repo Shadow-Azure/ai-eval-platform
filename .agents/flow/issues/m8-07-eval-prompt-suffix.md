@@ -9,6 +9,7 @@ priority: P1
 status: in-progress
 scope:
   - .agents/flow/issues/m8-07-eval-prompt-suffix.*
+  - .agents/flow/issues/m8-04-trace-viewer-redesign.*
   - .agents/flow/milestones/m8-bug-fixes.*
   - .agents/flow/roadmap.*
   - prototype/**
