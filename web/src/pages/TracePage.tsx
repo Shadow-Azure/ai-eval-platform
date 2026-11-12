@@ -23,6 +23,7 @@ import {
 import {
   createTraceFileDownloadUrl,
   createTraceSpanContentUrl,
+  downloadTraceArchive,
   fetchAttemptTrace,
   fetchTraceSessionSpans,
   fetchTraceSpan,
@@ -31,11 +32,17 @@ import {
   type TraceSession,
   type TraceSpan,
 } from "../api/traces";
+import { useAuth } from "../app/auth";
 import { EmptyState } from "../components/EmptyState";
 import { Icon } from "../components/Icon";
 import { PageHeading } from "../components/PageHeading";
 import { QueryError } from "../components/QueryError";
 import { formatMoney } from "../utils/money";
+import {
+  buildArchiveTree,
+  formatBytes,
+  summarizeTraceExport,
+} from "../features/traces/traceExportModel";
 import {
   flattenSessionTree,
   markMissingParents,
@@ -213,6 +220,40 @@ function copyText(value: string): Promise<void> {
   if (navigator.clipboard?.writeText)
     return navigator.clipboard.writeText(value);
   return Promise.reject(new Error("当前浏览器不支持剪贴板写入"));
+}
+
+/** Prototype's `download` glyph; not in the shared Icon map yet. */
+function DownloadGlyph({ size = 14 }: { size?: number }) {
+  return (
+    <svg
+      className="icon"
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path d="M12 3v12M7 10l5 5 5-5M5 21h14" />
+    </svg>
+  );
+}
+
+function saveBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.rel = "noopener";
+  anchor.style.display = "none";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
 interface SessionListProps {
@@ -1784,6 +1825,8 @@ function Inspector({
 
 export function TracePage() {
   const { message } = AntApp.useApp();
+  const { session } = useAuth();
+  const isAdmin = session?.role === "admin";
   const navigate = useNavigate();
   const { runId = "", caseRunId = "" } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1802,6 +1845,7 @@ export function TracePage() {
   const [dismissedSelection, setDismissedSelection] = useState(false);
   const narrow = useNarrowViewport();
   const initializedSessionRef = useRef<string | null>(null);
+  const [exportOpen, setExportOpen] = useState(false);
 
   const updateSelection = (
     patch: Partial<{
@@ -1842,6 +1886,14 @@ export function TracePage() {
     },
   });
   const attempt = attemptQuery.data?.attempt ?? null;
+  const exportSummary = useMemo(
+    () =>
+      summarizeTraceExport(
+        attemptQuery.data?.sessions ?? [],
+        attemptQuery.data?.files ?? [],
+      ),
+    [attemptQuery.data?.sessions, attemptQuery.data?.files],
+  );
   const flat = useMemo(
     () => flattenSessionTree(attemptQuery.data?.sessions ?? []),
     [attemptQuery.data?.sessions],
@@ -2051,6 +2103,16 @@ export function TracePage() {
         error instanceof Error ? error.message : "完整内容地址签发失败",
       ),
   });
+  const archiveDownload = useMutation({
+    mutationFn: (attemptNo: number) => downloadTraceArchive(caseRunId, attemptNo),
+    onSuccess: (result) => {
+      saveBlob(result.blob, result.filename);
+      setExportOpen(false);
+      message.success(`轨迹包已开始下载：${result.filename}`);
+    },
+    onError: (error) =>
+      message.error(error instanceof Error ? error.message : "轨迹包下载失败"),
+  });
 
   const selectAttempt = (attemptNo: number) => {
     setSignedLink(null);
@@ -2194,6 +2256,27 @@ export function TracePage() {
   const processing =
     attemptTraceStatus === "pending" || attemptTraceStatus === "parsing";
   const noTrace = files.length === 0;
+  const attemptNo = trace.attempt?.attempt_no ?? null;
+  const exportPending = archiveDownload.isPending;
+  const canExportArchive = isAdmin && files.length > 0 && attemptNo !== null;
+  const exportTooltip = !isAdmin
+    ? "仅管理员可下载轨迹包（与原始文件权限一致）"
+    : files.length === 0
+      ? "当前 attempt 没有可导出的原始文件"
+      : attemptNo === null
+        ? "轨迹尚未生成 attempt"
+        : "打包下载当前 attempt 的主 Agent 与全部子 Agent 原始会话文件";
+  const exportCaseKey = caseQuery.data?.case.case_key ?? trace.caseRunId;
+  const exportTree = buildArchiveTree({
+    caseKey: exportCaseKey,
+    caseRunId: trace.caseRunId,
+    attemptNo,
+    main: exportSummary.main,
+    subagents: exportSummary.subagents,
+    unlinked: exportSummary.unlinked,
+    orphanFiles: exportSummary.orphanFiles,
+    unlinkedCount: exportSummary.unlinkedCount,
+  });
   const sessionSpanTotal =
     selectedSession?.span_count ??
     spansQuery.data?.pages[0]?.pageInfo.total ??
@@ -2258,14 +2341,19 @@ export function TracePage() {
               }))}
               onChange={selectAttempt}
             />
-            <Button
-              icon={<Icon name="file" size={14} />}
-              disabled={!files.length}
-              loading={fileDownload.isPending}
-              onClick={() => files[0] && fileDownload.mutate(files[0].id)}
-            >
-              原始会话文件
-            </Button>
+            <Tooltip title={exportTooltip}>
+              <span className="trace-export-action">
+                <Button
+                  type="primary"
+                  icon={<DownloadGlyph />}
+                  disabled={!canExportArchive || exportPending}
+                  loading={exportPending}
+                  onClick={() => setExportOpen(true)}
+                >
+                  下载轨迹包
+                </Button>
+              </span>
+            </Tooltip>
           </>
         }
       />
@@ -2398,6 +2486,9 @@ export function TracePage() {
             />
             <div className="trace-raw-source">
               <div className="trace-pane-section-head">原始文件</div>
+              <div className="trace-raw-summary small muted">
+                主 Agent {exportSummary.mainAgentCount} · 子 Agent {exportSummary.subagentCount} · {files.length} 个原始文件
+              </div>
               {files.length ? (
                 files.map((file) => (
                   <button
@@ -2417,6 +2508,21 @@ export function TracePage() {
               ) : (
                 <span className="small muted">没有登记的原生文件。</span>
               )}
+              <Tooltip title={exportTooltip}>
+                <span className="trace-export-action">
+                  <Button
+                    className="trace-export-raw-button"
+                    size="small"
+                    block
+                    icon={<DownloadGlyph size={12} />}
+                    disabled={!canExportArchive || exportPending}
+                    loading={exportPending}
+                    onClick={() => setExportOpen(true)}
+                  >
+                    打包下载
+                  </Button>
+                </span>
+              </Tooltip>
             </div>
             <div className="trace-outline-foot">
               <Icon name="list" size={11} />主 Agent 与子 Agent 使用统一父子证据
@@ -2613,6 +2719,138 @@ export function TracePage() {
               : ""
           }
         />
+      </Modal>
+      <Modal
+        open={exportOpen}
+        title="下载轨迹包"
+        width={760}
+        className="trace-export-modal"
+        maskClosable={!exportPending}
+        closable={!exportPending}
+        onCancel={() => {
+          if (!exportPending) setExportOpen(false);
+        }}
+        footer={[
+          <Button
+            key="cancel"
+            disabled={exportPending}
+            onClick={() => setExportOpen(false)}
+          >
+            取消
+          </Button>,
+          <Button
+            key="download"
+            type="primary"
+            icon={<DownloadGlyph size={13} />}
+            loading={exportPending}
+            disabled={!canExportArchive}
+            onClick={() => {
+              if (attemptNo !== null) archiveDownload.mutate(attemptNo);
+            }}
+          >
+            下载 ZIP · {formatBytes(exportSummary.estimatedArchiveSize)}
+          </Button>,
+        ]}
+      >
+        <div className="trace-export-subtitle">
+          当前 attempt · Attempt {attemptNo ?? "—"} · {trace.attempt?.status ?? "unknown"} ·{" "}
+          <span className="mono">{exportCaseKey}</span>
+        </div>
+        <Alert
+          type="info"
+          showIcon
+          className="trace-export-banner"
+          message={
+            <span>
+              <strong>主 Agent 与全部子 Agent 打包下载。</strong>
+              原始会话文件会打进同一个 ZIP，不重新序列化，保留原生 JSONL；未关联会话会在清单中标记。
+            </span>
+          }
+        />
+        <div className="trace-export-stats">
+          <div className="trace-export-stat">
+            <strong>{exportSummary.mainAgentCount}</strong>
+            <span>主 Agent</span>
+          </div>
+          <div className="trace-export-stat">
+            <strong>{exportSummary.subagentCount}</strong>
+            <span>子 Agent</span>
+          </div>
+          <div className="trace-export-stat">
+            <strong>{exportSummary.rawFileCount}</strong>
+            <span>原始文件</span>
+          </div>
+          <div className="trace-export-stat">
+            <strong>{formatBytes(exportSummary.estimatedArchiveSize)}</strong>
+            <span>ZIP 预估</span>
+          </div>
+        </div>
+        <div className="trace-export-hint">
+          ZIP 预估按原始文件大小与清单开销估算，实际以下载结果为准。
+        </div>
+        <div className="trace-export-section">
+          <div className="trace-export-section-head">
+            包含的会话<span className="muted">{exportSummary.sessionCount}</span>
+          </div>
+          {exportSummary.sessions.length ? (
+            <div className="trace-export-session-list">
+              {exportSummary.sessions.map((row) => (
+                <div className="trace-export-session" key={row.id}>
+                  <span
+                    className={`trace-export-mark ${row.role === "unlinked" ? "warn" : ""}`}
+                  >
+                    {row.role === "unlinked" ? "U" : "A"}
+                  </span>
+                  <div className="trace-export-session-main">
+                    <div className="trace-export-session-name">{row.name}</div>
+                    <div className="trace-export-session-meta">
+                      {row.roleLabel} · {row.spanCount} spans ·{" "}
+                      <span className="mono">{row.nativeSessionId}</span>
+                    </div>
+                  </div>
+                  <Tag
+                    color={
+                      row.role === "main"
+                        ? "purple"
+                        : row.role === "subagent"
+                          ? "blue"
+                          : "warning"
+                    }
+                  >
+                    {row.roleLabel}
+                  </Tag>
+                  <span className="trace-export-session-size">
+                    {row.fileCount
+                      ? `${row.fileCount} 个文件 · ${formatBytes(row.fileSize)}`
+                      : `${row.spanCount} spans`}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="trace-export-empty">
+              该 attempt 还没有登记会话，原始文件仍会按清单归档。
+            </div>
+          )}
+          {exportSummary.unlinkedCount ? (
+            <div className="trace-export-hint">
+              {exportSummary.unlinkedCount} 个未关联会话会写入 unlinked/，并在清单中标注。
+            </div>
+          ) : null}
+          <div className="trace-export-hint">
+            从子 Agent 会话发起下载时，仍会导出它所属的完整会话组，避免只拿到半条轨迹。
+          </div>
+        </div>
+        <div className="trace-export-section">
+          <div className="trace-export-section-head">
+            ZIP 目录<span className="muted">原始 JSONL + 清单</span>
+          </div>
+          <pre className="trace-export-tree">{exportTree.join("\n")}</pre>
+          <div className="trace-export-hint">
+            manifest.json 记录 case、attempt、parser 版本、session / span 数量与每个文件的
+            sha256；文件缺失或会话未关联时会在清单中标注，不生成坏包。
+          </div>
+        </div>
       </Modal>
     </section>
   );

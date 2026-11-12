@@ -287,6 +287,7 @@ def _session_body(
     )
     return {
         "id": session.id,
+        "trace_file_id": session.trace_file_id,
         "native_session_id": session.native_session_id,
         "native_session_key": session.native_session_key,
         "root_session_id": session.root_session_id,
