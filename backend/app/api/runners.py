@@ -585,6 +585,21 @@ def _load_shard_dispatch(
     return row, run, attempts
 
 
+CASE_TOKEN_MIN_TTL_SECONDS = 300
+CASE_TOKEN_GRACE_SECONDS = 900
+
+
+def _case_token_ttl(run: EvalRun) -> int:
+    """M8-12: the case token must outlive the whole case plus upload grace.
+
+    The previous fixed 300s killed every case longer than five minutes with a
+    heartbeat timeout even though ``case_timeout_seconds`` defaults to an hour.
+    """
+
+    timeout = int(getattr(run, "case_timeout_seconds", 0) or 0)
+    return max(CASE_TOKEN_MIN_TTL_SECONDS, timeout + CASE_TOKEN_GRACE_SECONDS)
+
+
 @router.get("/runner/v1/shards/{shard_id}/manifest")
 def shard_manifest(
     shard_id: str,
@@ -612,7 +627,7 @@ def shard_manifest(
         "pool_id": run.resource_pool_id or "default",
         "scope": "case",
     }
-    token = issue_short_token(claims, effective_task_secret(settings), ttl_seconds=300)
+    token = issue_short_token(claims, effective_task_secret(settings), ttl_seconds=_case_token_ttl(run))
     model_headers: dict[str, str] = {}
     if run.model_config_id:
         config = session.get(ModelConfig, run.model_config_id)

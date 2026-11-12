@@ -8,6 +8,7 @@ The payload shape is pinned to the deployed heartbeat agent
 
 from __future__ import annotations
 
+import base64
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -730,4 +731,47 @@ def test_shard_task_payload_includes_prompt_suffix(
     cases = shard_cases()
     assert cases
     assert {case["prompt_suffix"] for case in cases} == {suffix}
+
+
+# ---------------------------------------------------------------------------
+# M8-12: the case token must outlive the configured case timeout
+# ---------------------------------------------------------------------------
+
+
+def _token_exp(token: str) -> int:
+    body = token.split(".")[1]
+    padding = "=" * (-len(body) % 4)
+    payload = json.loads(base64.urlsafe_b64decode(body + padding))
+    return int(payload["exp"])
+
+
+def test_manifest_case_token_ttl_covers_case_timeout(
+    eval_env: dict, session: Session, client: TestClient
+) -> None:
+    run = session.get(EvalRun, eval_env["run_id"])
+    assert run is not None
+    outbox = session.scalar(select(Outbox).where(Outbox.aggregate_id == run.id))
+    assert outbox is not None
+
+    def token() -> str:
+        response = client.get(
+            f"/runner/v1/shards/{eval_env['shard']}/manifest",
+            params={
+                "eval_run_id": run.id,
+                "attempt": 1,
+                "dispatch_key": outbox.dispatch_key,
+            },
+            headers=auth(eval_env),
+        )
+        assert response.status_code == 200, response.text
+        return response.headers["X-Runner-Task-Token"]
+
+    run.case_timeout_seconds = 3600
+    session.commit()
+    assert _token_exp(token()) - int(datetime.now(UTC).timestamp()) >= 3600
+
+    run.case_timeout_seconds = 60
+    session.commit()
+    assert _token_exp(token()) - int(datetime.now(UTC).timestamp()) >= 300
+
 

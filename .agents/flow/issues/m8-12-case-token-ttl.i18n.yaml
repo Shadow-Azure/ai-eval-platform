@@ -1,0 +1,5 @@
+# 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
+# git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
+#   pnpm run record:i18n -- .agents/flow/issues/m8-12-case-token-ttl.md
+m8-12-case-token-ttl.md: 2efe5a387e3aad95ffaa3ff7d7e5f204b391eec5
+m8-12-case-token-ttl.en.md: 3c56983a92044473e58737b3993302d5c72398d5

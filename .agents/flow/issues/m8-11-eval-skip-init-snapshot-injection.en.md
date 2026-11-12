@@ -6,7 +6,7 @@ English | [中文](m8-11-eval-skip-init-snapshot-injection.md)
 kind: issue
 milestone: m8
 priority: P2
-status: in-progress
+status: done
 scope:
   - .agents/flow/issues/m8-11-eval-skip-init-snapshot-injection.*
   - .agents/flow/issues/m8-10-cli-generated-agent-assets.*
