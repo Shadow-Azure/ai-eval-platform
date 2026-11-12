@@ -14,6 +14,11 @@ node prototype/build-standalone.mjs
 
 演示账号为 `admin@acme.local`，密码 `eval-demo`。密码只做空值校验，不会发送到网络。
 
+## 侧栏收起
+
+- 侧栏底部「收起导航」在 236px 展开态与 72px 图标栏之间切换，状态保存在浏览器 `localStorage` 的 `ep.sidebar.collapsed`。
+- 直接打开收起态：`prototype/index.html?sidebar=collapsed#/overview`；展开态可用 `?sidebar=expanded` 强制覆盖本地记忆。
+
 ## 主路径
 
 1. 登录后从总览进入“数据集”，在通用目录中切换任务族、状态并翻页，再打开 SWE-bench Verified 详情。

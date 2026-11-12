@@ -151,6 +151,19 @@ TracePage
 
 Waterfall 用 CSS/SVG 自研，行虚拟化；不为每个大 span 一次性渲染完整正文。文本默认按纯文本显示，Markdown 若启用必须 sanitize，工具输出中的 HTML/脚本不可执行。
 
+### 5.4 应用外壳与导航
+
+```text
+AppShell
+  ├─ Sidebar(collapsed, onToggle)
+  │   ├─ BrandMark / BrandCopy
+  │   ├─ NavGroup(icon + label / icon + Tooltip)
+  │   └─ SidebarToggle + TenantChip
+  └─ MainShell(Header + Outlet)
+```
+
+`collapsed` 由 `AppShell` 持有，初值读取 `localStorage` 的 `ep.sidebar.collapsed`；`Sidebar` 底部按钮用 `aria-expanded`/`aria-controls` 暴露状态，收起态导航项保留 `aria-label` 并用 antd `Tooltip` 从右侧显示名称。`shell.css` 通过 `--sidebar-width` 同步侧栏宽度与主内容 `margin-left`，`prefers-reduced-motion` 下关闭过渡。该偏好属于浏览器渲染状态，不进入后端数据模型。
+
 ## 6. 状态与错误处理
 
 - 首屏加载用骨架，局部刷新保留旧数据并显示更新时间；无数据不显示无限骨架。

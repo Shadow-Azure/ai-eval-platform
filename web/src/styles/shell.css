@@ -1,18 +1,24 @@
 .app-shell {
+  --sidebar-width: var(--sidebar);
   min-height: 100vh;
+}
+
+.app-shell.sidebar-collapsed {
+  --sidebar-width: var(--sidebar-collapsed);
 }
 
 .sidebar {
   position: fixed;
   inset: 0 auto 0 0;
   z-index: 20;
-  width: var(--sidebar);
+  width: var(--sidebar-width);
   display: flex;
   flex-direction: column;
   padding: 18px 14px 14px;
   border-right: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.96);
   backdrop-filter: blur(14px);
+  transition: width 180ms ease, padding 180ms ease;
 }
 
 .brand {
@@ -20,6 +26,10 @@
   align-items: center;
   gap: 11px;
   padding: 4px 8px 20px;
+}
+
+.brand-copy {
+  min-width: 0;
 }
 
 .brand-mark {
@@ -129,6 +139,37 @@
   color: var(--primary);
 }
 
+.sidebar-toggle {
+  width: 100%;
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0 0 9px;
+  padding: 7px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--muted);
+  background: transparent;
+  font-size: 12px;
+  text-align: left;
+  transition: 0.16s ease;
+}
+
+.sidebar-toggle:hover {
+  color: var(--ink);
+  background: #f5f8fc;
+}
+
+.sidebar-toggle:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
+.sidebar-toggle .icon {
+  color: #8b96a6;
+}
+
 .sidebar-footer {
   margin-top: auto;
   padding-top: 14px;
@@ -172,9 +213,78 @@
   font-size: 10px;
 }
 
+.app-shell.sidebar-collapsed .sidebar {
+  padding: 18px 10px 14px;
+}
+
+.app-shell.sidebar-collapsed .sidebar-nav {
+  padding-right: 0;
+}
+
+.app-shell.sidebar-collapsed .brand {
+  justify-content: center;
+  padding: 4px 0 18px;
+}
+
+.app-shell.sidebar-collapsed .brand-copy {
+  display: none;
+}
+
+.app-shell.sidebar-collapsed .nav-label {
+  display: none;
+}
+
+.app-shell.sidebar-collapsed .nav-group {
+  margin-bottom: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.app-shell.sidebar-collapsed .nav-group:first-child {
+  margin-top: 4px;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.app-shell.sidebar-collapsed .nav-item {
+  justify-content: center;
+  gap: 0;
+  padding: 8px 0;
+}
+
+.app-shell.sidebar-collapsed .nav-item > span {
+  display: none;
+}
+
+.app-shell.sidebar-collapsed .nav-item.active::before {
+  left: -10px;
+  height: 20px;
+}
+
+.app-shell.sidebar-collapsed .sidebar-toggle {
+  justify-content: center;
+  gap: 0;
+  padding: 7px 0;
+}
+
+.app-shell.sidebar-collapsed .sidebar-toggle span {
+  display: none;
+}
+
+.app-shell.sidebar-collapsed .tenant-chip {
+  justify-content: center;
+  padding: 6px;
+}
+
+.app-shell.sidebar-collapsed .tenant-copy,
+.app-shell.sidebar-collapsed .tenant-chip > .icon {
+  display: none;
+}
+
 .main-shell {
   min-height: 100vh;
-  margin-left: var(--sidebar);
+  margin-left: var(--sidebar-width);
+  transition: margin-left 180ms ease;
 }
 
 .topbar {
@@ -369,5 +479,15 @@
 @media (max-width: 1120px) {
   .env-chip {
     display: none;
+  }
+}
+
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar,
+  .main-shell,
+  .nav-item,
+  .sidebar-toggle {
+    transition: none;
   }
 }

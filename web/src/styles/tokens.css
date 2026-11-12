@@ -22,6 +22,7 @@
   --shadow-md: 0 10px 30px rgba(27, 46, 94, 0.08);
   --shadow-lg: 0 24px 70px rgba(27, 46, 94, 0.18);
   --sidebar: 236px;
+  --sidebar-collapsed: 72px;
   --radius: 10px;
   --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
 }
