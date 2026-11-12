@@ -2095,12 +2095,7 @@ export function TracePage() {
   );
   const selectedStep = useMemo(() => {
     if (!selectedSpanId) return null;
-    if (
-      selectedChildStep &&
-      selectedChildStep.span.id === selectedSpanId
-    ) {
-      return selectedChildStep;
-    }
+    if (selectedChildStep) return selectedChildStep;
     const direct = model.stepBySpanId.get(selectedSpanId);
     if (direct) return direct;
     return (
@@ -2219,8 +2214,17 @@ export function TracePage() {
     if (narrow) setDetailOpen(true);
   };
   const selectStep = (step: TraceStep, child = false) => {
+    if (child) {
+      // Keep the parent session in the center; the child step only drives the
+      // right inspector and its selected border.
+      setSelectedChildStep(step);
+      setSignedLink(null);
+      setDismissedSelection(false);
+      if (narrow) setDetailOpen(true);
+      return;
+    }
     selectSpan(step.span);
-    setSelectedChildStep(child ? step : null);
+    setSelectedChildStep(null);
   };
   const openStepDetail = (step: TraceStep) => {
     selectStep(step);
