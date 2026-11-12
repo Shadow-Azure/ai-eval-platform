@@ -285,7 +285,7 @@ def create_synthetic_evaluation(
         asset_snapshot_id=asset_snapshot_id,
         asset_snapshot_json=asset_snapshot_json or {},
         consistency_json=consistency_json or {},
-        prompt_suffix=prompt_suffix or "",
+        prompt_suffix=(prompt_suffix or "").strip(),
         idempotency_key=idempotency_key[:128],
         created_by=created_by[:128],
         case_timeout_seconds=timeout,
