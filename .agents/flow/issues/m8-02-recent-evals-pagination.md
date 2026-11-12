@@ -6,7 +6,7 @@
 kind: issue
 milestone: m8
 priority: P2
-status: in-progress
+status: done
 scope:
   - .agents/flow/issues/m8-02-recent-evals-pagination.*
   - .agents/flow/issues/m8-01-runner-records-pagination.*
