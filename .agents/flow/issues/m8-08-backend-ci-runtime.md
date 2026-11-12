@@ -5,7 +5,7 @@
 ```yaml flow
 kind: issue
 milestone: m8
-priority: P1
+priority: P2
 status: in-progress
 scope:
   - .agents/flow/issues/m8-08-backend-ci-runtime.*

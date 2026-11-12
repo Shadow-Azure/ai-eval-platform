@@ -6,7 +6,7 @@
 kind: issue
 milestone: m8
 priority: P1
-status: done
+status: in-progress
 scope:
   - .agents/flow/issues/m8-07-eval-prompt-suffix.*
   - .agents/flow/issues/m8-04-trace-viewer-redesign.*
