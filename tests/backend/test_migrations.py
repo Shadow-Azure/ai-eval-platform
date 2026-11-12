@@ -136,6 +136,32 @@ def test_revision_ids_fit_alembic_version_column() -> None:
             "alembic_version.version_num VARCHAR(32)"
         )
 
+def test_agent_asset_load_test_column_roundtrip(database_url: str) -> None:
+    """0023 adds the load-test result column and its downgrade removes it."""
+
+    run_alembic(database_url, "upgrade", "head")
+    engine = create_engine(database_url, future=True)
+    try:
+        columns = {
+            column["name"] for column in inspect(engine).get_columns("agent_asset_source")
+        }
+        assert "load_test_json" in columns
+    finally:
+        engine.dispose()
+
+    run_alembic(database_url, "downgrade", "0022_eval_run_prompt_suffix")
+    engine = create_engine(database_url, future=True)
+    try:
+        columns = {
+            column["name"] for column in inspect(engine).get_columns("agent_asset_source")
+        }
+        assert "load_test_json" not in columns
+    finally:
+        engine.dispose()
+
+    run_alembic(database_url, "upgrade", "head")
+
+
 def test_trace_tables_migrate_from_dataset_import_head(database_url: str) -> None:
     """0021 must apply on top of 0020 and reverse without losing earlier state."""
 

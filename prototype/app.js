@@ -371,6 +371,54 @@ const mock = {
       ],
       counts: { skill: 12, command: 6, subagent: 0 },
       note: "Command 属于生成资产；启动前需要受控执行 openspec init/update，并提供 openspec CLI。",
+      runtime: {
+        installCommand: "npm install -g @fission-ai/openspec",
+        initCommand: "openspec init",
+        status: "untested",
+        durationSeconds: null,
+        generatedCommands: 6,
+      },
+    },
+    {
+      id: "codespec",
+      name: "CodeSpec CLI",
+      repoUrl: "https://github.com/chenmr0/OpenSpec-cn",
+      defaultRef: "main-copy-ar",
+      scanPath: ".",
+      selection: "directory",
+      status: "requires_setup",
+      commit: "31cda2f",
+      adapter: "CLI-generated Agent Skills + /opsx commands",
+      description: "CodeSpec/OpenSpec 的 CLI 源码；仓库本身没有 Skill/Command，运行时由 codespec init 生成。",
+      cliSource: true,
+      assets: [
+        { id: "codespec-subagent-driven-development", type: "skill", name: "codespec-subagent-driven-development", path: "generated:.claude/skills/codespec-subagent-driven-development", selected: true },
+        { id: "codespec-test-driven-development", type: "skill", name: "codespec-test-driven-development", path: "generated:.claude/skills/codespec-test-driven-development", selected: true },
+        { id: "codespec-verification-before-completion", type: "skill", name: "codespec-verification-before-completion", path: "generated:.claude/skills/codespec-verification-before-completion", selected: true },
+        { id: "main-agent-development", type: "skill", name: "main-agent-development", path: "generated:.claude/skills/main-agent-development", selected: true },
+        { id: "writing-plans-main", type: "skill", name: "writing-plans-main", path: "generated:.claude/skills/writing-plans-main", selected: true },
+        { id: "writing-plans-subagent", type: "skill", name: "writing-plans-subagent", path: "generated:.claude/skills/writing-plans-subagent", selected: true },
+        { id: "opsx-design", type: "command", name: "opsx/design", path: "generated:.claude/commands/opsx/design.md", selected: true },
+        { id: "opsx-propose", type: "command", name: "opsx/propose", path: "generated:.claude/commands/opsx/propose.md", selected: true },
+        { id: "opsx-apply", type: "command", name: "opsx/apply", path: "generated:.claude/commands/opsx/apply.md", selected: true },
+        { id: "opsx-archive", type: "command", name: "opsx/archive", path: "generated:.claude/commands/opsx/archive.md", selected: true },
+        { id: "agent-code-generator", type: "subagent", name: "code-generator", path: "generated:.claude/agents/code-generator.md", selected: true },
+        { id: "agent-spec-reviewer", type: "subagent", name: "spec-reviewer", path: "generated:.claude/agents/spec-reviewer.md", selected: true },
+        { id: "agent-code-quality-reviewer", type: "subagent", name: "code-quality-reviewer", path: "generated:.claude/agents/code-quality-reviewer.md", selected: true },
+        { id: "agent-change-verifier", type: "subagent", name: "change-verifier", path: "generated:.claude/agents/change-verifier.md", selected: true },
+        { id: "agent-concept-clarify", type: "subagent", name: "concept-clarify", path: "generated:.claude/agents/concept-clarify.md", selected: true },
+      ],
+      counts: { skill: 6, command: 4, subagent: 5 },
+      note: "静态扫描 0 资产；codespec init（core）生成 4 Command + 6 Skill + 5 Agent（外部 Skill 含 codespec-* 前缀），需要 codespec CLI。",
+      runtime: {
+        installCommand: "npm install --prefix \"$HOME\" github:chenmr0/OpenSpec-cn#main-copy-ar",
+        initCommand: "\"$HOME/node_modules/.bin/codespec\" init --tools claude --profile core",
+        status: "untested",
+        durationSeconds: null,
+        generatedCommands: 4,
+        generatedSkills: 6,
+        generatedAgents: 5,
+      },
     },
     {
       id: "team-assets",
@@ -498,6 +546,14 @@ const ui = {
     scanToken: 0,
     page: 1,
     pageSize: 5,
+    runtimeEnabled: false,
+    installCommand: "npm install -g @fission-ai/openspec",
+    initCommand: "openspec init",
+    loadTesting: false,
+    loadTestPassed: false,
+    loadTestResult: null,
+    scannedSource: null,
+    staticEmpty: false,
   },
   datasetLoading: false,
   importStep: 1,
@@ -1397,10 +1453,21 @@ function assetSourcesPage() {
                   <span class="tag tag-violet">Command ${source.counts.command}</span>
                   <span class="tag tag-success">Subagent ${source.counts.subagent}</span>
                 </div>
+                ${source.runtime ? `
+                  <div class="asset-runtime">
+                    <div class="row" style="justify-content:space-between;gap:8px;margin-bottom:6px">
+                      <strong class="small">运行时前置</strong>
+                      ${source.runtime.status === "passed" ? '<span class="tag tag-success">加载测试通过</span>' : source.runtime.status === "testing" ? '<span class="tag tag-warning">测试中…</span>' : '<span class="tag tag-warning">未测试</span>'}
+                    </div>
+                    <div class="mono small muted">${esc(source.runtime.installCommand)}</div>
+                    <div class="mono small muted">${esc(source.runtime.initCommand)}</div>
+                    ${source.runtime.status === "passed" ? `<div class="small muted" style="margin-top:4px">已生成 ${source.runtime.generatedSkills ? `${source.runtime.generatedSkills} 个 Skill / ` : ""}${source.runtime.generatedCommands} 个 Command${source.runtime.generatedAgents ? ` / ${source.runtime.generatedAgents} 个 Agent` : ""} · ${source.runtime.durationSeconds}s；结果随快照冻结</div>` : ""}
+                  </div>` : ""}
                 <div class="asset-source-note">${source.note}</div>
                 <div class="dataset-footer">
                   <span class="small muted mono">@${source.commit}</span>
                   <button class="btn btn-ghost btn-sm" data-action="scan-asset-source" data-source="${source.id}">${icon("refresh", 13)} 扫描</button>
+                  ${source.runtime ? `<button class="btn btn-ghost btn-sm" data-action="run-load-test" data-source="${source.id}" ${source.runtime.status === "testing" ? "disabled" : ""}>${icon("terminal", 13)} ${source.runtime.status === "passed" ? "重新测试" : "加载测试"}</button>` : ""}
                   <button class="btn btn-sm" data-action="asset-source-detail" data-source="${source.id}">查看资产 ${icon("arrowRight", 13)}</button>
                 </div>
               </article>
@@ -2682,7 +2749,28 @@ function openAssetSourceModal(animate = true) {
               <option value="subagent" ${wizard.typeFilter === "subagent" ? "selected" : ""}>仅 Subagent</option>
             </select>
           </div>
-          <div class="asset-scan-hint">${icon("shield", 14)}<span>扫描只读取仓库内容，不执行 Skill 脚本；保存后固定解析 commit。</span></div>
+          <div class="field" style="border-top:1px solid var(--line);padding-top:12px">
+            <label class="row" style="gap:8px;align-items:center;font-weight:600">
+              <input type="checkbox" id="wizard-runtime-enabled" ${wizard.runtimeEnabled ? "checked" : ""} />
+              <span>运行时前置（可选）：需要 CLI 生成命令</span>
+            </label>
+            <span class="hint">适用于 OpenSpec/CodeSpec 等由 CLI 生成 Command 的仓库。</span>
+          </div>
+          ${wizard.runtimeEnabled ? `
+            <div class="field">
+              <label class="required">CLI 安装命令</label>
+              <input class="input mono" id="wizard-install-command" value="${esc(wizard.installCommand)}" placeholder="npm install -g @fission-ai/openspec" />
+            </div>
+            <div class="field">
+              <label class="required">初始化 / 生成命令</label>
+              <input class="input mono" id="wizard-init-command" value="${esc(wizard.initCommand)}" placeholder="openspec init" />
+            </div>
+            <div class="field">
+              <button class="btn btn-sm" data-action="wizard-load-test" ${wizard.loadTesting ? "disabled" : ""}>${icon("terminal", 13)} ${wizard.loadTesting ? "测试中…" : wizard.loadTestPassed ? "重新测试" : "加载测试"}</button>
+              ${wizard.loadTesting ? '<div class="asset-scan-hint" style="margin-top:8px">在隔离环境安装 CLI 并执行 init，再扫描生成资产…</div>' : wizard.loadTestPassed ? `<div class="banner success" style="margin-top:8px">${icon("check", 14)}<div><strong>加载测试通过</strong> · 生成 ${wizard.loadTestResult.generatedSkills ?? 0} 个 Skill / ${wizard.loadTestResult.generatedCommands} 个 Command / ${wizard.loadTestResult.generatedAgents ?? 0} 个 Agent · ${wizard.loadTestResult.durationSeconds}s；结果会冻结进资产快照。</div></div>` : '<div class="asset-scan-hint" style="margin-top:8px">在隔离环境执行上面两条命令并扫描生成结果，不写入仓库。</div>'}
+            </div>
+          ` : ""}
+          <div class="asset-scan-hint">${icon("shield", 14)}<span>${wizard.runtimeEnabled ? "加载测试会在隔离环境执行安装/初始化命令并扫描生成结果；扫描只读取仓库内容。" : "扫描只读取仓库内容，不执行 Skill 脚本；保存后固定解析 commit。"}</span></div>
         </section>
         <section class="asset-wizard-browser">
           <div class="asset-wizard-section-title"><span>02</span>扫描结果 <em>${wizard.scanned ? `${wizard.selectedPaths.length} / ${wizard.assets.length} 已选择` : "等待扫描"}</em></div>
@@ -2690,7 +2778,9 @@ function openAssetSourceModal(animate = true) {
             wizard.scanning
               ? `<div class="asset-scan-loading"><div class="skeleton" style="width:38%;height:14px"></div><div class="skeleton" style="width:100%;height:34px"></div><div class="skeleton" style="width:88%;height:34px"></div><div class="skeleton" style="width:94%;height:34px"></div><span>正在读取 Git tree、识别资产并校验路径…</span></div>`
               : wizard.scanned
-                ? `<div class="asset-scan-result">
+                ? wizard.assets.length === 0
+                  ? `<div class="asset-scan-result"><div class="banner warning">${icon("alert", 15)}<div><strong>未发现可识别的 Skill、Command 或 Subagent</strong><p>该仓库是 CLI 生成型资产源：填写左侧运行时前置并完成「加载测试」后，生成的 Skill 与 Command 会出现在这里。</p></div></div></div>`
+                  : `<div class="asset-scan-result">
                     <div class="row" style="gap:5px;margin-bottom:9px"><span class="tag tag-primary">Skill ${selectedCounts.skill}</span><span class="tag tag-violet">Command ${selectedCounts.command}</span><span class="tag tag-success">Subagent ${selectedCounts.subagent}</span></div>
                     <div class="file-tree">
                       ${grouped
@@ -2749,7 +2839,7 @@ function openAssetSourceModal(animate = true) {
         </section>
       </div>
     `,
-    footer: `<button class="btn" data-action="close-modal">取消</button><button class="btn" data-action="scan-git-assets">${icon("search", 13)} ${wizard.scanned ? "重新扫描" : "自动扫描"}</button><button class="btn btn-primary" data-action="save-asset-source" ${wizard.scanned && wizard.selectedPaths.length ? "" : "disabled"}>保存资产源</button>`,
+    footer: `<button class="btn" data-action="close-modal">取消</button><button class="btn" data-action="scan-git-assets">${icon("search", 13)} ${wizard.scanned ? "重新扫描" : "自动扫描"}</button><button class="btn btn-primary" data-action="save-asset-source" ${wizard.scanned && wizard.selectedPaths.length && (!wizard.runtimeEnabled || wizard.loadTestPassed) ? "" : "disabled"}>保存资产源</button>`,
   });
 }
 
@@ -3133,11 +3223,20 @@ function handleAction(action, target) {
       return;
     }
     const normalizedRepo = ui.assetWizard.repoUrl.toLowerCase();
-    const source = normalizedRepo.includes("openspec")
-      ? assetSourceById("openspec")
-      : normalizedRepo.includes("acme/agent-assets")
-        ? assetSourceById("team-assets")
-        : assetSourceById("superpowers");
+    const source = normalizedRepo.includes("chenmr0") || normalizedRepo.includes("codespec-cli")
+      ? assetSourceById("codespec")
+      : normalizedRepo.includes("openspec")
+        ? assetSourceById("openspec")
+        : normalizedRepo.includes("acme/agent-assets")
+          ? assetSourceById("team-assets")
+          : assetSourceById("superpowers");
+    if (source.runtime) {
+      ui.assetWizard.runtimeEnabled = true;
+      ui.assetWizard.installCommand = source.runtime.installCommand;
+      ui.assetWizard.initCommand = source.runtime.initCommand;
+      ui.assetWizard.loadTestPassed = false;
+      ui.assetWizard.loadTestResult = null;
+    }
     const token = ++ui.assetWizard.scanToken;
     ui.assetWizard.scanning = true;
     ui.assetWizard.scanned = false;
@@ -3145,7 +3244,9 @@ function handleAction(action, target) {
     openAssetSourceModal(false);
     window.setTimeout(() => {
       if (token !== ui.assetWizard.scanToken) return;
-      const assets = source.assets.map((asset) => ({ ...asset, source: "git" }));
+      const assets = source.cliSource ? [] : source.assets.map((asset) => ({ ...asset, source: "git" }));
+      ui.assetWizard.scannedSource = source.id;
+      ui.assetWizard.staticEmpty = Boolean(source.cliSource);
       ui.assetWizard.assets = assets;
       ui.assetWizard.selectedPaths =
         ui.assetWizard.selectionMode === "directory"
@@ -3214,11 +3315,75 @@ function handleAction(action, target) {
     toast("已手动添加资产");
     return;
   }
+  if (action === "wizard-load-test") {
+    const modalRoot = document.querySelector(".modal");
+    ui.assetWizard.installCommand = modalRoot?.querySelector("#wizard-install-command")?.value.trim() || ui.assetWizard.installCommand;
+    ui.assetWizard.initCommand = modalRoot?.querySelector("#wizard-init-command")?.value.trim() || ui.assetWizard.initCommand;
+    if (!ui.assetWizard.runtimeEnabled) {
+      toast("请先启用运行时前置", true);
+      return;
+    }
+    if (!ui.assetWizard.installCommand || !ui.assetWizard.initCommand) {
+      toast("请填写安装与初始化命令", true);
+      return;
+    }
+    ui.assetWizard.loadTesting = true;
+    ui.assetWizard.loadTestPassed = false;
+    openAssetSourceModal(false);
+    window.setTimeout(() => {
+      const source = assetSourceById(ui.assetWizard.scannedSource);
+      const generatedCommands = source?.runtime?.generatedCommands ?? 6;
+      const generatedSkills = source?.runtime?.generatedSkills ?? 0;
+      const generatedAgents = source?.runtime?.generatedAgents ?? 0;
+      ui.assetWizard.loadTesting = false;
+      ui.assetWizard.loadTestPassed = true;
+      ui.assetWizard.loadTestResult = { generatedCommands, generatedSkills, generatedAgents, durationSeconds: 42 };
+      if (source?.cliSource) {
+        const assets = source.assets.map((asset) => ({ ...asset, source: "generated" }));
+        ui.assetWizard.assets = assets;
+        ui.assetWizard.selectedPaths = assets.map((asset) => asset.path);
+        ui.assetWizard.selectionMode = "directory";
+        ui.assetWizard.staticEmpty = false;
+      }
+      openAssetSourceModal(false);
+      toast(`加载测试通过：生成 ${generatedSkills} 个 Skill / ${generatedCommands} 个 Command / ${generatedAgents} 个 Agent`);
+    }, 1500);
+    return;
+  }
+  if (action === "run-load-test") {
+    const source = assetSourceById(target.dataset.source);
+    if (!source || !source.runtime) return;
+    source.runtime.status = "testing";
+    render();
+    window.setTimeout(() => {
+      source.runtime.status = "passed";
+      source.runtime.durationSeconds = 42;
+      source.status = "ready";
+      render();
+      toast(`${source.name}：加载测试通过，生成 ${source.runtime.generatedCommands} 个 Command`);
+    }, 1500);
+    return;
+  }
   if (action === "save-asset-source") {
     if (!ui.assetWizard.scanned || !ui.assetWizard.selectedPaths.length) {
       toast("请先扫描并至少选择一个资产", true);
       return;
     }
+    if (ui.assetWizard.runtimeEnabled && !ui.assetWizard.loadTestPassed) {
+      toast("请先通过加载测试", true);
+      return;
+    }
+    const runtime = ui.assetWizard.runtimeEnabled
+      ? {
+          installCommand: ui.assetWizard.installCommand,
+          initCommand: ui.assetWizard.initCommand,
+          status: "passed",
+          durationSeconds: ui.assetWizard.loadTestResult?.durationSeconds ?? 42,
+          generatedCommands: ui.assetWizard.loadTestResult?.generatedCommands ?? 6,
+          generatedSkills: ui.assetWizard.loadTestResult?.generatedSkills ?? 0,
+          generatedAgents: ui.assetWizard.loadTestResult?.generatedAgents ?? 0,
+        }
+      : undefined;
     const selected = ui.assetWizard.assets.filter((asset) => ui.assetWizard.selectedPaths.includes(asset.path));
     const repoPath = ui.assetWizard.repoUrl.replace(/\.git$/, "").replace(/\/$/, "").split("/");
     const repoName = repoPath.at(-1) || "Custom Assets";
@@ -3241,11 +3406,15 @@ function handleAction(action, target) {
       description: "通过自动扫描与手动调整生成的 Git 资产源。",
       assets: selected,
       counts,
-      note: "保存时按当前 Ref 固定资产快照。",
+      ...(runtime ? { runtime } : {}),
+      note: runtime ? "运行时前置已通过加载测试；结果随快照冻结。" : "保存时按当前 Ref 固定资产快照。",
     });
     ui.assetWizard.scanned = false;
     ui.assetWizard.assets = [];
     ui.assetWizard.selectedPaths = [];
+    ui.assetWizard.runtimeEnabled = false;
+    ui.assetWizard.loadTestPassed = false;
+    ui.assetWizard.loadTestResult = null;
     closeOverlay();
     if (currentRoute().path === "/assets") render();
     toast(`已保存 ${selected.length} 个 Agent 资产`);
@@ -3795,9 +3964,16 @@ document.addEventListener("input", (event) => {
   if (event.target.id === "wizard-repo-url") ui.assetWizard.repoUrl = event.target.value;
   if (event.target.id === "wizard-default-ref") ui.assetWizard.defaultRef = event.target.value;
   if (event.target.id === "wizard-scan-path") ui.assetWizard.scanPath = event.target.value;
+  if (event.target.id === "wizard-install-command") ui.assetWizard.installCommand = event.target.value;
+  if (event.target.id === "wizard-init-command") ui.assetWizard.initCommand = event.target.value;
 });
 
 document.addEventListener("change", (event) => {
+  if (event.target.id === "wizard-runtime-enabled") {
+    ui.assetWizard.runtimeEnabled = event.target.checked;
+    openAssetSourceModal(false);
+    return;
+  }
   if (event.target.id === "asset-ref-input") {
     ui.newEval.assetRef = event.target.value.trim();
     render();

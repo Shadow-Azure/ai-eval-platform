@@ -31,8 +31,8 @@
 | Metrics | `GET /dataset-versions/:id/metrics` | 该版本的指标定义与口径 |
 | Models | `GET/POST /model-configs`、`PATCH /model-configs/:id`、`POST /model-configs/:id/test` | 模型配置与连通测试 |
 | Credentials | `POST /credentials/:id/rotate`、`DELETE /credentials/:id` | 再次认证后轮换/删除 |
-| Assets | `GET/POST /agent-asset-sources`、`POST /agent-asset-sources/:id/scan` | Git 源与扫描 |
-| Assets | `GET /agent-asset-sources/:id/tree`、`POST /agent-assets/resolve` | 文件树、Ref/commit/资产校验 |
+| Assets | `GET/POST /agent-asset-sources`、`POST /agent-asset-sources/:id/scan`、`POST /agent-asset-sources/load-test-preview` | Git 源、扫描与加载测试预览 |
+| Assets | `GET /agent-asset-sources/:id/tree`、`POST /agent-asset-sources/:id/load-test`、`POST /agent-assets/resolve` | 文件树、加载测试、Ref/commit/资产校验 |
 | Runtimes | `GET /agent-runtimes` | 可用 Runtime、版本和能力 |
 | Connections | `GET/POST /connections`、`POST /connections/:id/test` | 资源连接与只读验证 |
 | Pools | `GET/POST /resource-pools`、`GET /resource-pools/:id/runners` | 池、容量与 Runner |
