@@ -13,6 +13,7 @@ scope:
   - .agents/flow/roadmap.*
   - .github/workflows/backend-ci.yml
   - tests/backend/**
+  - backend/README.md
   - pyproject.toml
   - plans/**
 adr: []
@@ -81,13 +82,16 @@ The root cause is the test isolation strategy, not the test logic itself: 550 of
 3. Implement D independently of A so that web-only PRs no longer trigger the backend job.
 4. If A + D still miss the agreed target, choose B (shared-service parallelism) or C (matrix sharding) after confirming the runner size and required-check configuration.
 
+## Decision
+
+- 2026-11-12: implement A first, then D; A is a session-level template database with a per-test clone, D skips the backend job for web-only PRs, and B/C stay disabled for now.
+- Implementation and measured comparison are in PR #197.
+
 ## Open questions
 
-- What is the target duration: 5 minutes, 3 minutes or 2 minutes?
-- Do we accept a new pytest-xdist dependency, or prefer matrix sharding with more runner minutes?
-- Is skipping the backend job for web-only PRs acceptable? Who confirms the required check name and skip semantics?
-- May we change the database lifecycle per test (option A)? Is a separate empty database for migration tests sufficient?
-- Do we need to mark slow tests and run them in a separate job as a fallback beyond parallelism?
+- What is the final target duration: 5 minutes, 3 minutes or 2 minutes?
+- If A alone still misses the target, do we enable B (pytest-xdist) or C (matrix sharding)?
+- Do we need to mark slow tests and run them in a separate job?
 
 ## References
 
@@ -101,5 +105,5 @@ The root cause is the test isolation strategy, not the test logic itself: 550 of
 
 - Record the backend job and pytest step durations before and after for the same PR or commit, with CI run links.
 - All 550 database tests still start from a migrated empty database, and migration, constraint and downgrade coverage stays intact and passing.
-- The backend job reaches the agreed target duration; if D is adopted, web-only PRs no longer trigger it.
+- Record the measured duration; close if it reaches the suggested ≤ 5 minutes, otherwise use the result to decide whether B/C is needed; web-only PRs no longer trigger the backend job.
 - The test count does not shrink and database tests are not skipped; failures still identify the failing test.

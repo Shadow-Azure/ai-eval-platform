@@ -13,6 +13,7 @@ scope:
   - .agents/flow/roadmap.*
   - .github/workflows/backend-ci.yml
   - tests/backend/**
+  - backend/README.md
   - pyproject.toml
   - plans/**
 adr: []
@@ -81,13 +82,16 @@ github:
 3. 与 A 独立地实施 D，让 web-only PR 不再触发 backend job。
 4. 如果 A + D 仍达不到讨论确定的目标，再选 B（共享 service 并行）或 C（matrix 分片）；两者都要先确认 runner 规格与 required check 配置。
 
+## 决定
+
+- 2026-11-12：按先 A 后 D 实施；A 为会话级模板库 + 每用例克隆，D 为 web-only PR 跳过 backend job；B/C 暂不启用。
+- 实现与实测对比见 PR #197。
+
 ## 待讨论
 
-- 目标时长定为多少：5 分钟、3 分钟还是 2 分钟？
-- 是否接受新增 pytest-xdist 依赖，还是更倾向 matrix 分片（runner 分钟数会增加）？
-- web-only PR 跳过 backend job 是否可接受？required check 名称和跳过语义由谁确认？
-- 是否允许改变每个用例的数据库生命周期（A 方案）？迁移类测试保留独立空库是否足够？
-- 是否需要把慢测试单独标记并分作业运行，作为并行之外的后备手段？
+- 目标时长最终定为多少：5 分钟、3 分钟还是 2 分钟？
+- 若 A 实测仍不达标，是否启用 B（pytest-xdist）或 C（matrix 分片）？
+- 是否需要把慢测试单独标记并分作业运行？
 
 ## 参考
 
@@ -101,5 +105,5 @@ github:
 
 - 记录同一 PR 或同一提交在改动前后的 backend job 与 pytest 步骤耗时，附 CI 运行链接。
 - 550 个数据库用例仍各自从已迁移的空库开始，迁移、约束与 downgrade 测试保持覆盖且通过。
-- backend job 达到讨论确定的目标时长；若采纳 D，web-only PR 不再触发 backend job。
+- 记录实测耗时；若达到建议的 ≤5 分钟则关闭，否则按实测决定是否启用 B/C；web-only PR 不再触发 backend job。
 - 测试数量不减少，数据库用例不被跳过；失败输出仍能定位到具体用例。

@@ -44,7 +44,7 @@ curl -b /tmp/eval-cookies http://127.0.0.1:8000/api/v1/overview
 TEST_DATABASE_URL='postgresql+psycopg://eval:eval@localhost:5432/eval_test' ../.venv/bin/pytest
 ```
 
-`TEST_DATABASE_URL` 必须指向可清空的测试库；测试会重建 `public` schema 后执行迁移。`client` fixture 默认以测试管理员登录；需要匿名请求时使用 `anonymous_client`。
+`TEST_DATABASE_URL` 必须指向可清空的测试库。测试会话开始时只执行一次迁移并保留为模板库，每个用例再通过 `CREATE DATABASE ... TEMPLATE` 创建临时库（SQLite 则复制预迁移文件），结束后删除；迁移测试仍在自己的临时库上执行 downgrade/upgrade。若数据库角色不能创建库，本地会回退为逐用例重建 schema，CI 中则直接失败以暴露模板库不可用。`client` fixture 默认以测试管理员登录；需要匿名请求时使用 `anonymous_client`。
 
 ## 迁移
 
