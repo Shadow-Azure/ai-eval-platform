@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Form, Input, InputNumber, Modal, Select, Space, Table, Tag, message } from "antd";
 import type { TableColumnsType } from "antd";
 import { useEffect, useState } from "react";
@@ -27,9 +27,11 @@ import {
   runtimeLabel,
 } from "../utils/evaluationDisplay";
 
+const PAGE_SIZE = 10;
+
 const evaluationsQueries = {
   all: ["evaluations"] as const,
-  list: (filters: EvaluationListQuery) => ["evaluations", "list", filters] as const,
+  list: (filters: EvaluationListQuery, page: number) => ["evaluations", "list", filters, page] as const,
 };
 
 function StatusTag({ status }: { status: string }) {
@@ -51,29 +53,47 @@ export function EvalsPage() {
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [datasetFilter, setDatasetFilter] = useState("all");
+  const [page, setPage] = useState(1);
+  const trimmedSearch = search.trim();
 
   useEffect(() => {
-    const timer = window.setTimeout(() => setDebouncedSearch(search.trim()), 250);
+    const timer = window.setTimeout(() => {
+      setDebouncedSearch(trimmedSearch);
+      setPage(1);
+    }, 250);
     return () => window.clearTimeout(timer);
-  }, [search]);
+  }, [trimmedSearch]);
 
   const listQuery = useQuery({
-    queryKey: evaluationsQueries.list({
-      q: debouncedSearch,
-      status: statusFilter,
-      datasetId: datasetFilter,
-    }),
+    queryKey: evaluationsQueries.list(
+      {
+        q: debouncedSearch,
+        status: statusFilter,
+        datasetId: datasetFilter,
+      },
+      page,
+    ),
     queryFn: ({ signal }) =>
       fetchEvaluations(
         {
           q: debouncedSearch || undefined,
           status: statusFilter === "all" ? undefined : statusFilter,
           datasetId: datasetFilter === "all" ? undefined : datasetFilter,
+          limit: PAGE_SIZE,
+          offset: (page - 1) * PAGE_SIZE,
         },
         signal,
       ),
+    placeholderData: keepPreviousData,
     refetchInterval: 3000,
   });
+
+  const total = listQuery.data?.total;
+  useEffect(() => {
+    if (total === undefined) return;
+    const lastPage = Math.max(1, Math.ceil(total / PAGE_SIZE));
+    if (page > lastPage) setPage(lastPage);
+  }, [page, total]);
 
   const datasetsQuery = useQuery({
     queryKey: ["datasets", "eval-filter"],
@@ -132,6 +152,7 @@ export function EvalsPage() {
     setDebouncedSearch("");
     setStatusFilter("all");
     setDatasetFilter("all");
+    setPage(1);
   };
 
   const columns: TableColumnsType<EvaluationSummary> = [
@@ -312,14 +333,20 @@ export function EvalsPage() {
                 aria-label="状态筛选"
                 value={statusFilter}
                 options={statusOptions}
-                onChange={(value) => setStatusFilter(value)}
+                onChange={(value) => {
+                  setStatusFilter(value);
+                  setPage(1);
+                }}
                 style={{ width: 170 }}
               />
               <Select
                 aria-label="数据集筛选"
                 value={datasetFilter}
                 options={datasetOptions}
-                onChange={(value) => setDatasetFilter(value)}
+                onChange={(value) => {
+                  setDatasetFilter(value);
+                  setPage(1);
+                }}
                 loading={datasetsQuery.isLoading}
                 style={{ width: 260 }}
               />
@@ -336,7 +363,14 @@ export function EvalsPage() {
               loading={listQuery.isLoading}
               columns={columns}
               dataSource={listQuery.data?.items ?? []}
-              pagination={false}
+              pagination={{
+                current: page,
+                pageSize: PAGE_SIZE,
+                total: total ?? 0,
+                showSizeChanger: false,
+                hideOnSinglePage: true,
+                onChange: (nextPage) => setPage(nextPage),
+              }}
               locale={{
                 emptyText: hasFilters ? (
                   <EmptyState
