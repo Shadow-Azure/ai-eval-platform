@@ -23,6 +23,7 @@ import json
 import os
 import re
 import secrets
+import signal
 import subprocess
 import tempfile
 import threading
@@ -358,6 +359,34 @@ def asset_counts(assets: tuple[ScannedAsset, ...] | list[ScannedAsset]) -> dict[
 # ---------------------------------------------------------------------------
 
 
+def _decode_command_output(data: bytes | str | None) -> str:
+    """Decode CLI output without ever failing the request.
+
+    A CLI may print arbitrary bytes (progress bars, binary notices, a partially
+    written multibyte character). ``subprocess`` in text mode decodes strictly
+    with the locale codec and raises ``UnicodeDecodeError``; that is not a
+    load-test outcome but a 500. Decode as UTF-8 with replacement instead.
+    """
+
+    if data is None:
+        return ""
+    if isinstance(data, str):
+        return data
+    return data.decode("utf-8", errors="replace")
+
+
+def _kill_process_group(process: subprocess.Popen[bytes]) -> None:
+    """Kill the shell and everything it spawned (npm spawns grandchildren)."""
+
+    try:
+        os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        try:
+            process.kill()
+        except ProcessLookupError:
+            pass
+
+
 def run_setup_command(
     command: str, *, cwd: str, env: dict[str, str], timeout: int
 ) -> subprocess.CompletedProcess[str]:
@@ -365,16 +394,39 @@ def run_setup_command(
 
     Kept as a tiny module-level helper so tests can replace the shell without
     invoking npm/network access. Production always uses a login shell in the
-    isolated temporary HOME.
+    isolated temporary HOME, started in its own session so a timeout can kill
+    the whole process tree instead of orphan child processes holding pipes.
+
+    Output is captured as bytes and decoded with ``errors="replace"`` so no CLI
+    output can turn into an unhandled ``UnicodeDecodeError``.
     """
 
-    return subprocess.run(
+    process = subprocess.Popen(
         ["/bin/sh", "-lc", command],
         cwd=cwd,
         env=env,
-        timeout=timeout,
-        capture_output=True,
-        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _kill_process_group(process)
+        # Reap the shell after SIGKILL; a descendant that escaped the group can
+        # still hold the pipes, so this second wait is bounded.
+        try:
+            stdout, stderr = process.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            stdout, stderr = b"", b""
+        raise subprocess.TimeoutExpired(
+            command, timeout, output=stdout, stderr=stderr
+        ) from None
+    return subprocess.CompletedProcess(
+        args=command,
+        returncode=process.returncode,
+        stdout=_decode_command_output(stdout),
+        stderr=_decode_command_output(stderr),
     )
 
 
@@ -581,6 +633,32 @@ def load_test_view(result: dict[str, Any]) -> dict[str, Any]:
     if result.get("error"):
         view["error"] = result["error"]
     return view
+
+
+def runtime_setup_view(manifest: dict[str, Any] | None) -> dict[str, str]:
+    """The frozen install/init commands a runner must execute before the run.
+
+    Only the snapshot manifest is consulted: a later edit of the source's
+    prerequisites cannot change what a frozen asset snapshot requires. The
+    load-test result is the fallback for snapshots written before the
+    prerequisites were mirrored into the manifest.
+    """
+
+    manifest = manifest or {}
+    prerequisites = manifest.get("runtime_prerequisites") or {}
+    load_test = manifest.get("load_test") or {}
+    install_command = str(
+        prerequisites.get("install_command") or load_test.get("install_command") or ""
+    ).strip()
+    init_command = str(
+        prerequisites.get("init_command") or load_test.get("init_command") or ""
+    ).strip()
+    if not install_command or not init_command:
+        return {}
+    return {
+        "install_command": install_command,
+        "init_command": init_command,
+    }
 
 
 def _execute_load_test(
@@ -910,6 +988,64 @@ def _generated_runtime_path(asset_type: str, name: str) -> str:
 def _generated_description(content: bytes) -> str:
     front = _frontmatter(_decode_text(content))
     return front.get("description") or _command_description(content)
+
+
+def _merge_tree_assets(
+    git_assets: list[dict[str, Any]], generated_assets: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Merge the Git scan with the load test's generated assets, path-unique.
+
+    The wizard selects by path, and resolve maps the first asset with that path,
+    so a Git asset keeps precedence if both describe the same file. Generated
+    assets that Git did not scan are appended in manifest order.
+    """
+
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in [*git_assets, *generated_assets]:
+        path = str(item.get("path") or "").strip()
+        if not path or path in seen:
+            continue
+        seen.add(path)
+        merged.append(item)
+    return merged
+
+
+def asset_tree(source: AgentAssetSource) -> dict[str, Any]:
+    """The wizard's selectable tree: Git scan plus the load test's assets.
+
+    ``last_scan_json`` is the Git scan only, so a CLI-generated source (for
+    example chenmr0/OpenSpec-cn, whose repository contains no assets) used to
+    show an empty table and the wizard could prepare without an asset snapshot.
+    A passed load test's generated manifest is merged in with
+    ``metadata.generated=true``; counts cover the merged list.
+    """
+
+    scan = source.last_scan_json or {}
+    git_assets = [
+        item for item in (scan.get("assets") or []) if isinstance(item, dict)
+    ]
+    generated_assets: list[dict[str, Any]] = []
+    if _load_test_passed(source):
+        generated, _files = _generated_source_assets(source)
+        generated_assets = [asset.as_dict() for asset in generated]
+    assets = _merge_tree_assets(git_assets, generated_assets)
+    counts = {"skill": 0, "command": 0, "subagent": 0}
+    for item in assets:
+        asset_type = item.get("asset_type")
+        if asset_type in counts:
+            counts[asset_type] += 1
+    return {
+        "source_id": source.id,
+        "scanned": bool(scan),
+        "requested_ref": scan.get("requested_ref") or source.default_ref,
+        "resolved_commit": scan.get("resolved_commit") or source.last_scanned_commit,
+        "assets": assets,
+        "unclassified": scan.get("unclassified", []),
+        "counts": counts,
+        "warnings": scan.get("warnings", []),
+        "scanned_at": scan.get("scanned_at"),
+    }
 
 
 def _credential_token(session: Session, credential_id: str) -> str:
@@ -1815,6 +1951,8 @@ def resolve_assets(
                 field="asset_snapshot",
             ) from error
 
+        load_test = load_test_view(source.load_test_json or {})
+        runtime_prerequisites = dict(source.runtime_prerequisites_json or {})
         manifest = {
             "schema_version": ASSET_BUNDLE_SCHEMA,
             "files": [
@@ -1834,8 +1972,13 @@ def resolve_assets(
             },
             "tree_digest": tree_digest,
             "resolved_commit": commit,
-            "runtime_prerequisites": dict(source.runtime_prerequisites_json or {}),
-            "load_test": load_test_view(source.load_test_json or {}),
+            "runtime_prerequisites": runtime_prerequisites,
+            "load_test": load_test,
+            # M8-10: the runner consumes this from the frozen run payload, so
+            # freeze it here with the rest of the preparation inputs.
+            "runtime_setup": runtime_setup_view(
+                {"runtime_prerequisites": runtime_prerequisites, "load_test": load_test}
+            ),
         }
         snapshot = AgentAssetSnapshot(
             id=snapshot_id,
@@ -1972,6 +2115,9 @@ def asset_snapshot_json(snapshot: AgentAssetSnapshot, assets: list[AgentAsset]) 
         )
         or {},
         "load_test": (snapshot.manifest_json or {}).get("load_test") or {},
+        # M8-10: the runner executes this before starting the task, so it must
+        # travel with the frozen snapshot rather than the live source row.
+        "runtime_setup": runtime_setup_view(snapshot.manifest_json),
         "assets": [
             {
                 "asset_type": asset.asset_type,
@@ -2025,6 +2171,9 @@ def task_asset_payload(asset_snapshot: dict[str, Any] | None, settings: Settings
     """Add a short-lived presigned bundle URL to the frozen snapshot metadata."""
 
     payload = dict(asset_snapshot or {})
+    # M8-10: an older run row may predate runtime_setup; keep the key stable so
+    # the runner can always check a single field before executing prerequisites.
+    payload.setdefault("runtime_setup", {})
     key = payload.get("bundle_key")
     if not key:
         return payload

@@ -23,6 +23,7 @@ import {
   fetchAssetSnapshot,
   fetchAssetSources,
   hasRuntimePrerequisites,
+  isGeneratedAsset,
   isLoadTestPassed,
   loadTestAssetSource,
   previewAssetLoadTest,
@@ -256,6 +257,13 @@ function assetColumns(showDigest = true): ColumnsType<ScannedAsset> {
           <div className="mono small muted">{record.path}</div>
         </div>
       ),
+    },
+    {
+      title: "来源",
+      key: "origin",
+      width: 96,
+      render: (_value: unknown, record: ScannedAsset) =>
+        isGeneratedAsset(record) ? <Tag color="orange">生成</Tag> : <Tag>源文件</Tag>,
     },
     {
       title: "运行时映射",

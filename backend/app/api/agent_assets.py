@@ -267,20 +267,7 @@ def get_agent_asset_tree(
         source = asset_service.get_source(session, source_id)
     except asset_service.AgentAssetError as error:
         raise _http_error(error) from error
-    scan = source.last_scan_json or {}
-    return {
-        "source_id": source.id,
-        "scanned": bool(scan),
-        "requested_ref": scan.get("requested_ref") or source.default_ref,
-        "resolved_commit": scan.get("resolved_commit") or source.last_scanned_commit,
-        "assets": scan.get("assets", []),
-        "unclassified": scan.get("unclassified", []),
-        "counts": scan.get(
-            "counts", {"skill": 0, "command": 0, "subagent": 0}
-        ),
-        "warnings": scan.get("warnings", []),
-        "scanned_at": scan.get("scanned_at"),
-    }
+    return asset_service.asset_tree(source)
 
 
 @router.post("/api/v1/agent-assets/resolve")

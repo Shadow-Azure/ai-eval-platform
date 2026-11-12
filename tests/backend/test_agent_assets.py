@@ -10,6 +10,8 @@ from __future__ import annotations
 import gzip
 import hashlib
 import json
+import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -594,6 +596,9 @@ def test_load_test_preview_runs_isolated_commands_and_returns_cached_token(
 def test_create_without_valid_load_test_token_stays_requires_setup(
     client: TestClient, seeded: Session, monkeypatch: pytest.MonkeyPatch, fake_git: FakeRepo
 ) -> None:
+    # The preview itself must never invoke npm: this test only proves that a
+    # cached token cannot be replayed against a different command pair.
+    install_fake_setup(monkeypatch, files_by_command=GENERATED_FILES)
     preview = load_test_preview(client)
     # A different install command is a different configuration: the cached
     # result must not be replayed against it.
@@ -741,6 +746,108 @@ def _install_plain_repo(monkeypatch: pytest.MonkeyPatch) -> FakeRepo:
             ),
         },
     )
+
+
+def test_tree_includes_generated_assets_and_resolve_freezes_selected_paths(
+    client: TestClient,
+    seeded: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    asset_store: StubObjectStore,
+) -> None:
+    """The wizard tree must show CLI-generated assets, not just the Git scan."""
+
+    _install_plain_repo(monkeypatch)
+    install_fake_setup(monkeypatch, files_by_command=GENERATED_FILES)
+    # No preview token: the source starts unverified and has no load-test
+    # result yet, so the tree must stay Git-only until the test passes.
+    source = create_generated_source(client)
+    scan_source(client, source["id"])
+
+    # Without a passed load test the tree keeps Git-only behaviour.
+    before = client.get(f"/api/v1/agent-asset-sources/{source['id']}/tree").json()
+    assert before["counts"] == {"skill": 1, "command": 0, "subagent": 0}
+    assert [item["path"] for item in before["assets"]] == ["skills/plain"]
+    assert all(not item["metadata"].get("generated") for item in before["assets"])
+
+    client.post(f"/api/v1/agent-asset-sources/{source['id']}/load-test")
+    tree = client.get(f"/api/v1/agent-asset-sources/{source['id']}/tree").json()
+    assert tree["scanned"] is True
+    assert tree["counts"] == {"skill": 2, "command": 2, "subagent": 1}
+    generated = {
+        (item["asset_type"], item["path"]): item
+        for item in tree["assets"]
+        if item["metadata"].get("generated")
+    }
+    assert set(generated) == {
+        ("skill", ".claude/skills/openspec-explore"),
+        ("command", ".claude/commands/opsx/propose.md"),
+        ("command", ".claude/commands/opsx/apply.md"),
+        ("subagent", ".claude/agents/spec-reviewer.md"),
+    }
+    assert generated[("skill", ".claude/skills/openspec-explore")]["metadata"]["runtime_path"] == (
+        "skills/openspec-explore"
+    )
+    # Git-scanned assets stay in the merged list.
+    assert ("skill", "skills/plain") in {
+        (item["asset_type"], item["path"]) for item in tree["assets"]
+    }
+
+    # Selecting the tree's generated paths must work through resolve and be
+    # frozen into the snapshot/bundle.
+    selected_paths = [
+        item["path"] for item in tree["assets"] if item["metadata"].get("generated")
+    ]
+    snapshot = resolve(client, source["id"], selected_paths)["snapshot"]
+    assert snapshot["asset_count"] == 4
+    assert {
+        (item["asset_type"], item["path"]) for item in snapshot["assets"]
+    } >= set(generated)
+    manifest = snapshot["manifest"]
+    assert manifest["load_test"]["status"] == "passed"
+    assert manifest["load_test"]["generated"] == {"skill": 1, "command": 2, "subagent": 1}
+    assert manifest["runtime_setup"] == {
+        "install_command": INSTALL_COMMAND,
+        "init_command": INIT_COMMAND,
+    }
+
+    stored = seeded.get(AgentAssetSnapshot, snapshot["id"])
+    assert stored is not None
+    frozen = agent_assets.asset_snapshot_json(
+        stored, agent_assets.snapshot_assets(seeded, stored.id)
+    )
+    assert frozen["runtime_setup"] == {
+        "install_command": INSTALL_COMMAND,
+        "init_command": INIT_COMMAND,
+    }
+    assert frozen["load_test"]["status"] == "passed"
+    task_payload = agent_assets.task_asset_payload(frozen, get_settings())
+    assert task_payload["runtime_setup"] == frozen["runtime_setup"]
+    assert task_payload["bundle_url"].startswith("http://")
+
+
+def test_run_setup_command_decodes_invalid_utf8_with_replacement(tmp_path: Path) -> None:
+    completed = agent_assets.run_setup_command(
+        "printf '\\377'",
+        cwd=str(tmp_path),
+        env={"HOME": str(tmp_path), "PATH": agent_assets.DEFAULT_SHELL_PATH},
+        timeout=10,
+    )
+    assert completed.returncode == 0
+    assert "\ufffd" in completed.stdout
+    assert agent_assets._decode_command_output(b"caf\xe9") == "caf\ufffd"
+
+
+def test_run_setup_command_timeout_kills_the_process_group(tmp_path: Path) -> None:
+    started = time.monotonic()
+    with pytest.raises(subprocess.TimeoutExpired):
+        agent_assets.run_setup_command(
+            "sleep 30",
+            cwd=str(tmp_path),
+            env={"HOME": str(tmp_path), "PATH": agent_assets.DEFAULT_SHELL_PATH},
+            timeout=0.2,
+        )
+    # The 30s child must not keep the request (or its pipes) alive.
+    assert time.monotonic() - started < 10
 
 
 def test_resolve_merges_generated_assets_into_the_frozen_bundle(

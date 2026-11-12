@@ -179,6 +179,44 @@ def _seed_asset_snapshot(session: Session, *, runtime_key: str = "claude-code") 
     return snapshot
 
 
+LOAD_TEST_PREREQUISITES = {
+    "install_command": "npm install -g @fission-ai/openspec",
+    "init_command": "openspec init",
+}
+
+
+def _freeze_load_test(
+    snapshot: AgentAssetSnapshot,
+    *,
+    status: str,
+    prerequisites: dict | None = None,
+) -> None:
+    """Make the frozen manifest look like a resolve against that load test."""
+
+    manifest = dict(snapshot.manifest_json or {})
+    prerequisites = dict(prerequisites or {})
+    manifest["runtime_prerequisites"] = prerequisites
+    manifest["load_test"] = (
+        {
+            "status": "passed",
+            "install_command": prerequisites.get("install_command"),
+            "init_command": prerequisites.get("init_command"),
+            "generated": {"skill": 1, "command": 0, "subagent": 0},
+        }
+        if status == "passed"
+        else {}
+    )
+    manifest["runtime_setup"] = (
+        {
+            "install_command": prerequisites["install_command"],
+            "init_command": prerequisites["init_command"],
+        }
+        if status == "passed" and prerequisites
+        else {}
+    )
+    snapshot.manifest_json = manifest
+
+
 def _check(session: Session, ids: dict, **overrides):
     values = {
         "dataset_version_id": ids["dataset_version_id"],
@@ -385,6 +423,59 @@ def test_asset_snapshot_is_included_in_preparation(session: Session) -> None:
     assert result.asset_snapshot["file_count"] == 2
     assert result.asset_snapshot["resolved_commit"] == "a" * 40
     assert result.asset_snapshot["asset_count"] == 1
+    # No frozen prerequisites: the runner must not execute a setup step.
+    assert result.asset_snapshot["runtime_setup"] == {}
+    assert result.asset_snapshot["load_test"] == {}
+
+
+def test_frozen_passed_snapshot_stays_launchable_after_source_retest_failure(
+    session: Session,
+) -> None:
+    ids = _seed(session)
+    snapshot = _seed_asset_snapshot(session)
+    _freeze_load_test(
+        snapshot, status="passed", prerequisites=LOAD_TEST_PREREQUISITES
+    )
+    source = session.get(AgentAssetSource, snapshot.source_id)
+    assert source is not None
+    source.runtime_prerequisites_json = dict(LOAD_TEST_PREREQUISITES)
+    source.status = "requires_setup"
+    source.load_test_json = {"status": "failed", "error": "install_command_failed"}
+    session.commit()
+
+    result = _check(session, ids, asset_snapshot_id=snapshot.id)
+    assert result.ready, [issue.as_dict() for issue in result.blockers]
+    assert result.asset_snapshot is not None
+    assert result.asset_snapshot["load_test"]["status"] == "passed"
+    assert result.asset_snapshot["runtime_setup"] == {
+        "install_command": LOAD_TEST_PREREQUISITES["install_command"],
+        "init_command": LOAD_TEST_PREREQUISITES["init_command"],
+    }
+
+
+def test_snapshot_frozen_without_a_pass_stays_blocked_after_source_pass(
+    session: Session,
+) -> None:
+    ids = _seed(session)
+    snapshot = _seed_asset_snapshot(session)
+    _freeze_load_test(
+        snapshot, status="not_run", prerequisites=LOAD_TEST_PREREQUISITES
+    )
+    source = session.get(AgentAssetSource, snapshot.source_id)
+    assert source is not None
+    source.runtime_prerequisites_json = dict(LOAD_TEST_PREREQUISITES)
+    source.status = "ready"
+    source.load_test_json = {"status": "passed", "generated": []}
+    session.commit()
+
+    result = _check(session, ids, asset_snapshot_id=snapshot.id)
+    assert "asset_runtime_setup_required" in _codes(result)
+    blocker = next(
+        issue for issue in result.blockers if issue.code == "asset_runtime_setup_required"
+    )
+    assert blocker.details["source_id"] == source.id
+    assert blocker.details["load_test_status"] == "not_run"
+    assert result.asset_snapshot is None
 
 
 def test_asset_snapshot_runtime_mismatch_blocks(session: Session) -> None:

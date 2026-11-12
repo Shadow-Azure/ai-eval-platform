@@ -10,6 +10,8 @@ export interface AssetMetadata {
   prerequisites?: string[];
   file_count?: number;
   size?: number;
+  /** True when the CLI load test produced the asset instead of the Git tree. */
+  generated?: boolean;
   files?: Array<{ path: string; sha256: string; size: number }>;
   [key: string]: unknown;
 }
@@ -156,7 +158,7 @@ function readCount(record: Record<string, unknown>, keys: string[]): number {
   return 0;
 }
 
-function countAssets(assets: ScannedAsset[]): GeneratedAssetCounts {
+export function countAssetTypes(assets: ScannedAsset[]): GeneratedAssetCounts {
   const result: GeneratedAssetCounts = { skill: 0, command: 0, subagent: 0 };
   for (const asset of assets) result[asset.asset_type] += 1;
   return result;
@@ -168,7 +170,7 @@ function countAssets(assets: ScannedAsset[]): GeneratedAssetCounts {
  */
 function parseGeneratedCounts(value: unknown, fallbackAssets: ScannedAsset[]): GeneratedAssetCounts {
   if (Array.isArray(value)) {
-    return countAssets(value.filter(isRecord).map(parseAsset));
+    return countAssetTypes(value.filter(isRecord).map(parseAsset));
   }
   if (isRecord(value)) {
     if (isRecord(value.counts)) return parseGeneratedCounts(value.counts, fallbackAssets);
@@ -190,10 +192,10 @@ function parseGeneratedCounts(value: unknown, fallbackAssets: ScannedAsset[]): G
       };
     }
     if (Array.isArray(value.assets)) {
-      return countAssets(value.assets.filter(isRecord).map(parseAsset));
+      return countAssetTypes(value.assets.filter(isRecord).map(parseAsset));
     }
   }
-  return countAssets(fallbackAssets);
+  return countAssetTypes(fallbackAssets);
 }
 
 function parseLoadTestStatus(value: unknown): LoadTestStatus {
@@ -248,12 +250,67 @@ function loadTestDocument(raw: Record<string, unknown>): Record<string, unknown>
 
 function parseAsset(raw: unknown): ScannedAsset {
   if (!isRecord(raw)) throw new ApiError("资产条目格式无效", { code: "invalid_response" });
+  const metadata = isRecord(raw.metadata) ? (raw.metadata as AssetMetadata) : {};
+  // The tree endpoint stamps load-test generated entries with
+  // ``metadata.generated``; accept a top-level flag as well so a response that
+  // carries it elsewhere still renders the "生成" tag.
+  const generated = metadata.generated === true || raw.generated === true;
   return {
     path: text(raw.path),
     asset_type: parseAssetType(raw.asset_type),
     name: text(raw.name, text(raw.path)),
     content_digest: text(raw.content_digest),
-    metadata: isRecord(raw.metadata) ? (raw.metadata as AssetMetadata) : {},
+    metadata: generated ? { ...metadata, generated: true } : metadata,
+  };
+}
+
+/**
+ * True when the asset came from the source's CLI load test rather than from
+ * the Git tree. ``generatedPaths`` lets callers treat the paths listed by a
+ * passed load test as generated even before the tree endpoint stamps them.
+ */
+export function isGeneratedAsset(
+  asset: ScannedAsset,
+  generatedPaths?: ReadonlySet<string>,
+): boolean {
+  if (asset.metadata.generated === true) return true;
+  return generatedPaths ? generatedPaths.has(asset.path) : false;
+}
+
+/** Paths of the assets a passed load test generated; empty otherwise. */
+export function generatedPathsOf(loadTest: AssetLoadTest | null | undefined): Set<string> {
+  const paths = new Set<string>();
+  if (loadTest?.status !== "passed") return paths;
+  for (const asset of loadTest.assets) {
+    if (asset.path) paths.add(asset.path);
+  }
+  return paths;
+}
+
+/**
+ * Merge the load test's generated inventory into tree entries. The tree
+ * endpoint returns generated assets directly once the control plane includes
+ * them; this fallback keeps the selection usable when only the static Git scan
+ * is returned, without bypassing the resolve/snapshot flow.
+ */
+export function mergeGeneratedAssets(
+  assets: ScannedAsset[],
+  loadTest: AssetLoadTest | null | undefined,
+): { assets: ScannedAsset[]; supplemented: ScannedAsset[] } {
+  if (loadTest?.status !== "passed") return { assets, supplemented: [] };
+  const seen = new Set(assets.map((asset) => asset.path));
+  const supplemented: ScannedAsset[] = [];
+  for (const asset of loadTest.assets) {
+    if (!asset.path || seen.has(asset.path)) continue;
+    seen.add(asset.path);
+    supplemented.push({
+      ...asset,
+      metadata: { ...asset.metadata, generated: true, prerequisites: [] },
+    });
+  }
+  return {
+    assets: supplemented.length ? [...assets, ...supplemented] : assets,
+    supplemented,
   };
 }
 
@@ -432,6 +489,11 @@ export async function scanAssetSource(sourceId: string, requestedRef?: string): 
   );
 }
 
+/**
+ * Read the source's asset tree. Besides Git-scanned entries it may include the
+ * assets the source's passed CLI load test generated; those entries carry
+ * ``metadata.generated === true`` and are counted in ``counts``.
+ */
 export async function fetchAssetTree(sourceId: string, signal?: AbortSignal): Promise<AssetScan> {
   const payload = await request(`/api/v1/agent-asset-sources/${sourceId}/tree`, { signal });
   return parseScan(payload);

@@ -147,6 +147,80 @@ function dockerRun(args, { allowFailure = false, timeout = 1_200_000 } = {}) {
   return { status: result.status, stdout: result.stdout || "", stderr: result.stderr || "" };
 }
 
+/**
+ * M8-10: CLI-generated assets (OpenSpec/CodeSpec style) declare runtime
+ * prerequisites — an install command for the CLI plus an init command that
+ * generates the Skill/Command tree. The platform freezes the pair inside the
+ * frozen asset snapshot as `runtime_setup` (an empty object when the snapshot
+ * has none); older frozen snapshots may only carry `runtime_prerequisites`,
+ * so accept that as a fallback. Both fields come from the admin-controlled
+ * asset source, never from case data.
+ *
+ * The commands run verbatim inside the agent container, so the runner host
+ * never installs the CLI. An empty pair means "no setup" (old behaviour).
+ */
+const RUNTIME_SETUP_TIMEOUT_MS = 600_000;
+const RUNTIME_SETUP_PATH = "/opt/miniconda3/envs/testbed/bin:/opt/node/bin";
+
+function runtimeSetupFromSnapshot(assetSnapshot) {
+  // `runtime_setup` is the frozen contract; fall back to the legacy field only
+  // when the new one carries no command at all.
+  for (const setup of [assetSnapshot?.runtime_setup, assetSnapshot?.runtime_prerequisites]) {
+    if (!setup || typeof setup !== "object") continue;
+    const install = typeof setup.install_command === "string" ? setup.install_command.trim() : "";
+    const init = typeof setup.init_command === "string" ? setup.init_command.trim() : "";
+    if (!install && !init) continue;
+    return { install, init };
+  }
+  return null;
+}
+
+/**
+ * Execute install then init in the running agent container with /testbed as
+ * cwd. Both phases run as the workspace owner (`eval`) with the same HOME the
+ * load test used, so a CLI installed under `$HOME` is found again by init and
+ * by the eval-time commands. The commands are frozen, administrator-controlled
+ * text (never case data) and run verbatim; only a fixed PATH prefix is added
+ * so node/npm from the runtime install are visible. Any non-zero exit or
+ * timeout raises `asset_runtime_setup_failed`; callers must abort the case
+ * instead of running the agent against an image without the CLI.
+ */
+function runAssetRuntimeSetup(agentName, { install, init }) {
+  // A half-configured prerequisite (backend validation should prevent it) must
+  // fail before running anything rather than installing without initializing.
+  const phases = [["install", install], ["init", init]];
+  for (const [phase, command] of phases) {
+    if (!command) {
+      throw Object.assign(new Error(`资产运行时前置缺少 ${phase}_command`), {
+        code: "asset_runtime_setup_failed",
+        phase,
+      });
+    }
+  }
+  for (const [phase, command] of phases) {
+    const script = `export PATH=${RUNTIME_SETUP_PATH}:$PATH\n${command}`;
+    const args = ["exec", "-u", "eval", "-e", "HOME=/home/eval", "-w", "/testbed", agentName, "bash", "-lc", script];
+    let result;
+    try {
+      result = dockerRun(args, { allowFailure: true, timeout: RUNTIME_SETUP_TIMEOUT_MS });
+    } catch (error) {
+      throw Object.assign(new Error(`资产运行时前置 ${phase} 执行失败：${error.message}`), {
+        code: "asset_runtime_setup_failed",
+        phase,
+      });
+    }
+    if (result.status !== 0) {
+      const stderr = (result.stderr || "").slice(-4000);
+      throw Object.assign(
+        new Error(
+          `资产运行时前置 ${phase} 退出码 ${result.status}：${(stderr || result.stdout || "").slice(-800)}`,
+        ),
+        { code: "asset_runtime_setup_failed", phase, setupStderr: stderr },
+      );
+    }
+  }
+}
+
 
 /**
  * Execute one SWE-bench-style case: clone the repo, run Claude Code through
@@ -203,48 +277,6 @@ async function realCase(dispatch, item, task, { modelToken, runnerRoot }) {
     });
     if (checkout.status !== 0) throw new Error(`checkout 失败：${(checkout.stderr || "").slice(-500)}`);
 
-    // M5-01: apply exactly the frozen snapshot to <workspace>/.claude before
-    // the agent starts. A missing/invalid bundle fails the case explicitly;
-    // it never silently falls back to repository or host assets.
-    let assetsWritten = [];
-    try {
-      assetsWritten = await materializeSnapshot(task.asset_snapshot, workdir);
-    } catch (error) {
-      const message = `资产快照加载失败：${error.message}`;
-      console.error(message);
-      writeDiagnostic(
-        join(workdir, "trace"),
-        "asset-failure.json",
-        `${JSON.stringify({ type: "trace.failed", code: error.code || "asset_invalid", message })}\n`,
-      );
-      return {
-        score: {
-          [task.case_key]: {
-            resolved: false,
-            error: "asset_invalid",
-            message,
-            tests_status: {
-              FAIL_TO_PASS: { success: [], failure: [] },
-              PASS_TO_PASS: { success: [], failure: [] },
-            },
-          },
-        },
-        traceBundle: collectCapture(),
-        executionStatus: "failed",
-        resultStatus: "not_scored",
-        durationMs: Date.now() - startedAt,
-      };
-    }
-    if (assetsWritten.length > 0) {
-      console.error(
-        JSON.stringify({
-          status: "assets_materialized",
-          snapshot_id: task.asset_snapshot?.snapshot_id,
-          files: assetsWritten.length,
-        }),
-      );
-    }
-
     const env = {
       WORKSPACE: "/testbed",
       RUNTIME_HOME: "/testbed/.runtime-home",
@@ -272,6 +304,113 @@ async function realCase(dispatch, item, task, { modelToken, runnerRoot }) {
       // The dataset image is fixed; the generic agent runtime is installed
       // after start from Alibaba npm/PyPI sources. No per-agent image.
       dockerRun(["exec", agentName, "bash", "-lc", runtimeAdapter.installScript()], { timeout: 600_000 });
+      // M8-10: run the frozen asset runtime setup (CLI install + init) inside
+      // the same container before the agent starts. A failure aborts the case:
+      // the eval commands would otherwise hit an image without the CLI.
+      const runtimeSetup = runtimeSetupFromSnapshot(task.asset_snapshot);
+      if (runtimeSetup) {
+        try {
+          runAssetRuntimeSetup(agentName, runtimeSetup);
+        } catch (error) {
+          const code = error.code || "asset_runtime_setup_failed";
+          const message = `资产运行时前置失败：${error.message}`;
+          console.error(message);
+          writeDiagnostic(
+            join(workdir, "trace"),
+            "runtime-setup-failure.json",
+            `${JSON.stringify({
+              type: "trace.failed",
+              code,
+              phase: error.phase ?? null,
+              message,
+              stderr: error.setupStderr ?? "",
+            })}\n`,
+          );
+          console.error(
+            JSON.stringify({
+              status: "runtime_setup_failed",
+              error_code: code,
+              phase: error.phase ?? null,
+            }),
+          );
+          return {
+            score: {
+              [task.case_key]: {
+                resolved: false,
+                error: code,
+                message,
+                tests_status: {
+                  FAIL_TO_PASS: { success: [], failure: [] },
+                  PASS_TO_PASS: { success: [], failure: [] },
+                },
+              },
+            },
+            traceBundle: collectCapture(),
+            executionStatus: "failed",
+            resultStatus: "not_scored",
+            durationMs: Date.now() - startedAt,
+          };
+        }
+        console.error(
+          JSON.stringify({
+            status: "runtime_setup",
+            snapshot_id: task.asset_snapshot?.snapshot_id,
+            install: true,
+            init: true,
+          }),
+        );
+      }
+      // M5-01: apply exactly the frozen snapshot to <workspace>/.claude AFTER
+      // the runtime setup runs. `init_command` may regenerate the same tree, so
+      // materializing last keeps the frozen snapshot authoritative: the agent
+      // only ever loads what the platform froze. A missing/invalid bundle fails
+      // the case explicitly; it never silently falls back to repository/host
+      // assets.
+      let assetsWritten = [];
+      try {
+        assetsWritten = await materializeSnapshot(task.asset_snapshot, workdir);
+      } catch (error) {
+        const message = `资产快照加载失败：${error.message}`;
+        console.error(message);
+        writeDiagnostic(
+          join(workdir, "trace"),
+          "asset-failure.json",
+          `${JSON.stringify({ type: "trace.failed", code: error.code || "asset_invalid", message })}\n`,
+        );
+        return {
+          score: {
+            [task.case_key]: {
+              resolved: false,
+              error: "asset_invalid",
+              message,
+              tests_status: {
+                FAIL_TO_PASS: { success: [], failure: [] },
+                PASS_TO_PASS: { success: [], failure: [] },
+              },
+            },
+          },
+          traceBundle: collectCapture(),
+          executionStatus: "failed",
+          resultStatus: "not_scored",
+          durationMs: Date.now() - startedAt,
+        };
+      }
+      if (assetsWritten.length > 0) {
+        // The host-side materializer writes as the runner user, after the
+        // adapter install chowned the workspace to `eval`; hand the frozen
+        // tree back so the non-root agent can traverse/load it.
+        dockerRun(["exec", agentName, "chown", "-R", "eval:eval", "/testbed/.claude"], {
+          allowFailure: true,
+          timeout: 60_000,
+        });
+        console.error(
+          JSON.stringify({
+            status: "assets_materialized",
+            snapshot_id: task.asset_snapshot?.snapshot_id,
+            files: assetsWritten.length,
+          }),
+        );
+      }
       const execArgs = ["exec", "-u", "eval", "-e", "HOME=/home/eval"];
       for (const [key, value] of Object.entries(env)) execArgs.push("-e", `${key}=${value}`);
       execArgs.push(
