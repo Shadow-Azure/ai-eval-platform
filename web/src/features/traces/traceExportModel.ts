@@ -39,9 +39,16 @@ export interface TraceExportSessionRow {
   depth: number;
   parentId: string | null;
   /** Native file linked to the session, when the API exposes `trace_file_id`. */
+  fileId: string | null;
   fileName: string | null;
   fileSize: number;
   fileCount: number;
+}
+
+export interface TraceExportOrphanFile {
+  id: string | null;
+  name: string;
+  size: number;
 }
 
 export interface TraceExportSummary {
@@ -50,6 +57,8 @@ export interface TraceExportSummary {
   main: TraceExportSessionRow[];
   subagents: TraceExportSessionRow[];
   unlinked: TraceExportSessionRow[];
+  /** Native files with no linked session; the backend archives them under unlinked/. */
+  orphanFiles: TraceExportOrphanFile[];
   mainAgentCount: number;
   subagentCount: number;
   unlinkedCount: number;
@@ -166,6 +175,7 @@ export function summarizeTraceExport(
       spanCount: finiteSize(session.span_count),
       depth: role === "unlinked" ? 0 : depth,
       parentId,
+      fileId: file?.id ?? null,
       fileName: basename(file?.logical_path),
       fileSize: finiteSize(file?.size),
       fileCount: file ? 1 : 0,
@@ -182,12 +192,23 @@ export function summarizeTraceExport(
   const unlinked = rows.filter((row) => row.role === "unlinked");
   const totalSize = files.reduce((sum, file) => sum + finiteSize(file.size), 0);
   const rawFileCount = files.length;
+  const referenced = new Set(
+    rows.map((row) => row.fileId).filter((id): id is string => Boolean(id)),
+  );
+  const orphanFiles: TraceExportOrphanFile[] = files
+    .filter((file) => !file.id || !referenced.has(file.id))
+    .map((file) => ({
+      id: file.id ?? null,
+      name: basename(file.logical_path) ?? file.id ?? "trace-file",
+      size: finiteSize(file.size),
+    }));
 
   return {
     sessions: [...main, ...subagents, ...unlinked],
     main,
     subagents,
     unlinked,
+    orphanFiles,
     mainAgentCount: main.length,
     subagentCount: subagents.length,
     unlinkedCount: unlinked.length,
@@ -228,6 +249,52 @@ function safeSegment(value: string | null | undefined): string | null {
   return cleaned ? cleaned.slice(0, 160) : null;
 }
 
+const CONTROL_CHARS = /[\u0000-\u001f\u007f]/g;
+
+function safeArchiveFilename(raw: string | null): string | null {
+  if (!raw) return null;
+  const segment = raw
+    .replace(CONTROL_CHARS, "")
+    .split(/[\\/]/)
+    .pop()
+    ?.trim()
+    .replace(/^"|"$/g, "")
+    .replace(/^\.+/, "")
+    .slice(0, 180);
+  return segment ? segment : null;
+}
+
+function decodeExtendedFilename(value: string): string | null {
+  // RFC 5987: charset'language'percent-encoded-value
+  const parts = /^([^']*)'([^']*)'(.*)$/.exec(value);
+  const encoded = parts ? parts[3] : value;
+  try {
+    return safeArchiveFilename(decodeURIComponent(encoded));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Read the archive name from `Content-Disposition`.
+ * `filename*` (RFC 5987, UTF-8) wins over the ASCII `filename` fallback.
+ */
+export function parseArchiveFilename(header: string | null): string | null {
+  if (!header) return null;
+  const extended = /filename\*\s*=\s*("([^"]*)"|[^;]+)/i.exec(header);
+  if (extended) {
+    const raw = (extended[2] ?? extended[1]).trim().replace(/^"|"$/g, "");
+    const decoded = decodeExtendedFilename(raw);
+    if (decoded) return decoded;
+  }
+  const plain = /filename\s*=\s*("([^"]*)"|[^;]+)/i.exec(header);
+  if (plain) {
+    return safeArchiveFilename((plain[2] ?? plain[1]).trim());
+  }
+  return null;
+}
+
+
 /** Mirrors the backend's `trace-<safe-case-key>-attempt-<n>` root folder. */
 export function archiveRootName(
   caseKey: string | null | undefined,
@@ -250,6 +317,7 @@ export interface TraceArchiveTreeOptions {
   main?: TraceExportSessionRow[];
   subagents: TraceExportSessionRow[];
   unlinked?: TraceExportSessionRow[];
+  orphanFiles?: TraceExportOrphanFile[];
   unlinkedCount: number;
 }
 
@@ -258,11 +326,17 @@ interface TreeEntry {
   children: TreeEntry[];
 }
 
-function fileEntries(rows: TraceExportSessionRow[] | undefined): TreeEntry[] {
+function fileEntries(
+  rows: TraceExportSessionRow[] | undefined,
+  claimed: Set<string>,
+): TreeEntry[] {
   const names: string[] = [];
   for (const row of rows ?? []) {
+    if (row.fileId && claimed.has(row.fileId)) continue;
     const name = safeSegment(row.fileName);
-    if (name && !names.includes(name)) names.push(name);
+    if (!name || names.includes(name)) continue;
+    names.push(name);
+    if (row.fileId) claimed.add(row.fileId);
   }
   return names.map((name) => ({ label: name, children: [] }));
 }
@@ -275,8 +349,11 @@ function fileEntries(rows: TraceExportSessionRow[] | undefined): TreeEntry[] {
  * the same sanitization rules while the manifest stays authoritative.
  */
 export function buildArchiveTree(options: TraceArchiveTreeOptions): string[] {
+  const claimed = new Set<string>();
+  const mainEntries = fileEntries(options.main, claimed);
   const folders = new Map<string, TreeEntry[]>();
   for (const row of options.subagents) {
+    if (row.fileId && claimed.has(row.fileId)) continue;
     // `_session_directory` uses the agent name/id, or `session-<id>` when the
     // child session has neither.
     const unnamed = row.agentId === null && row.name === row.id;
@@ -288,13 +365,14 @@ export function buildArchiveTree(options: TraceArchiveTreeOptions): string[] {
     const name = safeSegment(row.fileName);
     if (name && !entries.some((entry) => entry.label === name)) {
       entries.push({ label: name, children: [] });
+      if (row.fileId) claimed.add(row.fileId);
     }
     folders.set(folder, entries);
   }
 
   const top: TreeEntry[] = [
     { label: "manifest.json", children: [] },
-    { label: "main/", children: fileEntries(options.main) },
+    { label: "main/", children: mainEntries },
   ];
   if (folders.size) {
     top.push({
@@ -305,8 +383,16 @@ export function buildArchiveTree(options: TraceArchiveTreeOptions): string[] {
       })),
     });
   }
-  if (options.unlinkedCount > 0) {
-    top.push({ label: "unlinked/", children: fileEntries(options.unlinked) });
+  const unlinkedEntries = fileEntries(options.unlinked, claimed);
+  for (const file of options.orphanFiles ?? []) {
+    if (file.id && claimed.has(file.id)) continue;
+    const name = safeSegment(file.name);
+    if (!name || unlinkedEntries.some((entry) => entry.label === name)) continue;
+    unlinkedEntries.push({ label: name, children: [] });
+    if (file.id) claimed.add(file.id);
+  }
+  if (options.unlinkedCount > 0 || unlinkedEntries.length > 0) {
+    top.push({ label: "unlinked/", children: unlinkedEntries });
   }
 
   const lines = [

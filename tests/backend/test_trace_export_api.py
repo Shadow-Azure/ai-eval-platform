@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from hashlib import sha256
 
 import pytest
-from app.defaults import DEFAULT_TENANT_ID
+from app.defaults import DEFAULT_PROJECT_ID, DEFAULT_TENANT_ID
 from app.models import (
     AuditLog,
     EvalCaseAttempt,
@@ -22,7 +22,7 @@ from app.models import (
     Workspace,
 )
 from app.services import identity, trace_export
-from app.services.object_store import ObjectStoreError
+from app.services.object_store import ObjectMissing, ObjectStoreError
 from conftest import TEST_VIEWER_EMAIL, TEST_VIEWER_PASSWORD
 from fastapi.testclient import TestClient
 from object_stub import StubObjectStore
@@ -548,6 +548,111 @@ def test_object_store_failure_returns_502_without_leaking_details(
     assert response.json()["detail"]["error"]["code"] == "trace_export_failed"
     assert "boom" not in response.text
     assert "must-not-leak-secret" not in response.text
+    assert (
+        session.scalar(
+            select(AuditLog).where(AuditLog.action == "trace.export.download")
+        )
+        is None
+    )
+
+
+def test_unlinked_dangling_and_orphan_files_land_under_unlinked(
+    client: TestClient, session: Session, trace_export_env
+) -> None:
+    case = trace_export_env["case"]
+    seed = trace_export_env["seeded"]
+    attempt = trace_export_env["attempt"]
+
+    seed.child_session.status = "unlinked"
+    session.commit()
+    response = client.post(_export_url(case.id))
+    assert response.status_code == 200, response.text
+    with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+        names = archive.namelist()
+        manifest = json.loads(archive.read(names[0]))
+    assert "trace-case-a-attempt-1/unlinked/agent-alpha.jsonl" in names
+    assert not any("/subagents/reviewer/" in name for name in names)
+    unlinked = next(
+        item for item in manifest["files"] if item["id"] == seed.child_file.id
+    )
+    assert unlinked["archive_path"] == "unlinked/agent-alpha.jsonl"
+
+    orphan_key = f"evaluations/{trace_export_env['run'].id}/trace/{attempt.id}/orphan.jsonl"
+    orphan_content = b'{"type": "orphan"}\n'
+    trace_export_env["store"].add_bytes(orphan_key, orphan_content)
+    session.add(
+        TraceFile(
+            tenant_id=str(DEFAULT_TENANT_ID),
+            eval_case_attempt_id=attempt.id,
+            eval_case_run_id=case.id,
+            runtime_key="claude-code",
+            runtime_version="2.1.278",
+            native_format="claude-code.session+jsonl",
+            format_version="1",
+            parser_version="claude-code-2.1.278-v1",
+            logical_path="native/orphan.jsonl",
+            artifact_kind="trace",
+            object_key=orphan_key,
+            sha256=sha256(orphan_content).hexdigest(),
+            size=len(orphan_content),
+            detected_format="jsonl",
+            status="ready",
+            ordinal=5,
+        )
+    )
+    session.commit()
+    response = client.post(_export_url(case.id))
+    assert response.status_code == 200, response.text
+    with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+        names = archive.namelist()
+        manifest = json.loads(archive.read(names[0]))
+    assert "trace-case-a-attempt-1/unlinked/orphan.jsonl" in names
+    orphan = next(
+        item for item in manifest["files"] if item["logical_path"] == "native/orphan.jsonl"
+    )
+    assert orphan["session_ids"] == []
+
+
+def test_midstream_missing_object_after_successful_head_is_marked(
+    session: Session, trace_export_env
+) -> None:
+    case = trace_export_env["case"]
+
+    class _MidstreamMissingStore:
+        def head_object(self, _object_key: str) -> int:
+            return 100
+
+        def iter_object(self, object_key: str):
+            yield b"partial"
+            raise ObjectMissing(object_key)
+
+    plan = trace_export.plan_trace_export(
+        session,
+        tenant_id=str(DEFAULT_TENANT_ID),
+        project_id=str(DEFAULT_PROJECT_ID),
+        case_run_id=case.id,
+        attempt_no=1,
+    )
+    archive = trace_export.build_trace_export(plan, _MidstreamMissingStore())
+    try:
+        archive.file.seek(0)
+        data = archive.file.read()
+    finally:
+        archive.close()
+    with zipfile.ZipFile(io.BytesIO(data)) as bundle:
+        names = bundle.namelist()
+        manifest = json.loads(bundle.read(names[0]))
+    assert len(names) == 1
+    assert manifest["stats"]["archived_file_count"] == 0
+    assert manifest["stats"]["missing_file_count"] == 2
+
+
+def test_unknown_case_id_returns_not_found_without_audit(
+    client: TestClient, session: Session, trace_export_env
+) -> None:
+    response = client.post(_export_url("00000000-0000-0000-0000-000000000000"))
+    assert response.status_code == 404
+    assert response.json()["detail"]["error"]["code"] == "eval_case_run_not_found"
     assert (
         session.scalar(
             select(AuditLog).where(AuditLog.action == "trace.export.download")

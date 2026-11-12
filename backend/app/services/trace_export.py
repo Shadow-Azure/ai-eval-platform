@@ -203,16 +203,28 @@ def _case_and_run(
 def _session_directory(sessions: list[TraceSession], known_ids: set[str]) -> str:
     if not sessions:
         return "unlinked"
-    # ``attempt_trace`` promotes a session with a dangling parent to the tree
-    # root, so the archive must do the same (main/ rather than a subagent dir).
-    if any(
-        item.parent_session_id is None or item.parent_session_id not in known_ids
+
+    def linked(item: TraceSession) -> bool:
+        # Keep the archive aligned with ``flattenSessionTree``: an explicitly
+        # unlinked session, or one whose parent is absent from the attempt, is
+        # not a trustworthy root/subagent and goes to unlinked/.
+        return item.status != "unlinked" and (
+            item.parent_session_id is None or item.parent_session_id in known_ids
+        )
+
+    roots = [
+        item
         for item in sessions
-    ):
+        if linked(item) and item.parent_session_id is None
+    ]
+    if roots:
         return "main"
-    child = sessions[0]
-    agent = child.agent_name or child.agent_id
-    return "subagents/" + safe_segment(agent, fallback=f"session-{child.id}")
+    children = [item for item in sessions if linked(item)]
+    if children:
+        child = children[0]
+        agent = child.agent_name or child.agent_id
+        return "subagents/" + safe_segment(agent, fallback=f"session-{child.id}")
+    return "unlinked"
 
 
 def plan_trace_export(
@@ -318,6 +330,10 @@ def _stage_files(plan: TraceExportPlan, store: ObjectStore, staging_dir: Path) -
             raise TraceExportError(
                 502, "trace_export_failed", "对象存储读取失败"
             ) from exc
+        except OSError as exc:
+            raise TraceExportError(
+                502, "trace_export_failed", "对象存储读取超时或网络失败"
+            ) from exc
         item.size_mismatch = reported_size != int(item.trace_file.size)
         staged = staging_dir / f"{index:04d}.bin"
         try:
@@ -332,6 +348,11 @@ def _stage_files(plan: TraceExportPlan, store: ObjectStore, staging_dir: Path) -
         except ObjectStoreError as exc:
             raise TraceExportError(
                 502, "trace_export_failed", "对象存储读取失败"
+            ) from exc
+        except OSError as exc:
+            staged.unlink(missing_ok=True)
+            raise TraceExportError(
+                502, "trace_export_failed", "对象存储读取超时或网络失败"
             ) from exc
         item.actual_size = staged.stat().st_size
         if item.actual_size != reported_size:

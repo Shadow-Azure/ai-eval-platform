@@ -787,6 +787,7 @@ export function TracePage() {
     main: exportSummary.main,
     subagents: exportSummary.subagents,
     unlinked: exportSummary.unlinked,
+    orphanFiles: exportSummary.orphanFiles,
     unlinkedCount: exportSummary.unlinkedCount,
   });
   const sessionSpanTotal = spansQuery.data?.pages[0]?.pageInfo.total ?? selectedSession?.span_count ?? 0;
@@ -930,6 +931,10 @@ export function TracePage() {
             />
             <div className="trace-raw-source">
               <div className="trace-pane-title">Raw source</div>
+              <div className="trace-raw-summary small muted">
+                主 Agent {exportSummary.mainAgentCount} · 子 Agent {exportSummary.subagentCount} ·{" "}
+                {files.length} 个原始文件
+              </div>
               {files.length ? (
                 files.map((file) => (
                   <button
@@ -1094,6 +1099,9 @@ export function TracePage() {
             <strong>{formatBytes(exportSummary.estimatedArchiveSize)}</strong>
             <span>ZIP 预估</span>
           </div>
+        </div>
+        <div className="trace-export-hint">
+          ZIP 预估按原始文件大小与清单开销估算，实际以下载结果为准。
         </div>
         <div className="trace-export-section">
           <div className="trace-export-section-head">

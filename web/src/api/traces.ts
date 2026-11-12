@@ -1,5 +1,6 @@
 import { ApiError, notifyUnauthorized } from "./types";
 import { request } from "./evaluations";
+import { parseArchiveFilename } from "../features/traces/traceExportModel";
 
 function record(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -401,51 +402,6 @@ export async function createTraceSpanContentUrl(
 export interface TraceArchiveDownload {
   blob: Blob;
   filename: string;
-}
-
-const CONTROL_CHARS = /[\u0000-\u001f\u007f]/g;
-
-function safeArchiveFilename(raw: string | null): string | null {
-  if (!raw) return null;
-  const segment = raw
-    .replace(CONTROL_CHARS, "")
-    .split(/[\\/]/)
-    .pop()
-    ?.trim()
-    .replace(/^"|"$/g, "")
-    .replace(/^\.+/, "")
-    .slice(0, 180);
-  return segment ? segment : null;
-}
-
-function decodeExtendedFilename(value: string): string | null {
-  // RFC 5987: charset'language'percent-encoded-value
-  const parts = /^([^']*)'([^']*)'(.*)$/.exec(value);
-  const encoded = parts ? parts[3] : value;
-  try {
-    return safeArchiveFilename(decodeURIComponent(encoded));
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Read the archive name from `Content-Disposition`.
- * `filename*` (RFC 5987, UTF-8) wins over the ASCII `filename` fallback.
- */
-export function parseArchiveFilename(header: string | null): string | null {
-  if (!header) return null;
-  const extended = /filename\*\s*=\s*("([^"]*)"|[^;]+)/i.exec(header);
-  if (extended) {
-    const raw = (extended[2] ?? extended[1]).trim().replace(/^"|"$/g, "");
-    const decoded = decodeExtendedFilename(raw);
-    if (decoded) return decoded;
-  }
-  const plain = /filename\s*=\s*("([^"]*)"|[^;]+)/i.exec(header);
-  if (plain) {
-    return safeArchiveFilename((plain[2] ?? plain[1]).trim());
-  }
-  return null;
 }
 
 function fallbackArchiveFilename(caseRunId: string, attempt: number): string {

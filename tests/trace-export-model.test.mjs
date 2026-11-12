@@ -5,6 +5,7 @@ import {
   archiveRootName,
   buildArchiveTree,
   formatBytes,
+  parseArchiveFilename,
   summarizeTraceExport,
 } from "../web/src/features/traces/traceExportModel.ts";
 
@@ -297,4 +298,88 @@ test("maps native files to sessions for counts, sizes and tree filenames", () =>
       "    └── orphan.jsonl",
     ],
   );
+});
+
+test("a native file shared by root and child is projected once, under main", () => {
+  const shared = [
+    session({
+      id: "root",
+      trace_file_id: "file-shared",
+      agent_name: "Main agent",
+      children: [
+        session({
+          id: "child",
+          trace_file_id: "file-shared",
+          parent_session_id: "root",
+          agent_name: "test_runner",
+          children: [],
+        }),
+      ],
+    }),
+  ];
+  const summary = summarizeTraceExport(shared, [
+    { id: "file-shared", size: 10, logical_path: "native/shared.jsonl" },
+  ]);
+  assert.deepEqual(
+    buildArchiveTree({
+      caseKey: "case",
+      attemptNo: 1,
+      main: summary.main,
+      subagents: summary.subagents,
+      unlinkedCount: 0,
+    }),
+    [
+      "trace-case-attempt-1/",
+      "├── manifest.json",
+      "└── main/",
+      "    └── shared.jsonl",
+    ],
+  );
+});
+
+test("orphan native files are projected under unlinked", () => {
+  const summary = summarizeTraceExport([], [
+    { id: "file-orphan", size: 5, logical_path: "native/orphan.jsonl" },
+  ]);
+  assert.deepEqual(summary.orphanFiles, [
+    { id: "file-orphan", name: "orphan.jsonl", size: 5 },
+  ]);
+  assert.deepEqual(
+    buildArchiveTree({
+      caseKey: "case",
+      attemptNo: 1,
+      main: [],
+      subagents: [],
+      orphanFiles: summary.orphanFiles,
+      unlinkedCount: 0,
+    }),
+    [
+      "trace-case-attempt-1/",
+      "├── manifest.json",
+      "├── main/",
+      "└── unlinked/",
+      "    └── orphan.jsonl",
+    ],
+  );
+});
+
+
+
+
+test("parses ASCII and RFC 5987 archive filenames safely", () => {
+  assert.equal(
+    parseArchiveFilename('attachment; filename="trace-case-attempt-1.zip"'),
+    "trace-case-attempt-1.zip",
+  );
+  assert.equal(
+    parseArchiveFilename(
+      "attachment; filename=\"fallback.zip\"; filename*=UTF-8''trace-%E8%BD%A8%E8%BF%B9.zip",
+    ),
+    "trace-轨迹.zip",
+  );
+  assert.equal(
+    parseArchiveFilename('attachment; filename="../../etc/passwd"'),
+    "passwd",
+  );
+  assert.equal(parseArchiveFilename(null), null);
 });

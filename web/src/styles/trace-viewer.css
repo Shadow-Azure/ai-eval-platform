@@ -615,6 +615,11 @@
   display: flex;
 }
 
+.trace-raw-summary {
+  padding: 0 8px 8px;
+  line-height: 1.45;
+}
+
 .trace-export-subtitle {
   margin-bottom: 10px;
   color: var(--muted);
