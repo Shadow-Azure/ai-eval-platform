@@ -1,6 +1,6 @@
-# Runner 记录按每页 5 条分页
+# m8-01 Runner 记录按每页 5 条分页
 
-[English](m8-runner-records-pagination.en.md) | 中文
+[English](m8-01-runner-records-pagination.en.md) | 中文
 
 ```yaml flow
 kind: issue
@@ -8,7 +8,7 @@ milestone: m8
 priority: P2
 status: ready
 scope:
-  - .agents/flow/issues/m8-runner-records-pagination.*
+  - .agents/flow/issues/m8-01-runner-records-pagination.*
   - .agents/flow/milestones/m8-bug-fixes.*
   - .agents/flow/roadmap.*
   - scripts/doc-budgets.manifest.json

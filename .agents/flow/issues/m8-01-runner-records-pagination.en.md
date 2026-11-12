@@ -1,6 +1,6 @@
-# Paginate runner records 5 per page
+# m8-01 Paginate runner records 5 per page
 
-English | [中文](m8-runner-records-pagination.md)
+English | [中文](m8-01-runner-records-pagination.md)
 
 ```yaml flow
 kind: issue
@@ -8,7 +8,7 @@ milestone: m8
 priority: P2
 status: ready
 scope:
-  - .agents/flow/issues/m8-runner-records-pagination.*
+  - .agents/flow/issues/m8-01-runner-records-pagination.*
   - .agents/flow/milestones/m8-bug-fixes.*
   - .agents/flow/roadmap.*
   - scripts/doc-budgets.manifest.json
