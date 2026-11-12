@@ -64,6 +64,7 @@ export interface TraceStep {
   diff: TraceDiffLine[];
   readLines: TraceReadLine[];
   outputTruncated: boolean;
+  inputTruncated: boolean;
   childSession: TraceSession | null;
   childSessionId: string | null;
   childAgentName: string | null;
@@ -266,6 +267,24 @@ export function parseToolInput(
   } catch {
     return null;
   }
+}
+
+function extractJsonString(
+  text: string | null,
+  keys: string[],
+): string | null {
+  if (!text) return null;
+  for (const key of keys) {
+    const match = new RegExp(`"${key}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"`).exec(text);
+    if (!match) continue;
+    try {
+      const parsed: unknown = JSON.parse(`"${match[1]}"`);
+      if (typeof parsed === "string" && parsed.trim()) return parsed;
+    } catch {
+      if (match[1].trim()) return match[1];
+    }
+  }
+  return null;
 }
 
 export function isToolResultSpan(span: TraceSpan): boolean {
@@ -615,24 +634,49 @@ function buildToolStep(
   const outputTruncated = results.some(
     (item) => item.attributes["content.truncated"] === true,
   );
-  const command = kind === "bash" ? resolveCommand(toolInput, inputText) : null;
-  const filePath = resolveFilePath(toolInput);
+  const inputTruncated = Boolean(
+    span.attributes["content.truncated"] === true ||
+      (inputText !== null &&
+        inputText.length >= 500 &&
+        inputText.trimEnd().endsWith("…")),
+  );
+  const command =
+    kind === "bash"
+      ? (resolveCommand(toolInput, inputText) ??
+        (inputTruncated
+          ? extractJsonString(inputText, ["command", "cmd", "script"])
+          : null))
+      : null;
+  const filePath =
+    resolveFilePath(toolInput) ??
+    (inputTruncated
+      ? extractJsonString(inputText, [
+          "file_path",
+          "filePath",
+          "path",
+          "notebook_path",
+        ])
+      : null);
   const childAgentId = attrString(span, "claude.child.agent_id");
   const callId = toolCallId(span);
   const childSession =
     (callId ? indexes.byToolCallId.get(callId) : null) ??
     (childAgentId ? indexes.byAgentId.get(childAgentId) : null) ??
     null;
-  const error = results.some(resultHasError) || hasFailureStatus(span);
   const exitCode = parseExitCode(toolInput, outputText);
   const passed = passedLabel(outputText);
-  const statusText = error
-    ? "失败"
-    : exitCode !== null && exitCode !== 0
-      ? `退出码 ${exitCode}`
-      : (passed ??
-        resultLabel(results[0] ?? null) ??
-        (results.length ? "完成" : "已记录"));
+  const outputFailed = Boolean(passed && /failed/i.test(passed));
+  const error =
+    results.some(resultHasError) || hasFailureStatus(span) || outputFailed;
+  const statusText = outputFailed
+    ? (passed as string)
+    : error
+      ? "失败"
+      : exitCode !== null && exitCode !== 0
+        ? `退出码 ${exitCode}`
+        : (passed ??
+          resultLabel(results[0] ?? null) ??
+          (results.length ? "完成" : "已记录"));
   const oldString = firstString(
     toolInput,
     "old_string",
@@ -757,6 +801,7 @@ function buildToolStep(
     diff,
     readLines,
     outputTruncated,
+    inputTruncated,
     childSession,
     childSessionId: childSession?.id ?? null,
     childAgentName: childSession?.agent_name ?? childAgentId,
@@ -823,6 +868,7 @@ function buildTextStep(
     diff: [],
     readLines: [],
     outputTruncated: false,
+    inputTruncated: false,
     childSession: null,
     childSessionId: null,
     childAgentName: null,
@@ -917,14 +963,14 @@ function phaseLabel(
   }
   if (category === "summary") {
     return {
-      label: "总结",
+      label: "总结回答",
       description: steps[0]?.summary || "汇总结论与验证结果",
     };
   }
   if (exploreSplit) {
     return exploreIndex === 0
-      ? { label: "理解", description: "读取问题描述与约束" }
-      : { label: "定位", description: "追踪相关代码、文件与调用关系" };
+      ? { label: "理解任务", description: "读取问题描述与约束" }
+      : { label: "定位问题", description: "追踪相关代码、文件与调用关系" };
   }
   return exploreIndex === 0
     ? { label: "探索与定位", description: "阅读任务、检索代码与调用关系" }

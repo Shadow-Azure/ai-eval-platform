@@ -39,6 +39,7 @@ import { formatMoney } from "../utils/money";
 import {
   flattenSessionTree,
   markMissingParents,
+  mergeSelectedSpan,
   mergeSpanPages,
   readSpanFilter,
   readTraceSelection,
@@ -766,9 +767,19 @@ interface StepBodyProps {
 
 function StepBody({ step, onOpenSession }: StepBodyProps) {
   const output = step.outputText;
+  const inputWarning = step.inputTruncated ? (
+    <div className="trace-input-warning" role="status">
+      <Icon name="alert" size={12} />
+      <span>
+        工具输入已截断（&gt;500 字符），无法完整解析命令或 diff；完整内容需管理员打开底层
+        span。
+      </span>
+    </div>
+  ) : null;
   if (step.kind === "bash") {
     return (
       <div className="trace-step-detail">
+        {inputWarning}
         <div className="trace-section-label">命令</div>
         <pre className="trace-code-block trace-command">
           <span className="trace-prompt">$</span>{" "}
@@ -793,6 +804,7 @@ function StepBody({ step, onOpenSession }: StepBodyProps) {
   if (step.kind === "edit" || step.kind === "write") {
     return (
       <div className="trace-step-detail">
+        {inputWarning}
         <div className="trace-section-label">
           {step.kind === "write" ? "新文件" : "差异"}
           <span className="trace-section-hint">
@@ -818,6 +830,7 @@ function StepBody({ step, onOpenSession }: StepBodyProps) {
   if (step.kind === "read") {
     return (
       <div className="trace-step-detail">
+        {inputWarning}
         <div className="trace-filepath">
           <Icon name="file" size={11} />
           <span className="mono">{step.filePath ?? "未知路径"}</span>
@@ -1896,7 +1909,7 @@ export function TracePage() {
     );
     return filter === "all" ? markMissingParents(merged) : merged;
   }, [filter, spansQuery.data?.pages]);
-  const model = useMemo(
+  const initialModel = useMemo(
     () => buildTraceViewModel(spans, allSessions),
     [spans, allSessions],
   );
@@ -1906,14 +1919,14 @@ export function TracePage() {
     if (!selectedSessionId || selection.span !== null || dismissedSelection)
       return;
     const preferred =
-      model.steps.find((step) => step.category === "fix") ??
-      model.steps.find((step) => Boolean(step.toolName)) ??
-      model.steps[0] ??
+      initialModel.steps.find((step) => step.category === "fix") ??
+      initialModel.steps.find((step) => Boolean(step.toolName)) ??
+      initialModel.steps[0] ??
       null;
     const targetId = preferred?.span.id ?? spans[0]?.id;
     if (!targetId) return;
     updateSelection({ span: targetId }, true);
-  }, [dismissedSelection, model, selectedSessionId, selection.span, spans]);
+  }, [dismissedSelection, initialModel, selectedSessionId, selection.span, spans]);
 
   const selectedSpanId = visibleSpan?.id ?? selection.span;
   const detailQuery = useQuery({
@@ -1943,6 +1956,11 @@ export function TracePage() {
     }
   }, [detailQuery.data, filter, selectedSessionId]);
 
+  const model = useMemo(() => {
+    if (!detailSpan) return initialModel;
+    const merged = mergeSelectedSpan(spans, detailSpan, selectedSessionId, filter);
+    return buildTraceViewModel(merged, allSessions);
+  }, [allSessions, detailSpan, filter, initialModel, selectedSessionId, spans]);
   const span = detailSpan ?? visibleSpan;
   const timeline = useMemo(
     () =>
@@ -2188,8 +2206,8 @@ export function TracePage() {
     null;
   const totalTokens = trace.stats.inputTokens + trace.stats.outputTokens;
   const counts = (() => {
-    const result: Record<string, number> = { all: spans.length };
-    for (const item of spans) result[item.kind] = (result[item.kind] ?? 0) + 1;
+    const result: Record<string, number> = { all: model.spans.length };
+    for (const item of model.spans) result[item.kind] = (result[item.kind] ?? 0) + 1;
     return result;
   })();
 
@@ -2328,7 +2346,7 @@ export function TracePage() {
               <strong>{compactNumber(totalTokens)}</strong> tokens
             </span>
             <span>
-              <strong>{formatCost(model.cost)}</strong> 成本
+              <strong>{formatCost(model.cost ?? selectedSession?.cost)}</strong> 成本
             </span>
             <span>
               <strong>{sessionSpanTotal || trace.stats.spanCount}</strong> spans

@@ -6,7 +6,7 @@
 kind: issue
 milestone: m8
 priority: P1
-status: in-progress
+status: done
 scope:
   - .agents/flow/issues/m8-06-agent-asset-not-injected.*
   - .agents/flow/issues/m8-03-eval-records-pagination.*

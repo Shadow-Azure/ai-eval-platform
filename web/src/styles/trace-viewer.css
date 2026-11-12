@@ -2676,3 +2676,23 @@
     margin-left: 0;
   }
 }
+
+/* Honest degradation when the backend 500-char tool-input preview is truncated. */
+.trace-input-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-bottom: 8px;
+  padding: 6px 8px;
+  border: 1px solid #f4d9a6;
+  border-radius: 6px;
+  background: #fffaef;
+  color: #92400e;
+  font-size: 9.5px;
+  line-height: 1.45;
+}
+.trace-input-warning .icon {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: #b45309;
+}
