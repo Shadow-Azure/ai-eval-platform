@@ -87,6 +87,18 @@ github:
 - 2026-11-12：按先 A 后 D 实施；A 为会话级模板库 + 每用例克隆，D 为 web-only PR 跳过 backend job；B/C 暂不启用。
 - 实现与实测对比见 PR #197。
 
+## 实测
+
+| 指标 | 改动前 | 改动后（A） |
+|---|---|---|
+| backend job | 15m08s | 5m13s |
+| pytest 步骤 | 14m36s | 4m36s |
+| pytest 自报 | 722 passed in 865.48s | 728 passed in 263.32s |
+
+- 改动前：[run 43183921424](https://github.com/Shadow-Azure/ai-eval-platform/actions/runs/43183921424) / job 131073760686；改动后：[run 43193007271](https://github.com/Shadow-Azure/ai-eval-platform/actions/runs/43193007271) / job 131096856802。
+- 本地 SQLite 完整套件 2m15s；PostgreSQL 的 `CREATE DATABASE ... TEMPLATE` 克隆成本已不在最慢 20 项内。
+- D 按 PR #191 的文件列表验证：全部为 `web/**` 时 changes job 输出 `backend=false`，backend job 被跳过；backend 相关改动仍输出 `true`。
+
 ## 待讨论
 
 - 目标时长最终定为多少：5 分钟、3 分钟还是 2 分钟？

@@ -87,6 +87,18 @@ The root cause is the test isolation strategy, not the test logic itself: 550 of
 - 2026-11-12: implement A first, then D; A is a session-level template database with a per-test clone, D skips the backend job for web-only PRs, and B/C stay disabled for now.
 - Implementation and measured comparison are in PR #197.
 
+## Measurements
+
+| Metric | Before | After (A) |
+|---|---|---|
+| backend job | 15m08s | 5m13s |
+| pytest step | 14m36s | 4m36s |
+| pytest self-report | 722 passed in 865.48s | 728 passed in 263.32s |
+
+- Before: [run 43183921424](https://github.com/Shadow-Azure/ai-eval-platform/actions/runs/43183921424) / job 131073760686; after: [run 43193007271](https://github.com/Shadow-Azure/ai-eval-platform/actions/runs/43193007271) / job 131096856802.
+- The local SQLite suite takes 2m15s; the PostgreSQL `CREATE DATABASE ... TEMPLATE` clone cost no longer appears in the slowest 20 durations.
+- D was verified against the file list of PR #191: when every file is under `web/**`, the changes job outputs `backend=false` and the backend job is skipped; backend-related changes still output `true`.
+
 ## Open questions
 
 - What is the final target duration: 5 minutes, 3 minutes or 2 minutes?

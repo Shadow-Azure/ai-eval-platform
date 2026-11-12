@@ -6,7 +6,7 @@ English | [中文](m8-07-eval-prompt-suffix.md)
 kind: issue
 milestone: m8
 priority: P1
-status: in-progress
+status: done
 scope:
   - .agents/flow/issues/m8-07-eval-prompt-suffix.*
   - .agents/flow/issues/m8-04-trace-viewer-redesign.*

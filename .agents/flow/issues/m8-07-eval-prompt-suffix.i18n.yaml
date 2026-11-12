@@ -1,5 +1,5 @@
 # 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
 # git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
 #   pnpm run record:i18n -- .agents/flow/issues/m8-07-eval-prompt-suffix.md
-m8-07-eval-prompt-suffix.md: efbfa663b09ab074120edd365e8a24d72e787794
-m8-07-eval-prompt-suffix.en.md: 6b4f00319f0db7971bb14e749122c6cf3519e88b
+m8-07-eval-prompt-suffix.md: 89167cc65d0f8e3c89cdfd07988e2f95f63f8b9e
+m8-07-eval-prompt-suffix.en.md: 03b55d28f8133bbadfae36837e51ba1cb13fe4b2
