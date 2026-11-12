@@ -544,6 +544,10 @@ function ConversationView({
         </section>
       ) : null}
 
+      <div className="trace-conversation-hint">
+        点击步骤，在右侧查看命令、diff 或文件内容；只有 Subagent 在中间展开子节点。
+      </div>
+
       {phases.length === 0 ? (
         <div className="trace-conversation-empty">
           <EmptyState
@@ -625,18 +629,29 @@ function ConversationView({
                   step.kind === "thinking" ? (
                     <button
                       type="button"
-                      className="trace-reasoning"
+                      className={`trace-tool-card ${selectedStepId === step.id ? "selected" : ""}`}
                       key={step.id}
                       onClick={() => onSelectStep(step)}
                       aria-label="查看思考步骤详情"
                     >
-                      <span className="trace-reasoning-label">
-                        <Icon name="sparkles" size={12} />
-                        思考
-                      </span>
-                      <span className="trace-reasoning-text">
-                        {step.bodyText || step.summary}
-                      </span>
+                      <div className="trace-tool-main">
+                        <span className="trace-step-badge thinking">✦</span>
+                        <span className="trace-tool-copy">
+                          <span className="trace-tool-title">
+                            <span className="trace-tool-name">思考</span>
+                            <code>{step.title}</code>
+                          </span>
+                          <span className="trace-tool-sub">
+                            {step.summary.length > 90
+                              ? `${step.summary.slice(0, 90)}…`
+                              : step.summary}
+                          </span>
+                        </span>
+                        <span className="trace-tool-status ok">完成</span>
+                        <span className="trace-tool-link" aria-hidden="true">
+                          查看<Icon name="arrowRight" size={11} />
+                        </span>
+                      </div>
                     </button>
                   ) : step.kind === "message" &&
                     phase.category === "summary" ? (
@@ -683,7 +698,11 @@ function ConversationView({
                             </span>
                             <code>{step.title}</code>
                           </span>
-                          <span className="trace-tool-sub">{step.summary}</span>
+                          <span className="trace-tool-sub">
+                            {step.summary.length > 90
+                              ? `${step.summary.slice(0, 90)}…`
+                              : step.summary}
+                          </span>
                         </span>
                         <span
                           className={`trace-tool-status ${stepStatusTone(step)}`}
@@ -700,9 +719,6 @@ function ConversationView({
                           <Icon name="arrowRight" size={11} />
                         </span>
                       </button>
-                      {step.diff.length ? (
-                        <DiffBlock lines={step.diff.slice(0, 6)} compact />
-                      ) : null}
                       {step.childSession ? (
                         <div className="trace-tool-note">
                           子会话{" "}
@@ -726,9 +742,16 @@ function ConversationView({
 interface SubagentNestedProps {
   session: TraceSession;
   onOpenSession: (session: TraceSession) => void;
+  onSelectStep?: (step: TraceStep) => void;
+  selectedStepId?: string | null;
 }
 
-function SubagentNested({ session, onOpenSession }: SubagentNestedProps) {
+function SubagentNested({
+  session,
+  onOpenSession,
+  onSelectStep,
+  selectedStepId,
+}: SubagentNestedProps) {
   const query = useQuery({
     queryKey: ["trace-child-spans", session.id],
     queryFn: ({ signal }) =>
@@ -772,7 +795,15 @@ function SubagentNested({ session, onOpenSession }: SubagentNestedProps) {
       ) : nested.length ? (
         <div className="trace-nested" aria-label="子 Agent 步骤">
           {nested.map((step) => (
-            <div className="trace-nested-row" key={step.id}>
+            <button
+              type="button"
+              className={`trace-nested-row ${
+                selectedStepId === step.id ? "selected" : ""
+              }`}
+              key={step.id}
+              onClick={() => onSelectStep?.(step)}
+              aria-label={`查看子会话步骤 ${step.toolName ?? step.title}`}
+            >
               <span className={`trace-step-badge tiny ${step.kind}`}>
                 {STEP_KIND_BADGE[step.kind]}
               </span>
@@ -783,7 +814,7 @@ function SubagentNested({ session, onOpenSession }: SubagentNestedProps) {
               <span className={`trace-nested-status ${stepStatusTone(step)}`}>
                 {step.statusText}
               </span>
-            </div>
+            </button>
           ))}
         </div>
       ) : (
@@ -804,9 +835,16 @@ function SubagentNested({ session, onOpenSession }: SubagentNestedProps) {
 interface StepBodyProps {
   step: TraceStep;
   onOpenSession: (session: TraceSession) => void;
+  onSelectStep?: (step: TraceStep) => void;
+  selectedStepId?: string | null;
 }
 
-function StepBody({ step, onOpenSession }: StepBodyProps) {
+function StepBody({
+  step,
+  onOpenSession,
+  onSelectStep,
+  selectedStepId,
+}: StepBodyProps) {
   const output = step.outputText;
   const inputWarning = step.inputTruncated ? (
     <div className="trace-input-warning" role="status">
@@ -912,6 +950,8 @@ function StepBody({ step, onOpenSession }: StepBodyProps) {
           <SubagentNested
             session={step.childSession}
             onOpenSession={onOpenSession}
+            onSelectStep={onSelectStep}
+            selectedStepId={selectedStepId ?? null}
           />
         ) : (
           <div className="trace-muted-block">
@@ -928,6 +968,8 @@ function StepBody({ step, onOpenSession }: StepBodyProps) {
           <SubagentNested
             session={step.childSession}
             onOpenSession={onOpenSession}
+            onSelectStep={onSelectStep}
+            selectedStepId={selectedStepId ?? null}
           />
         ) : (
           <>
@@ -1003,6 +1045,8 @@ interface StepCardProps {
   selected: boolean;
   onToggle: () => void;
   onSelect: () => void;
+  onSelectChild?: (step: TraceStep) => void;
+  selectedStepId?: string | null;
   onOpenSession: (session: TraceSession) => void;
 }
 
@@ -1012,9 +1056,12 @@ function StepCard({
   selected,
   onToggle,
   onSelect,
+  onSelectChild,
+  selectedStepId,
   onOpenSession,
 }: StepCardProps) {
   const bodyId = `trace-step-body-${step.id}`;
+  const expandable = step.kind === "subagent";
   return (
     <article
       className={`trace-step ${open ? "open" : ""} ${selected ? "selected" : ""}`}
@@ -1022,11 +1069,11 @@ function StepCard({
       <button
         type="button"
         className="trace-step-head"
-        aria-expanded={open}
-        aria-controls={bodyId}
+        aria-expanded={expandable ? open : undefined}
+        aria-controls={expandable ? bodyId : undefined}
         onClick={() => {
-          onToggle();
-          if (!open) onSelect();
+          if (expandable) onToggle();
+          onSelect();
         }}
       >
         <span className={`trace-step-badge ${step.kind}`}>
@@ -1050,15 +1097,20 @@ function StepCard({
           </span>
         ) : null}
         <span
-          className={`trace-step-chev ${open ? "open" : ""}`}
+          className={`trace-step-chev ${expandable ? (open ? "open" : "") : "jump"}`}
           aria-hidden="true"
         >
-          ⌄
+          {expandable ? (open ? "⌃" : "⌄") : "→"}
         </span>
       </button>
-      {open ? (
+      {expandable && open ? (
         <div className="trace-step-body" id={bodyId}>
-          <StepBody step={step} onOpenSession={onOpenSession} />
+          <StepBody
+            step={step}
+            onOpenSession={onOpenSession}
+            onSelectStep={onSelectChild}
+            selectedStepId={selectedStepId ?? null}
+          />
         </div>
       ) : null}
     </article>
@@ -1071,6 +1123,7 @@ interface StepsViewProps {
   selectedStepId: string | null;
   onToggleStep: (step: TraceStep) => void;
   onSelectStep: (step: TraceStep) => void;
+  onSelectChild: (step: TraceStep) => void;
   onSetExpandedSteps: (ids: string[]) => void;
   onOpenSession: (session: TraceSession) => void;
 }
@@ -1081,17 +1134,25 @@ function StepsView({
   selectedStepId,
   onToggleStep,
   onSelectStep,
+  onSelectChild,
   onSetExpandedSteps,
   onOpenSession,
 }: StepsViewProps) {
   const allIds = phases.flatMap(({ steps }) => steps.map((step) => step.id));
+  const expandableIds = phases
+    .flatMap(({ steps }) => steps)
+    .filter((step) => step.kind === "subagent")
+    .map((step) => step.id);
   const totalSteps = allIds.length;
   return (
     <div className="trace-steps-view">
       <div className="trace-steps-toolbar">
         <span className="trace-steps-title">工具步骤</span>
         <span className="trace-steps-sub">
-          {phases.length} 个阶段 · {totalSteps} 步 · 全部折叠
+          {phases.length} 个阶段 · {totalSteps} 步 ·{" "}
+          {expandedSteps.size
+            ? `${expandedSteps.size} 个 Subagent 已展开`
+            : "全部折叠"}
         </span>
         <span className="trace-steps-hint">
           Bash 命令/输出 · Edit diff · Read 路径/内容 · Skill/Subagent 嵌套
@@ -1100,10 +1161,10 @@ function StepsView({
           <Button
             size="small"
             type="text"
-            onClick={() => onSetExpandedSteps(allIds)}
-            disabled={totalSteps === 0}
+            onClick={() => onSetExpandedSteps(expandableIds)}
+            disabled={expandableIds.length === 0}
           >
-            全部展开
+            展开 Subagent
           </Button>
           <Button
             size="small"
@@ -1134,6 +1195,8 @@ function StepsView({
                 selected={selectedStepId === step.id}
                 onToggle={() => onToggleStep(step)}
                 onSelect={() => onSelectStep(step)}
+                onSelectChild={onSelectChild}
+                selectedStepId={selectedStepId}
                 onOpenSession={onOpenSession}
               />
             ))}
@@ -1788,6 +1851,11 @@ function Inspector({
           <span className="trace-meta-sep">·</span>
           <span>{clockLabel(displaySpan.started_at)}</span>
         </div>
+        {step ? (
+          <div className="trace-inspector-linked">
+            <i />中间高亮节点
+          </div>
+        ) : null}
       </div>
       <Tabs
         size="small"
@@ -1843,6 +1911,9 @@ export function TracePage() {
   const [focusPhaseId, setFocusPhaseId] = useState<string | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [dismissedSelection, setDismissedSelection] = useState(false);
+  const [selectedChildStep, setSelectedChildStep] = useState<TraceStep | null>(
+    null,
+  );
   const narrow = useNarrowViewport();
   const initializedSessionRef = useRef<string | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
@@ -2024,6 +2095,12 @@ export function TracePage() {
   );
   const selectedStep = useMemo(() => {
     if (!selectedSpanId) return null;
+    if (
+      selectedChildStep &&
+      selectedChildStep.span.id === selectedSpanId
+    ) {
+      return selectedChildStep;
+    }
     const direct = model.stepBySpanId.get(selectedSpanId);
     if (direct) return direct;
     return (
@@ -2031,7 +2108,7 @@ export function TracePage() {
         step.related.some((item) => item.id === selectedSpanId),
       ) ?? null
     );
-  }, [model, selectedSpanId]);
+  }, [model, selectedChildStep, selectedSpanId]);
   const selectedPhase = selectedStep?.phaseId
     ? (model.phases.find((phase) => phase.id === selectedStep.phaseId) ?? null)
     : null;
@@ -2129,6 +2206,7 @@ export function TracePage() {
   const selectSession = (session: TraceSession) => {
     setSignedLink(null);
     setDismissedSelection(false);
+    setSelectedChildStep(null);
     setDetailOpen(false);
     initializedSessionRef.current = null;
     updateSelection({ session: session.id, span: null, kind: null });
@@ -2136,11 +2214,13 @@ export function TracePage() {
   const selectSpan = (spanItem: TraceSpan) => {
     setSignedLink(null);
     setDismissedSelection(false);
+    setSelectedChildStep(null);
     updateSelection({ session: spanItem.session_id, span: spanItem.id });
     if (narrow) setDetailOpen(true);
   };
-  const selectStep = (step: TraceStep) => {
+  const selectStep = (step: TraceStep, child = false) => {
     selectSpan(step.span);
+    setSelectedChildStep(child ? step : null);
   };
   const openStepDetail = (step: TraceStep) => {
     selectStep(step);
@@ -2152,6 +2232,7 @@ export function TracePage() {
   const changeFilter = (value: string) => {
     setSignedLink(null);
     setDismissedSelection(false);
+    setSelectedChildStep(null);
     updateSelection({ span: null, kind: value === "all" ? null : value });
   };
   const clearFilters = () => {
@@ -2181,6 +2262,7 @@ export function TracePage() {
   };
   const clearSelection = () => {
     setDismissedSelection(true);
+    setSelectedChildStep(null);
     setDetailOpen(false);
     setSignedLink(null);
     updateSelection({ span: null }, true);
@@ -2646,6 +2728,7 @@ export function TracePage() {
                 selectedStepId={selectedStep?.id ?? null}
                 onToggleStep={toggleStep}
                 onSelectStep={openStepDetail}
+                onSelectChild={(step) => selectStep(step, true)}
                 onSetExpandedSteps={(ids) => setExpandedSteps(new Set(ids))}
                 onOpenSession={selectSession}
               />
