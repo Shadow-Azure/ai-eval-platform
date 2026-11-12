@@ -12,6 +12,7 @@ scope:
   - reports/**
   - runner/**
   - tests/**
+  - .agents/flow/milestones/m7-extension-and-hardening.*
   - backend/app/services/runner_labels.py
   - backend/app/services/runners.py
   - tests/backend/test_runner_labels.py
