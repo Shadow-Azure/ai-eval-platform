@@ -67,7 +67,7 @@ export function Sidebar({ tenant, collapsed, onToggle }: SidebarProps) {
                   </NavLink>
                 );
                 return collapsed ? (
-                  <Tooltip key={item.to} title={item.label} placement="right">
+                  <Tooltip key={item.to} title={item.label} placement="right" trigger={["hover", "focus"]}>
                     {link}
                   </Tooltip>
                 ) : (
@@ -87,12 +87,17 @@ export function Sidebar({ tenant, collapsed, onToggle }: SidebarProps) {
           aria-expanded={!collapsed}
           aria-controls="app-sidebar"
           aria-label={toggleLabel}
-          title={toggleLabel}
+          title={collapsed ? toggleLabel : undefined}
         >
           <Icon name={collapsed ? "chevronsRight" : "chevronsLeft"} size={15} />
           <span>{toggleLabel}</span>
         </button>
-        <div className="tenant-chip" title={`租户 ${tenantName} · ${tenantSlug}`}>
+        <div
+          className="tenant-chip"
+          role="group"
+          aria-label={`租户 ${tenantName} · ${tenantSlug}`}
+          title={`租户 ${tenantName} · ${tenantSlug}`}
+        >
           <div className="tenant-avatar" aria-hidden="true">
             {initials(tenantName)}
           </div>

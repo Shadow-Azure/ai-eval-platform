@@ -36,7 +36,7 @@ The application shell's left navigation always occupies 236px (`--sidebar` in `w
 - Keep every top-level entry, the active-page highlight, and hover labels in the collapsed state so users can identify their location without expanding first.
 - Make the toggle keyboard operable and preserve the state across refreshes and route changes in the current browser; default to expanded so the initial view is unchanged.
 - Add no backend endpoint, table, or migration; navigation permissions remain governed by the existing session and admin filtering.
-- Deliver the design, prototype, and before/after screenshots first, then change the production frontend after the direction is confirmed.
+- Deliver the design, prototype, and before/after screenshots first, then land the production frontend in the same branch after the direction is confirmed (PR #199).
 
 ## Frontend design
 
@@ -80,7 +80,7 @@ The application shell's left navigation always occupies 236px (`--sidebar` in `w
 
 ## Prototype and screenshots
 
-The prototype lives in `prototype/` as a local interactive single-file HTML page; this round reviews the design only and changes no production frontend. Click "收起导航 / 展开导航" at the sidebar bottom to toggle, or use `?sidebar=collapsed` to open the collapsed state directly.
+The prototype lives in `prototype/` as a local interactive single-file HTML page; the design and implementation share PR #199, and the production frontend is now implemented from this prototype. Click "收起导航 / 展开导航" at the sidebar bottom to toggle, or use `?sidebar=collapsed` to open the collapsed state directly.
 
 Before (current prototype, fixed 236px navigation):
 
