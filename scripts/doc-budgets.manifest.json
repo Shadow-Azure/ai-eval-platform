@@ -20,5 +20,6 @@
   ".agents/flow/milestones/m4-concurrency-and-spot-pool.md": 200,
   ".agents/flow/milestones/m5-product-workflows.md": 200,
   ".agents/flow/milestones/m6-trace-diagnosis.md": 200,
-  ".agents/flow/milestones/m7-extension-and-hardening.md": 200
+  ".agents/flow/milestones/m7-extension-and-hardening.md": 200,
+  ".agents/flow/milestones/m8-bug-fixes.md": 200
 }

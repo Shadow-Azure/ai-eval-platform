@@ -742,7 +742,7 @@ export function OperationsPage() {
             columns={runnerColumns}
             dataSource={runners}
             rowKey="id"
-            pagination={false}
+            pagination={{ pageSize: 5, showSizeChanger: false, hideOnSinglePage: true }}
             locale={{
               emptyText: (
                 <EmptyState
