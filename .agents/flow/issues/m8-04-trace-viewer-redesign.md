@@ -11,8 +11,11 @@ scope:
   - .agents/flow/issues/m8-04-trace-viewer-redesign.*
   - .agents/flow/milestones/m8-bug-fixes.*
   - .agents/flow/roadmap.*
+  - .agents/flow/issues/m8-03-eval-records-pagination.*
+  - .agents/flow/issues/m8-06-agent-asset-not-injected.*
   - scripts/doc-budgets.manifest.json
   - web/src/pages/TracePage.tsx
+  - web/src/pages/traceViewModel.ts
   - web/src/styles/trace-viewer.css
   - plans/**
   - prototype/**
