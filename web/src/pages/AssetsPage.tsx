@@ -601,7 +601,7 @@ function AddAssetSourceModal({ open, onClose, onCreated }: AddModalProps) {
                   className="mono"
                   value={installCommand}
                   onChange={(event) => setInstallCommand(event.target.value)}
-                  placeholder="npm install -g @fission-ai/openspec"
+                  placeholder='npm install --prefix "$HOME" github:owner/repo#ref'
                 />
               </div>
               <div className="asset-field">
@@ -610,7 +610,7 @@ function AddAssetSourceModal({ open, onClose, onCreated }: AddModalProps) {
                   className="mono"
                   value={initCommand}
                   onChange={(event) => setInitCommand(event.target.value)}
-                  placeholder="openspec init"
+                  placeholder='"$HOME/node_modules/.bin/openspec" init --tools claude'
                 />
               </div>
               <div className="asset-field">
