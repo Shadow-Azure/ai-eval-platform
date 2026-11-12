@@ -426,7 +426,7 @@ export function OverviewPage() {
               columns={recentColumns}
               dataSource={recentQuery.data?.items ?? []}
               rowKey="id"
-              loading={recentQuery.isFetching}
+              loading={recentQuery.isLoading || recentQuery.isPlaceholderData}
               pagination={{
                 current: visiblePage,
                 pageSize: RECENT_EVAL_PAGE_SIZE,
