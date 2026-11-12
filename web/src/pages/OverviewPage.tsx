@@ -1,8 +1,9 @@
 import { Button, Skeleton, Table } from "antd";
 import type { TableColumnsType } from "antd";
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
-import { useOverviewQuery, useReadyzQuery } from "../api/overview";
+import type { EvaluationSummary } from "../api/evaluations";
+import { useOverviewQuery, useReadyzQuery, useRecentEvaluationsQuery } from "../api/overview";
 import { ApiError } from "../api/types";
 import { EmptyState } from "../components/EmptyState";
 import { Icon, type IconName } from "../components/Icon";
@@ -10,18 +11,15 @@ import { PageHeading } from "../components/PageHeading";
 import { QueryError } from "../components/QueryError";
 import { StatusCard } from "../components/StatusCard";
 import { evalStatusMeta } from "../utils/evalStatus";
+import {
+  dateTimeLabel,
+  durationLabel,
+  progressPercent,
+  rateLabel,
+  runtimeLabel,
+} from "../utils/evaluationDisplay";
 
-interface RecentEvalRow {
-  id: string;
-  name: string;
-  agent: string;
-  model: string;
-  dataset: string;
-  status: string;
-  progress: number;
-  resolvedRate: string;
-  startedAt: string;
-}
+const RECENT_EVAL_PAGE_SIZE = 5;
 
 function EvalStatusTag({ status }: { status: string }) {
   const meta = evalStatusMeta(status);
@@ -32,73 +30,6 @@ function EvalStatusTag({ status }: { status: string }) {
     </span>
   );
 }
-
-const recentEvalColumns: TableColumnsType<RecentEvalRow> = [
-  {
-    title: "评测任务",
-    dataIndex: "name",
-    key: "name",
-    render: (_value: string, row) => (
-      <div>
-        <div className="table-primary">{row.name}</div>
-        <div className="table-secondary">{row.id}</div>
-      </div>
-    ),
-  },
-  {
-    title: "Agent / 模型",
-    dataIndex: "agent",
-    key: "agent",
-    render: (_value: string, row) => (
-      <div>
-        <div>{row.agent}</div>
-        <div className="table-secondary">{row.model}</div>
-      </div>
-    ),
-  },
-  {
-    title: "数据集",
-    dataIndex: "dataset",
-    key: "dataset",
-    render: (value: string) => <div>{value}</div>,
-  },
-  {
-    title: "状态",
-    dataIndex: "status",
-    key: "status",
-    render: (value: string) => <EvalStatusTag status={value} />,
-  },
-  {
-    title: "进展",
-    dataIndex: "progress",
-    key: "progress",
-    render: (value: number) => (
-      <div className="table-progress">
-        <div className="progress">
-          <span style={{ width: `${Math.min(100, Math.max(0, value))}%` }} />
-        </div>
-        <span>{value}%</span>
-      </div>
-    ),
-  },
-  {
-    title: "核心指标",
-    dataIndex: "resolvedRate",
-    key: "resolvedRate",
-    render: (value: string) => (
-      <div>
-        <strong>{value}</strong>
-        <div className="table-secondary">解决率</div>
-      </div>
-    ),
-  },
-  {
-    title: "开始时间",
-    dataIndex: "startedAt",
-    key: "startedAt",
-    render: (value: string) => <div>{value}</div>,
-  },
-];
 
 interface HealthRowProps {
   icon: IconName;
@@ -162,6 +93,16 @@ export function OverviewPage() {
   const readyzQuery = useReadyzQuery();
   const { data, error, isError, isFetching, isLoading, refetch } = overviewQuery;
 
+  const [recentPage, setRecentPage] = useState(1);
+  const recentQuery = useRecentEvaluationsQuery(recentPage, RECENT_EVAL_PAGE_SIZE);
+  const recentTotal = recentQuery.data?.total ?? 0;
+  const recentPageCount = Math.max(1, Math.ceil(recentTotal / RECENT_EVAL_PAGE_SIZE));
+  const visiblePage = recentQuery.data ? Math.min(recentPage, recentPageCount) : recentPage;
+
+  useEffect(() => {
+    if (recentQuery.data && recentPage > recentPageCount) setRecentPage(recentPageCount);
+  }, [recentQuery.data, recentPage, recentPageCount]);
+
   const counts = data?.counts;
   const online = counts?.runners_online ?? 0;
   const total = counts?.runners_total ?? 0;
@@ -184,6 +125,100 @@ export function OverviewPage() {
   const readyzErrorTitle =
     readyzQuery.error instanceof ApiError ? readyzQuery.error.message : undefined;
 
+  const recentErrorMessage =
+    recentQuery.error instanceof ApiError
+      ? recentQuery.error.message
+      : recentQuery.error instanceof Error
+        ? recentQuery.error.message
+        : undefined;
+
+  const recentColumns: TableColumnsType<EvaluationSummary> = [
+    {
+      title: "评测任务",
+      key: "name",
+      render: (_value, row) => (
+        <div>
+          <div className="table-primary">{row.name}</div>
+          <div className="table-secondary">{row.id.slice(0, 8)}</div>
+        </div>
+      ),
+    },
+    {
+      title: "Agent / 模型",
+      key: "agent",
+      render: (_value, row) => (
+        <div>
+          <div>{runtimeLabel(row.runtime_key)}</div>
+          <div className="table-secondary">{row.model_name ?? "—"}</div>
+        </div>
+      ),
+    },
+    {
+      title: "数据集",
+      key: "dataset",
+      render: (_value, row) => (
+        <div>
+          <div>{row.dataset_name ?? "未绑定数据集"}</div>
+          <div className="table-secondary">{row.dataset_version ?? "—"}</div>
+        </div>
+      ),
+    },
+    {
+      title: "状态",
+      key: "status",
+      render: (_value, row) => <EvalStatusTag status={row.status} />,
+    },
+    {
+      title: "进展",
+      key: "progress",
+      render: (_value, row) => {
+        const percent = progressPercent(row);
+        return (
+          <div className="table-progress">
+            <div className="progress">
+              <span style={{ width: `${percent}%` }} />
+            </div>
+            <span>{percent}%</span>
+          </div>
+        );
+      },
+    },
+    {
+      title: "核心指标",
+      key: "resolve_rate",
+      render: (_value, row) => (
+        <div>
+          <strong>{rateLabel(row.resolve_rate)}</strong>
+          <div className="table-secondary">解决率</div>
+        </div>
+      ),
+    },
+    {
+      title: "开始时间",
+      key: "started_at",
+      render: (_value, row) => (
+        <div>
+          <div>{dateTimeLabel(row.started_at)}</div>
+          <div className="table-secondary">{durationLabel(row.duration_seconds)}</div>
+        </div>
+      ),
+    },
+    {
+      title: "",
+      key: "actions",
+      width: 46,
+      render: (_value, row) => (
+        <Button
+          type="text"
+          size="small"
+          aria-label={`查看评测 ${row.name}`}
+          icon={<Icon name="arrowRight" size={14} />}
+          onClick={() => navigate(`/evals/${row.id}`)}
+        />
+      ),
+    },
+  ];
+
   return (
     <div className="page">
       <PageHeading
@@ -205,14 +240,6 @@ export function OverviewPage() {
           </>
         }
       />
-
-      <div className="banner info overview-note">
-        <Icon name="sparkles" size={15} />
-        <div>
-          <strong>M3 建设中。</strong>
-          账号登录、总览与评测页面已接入；数据集、模型网关与执行运行时正在按里程碑补齐。
-        </div>
-      </div>
 
       {isLoading ? <OverviewSkeleton /> : null}
 
@@ -373,30 +400,74 @@ export function OverviewPage() {
                 <p className="card-subtitle">结果指标由数据集版本定义，不在界面侧写死</p>
               </div>
               <div className="card-actions">
-                <span className="tag tag-neutral">M3 建设中</span>
+                {recentQuery.data ? (
+                  <span className="tag tag-neutral">{recentTotal} 个任务</span>
+                ) : null}
               </div>
             </div>
-            <Table<RecentEvalRow>
+            {recentQuery.isError && recentQuery.data ? (
+              <div className="banner warning recent-error" role="alert">
+                <Icon name="alert" size={15} />
+                <div className="overview-note-body">
+                  <span>最近评测刷新失败，以下为上次成功数据。</span>
+                  <Button
+                    type="link"
+                    size="small"
+                    onClick={() => void recentQuery.refetch()}
+                    loading={recentQuery.isFetching}
+                  >
+                    重试
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+            <Table<EvaluationSummary>
               className="recent-table"
-              columns={recentEvalColumns}
-              dataSource={[]}
+              columns={recentColumns}
+              dataSource={recentQuery.data?.items ?? []}
               rowKey="id"
-              pagination={false}
+              loading={recentQuery.isLoading || recentQuery.isPlaceholderData}
+              pagination={{
+                current: visiblePage,
+                pageSize: RECENT_EVAL_PAGE_SIZE,
+                total: recentTotal,
+                showSizeChanger: false,
+                hideOnSinglePage: true,
+                showTotal: (value) => `共 ${value} 条`,
+                onChange: (nextPage) => setRecentPage(nextPage),
+              }}
               locale={{
-                emptyText: (
+                emptyText: recentQuery.isError && !recentQuery.data ? (
+                  <EmptyState
+                    compact
+                    inline
+                    icon="alert"
+                    title="最近评测加载失败"
+                    description={recentErrorMessage ?? "无法加载最近评测，请稍后重试。"}
+                    action={
+                      <Button
+                        size="small"
+                        onClick={() => void recentQuery.refetch()}
+                        loading={recentQuery.isFetching}
+                      >
+                        重试
+                      </Button>
+                    }
+                  />
+                ) : recentQuery.isSuccess && recentTotal === 0 ? (
                   <EmptyState
                     compact
                     inline
                     icon="list"
                     title="暂无评测任务"
-                    description="评测执行链路接入后，运行状态与核心指标将在这里展示。"
+                    description="发起一次评测后，运行状态与核心指标将在这里展示。"
                     action={
                       <Button size="small" onClick={() => navigate("/evals/new")}>
                         发起评测
                       </Button>
                     }
                   />
-                ),
+                ) : null,
               }}
             />
           </section>
