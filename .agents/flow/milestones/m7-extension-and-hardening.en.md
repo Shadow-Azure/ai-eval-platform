@@ -8,7 +8,7 @@ Expand runtime, dataset, and metric adapters while completing security, observab
 kind: milestone
 id: m7
 title: 扩展与生产加固
-status: planned
+status: done
 github:
   number: 7
   url: https://github.com/Shadow-Azure/ai-eval-platform/milestone/7

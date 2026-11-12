@@ -6,7 +6,7 @@
 kind: issue
 milestone: m7
 priority: P1
-status: in-progress
+status: done
 scope:
   - plans/**
   - reports/**
@@ -47,4 +47,5 @@ github:
 - 生产 fixed-linux 池仍保留历史 `{"kind": "fixed"}`，部署后的解析结果为 self-hosted、linux、eval。
 - 2026-11-12 新评测 `64e90bd2-e715-4c34-94ff-489782fc9041` 已由 fixed-linux-eval 接收并进入运行中；对应 eval-shard run 为 43121931498。
 - 这次真实执行暴露了容器退出后 Claude 原生文件权限不可读的独立问题；本分支在删除容器前由 root 统一恢复 `/testbed` 可读写遍历权限，并补权限回归。
+- 权限修复部署后的复测又暴露 heartbeat 与 terminal callback 的 sequence 冲突；修复后用新评测 `a04b8881-1513-4514-a9f5-b98d2225d6ad` 验证 execute job 成功、结果 resolved、轨迹 ready。
 - 原 707bb3bc 保持历史失败记录，不作为可恢复任务改写。
