@@ -234,6 +234,81 @@ def test_prepare_freezes_snapshot_with_ttl(client: TestClient, session: Session)
     assert expires_at > datetime.now(UTC)
 
 
+def test_prepare_freezes_prompt_suffix_and_create_returns_it(
+    client: TestClient, session: Session
+) -> None:
+    """M8-07: the suffix is normalized, frozen and exposed by run responses."""
+
+    ids = seed_launch(session)
+    suffix = "非交互评测：请使用 superpowers 技能；不要向用户提问，自主决策并继续。"
+    empty = client.post("/api/v1/evaluations/prepare", json=prepare_body(ids)).json()
+    response = client.post(
+        "/api/v1/evaluations/prepare",
+        json=prepare_body(ids, prompt_suffix=f"  {suffix}\n"),
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["ready"] is True
+    assert body["prompt_suffix"] == suffix
+    assert body["summary"]["prompt_suffix"] == suffix
+
+    preparation = session.get(EvalPreparation, body["preparation_id"])
+    assert preparation is not None
+    assert preparation.snapshot_json["prompt_suffix"] == suffix
+    assert preparation.snapshot_json["identity"]["prompt_suffix"] == suffix
+    # The suffix participates in the frozen configuration identity/digest.
+    assert preparation.snapshot_digest != empty["snapshot_digest"]
+
+    created = client.post(
+        "/api/v1/evaluations",
+        json={"preparation_id": body["preparation_id"], "name": "附加指令评测"},
+        headers={"Idempotency-Key": "idem-prompt-suffix"},
+    )
+    assert created.status_code == 201, created.text
+    run_body = created.json()
+    assert run_body["prompt_suffix"] == suffix
+    stored = session.get(EvalRun, run_body["id"])
+    assert stored is not None
+    assert stored.prompt_suffix == suffix
+
+    detail = client.get(f"/api/v1/evaluations/{run_body['id']}")
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["prompt_suffix"] == suffix
+
+
+def test_prompt_suffix_defaults_to_empty_and_whitespace_is_ignored(
+    client: TestClient, session: Session
+) -> None:
+    """Empty keeps today's behaviour: the run stores and returns an empty string."""
+
+    ids = seed_launch(session)
+    response = client.post(
+        "/api/v1/evaluations/prepare",
+        json=prepare_body(ids, prompt_suffix="   \n\t "),
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["ready"] is True
+    assert body["prompt_suffix"] == ""
+    assert body["summary"]["prompt_suffix"] == ""
+
+    preparation = session.get(EvalPreparation, body["preparation_id"])
+    assert preparation is not None
+    assert preparation.snapshot_json["prompt_suffix"] == ""
+    assert preparation.snapshot_json["identity"]["prompt_suffix"] == ""
+
+    created = client.post(
+        "/api/v1/evaluations",
+        json={"preparation_id": body["preparation_id"]},
+        headers={"Idempotency-Key": "idem-empty-prompt-suffix"},
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["prompt_suffix"] == ""
+    stored = session.get(EvalRun, created.json()["id"])
+    assert stored is not None
+    assert stored.prompt_suffix == ""
+
+
 def test_prepare_and_create_without_agent_assets(
     client: TestClient, session: Session
 ) -> None:

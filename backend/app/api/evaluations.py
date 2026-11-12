@@ -132,6 +132,8 @@ class PrepareRequest(BaseModel):
     execution: ExecutionPolicyRequest | None = None
     model_budget_cny: float | None = Field(default=None, ge=0)
     shard_size: int | None = Field(default=None, ge=1, le=255)
+    # M8-07: optional instructions appended to every case problem statement.
+    prompt_suffix: str | None = Field(default=None, max_length=4000)
 
 
 class CreateEvaluationRequest(BaseModel):
@@ -168,6 +170,8 @@ class CreateEvaluationRequest(BaseModel):
     requested_ref: str | None = Field(default=None, max_length=200)
     asset_paths: list[str] | None = None
     asset_types: dict[str, str] = Field(default_factory=dict)
+    # M8-07: optional instructions appended to every case problem statement.
+    prompt_suffix: str | None = Field(default=None, max_length=4000)
 
 
 class ResumeBudgetRequest(BaseModel):
@@ -231,6 +235,7 @@ def prepare_evaluation(
         execution=execution_payload,
         assets_resolved=payload.assets_resolved,
         created_by=context.user.email,
+        prompt_suffix=payload.prompt_suffix,
     )
     return {"status": "ok", **result}
 
@@ -397,6 +402,7 @@ def create_evaluation(
             asset_snapshot_id=asset_snapshot_id,
             asset_snapshot_json=frozen_assets,
             consistency_json=check.payload() if payload.dataset_version_id else {},
+            prompt_suffix=payload.prompt_suffix,
             settings=settings,
         )
     except evaluation_service.EvaluationInvalid as exc:

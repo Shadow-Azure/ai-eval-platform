@@ -276,6 +276,71 @@ def test_api_create_returns_run_summary(seeded: Session, client: TestClient) -> 
     assert replay.json()["id"] == body["id"]
 
 
+def test_api_create_stores_and_returns_prompt_suffix(
+    seeded: Session, client: TestClient
+) -> None:
+    suffix = "非交互评测；不要向用户提问，自主决策并继续。"
+    response = client.post(
+        "/api/v1/evaluations",
+        json={
+            "name": "附加指令",
+            "case_keys": ["case-a"],
+            "idempotency_key": "api-prompt-suffix",
+            "prompt_suffix": suffix,
+        },
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["prompt_suffix"] == suffix
+    stored = seeded.get(EvalRun, body["id"])
+    assert stored is not None
+    assert stored.prompt_suffix == suffix
+
+    default = client.post(
+        "/api/v1/evaluations",
+        json={"case_keys": ["case-b"], "idempotency_key": "api-no-prompt-suffix"},
+    )
+    assert default.status_code == 201, default.text
+    assert default.json()["prompt_suffix"] == ""
+
+
+def test_api_create_strips_prompt_suffix(seeded: Session, client: TestClient) -> None:
+    """Direct create normalizes like the preparation path (M8-07 review 6.1)."""
+
+    response = client.post(
+        "/api/v1/evaluations",
+        json={
+            "case_keys": ["case-a"],
+            "idempotency_key": "api-prompt-suffix-trim",
+            "prompt_suffix": "  非交互评测；不要提问。 \n",
+        },
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["prompt_suffix"] == "非交互评测；不要提问。"
+    stored = seeded.get(EvalRun, response.json()["id"])
+    assert stored is not None
+    assert stored.prompt_suffix == "非交互评测；不要提问。"
+
+    blank = client.post(
+        "/api/v1/evaluations",
+        json={
+            "case_keys": ["case-b"],
+            "idempotency_key": "api-prompt-suffix-blank",
+            "prompt_suffix": "   \n\t ",
+        },
+    )
+    assert blank.status_code == 201, blank.text
+    assert blank.json()["prompt_suffix"] == ""
+
+
+def test_api_rejects_prompt_suffix_over_limit(seeded: Session, client: TestClient) -> None:
+    response = client.post(
+        "/api/v1/evaluations",
+        json={"case_keys": ["case-a"], "prompt_suffix": "x" * 4001},
+    )
+    assert response.status_code == 422
+
+
 # ---------------------------------------------------------------------------
 # Queries: list / detail / events cursor
 # ---------------------------------------------------------------------------

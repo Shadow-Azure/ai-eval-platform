@@ -12,6 +12,7 @@ from sqlalchemy import (
     Integer,
     Numeric,
     String,
+    Text,
     UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -92,6 +93,12 @@ class EvalRun(Base, TimestampMixin):
     runtime_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
     runtime_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
     execution_image_digest: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # M8-07: evaluation-level instructions appended to every case problem
+    # statement at launch. Frozen with the preparation snapshot; empty keeps
+    # the dataset prompt unchanged.
+    prompt_suffix: Mapped[str] = mapped_column(
+        Text, nullable=False, default="", server_default=""
+    )
     asset_snapshot_json: Mapped[dict] = mapped_column(json_type(), default=dict, nullable=False)
     consistency_json: Mapped[dict] = mapped_column(json_type(), default=dict, nullable=False)
     name: Mapped[str] = mapped_column(String(200), nullable=False)

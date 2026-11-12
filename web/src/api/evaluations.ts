@@ -62,6 +62,8 @@ export interface EvaluationSummary {
   asset_snapshot_id?: string | null;
   asset_resolved_commit?: string | null;
   asset_count?: number | null;
+  /** Frozen custom instructions appended after each case's problem_statement. */
+  prompt_suffix?: string | null;
 }
 
 export interface FrozenAsset {
@@ -202,6 +204,7 @@ export interface CreateEvaluationRequest {
   preparation_id?: string;
   case_timeout_seconds?: number;
   max_attempts?: number;
+  prompt_suffix?: string;
 }
 
 export interface PreflightIssue {
@@ -338,6 +341,7 @@ export interface PrepareRequest {
   execution?: ExecutionPolicy;
   model_budget_cny?: number;
   shard_size?: number;
+  prompt_suffix?: string;
 }
 
 export interface MetricResult {
@@ -638,6 +642,7 @@ export function parseEvaluationSummary(payload: unknown): EvaluationSummary {
     asset_snapshot_id: readOptionalString(payload.asset_snapshot_id),
     asset_resolved_commit: readOptionalString(payload.asset_resolved_commit),
     asset_count: typeof payload.asset_count === "number" ? payload.asset_count : undefined,
+    prompt_suffix: readOptionalString(payload.prompt_suffix),
   };
 }
 
