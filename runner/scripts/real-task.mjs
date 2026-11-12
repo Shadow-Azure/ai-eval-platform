@@ -14,6 +14,7 @@ import { ContractError } from "../lib/errors.mjs";
 import { fetchManifest, sha256 } from "../lib/manifest-source.mjs";
 import { LocalObjectStore } from "../lib/object-store.mjs";
 import { getDatasetAdapter, getRuntimeAdapter } from "../lib/adapters.mjs";
+import { composePrompt } from "../lib/prompt.mjs";
 import { startHeartbeatSidecar, stopHeartbeatSidecar } from "./heartbeat-agent.mjs";
 import { buildCaseTasks } from "../lib/task-payload.mjs";
 import {
@@ -251,7 +252,7 @@ async function realCase(dispatch, item, task, { modelToken, runnerRoot }) {
       CLAUDE_GATEWAY_TOKEN: modelToken,
       CLAUDE_MODEL: task.model.name,
       PROMPT: runtimeAdapter.buildPrompt({
-        problem: task.prompt,
+        problem: composePrompt(task.prompt, task.prompt_suffix),
         workspace: datasetAdapter.workspacePath(),
         constraints: datasetAdapter.constraints(task),
       }),

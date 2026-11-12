@@ -49,6 +49,9 @@ import { PageHeading } from "../components/PageHeading";
 
 const DRAFT_KEY = "ai-eval-platform:eval-wizard-draft:v1";
 const CASE_PAGE_SIZE = 20;
+const MAX_PROMPT_SUFFIX = 4000;
+const PROMPT_SUFFIX_PLACEHOLDER =
+  "例如：这是非交互评测。请使用 superpowers 技能完成任务；不要向用户提问，自主决策并继续。";
 
 const STEP_ITEMS: { title: string; meta: string }[] = [
   { title: "数据集与用例", meta: "版本与子集" },
@@ -84,6 +87,7 @@ interface WizardDraft {
   budgetCny: number | null;
   executionDigest: string;
   scoringDigest: string;
+  promptSuffix: string;
 }
 
 function defaultDraft(): WizardDraft {
@@ -109,6 +113,7 @@ function defaultDraft(): WizardDraft {
     budgetCny: null,
     executionDigest: "",
     scoringDigest: "",
+    promptSuffix: "",
   };
 }
 
@@ -157,6 +162,8 @@ function readDraft(): WizardDraft | null {
         typeof it.budgetCny === "number" && Number.isFinite(it.budgetCny) ? it.budgetCny : null,
       executionDigest: typeof it.executionDigest === "string" ? it.executionDigest : "",
       scoringDigest: typeof it.scoringDigest === "string" ? it.scoringDigest : "",
+      promptSuffix:
+        typeof it.promptSuffix === "string" ? it.promptSuffix.slice(0, MAX_PROMPT_SUFFIX) : "",
     };
   } catch {
     return null;
@@ -668,6 +675,7 @@ export function EvalWizardPage() {
         execution: executionPayload(),
         scoring_image_digest: draft.scoringDigest || undefined,
         execution_image_digest: draft.executionDigest || undefined,
+        prompt_suffix: draft.promptSuffix.trim() || undefined,
       });
       setPreparation(result);
       if (result.ready) {
@@ -739,6 +747,7 @@ export function EvalWizardPage() {
         )
       : draft.concurrency);
   const selectedMetrics = versionDetail.data?.metrics?.map((metric) => metric.display_name) ?? [];
+  const promptSuffix = draft.promptSuffix.trim();
 
   function renderStepBar() {
     return (
@@ -806,6 +815,12 @@ export function EvalWizardPage() {
               {selectedPool
                 ? `${selectedPool.name} · ${selectedPool.runners.online} 在线`
                 : "未选择"}
+            </span>
+          </div>
+          <div className="summary-item">
+            <span className="summary-label">附加指令</span>
+            <span className="summary-value">
+              {promptSuffix ? `已配置 · ${promptSuffix.length} 字符` : "未设置"}
             </span>
           </div>
         </div>
@@ -1412,6 +1427,42 @@ export function EvalWizardPage() {
         {blockerFor("resource_pool_id") ? (
           <span className="field-error">{blockerFor("resource_pool_id")?.message}</span>
         ) : null}
+        <div
+          className="row-between"
+          style={{ marginTop: 18, paddingTop: 14, borderTop: "1px solid var(--line)" }}
+        >
+          <div>
+            <h3 style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "var(--ink)" }}>
+              附加指令（可选）
+            </h3>
+            <p className="small muted" style={{ margin: "2px 0 0" }}>
+              追加到每个用例的题面之后，启动时冻结进评测快照
+            </p>
+          </div>
+          <Tag style={{ marginInlineEnd: 0 }}>可选</Tag>
+        </div>
+        <div className="field" style={{ marginTop: 12 }}>
+          <Input.TextArea
+            value={draft.promptSuffix}
+            onChange={(event) =>
+              update({ promptSuffix: event.target.value.slice(0, MAX_PROMPT_SUFFIX) })
+            }
+            placeholder={PROMPT_SUFFIX_PLACEHOLDER}
+            rows={4}
+            maxLength={MAX_PROMPT_SUFFIX}
+            showCount
+            className="mono"
+          />
+          <span className="hint">
+            原样追加到数据集的 problem_statement 之后；上限 4000 字符。评测配置与轨迹会保留该文本。
+          </span>
+        </div>
+        <div className="banner" style={{ marginTop: 2 }}>
+          <Icon name="sparkles" size={15} />
+          <div>
+            <strong>示例</strong> · “非交互评测，请勿向用户提问；按需使用 superpowers 技能（using-superpowers、test-driven-development 等）完成任务。”
+          </div>
+        </div>
         <h3 className="wizard-section-title">高级执行策略</h3>
         <div className="policy-grid">
           <div className="field">
@@ -1604,6 +1655,12 @@ export function EvalWizardPage() {
               {summary.execution.model_budget_cny !== null
                 ? ` · 预算 ${formatMoney(summary.execution.model_budget_cny)}`
                 : ""}
+            </span>
+          </div>
+          <div className="summary-item">
+            <span className="summary-label">附加指令</span>
+            <span className="summary-value" style={{ whiteSpace: "pre-wrap" }}>
+              {promptSuffix || "未设置"}
             </span>
           </div>
           <div className="summary-item">

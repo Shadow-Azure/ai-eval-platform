@@ -4290,6 +4290,7 @@ const ui = {
     temporaryProvider: "MiniMax",
     temporaryModel: "MiniMax-M2.1",
     pool: "linux",
+    promptSuffix: "",
   },
   traceSpan: "span-root",
   traceFilter: "all",
@@ -5391,6 +5392,7 @@ function evalSummaryAside() {
         <div class="summary-item"><span class="summary-label">Agent 资产</span><span class="summary-value">${source.name}<br /><span class="muted mono" id="summary-asset-ref">${ui.newEval.assetRef} · ${ui.newEval.selectedAssets.length} 项</span></span></div>
         <div class="summary-item"><span class="summary-label">模型</span><span class="summary-value">${credential}</span></div>
         <div class="summary-item"><span class="summary-label">资源池</span><span class="summary-value">${pool}</span></div>
+        <div class="summary-item"><span class="summary-label">附加指令</span><span class="summary-value">${ui.newEval.promptSuffix ? `已配置 · ${ui.newEval.promptSuffix.length} 字符` : "未设置"}</span></div>
       </div>
       <div style="padding:0 19px 19px">
         <div class="review-box">
@@ -5590,6 +5592,12 @@ function newEvalPage() {
         </button>
       </div>
       <div class="banner" style="margin-top:15px">${icon("cpu", 15)}<div>按当前空闲容量估算，500 个用例约需 2 小时 30 分。队列等待时间不计入任务超时。</div></div>
+      <div class="card-header" style="padding:20px 0 10px;border:0"><div><h3 class="card-title">附加指令（可选）</h3><p class="card-subtitle">追加到每个用例的题面之后，启动时冻结进评测快照</p></div><span class="tag tag-neutral">可选</span></div>
+      <div class="field">
+        <textarea class="textarea mono" id="prompt-suffix" rows="4" placeholder="例如：这是非交互评测。请使用 superpowers 技能完成任务；不要向用户提问，自主决策并继续。">${esc(ui.newEval.promptSuffix)}</textarea>
+        <span class="hint">原样追加到数据集的 problem_statement 之后；上限 4000 字符。评测配置与轨迹会保留该文本。</span>
+      </div>
+      <div class="banner" style="margin-top:2px">${icon("sparkles", 15)}<div><strong>示例</strong> · “非交互评测，请勿向用户提问；按需使用 superpowers 技能（using-superpowers、test-driven-development 等）完成任务。”</div></div>
     `;
   } else {
     const selectedAssetSource = assetSourceById(ui.newEval.assetSource);
@@ -5605,6 +5613,7 @@ function newEvalPage() {
         <div class="summary-item"><span class="summary-label">Git Ref</span><span class="summary-value mono">${ui.newEval.assetRef} @ ${ui.newEval.assetCommit}</span></div>
         <div class="summary-item"><span class="summary-label">资源池</span><span class="summary-value">Linux Spot Pool</span></div>
         <div class="summary-item"><span class="summary-label">超时策略</span><span class="summary-value">单用例 30 分钟 · 失败重试 1 次</span></div>
+        <div class="summary-item"><span class="summary-label">附加指令</span><span class="summary-value" style="white-space:pre-wrap">${ui.newEval.promptSuffix ? esc(ui.newEval.promptSuffix) : "未设置"}</span></div>
       </div>
       <div class="banner warning" style="margin-top:15px">${icon("alert", 15)}<div><strong>这会占用资源池并产生模型费用。</strong> 预计 ¥126–158，实际费用以 token 与机时为准。启动后仍可取消排队和执行中的用例。</div></div>
       <div class="field" style="margin-top:16px"><label>通知</label><select class="select"><option>完成后站内通知</option><option>完成后站内通知 + Webhook</option><option>不通知</option></select></div>
@@ -7519,6 +7528,9 @@ document.addEventListener("input", (event) => {
       nextInput.focus();
       nextInput.setSelectionRange(selection, selection);
     }
+  }
+  if (event.target.id === "prompt-suffix") {
+    ui.newEval.promptSuffix = event.target.value;
   }
   if (event.target.id === "asset-ref-input") {
     ui.newEval.assetRef = event.target.value;

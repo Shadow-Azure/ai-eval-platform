@@ -997,6 +997,7 @@ export function EvalDetailPage() {
           loading={config.isLoading}
           error={config.error}
           onRetry={() => config.refetch()}
+          promptSuffix={data.prompt_suffix}
         />
       ) : null}
 
@@ -2157,9 +2158,10 @@ interface ConfigPanelProps {
   loading: boolean;
   error: Error | null;
   onRetry: () => void;
+  promptSuffix?: string | null;
 }
 
-function ConfigPanel({ config, loading, error, onRetry }: ConfigPanelProps) {
+function ConfigPanel({ config, loading, error, onRetry, promptSuffix }: ConfigPanelProps) {
   if (error) {
     return <Card className="section-gap"><QueryError error={error} onRetry={onRetry} /></Card>;
   }
@@ -2193,6 +2195,14 @@ function ConfigPanel({ config, loading, error, onRetry }: ConfigPanelProps) {
               ["Agent 资产", `${config.assets.asset_count ?? 0} 项 / ${config.assets.file_count ?? 0} 个文件`],
               ["资产 Ref", config.assets.requested_ref ?? "—"],
               ["解析 commit", config.assets.resolved_commit ?? "—"],
+              [
+                "附加指令",
+                promptSuffix ? (
+                  <span style={{ whiteSpace: "pre-wrap" }}>{promptSuffix}</span>
+                ) : (
+                  "未设置"
+                ),
+              ],
             ]}
           />
         </Card>

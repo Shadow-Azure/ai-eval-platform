@@ -15,9 +15,11 @@ from pathlib import Path
 import pytest
 from app.config import get_settings
 from app.defaults import DEFAULT_PROJECT_ID, DEFAULT_TENANT_ID
-from app.models import EvalCaseRun, ResourcePool, Runner
+from app.models import EvalCaseRun, EvalRun, Outbox, ResourcePool, Runner
 from app.seed import ensure_default_scope
+from case_helpers import auth
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -692,3 +694,40 @@ def test_spot_runner_heartbeat_rejects_unknown_pool(seeded: Session, client: Tes
     )
     assert response.status_code == 404
     assert response.json()["detail"]["error"]["code"] == "resource_pool_not_found"
+
+
+# ---------------------------------------------------------------------------
+# M8-07: the frozen prompt suffix travels with every shard case task
+# ---------------------------------------------------------------------------
+
+
+def test_shard_task_payload_includes_prompt_suffix(
+    eval_env: dict, session: Session, client: TestClient
+) -> None:
+    run = session.get(EvalRun, eval_env["run_id"])
+    assert run is not None
+    outbox = session.scalar(select(Outbox).where(Outbox.aggregate_id == run.id))
+    assert outbox is not None
+
+    def shard_cases() -> list[dict]:
+        response = client.get(
+            f"/runner/v1/shards/{eval_env['shard']}/tasks",
+            params={
+                "eval_run_id": run.id,
+                "attempt": 1,
+                "dispatch_key": outbox.dispatch_key,
+            },
+            headers=auth(eval_env),
+        )
+        assert response.status_code == 200, response.text
+        return response.json()["cases"]
+
+    assert {case["prompt_suffix"] for case in shard_cases()} == {""}
+
+    suffix = "非交互评测：不要向用户提问，自主决策并继续。"
+    run.prompt_suffix = suffix
+    session.commit()
+    cases = shard_cases()
+    assert cases
+    assert {case["prompt_suffix"] for case in cases} == {suffix}
+
