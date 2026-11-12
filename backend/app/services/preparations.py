@@ -308,6 +308,11 @@ def _snapshot_asset(asset: dict | None) -> dict | None:
         "file_count": asset.get("file_count"),
         "asset_count": asset.get("asset_count"),
         "runtime_key": asset.get("runtime_key"),
+        "runtime_prerequisites": asset.get("runtime_prerequisites") or {},
+        "load_test": asset.get("load_test") or {},
+        # M8-10: frozen install/init commands for the runner; never re-derived
+        # from the live source at launch time.
+        "runtime_setup": asset.get("runtime_setup") or {},
         "assets": asset.get("assets") or [],
     }
 

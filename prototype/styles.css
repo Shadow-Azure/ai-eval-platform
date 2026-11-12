@@ -1335,6 +1335,17 @@ tbody tr.clickable {
   font-size: 10px;
 }
 
+.asset-runtime {
+  margin-top: 11px;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
 .asset-source-card .dataset-footer {
   margin-top: auto;
   padding-top: 15px;

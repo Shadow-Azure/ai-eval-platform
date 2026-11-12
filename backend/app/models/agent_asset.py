@@ -50,6 +50,9 @@ class AgentAssetSource(Base, TimestampMixin):
     credential_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     last_scanned_commit: Mapped[str | None] = mapped_column(String(64), nullable=True)
     last_scan_json: Mapped[dict] = mapped_column(json_type(), default=dict, nullable=False)
+    # M8-10: the last isolated CLI load-test result (status, duration, log tail
+    # and generated asset manifest/contents). Frozen into snapshots on resolve.
+    load_test_json: Mapped[dict] = mapped_column(json_type(), default=dict, nullable=False)
     status: Mapped[str] = mapped_column(
         String(24), nullable=False, default="unverified", server_default="unverified"
     )

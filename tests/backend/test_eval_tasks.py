@@ -240,6 +240,10 @@ def test_shard_tasks_includes_frozen_asset_snapshot(eval_env, session: Session, 
         "bundle_digest": "sha256:" + "c" * 64,
         "asset_count": 1,
         "file_count": 1,
+        "runtime_setup": {
+            "install_command": "npm install -g @fission-ai/openspec",
+            "init_command": "openspec init",
+        },
         "assets": [{"asset_type": "skill", "name": "brainstorming", "path": "skills/brainstorming"}],
     }
     session.commit()
@@ -258,4 +262,8 @@ def test_shard_tasks_includes_frozen_asset_snapshot(eval_env, session: Session, 
     snapshot = response.json()["asset_snapshot"]
     assert snapshot["snapshot_id"] == "snap-1"
     assert snapshot["resolved_commit"] == "a" * 40
+    assert snapshot["runtime_setup"] == {
+        "install_command": "npm install -g @fission-ai/openspec",
+        "init_command": "openspec init",
+    }
     assert snapshot["bundle_url"].startswith("http://")

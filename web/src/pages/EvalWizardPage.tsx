@@ -15,11 +15,18 @@ import {
 import type { TableColumnsType } from "antd";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
+  countAssetTypes,
   fetchAssetSources,
   fetchAssetTree,
+  generatedPathsOf,
+  hasRuntimePrerequisites,
+  isGeneratedAsset,
+  isLoadTestPassed,
+  mergeGeneratedAssets,
   resolveAgentAssets,
   type AssetSource,
   type AssetType,
+  type GeneratedAssetCounts,
   type ScannedAsset,
 } from "../api/agentAssets";
 import {
@@ -235,6 +242,14 @@ function assetTypeTag(type: AssetType) {
   return <Tag color="blue">Skill</Tag>;
 }
 
+/** "3 Skill / 4 Command / 5 Subagent" for load-test generated counts. */
+function generatedCountsText(counts: GeneratedAssetCounts | null | undefined): string {
+  if (!counts) return "未记录生成资产";
+  const parts = [`${counts.skill} Skill`, `${counts.command} Command`];
+  if (counts.subagent) parts.push(`${counts.subagent} Subagent`);
+  return parts.join(" / ");
+}
+
 function sourceOption(source: AssetSource): string {
   return `${source.name} · ${source.repo_url.replace("https://github.com/", "")}`;
 }
@@ -337,6 +352,32 @@ export function EvalWizardPage() {
   const selectedModel = models.data?.find((item) => item.id === draft.modelConfigId) ?? null;
   const selectedPool = pools.data?.find((item) => item.id === draft.poolId) ?? null;
   const selectedSource = sources.data?.find((source) => source.id === draft.assetSourceId) ?? null;
+  const runtimeConfigured = hasRuntimePrerequisites(selectedSource?.runtime_prerequisites);
+  const runtimeLoadTestPassed = isLoadTestPassed(selectedSource?.load_test);
+  // The asset tree returns load-test generated entries (``metadata.generated``)
+  // alongside Git-scanned ones. Merge the source's stored load-test inventory as
+  // a fallback so the selection stays usable when the control plane only returns
+  // the static scan; both routes still freeze through the normal snapshot flow.
+  const selectedLoadTest = selectedSource?.load_test ?? null;
+  const generatedPaths = useMemo(() => generatedPathsOf(selectedLoadTest), [selectedLoadTest]);
+  const mergedAssetTree = useMemo(
+    () => mergeGeneratedAssets(assetTree.data?.assets ?? [], selectedLoadTest),
+    [assetTree.data?.assets, selectedLoadTest],
+  );
+  const wizardAssets = mergedAssetTree.assets;
+  const generatedFallbackCount = mergedAssetTree.supplemented.length;
+  const assetCounts = useMemo(() => countAssetTypes(wizardAssets), [wizardAssets]);
+  const generatedAssetCount = useMemo(
+    () => wizardAssets.filter((asset) => isGeneratedAsset(asset, generatedPaths)).length,
+    [generatedPaths, wizardAssets],
+  );
+  // Only sources that declare commands are hard-blocked until the isolated
+  // load test passes; sources without explicit prerequisites keep the prior
+  // warning-only behavior.
+  const runtimeSetupBlocked = Boolean(runtimeConfigured && !runtimeLoadTestPassed);
+  const runtimeSetupWarning = Boolean(
+    selectedSource && (runtimeSetupBlocked || selectedSource.status === "requires_setup"),
+  );
   const totalCases = versionDetail.data?.case_count ?? 0;
   const selectedCaseCount =
     draft.selectionMode === "all"
@@ -413,15 +454,16 @@ export function EvalWizardPage() {
   // dataset/asset pages still preselect a source through the effect above.
 
   // Directory-mode sources auto-select every asset until the operator edits
-  // the selection themselves.
+  // the selection themselves. Generated assets are part of that set, so a
+  // runtime-configured source never silently skips its generated inventory.
   useEffect(() => {
     if (!assetTree.data || draft.assetSelectionTouched) return;
     if (selectedSource?.selection_mode !== "directory") return;
     update(
-      { selectedPaths: assetTree.data.assets.map((asset) => asset.path) },
+      { selectedPaths: wizardAssets.map((asset) => asset.path) },
       { invalidate: false },
     );
-  }, [assetTree.data, draft.assetSelectionTouched, selectedSource?.selection_mode, update]);
+  }, [assetTree.data, draft.assetSelectionTouched, selectedSource?.selection_mode, update, wizardAssets]);
 
   useEffect(() => {
     setCaseOffset(0);
@@ -564,11 +606,13 @@ export function EvalWizardPage() {
     });
   }
 
-  const filteredAssets = useMemo(() => {
-    const assets = assetTree.data?.assets ?? [];
-    return assetFilter === "all" ? assets : assets.filter((asset) => asset.asset_type === assetFilter);
-  }, [assetFilter, assetTree.data]);
-  const counts = assetTree.data?.counts ?? { skill: 0, command: 0, subagent: 0 };
+  const filteredAssets = useMemo(
+    () =>
+      assetFilter === "all"
+        ? wizardAssets
+        : wizardAssets.filter((asset) => asset.asset_type === assetFilter),
+    [assetFilter, wizardAssets],
+  );
   const expiresAt = preparation?.expires_at ? Date.parse(preparation.expires_at) : null;
   const remainingSeconds = expiresAt ? Math.max(0, Math.floor((expiresAt - nowTick) / 1000)) : 0;
   const expired = Boolean(preparation) && remainingSeconds <= 0;
@@ -594,10 +638,14 @@ export function EvalWizardPage() {
     },
     {
       title: "来源",
-      dataIndex: "path",
+      key: "origin",
       width: 100,
-      render: (value: string) =>
-        value.startsWith("generated:") ? <Tag color="orange">生成</Tag> : <Tag>源文件</Tag>,
+      render: (_value: unknown, record: ScannedAsset) =>
+        isGeneratedAsset(record, generatedPaths) ? (
+          <Tag color="orange">生成</Tag>
+        ) : (
+          <Tag>源文件</Tag>
+        ),
     },
   ];
 
@@ -661,6 +709,10 @@ export function EvalWizardPage() {
       message.warning("已选择资产但尚未读取冻结：点击「读取资产」，或清空选择后跳过资产");
       return;
     }
+    if (runtimeSetupBlocked) {
+      message.warning("所选资产源的运行时前置未通过加载测试：请先在 Agent 资产页完成加载测试");
+      return;
+    }
     setChecking(true);
     setBlockers([]);
     setCreateNotice(null);
@@ -711,6 +763,10 @@ export function EvalWizardPage() {
       }
       if (draft.assetSourceId && !draft.assetSnapshotId && draft.selectedPaths.length > 0) {
         message.warning("已选择资产但尚未读取冻结：点击「读取资产」，或清空选择后跳过资产");
+        return;
+      }
+      if (runtimeSetupBlocked) {
+        message.warning("所选资产源的运行时前置未通过加载测试：请先在 Agent 资产页完成加载测试");
         return;
       }
       setStep(2);
@@ -1019,6 +1075,13 @@ export function EvalWizardPage() {
       assetSnapshotCommit: null,
       assetSnapshotCount: 0,
     };
+    const selectedGeneratedCount = wizardAssets.filter(
+      (asset) => draft.selectedPaths.includes(asset.path) && isGeneratedAsset(asset, generatedPaths),
+    ).length;
+    const generatedCounts = selectedSource?.load_test.generated;
+    const loadTestGeneratedTotal = generatedCounts
+      ? generatedCounts.skill + generatedCounts.command + generatedCounts.subagent
+      : 0;
     return (
       <div>
         <div className="eyebrow">Step 2 · Runtime</div>
@@ -1103,9 +1166,21 @@ export function EvalWizardPage() {
             <span className="tag tag-neutral">
               路径 {(selectedSource?.scan_paths ?? []).join(" · ") || "—"}
             </span>
-            <span className="tag tag-primary">{counts.skill} Skill</span>
-            <span className="tag tag-violet">{counts.command} Command</span>
-            <span className="tag tag-success">{counts.subagent} Subagent</span>
+            <span className="tag tag-primary">{assetCounts.skill} Skill</span>
+            <span className="tag tag-violet">{assetCounts.command} Command</span>
+            <span className="tag tag-success">{assetCounts.subagent} Subagent</span>
+            {generatedAssetCount ? (
+              <span className="tag tag-warning">{generatedAssetCount} 项生成</span>
+            ) : null}
+            {runtimeConfigured ? (
+              <span className={runtimeLoadTestPassed ? "tag tag-success" : "tag tag-warning"}>
+                {runtimeLoadTestPassed
+                  ? "加载测试通过"
+                  : selectedSource?.load_test.status === "failed"
+                    ? "加载测试失败"
+                    : "加载测试未通过"}
+              </span>
+            ) : null}
           </div>
           <div className="field-row asset-ref-row">
             <div className="field">
@@ -1166,10 +1241,14 @@ export function EvalWizardPage() {
                 <>
                   <strong>资产尚未读取冻结。</strong>{" "}
                   {draft.selectedPaths.length
-                    ? `已选择 ${draft.selectedPaths.length} 项资产；点击「读取资产」冻结快照，或清空选择后跳过资产。`
+                    ? `已选择 ${draft.selectedPaths.length} 项资产${
+                        selectedGeneratedCount ? `（含 ${selectedGeneratedCount} 项生成资产）` : ""
+                      }；点击「读取资产」冻结快照，或清空选择后跳过资产。`
                     : assetTree.isLoading
                       ? "正在读取资产树；读取完成后可选择并冻结，或清空选择后跳过资产。"
-                      : "未选择任何资产；可直接进入下一步，只使用 Runtime 内置能力。"}
+                      : generatedAssetCount
+                        ? `资产树包含 ${generatedAssetCount} 项生成资产，尚未选择；勾选后点击「读取资产」冻结，否则本次评测不会注入这些生成资产。`
+                        : "未选择任何资产；可直接进入下一步，只使用 Runtime 内置能力。"}
                 </>
               ) : (
                 <>
@@ -1180,11 +1259,35 @@ export function EvalWizardPage() {
             </div>
           </div>
         </div>
+        {runtimeSetupWarning ? (
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginBottom: 12 }}
+            message={
+              runtimeSetupBlocked
+                ? "运行时前置尚未通过加载测试"
+                : "该资产源需要运行时准备"
+            }
+            description={
+              runtimeConfigured
+                ? `该资产源声明了安装/初始化命令，加载测试${
+                    selectedSource?.load_test.status === "failed" ? "失败" : "尚未通过"
+                  }；通过后才能发起评测。`
+                : "扫描结果中的 Command 依赖运行时前置（如 openspec CLI）；平台不会静默安装，请确认目标沙箱已准备。"
+            }
+            action={
+              <Button size="small" onClick={() => navigate("/assets")}>
+                {runtimeSetupBlocked ? "去完成加载测试" : "去资产页查看"}
+              </Button>
+            }
+          />
+        ) : null}
         <div className="row-between wizard-asset-toolbar">
           <div>
             <strong>选择资产</strong>
             <div className="small muted">
-              已选择 {draft.selectedPaths.length} / {assetTree.data?.assets.length ?? 0} 项 · 全选覆盖当前筛选的所有页
+              已选择 {draft.selectedPaths.length} / {wizardAssets.length} 项 · 全选覆盖当前筛选的所有页
             </div>
           </div>
           <Button type="link" onClick={() => navigate("/assets")}>
@@ -1199,13 +1302,20 @@ export function EvalWizardPage() {
               setAssetPage(1);
             }}
             options={[
-              { value: "all", label: `全部 ${assetTree.data?.assets.length ?? 0}` },
-              { value: "skill", label: `Skill ${counts.skill}` },
-              { value: "command", label: `Command ${counts.command}` },
-              { value: "subagent", label: `Subagent ${counts.subagent}` },
+              { value: "all", label: `全部 ${wizardAssets.length}` },
+              { value: "skill", label: `Skill ${assetCounts.skill}` },
+              { value: "command", label: `Command ${assetCounts.command}` },
+              { value: "subagent", label: `Subagent ${assetCounts.subagent}` },
             ]}
           />
           <div className="wizard-asset-tools">
+            <Button
+              size="small"
+              onClick={() => assetTree.refetch()}
+              loading={assetTree.isFetching}
+            >
+              <Icon name="refresh" size={13} /> 刷新资产树
+            </Button>
             <Button
               size="small"
               onClick={() =>
@@ -1231,6 +1341,11 @@ export function EvalWizardPage() {
             </Button>
           </div>
         </div>
+        {!assetTree.isLoading && generatedFallbackCount ? (
+          <div className="small muted" style={{ marginBottom: 10 }}>
+            资产树未返回生成资产：已按该资产源通过的加载测试补充 {generatedFallbackCount} 项；刷新资产树后以服务端结果为准。
+          </div>
+        ) : null}
         {assetTree.isLoading ? (
           <div className="card wizard-asset-placeholder">正在读取资产树…</div>
         ) : filteredAssets.length ? (
@@ -1275,15 +1390,44 @@ export function EvalWizardPage() {
           />
         ) : (
           <Empty
-            description={selectedSource ? "该资产源还没有扫描结果" : "先选择资产源"}
+            description={
+              selectedSource
+                ? runtimeLoadTestPassed
+                  ? loadTestGeneratedTotal
+                    ? "加载测试已通过，但资产树暂未返回生成资产"
+                    : "加载测试已通过，但未生成可识别的资产"
+                  : "该资产源还没有扫描结果"
+                : "先选择资产源"
+            }
             image={Empty.PRESENTED_IMAGE_SIMPLE}
           >
-            <Button onClick={() => navigate("/assets")}>去扫描资产源</Button>
+            {selectedSource && runtimeLoadTestPassed ? (
+              <p className="small muted" style={{ maxWidth: 520, margin: "0 auto 12px" }}>
+                {`加载测试已通过（${generatedCountsText(selectedSource.load_test.generated)}）。若资产树持续为空，请刷新资产树，或到资产页重新执行加载测试与扫描。`}
+              </p>
+            ) : null}
+            <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
+              {selectedSource ? (
+                <Button
+                  size="small"
+                  onClick={() => assetTree.refetch()}
+                  loading={assetTree.isFetching}
+                >
+                  刷新资产树
+                </Button>
+              ) : null}
+              <Button
+                size="small"
+                type={selectedSource ? "default" : "primary"}
+                onClick={() => navigate("/assets")}
+              >
+                {selectedSource ? "去资产页查看" : "去选择资产源"}
+              </Button>
+            </div>
           </Empty>
         )}
-        {draft.selectedPaths.some(
-          (path) =>
-            assetTree.data?.assets.find((asset) => asset.path === path)?.metadata.prerequisites?.length,
+        {draft.selectedPaths.some((path) =>
+          wizardAssets.find((asset) => asset.path === path)?.metadata.prerequisites?.length,
         ) ? (
           <Alert
             type="warning"

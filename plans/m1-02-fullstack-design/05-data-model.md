@@ -65,7 +65,7 @@ tenant ─ workspace ─ project
 | `credential` | id, tenant_id, project_id, kind, provider, ciphertext, kms_key_version, secret_mask, expires_at, last_rotated_at | 模型或资源连接的密文底座，可按 kind 拆分表 |
 | `model_config` | id, tenant_id, project_id, credential_id, provider, display_name, base_url, model_name, api_style, limits_json, is_temporary, owner_eval_run_id | 临时配置不进入公共目录 |
 | `agent_runtime` | id, runtime_key, version, adapter_version, command_template_json, capabilities_json, trace_format | 平台注册，通常不属租户 |
-| `agent_asset_source` | id, tenant_id, project_id, connection_id, repo_url, default_ref, scan_paths_json, selection_mode, runtime_prerequisites_json, last_scanned_commit | Git 源配置 |
+| `agent_asset_source` | id, tenant_id, project_id, connection_id, repo_url, default_ref, scan_paths_json, selection_mode, runtime_prerequisites_json, load_test_json, last_scanned_commit | Git 源配置；CLI 生成型源记录隔离加载测试结果 |
 | `agent_asset_snapshot` | id, tenant_id, source_id, requested_ref, resolved_commit, tree_digest, bundle_key, bundle_digest, created_by | 一次不可变快照 |
 | `agent_asset` | id, tenant_id, snapshot_id, asset_type, name, path, content_digest, metadata_json | `(snapshot_id,asset_type,path)` unique |
 | `connection` | id, tenant_id, credential_id, provider, region, capabilities_json, status, last_verified_at | 资源连接能力清单 |

@@ -479,6 +479,127 @@ def test_asset_commit_drift_returns_configuration_changed(
     assert "asset_snapshot.resolved_commit" in error["details"]["changed"]
 
 
+LOAD_TEST_PREREQUISITES = {
+    "install_command": "npm install -g @fission-ai/openspec",
+    "init_command": "openspec init",
+}
+
+
+def freeze_load_test(
+    snapshot: AgentAssetSnapshot,
+    *,
+    status: str,
+    prerequisites: dict | None = None,
+) -> None:
+    """Rewrite the frozen manifest as a resolve against that load-test result."""
+
+    manifest = dict(snapshot.manifest_json or {})
+    prerequisites = dict(prerequisites or {})
+    manifest["runtime_prerequisites"] = prerequisites
+    if status == "passed":
+        manifest["load_test"] = {
+            "status": "passed",
+            "install_command": prerequisites.get("install_command"),
+            "init_command": prerequisites.get("init_command"),
+            "generated": {"skill": 1, "command": 0, "subagent": 0},
+            "assets": [
+                {
+                    "asset_type": "skill",
+                    "name": "openspec-explore",
+                    "path": ".claude/skills/openspec-explore",
+                }
+            ],
+        }
+        manifest["runtime_setup"] = {
+            "install_command": prerequisites["install_command"],
+            "init_command": prerequisites["init_command"],
+        }
+    else:
+        manifest["load_test"] = {}
+        manifest["runtime_setup"] = {}
+    snapshot.manifest_json = manifest
+
+
+def test_prepare_uses_frozen_snapshot_after_source_retest_failure(
+    client: TestClient, session: Session
+) -> None:
+    """M8-10: a snapshot frozen after a pass stays launchable after a re-test fails."""
+
+    ids = seed_launch(session)
+    snapshot = seed_asset_snapshot(session)
+    freeze_load_test(snapshot, status="passed", prerequisites=LOAD_TEST_PREREQUISITES)
+    source = session.get(AgentAssetSource, snapshot.source_id)
+    assert source is not None
+    source.runtime_prerequisites_json = dict(LOAD_TEST_PREREQUISITES)
+    # The live source now fails a re-test; launchable state comes from the
+    # frozen snapshot, never from this row.
+    source.status = "requires_setup"
+    source.load_test_json = {"status": "failed", "error": "install_command_failed"}
+    session.commit()
+
+    response = client.post(
+        "/api/v1/evaluations/prepare",
+        json=prepare_body(ids, asset_snapshot_id=snapshot.id),
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["ready"] is True, body
+    assert body["asset_snapshot"]["id"] == snapshot.id
+    assert body["asset_snapshot"]["load_test"]["status"] == "passed"
+    assert body["asset_snapshot"]["runtime_setup"] == {
+        "install_command": LOAD_TEST_PREREQUISITES["install_command"],
+        "init_command": LOAD_TEST_PREREQUISITES["init_command"],
+    }
+
+    created = client.post(
+        "/api/v1/evaluations",
+        json={"preparation_id": body["preparation_id"], "name": "冻结快照评测"},
+        headers={"Idempotency-Key": "idem-frozen-load-test"},
+    )
+    assert created.status_code == 201, created.text
+    stored = session.get(EvalRun, created.json()["id"])
+    assert stored is not None
+    # The runner receives the frozen setup, not the failed live source state.
+    assert stored.asset_snapshot_json["runtime_setup"] == {
+        "install_command": LOAD_TEST_PREREQUISITES["install_command"],
+        "init_command": LOAD_TEST_PREREQUISITES["init_command"],
+    }
+    assert stored.asset_snapshot_json["load_test"]["status"] == "passed"
+
+
+def test_prepare_blocks_snapshot_frozen_before_load_test_pass(
+    client: TestClient, session: Session
+) -> None:
+    """M8-10: a snapshot resolved without a pass stays blocked even if the source passes later."""
+
+    ids = seed_launch(session)
+    snapshot = seed_asset_snapshot(session)
+    freeze_load_test(snapshot, status="not_run", prerequisites=LOAD_TEST_PREREQUISITES)
+    source = session.get(AgentAssetSource, snapshot.source_id)
+    assert source is not None
+    source.runtime_prerequisites_json = dict(LOAD_TEST_PREREQUISITES)
+    # The live source passes afterwards; the frozen snapshot still has no pass.
+    source.status = "ready"
+    source.load_test_json = {"status": "passed", "generated": []}
+    session.commit()
+
+    response = client.post(
+        "/api/v1/evaluations/prepare",
+        json=prepare_body(ids, asset_snapshot_id=snapshot.id),
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["ready"] is False
+    assert body["preparation_id"] is None
+    blocker = next(
+        item for item in body["blockers"] if item["code"] == "asset_runtime_setup_required"
+    )
+    assert "加载测试" in blocker["message"]
+    assert blocker["field"] == "asset_snapshot_id"
+    assert blocker["details"]["source_id"] == source.id
+    assert blocker["details"]["load_test_status"] == "not_run"
+
+
 def test_revoked_credential_returns_configuration_changed(
     client: TestClient, session: Session
 ) -> None:

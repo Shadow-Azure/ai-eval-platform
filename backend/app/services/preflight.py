@@ -20,6 +20,7 @@ from ..datasets import AdapterNotFound, get_adapter
 from ..defaults import DEFAULT_TENANT_ID
 from ..models import (
     AgentAssetSnapshot,
+    AgentAssetSource,
     Credential,
     Dataset,
     DatasetVersion,
@@ -30,6 +31,7 @@ from ..models import (
 from ..runtimes.base import AssetSnapshot
 from ..runtimes.claude_code import get_runtime_adapter
 from . import capacity
+from .agent_assets import runtime_setup_view
 
 
 @dataclass(frozen=True)
@@ -369,6 +371,13 @@ def check_preparation(
     asset_snapshot = None
     if asset_snapshot_id:
         snapshot = session.get(AgentAssetSnapshot, asset_snapshot_id)
+        source = (
+            session.get(AgentAssetSource, snapshot.source_id)
+            if snapshot is not None and snapshot.tenant_id == tenant_id
+            else None
+        )
+        if source is not None and source.tenant_id != tenant_id:
+            source = None
         if snapshot is None or snapshot.tenant_id != tenant_id:
             blockers.append(
                 PreflightIssue(
@@ -401,32 +410,62 @@ def check_preparation(
                 )
             )
         else:
-            asset_snapshot = {
-                "id": snapshot.id,
-                # The runner contract addresses the bundle by snapshot_id and
-                # presigns it from bundle_key; both must survive preparation.
-                "snapshot_id": snapshot.id,
-                "source_id": snapshot.source_id,
-                "requested_ref": snapshot.requested_ref,
-                "resolved_commit": snapshot.resolved_commit,
-                "tree_digest": snapshot.tree_digest,
-                "bundle_key": snapshot.bundle_key,
-                "bundle_digest": snapshot.bundle_digest,
-                "bundle_size": snapshot.bundle_size,
-                "file_count": snapshot.file_count,
-                "asset_count": snapshot.asset_count,
-                "runtime_key": snapshot.runtime_key,
-                "assets": [
-                    {
-                        "asset_type": asset.get("asset_type"),
-                        "name": asset.get("name"),
-                        "path": asset.get("path"),
-                        "content_digest": asset.get("content_digest"),
-                        "metadata": asset.get("metadata", {}),
-                    }
-                    for asset in (snapshot.manifest_json or {}).get("assets", [])
-                ],
-            }
+            # M8-10: the launch decision must use the preparation's frozen
+            # manifest, not the live source row. A snapshot resolved after a
+            # passing load test stays launchable even if the operator later
+            # fails a re-test; a snapshot resolved before any pass stays blocked
+            # even if the source passes afterwards.
+            manifest = snapshot.manifest_json or {}
+            frozen_prerequisites = manifest.get("runtime_prerequisites") or {}
+            frozen_load_test = manifest.get("load_test") or {}
+            frozen_status = str(frozen_load_test.get("status") or "")
+            if frozen_prerequisites and frozen_status != "passed":
+                source_label = source.name if source is not None else snapshot.source_id
+                blockers.append(
+                    PreflightIssue(
+                        "asset_runtime_setup_required",
+                        f"资产快照「{source_label}」冻结时加载测试未通过；"
+                        "请重新执行加载测试并重新解析资产快照",
+                        "asset_snapshot_id",
+                        {
+                            "source_id": snapshot.source_id,
+                            "load_test_status": frozen_status or "not_run",
+                        },
+                    )
+                )
+            else:
+                asset_snapshot = {
+                    "id": snapshot.id,
+                    # The runner contract addresses the bundle by snapshot_id and
+                    # presigns it from bundle_key; both must survive preparation.
+                    "snapshot_id": snapshot.id,
+                    "source_id": snapshot.source_id,
+                    "requested_ref": snapshot.requested_ref,
+                    "resolved_commit": snapshot.resolved_commit,
+                    "tree_digest": snapshot.tree_digest,
+                    "bundle_key": snapshot.bundle_key,
+                    "bundle_digest": snapshot.bundle_digest,
+                    "bundle_size": snapshot.bundle_size,
+                    "file_count": snapshot.file_count,
+                    "asset_count": snapshot.asset_count,
+                    "runtime_key": snapshot.runtime_key,
+                    "runtime_prerequisites": manifest.get("runtime_prerequisites")
+                    or {},
+                    "load_test": manifest.get("load_test") or {},
+                    # M8-10: the runner executes these frozen commands, so a
+                    # later source edit cannot change what this snapshot needs.
+                    "runtime_setup": runtime_setup_view(manifest),
+                    "assets": [
+                        {
+                            "asset_type": asset.get("asset_type"),
+                            "name": asset.get("name"),
+                            "path": asset.get("path"),
+                            "content_digest": asset.get("content_digest"),
+                            "metadata": asset.get("metadata", {}),
+                        }
+                        for asset in manifest.get("assets", [])
+                    ],
+                }
     elif not assets_resolved:
         blockers.append(
             PreflightIssue("asset_unresolved", "Agent 资产快照尚未解析", "assets")
