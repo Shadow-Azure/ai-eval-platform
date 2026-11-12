@@ -380,6 +380,9 @@ def test_asset_snapshot_is_included_in_preparation(session: Session) -> None:
     assert result.ready
     assert result.asset_snapshot is not None
     assert result.asset_snapshot["id"] == snapshot.id
+    assert result.asset_snapshot["snapshot_id"] == snapshot.id
+    assert result.asset_snapshot["bundle_key"] == snapshot.bundle_key
+    assert result.asset_snapshot["file_count"] == 2
     assert result.asset_snapshot["resolved_commit"] == "a" * 40
     assert result.asset_snapshot["asset_count"] == 1
 

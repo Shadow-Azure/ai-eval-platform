@@ -403,10 +403,14 @@ def check_preparation(
         else:
             asset_snapshot = {
                 "id": snapshot.id,
+                # The runner contract addresses the bundle by snapshot_id and
+                # presigns it from bundle_key; both must survive preparation.
+                "snapshot_id": snapshot.id,
                 "source_id": snapshot.source_id,
                 "requested_ref": snapshot.requested_ref,
                 "resolved_commit": snapshot.resolved_commit,
                 "tree_digest": snapshot.tree_digest,
+                "bundle_key": snapshot.bundle_key,
                 "bundle_digest": snapshot.bundle_digest,
                 "bundle_size": snapshot.bundle_size,
                 "file_count": snapshot.file_count,
