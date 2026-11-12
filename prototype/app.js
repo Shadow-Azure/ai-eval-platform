@@ -40,6 +40,8 @@ const icons = {
   filter: '<path d="M4 5h16M7 12h10M10 19h4"/>',
   more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
   chevronDown: '<path d="m7 9 5 5 5-5"/>',
+  chevronsLeft: '<path d="m11 17-5-5 5-5M18 17l-5-5 5-5"/>',
+  chevronsRight: '<path d="m13 17 5-5-5-5M6 17l5-5-5-5"/>',
   copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/>',
   cloud:
     '<path d="M17.5 19H6a4 4 0 0 1-.5-8A6.5 6.5 0 0 1 18 9.5a4.8 4.8 0 0 1-.5 9.5Z"/>',
@@ -460,7 +462,19 @@ const mock = {
   ],
 };
 
+function sidebarPreference() {
+  const requested = new URLSearchParams(location.search).get("sidebar");
+  if (requested === "collapsed") return true;
+  if (requested === "expanded") return false;
+  try {
+    return localStorage.getItem("ep.sidebar.collapsed") === "1";
+  } catch {
+    return false;
+  }
+}
+
 const ui = {
+  sidebarCollapsed: sidebarPreference(),
   modelFilter: "",
   datasetSearch: "",
   datasetCategory: "all",
@@ -754,11 +768,13 @@ function topbar(path) {
 
 function sidebar(path) {
   const active = navActive(path);
+  const collapsed = ui.sidebarCollapsed;
+  const toggleLabel = collapsed ? "展开导航" : "收起导航";
   return `
-    <aside class="sidebar">
+    <aside class="sidebar" id="app-sidebar" aria-label="主导航">
       <div class="brand">
         <div class="brand-mark">EP</div>
-        <div>
+        <div class="brand-copy">
           <div class="brand-name">Eval Platform</div>
           <div class="brand-caption">Agent Evaluation</div>
         </div>
@@ -771,7 +787,7 @@ function sidebar(path) {
               ${group.items
                 .map(
                   (item) => `
-                    <button class="nav-item ${item.id === active ? "active" : ""}" data-route="${item.path}">
+                    <button class="nav-item ${item.id === active ? "active" : ""}" data-route="${item.path}"${collapsed ? ` aria-label="${item.label}" title="${item.label}"` : ""}>
                       ${icon(item.icon, 17)}
                       <span>${item.label}</span>
                       ${item.badge ? `<span class="nav-badge">${item.badge}</span>` : ""}
@@ -784,9 +800,13 @@ function sidebar(path) {
         )
         .join("")}
       <div class="sidebar-footer">
-        <div class="tenant-chip">
+        <button class="sidebar-toggle" data-action="toggle-sidebar" aria-controls="app-sidebar" aria-expanded="${!collapsed}" aria-label="${toggleLabel}" title="${toggleLabel}">
+          ${icon(collapsed ? "chevronsRight" : "chevronsLeft", 15)}
+          <span>${toggleLabel}</span>
+        </button>
+        <div class="tenant-chip" title="Acme Labs · 默认组织 · 单租户">
           <div class="tenant-avatar">AC</div>
-          <div class="truncate">
+          <div class="tenant-copy truncate">
             <div class="tenant-name">Acme Labs</div>
             <div class="tenant-meta">默认组织 · 单租户</div>
           </div>
@@ -799,7 +819,7 @@ function sidebar(path) {
 
 function shell(content, path) {
   return `
-    <div class="app-shell">
+    <div class="app-shell ${ui.sidebarCollapsed ? "sidebar-collapsed" : ""}">
       ${sidebar(path)}
       <main class="main-shell">
         ${topbar(path)}
@@ -3655,6 +3675,17 @@ function handleAction(action, target) {
       body: `<div class="banner warning">${icon("alert", 15)}<div>将基于当前 main 构建镜像并在生产 ECS 滚动更新。数据库迁移失败会自动中止。</div></div><div class="field" style="margin-top:14px"><label>确认文本</label><input class="input" placeholder="输入 DEPLOY 继续" /></div>`,
       footer: `<button class="btn" data-action="close-modal">取消</button><button class="btn btn-primary" data-action="confirm-deploy">开始部署</button>`,
     });
+    return;
+  }
+  if (action === "toggle-sidebar") {
+    ui.sidebarCollapsed = !ui.sidebarCollapsed;
+    try {
+      localStorage.setItem("ep.sidebar.collapsed", ui.sidebarCollapsed ? "1" : "0");
+    } catch {
+      // Local storage can be unavailable in private or sandboxed contexts.
+    }
+    render({ preserveScroll: true });
+    document.querySelector('[data-action="toggle-sidebar"]')?.focus({ preventScroll: true });
     return;
   }
   if (action === "confirm-deploy") {

@@ -27,6 +27,8 @@ const iconPaths = {
   cloud:
     '<path d="M17.5 19H6a4 4 0 0 1-.5-8A6.5 6.5 0 0 1 18 9.5a4.8 4.8 0 0 1-.5 9.5Z"/>',
   chevronDown: '<path d="m7 9 5 5 5-5"/>',
+  chevronsLeft: '<path d="m11 17-5-5 5-5M18 17l-5-5 5-5"/>',
+  chevronsRight: '<path d="m13 17 5-5-5-5M6 17l5-5-5-5"/>',
   logout: '<path d="M10 17l5-5-5-5M15 12H3M14 4h5a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-5"/>',
   sparkles:
     '<path d="m12 3 1.2 3.8L17 8l-3.8 1.2L12 13l-1.2-3.8L7 8l3.8-1.2L12 3ZM5 14l.8 2.2L8 17l-2.2.8L5 20l-.8-2.2L2 17l2.2-.8L5 14ZM19 13l.7 2.3L22 16l-2.3.7L19 19l-.7-2.3L16 16l2.3-.7L19 13Z"/>',
