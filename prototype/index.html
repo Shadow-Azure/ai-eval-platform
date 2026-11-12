@@ -4331,8 +4331,8 @@ const mock = {
       counts: { skill: 6, command: 4, subagent: 5 },
       note: "静态扫描 0 资产；codespec init（core）生成 4 Command + 6 Skill + 5 Agent（外部 Skill 含 codespec-* 前缀），需要 codespec CLI。",
       runtime: {
-        installCommand: "npm install -g github:chenmr0/OpenSpec-cn#main-copy-ar",
-        initCommand: "codespec init --profile core",
+        installCommand: "npm install --prefix \"$HOME\" github:chenmr0/OpenSpec-cn#main-copy-ar",
+        initCommand: "\"$HOME/node_modules/.bin/codespec\" init --tools claude --profile core",
         status: "untested",
         durationSeconds: null,
         generatedCommands: 4,
