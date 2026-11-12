@@ -295,10 +295,17 @@ def _snapshot_asset(asset: dict | None) -> dict | None:
         return None
     return {
         "id": asset.get("id"),
+        # Freeze the full bundle descriptor: the runner builds its task
+        # payload from this JSON and needs snapshot_id/bundle_key to fetch it.
+        "snapshot_id": asset.get("snapshot_id") or asset.get("id"),
         "source_id": asset.get("source_id"),
         "requested_ref": asset.get("requested_ref"),
         "resolved_commit": asset.get("resolved_commit"),
         "tree_digest": asset.get("tree_digest"),
+        "bundle_key": asset.get("bundle_key"),
+        "bundle_digest": asset.get("bundle_digest"),
+        "bundle_size": asset.get("bundle_size"),
+        "file_count": asset.get("file_count"),
         "asset_count": asset.get("asset_count"),
         "runtime_key": asset.get("runtime_key"),
         "assets": asset.get("assets") or [],

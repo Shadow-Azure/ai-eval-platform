@@ -117,3 +117,15 @@ test("missing snapshot means no injection; missing URL is an explicit failure", 
     (error) => error.code === "asset_bundle_missing",
   );
 });
+
+test("declared assets without snapshot id fail instead of skipping injection", async () => {
+  const workspace = mkdtempSync(join(tmpdir(), "asset-bundle-"));
+  await assert.rejects(
+    () =>
+      materializeSnapshot(
+        { asset_count: 1, resolved_commit: "a".repeat(40) },
+        workspace,
+      ),
+    (error) => error.code === "asset_snapshot_missing",
+  );
+});
