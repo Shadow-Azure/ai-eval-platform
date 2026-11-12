@@ -171,6 +171,74 @@
   margin: 0 0 12px;
 }
 
+.asset-runtime {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 12px;
+  padding: 10px 11px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+
+.asset-runtime-detail {
+  margin: 0 0 14px;
+}
+
+.asset-runtime-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 2px;
+  font-size: 12px;
+}
+
+.asset-runtime-head .ant-tag {
+  margin-inline-end: 0;
+}
+
+.asset-runtime-result {
+  line-height: 1.5;
+}
+
+.asset-runtime-error {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--danger, #b42318);
+  font-size: 12px;
+}
+
+.asset-runtime-log {
+  max-height: 148px;
+  margin: 0;
+  overflow: auto;
+  padding: 8px 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--ink-2);
+  background: #fff;
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.asset-field > label.asset-runtime-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.asset-runtime-field {
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
 .asset-source-footer {
   display: flex;
   align-items: center;

@@ -20,10 +20,16 @@ import base64
 import gzip
 import hashlib
 import json
+import os
 import re
+import secrets
+import subprocess
+import tempfile
+import threading
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from sqlalchemy import func, select
@@ -44,6 +50,25 @@ MAX_ASSET_FILES = 256
 MAX_ASSET_BYTES = 8 * 1024 * 1024
 MAX_SCAN_UNCLASSIFIED = 200
 SUPPORTED_RUNTIMES = ("claude-code",)
+
+# M8-10: runtime prerequisites are administrator-configured shell commands.
+# The load test executes them only in a fresh temporary HOME and keeps a
+# bounded log/asset footprint so a runaway CLI cannot grow the database.
+LOAD_TEST_TIMEOUT_SECONDS = 600
+LOAD_TEST_TOKEN_TTL_SECONDS = 600
+MAX_RUNTIME_COMMAND_LENGTH = 2000
+MAX_RUNTIME_LABEL_LENGTH = 100
+MAX_LOAD_TEST_LOG_TAIL = 20_000
+RUNTIME_PREREQUISITE_KEYS = ("install_command", "init_command", "runtime")
+DEFAULT_SHELL_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+# Preview tokens are intentionally process-local: they only bridge the add
+# wizard's "test" click to the following create request. A multi-replica API
+# may miss the cache on another instance, which falls back to requires_setup
+# instead of trusting client-provided generated assets.
+_LOAD_TEST_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+_LOAD_TEST_CACHE_LOCK = threading.Lock()
+
 
 
 class AgentAssetError(Exception):
@@ -113,7 +138,9 @@ def _normalize_paths(paths: list[str] | None) -> list[str]:
     seen: set[str] = set()
     for raw in paths or []:
         value = str(raw or "").strip().strip("/")
-        if not value:
+        # "." explicitly means the repository root; the empty list already
+        # means "scan everything", so normalize it rather than scope to "./".
+        if not value or value == ".":
             continue
         candidate = PurePosixPath(value)
         if candidate.is_absolute() or any(part in ("", ".", "..") for part in candidate.parts):
@@ -195,6 +222,86 @@ def _scan_status(assets: tuple[ScannedAsset, ...] | list[ScannedAsset]) -> str:
     return "requires_setup" if any(asset.metadata.get("prerequisites") for asset in assets) else "ready"
 
 
+def normalize_runtime_prerequisites(
+    value: dict[str, Any] | None, *, field: str = "runtime_prerequisites"
+) -> dict[str, str]:
+    """Validate the optional runtime-prerequisite commands without semantics.
+
+    The platform never interprets these strings; it only requires a non-empty
+    install and init command pair so the load test can run them safely.
+    """
+
+    if value is None or value == {}:
+        return {}
+    if not isinstance(value, dict):
+        raise AgentAssetError(
+            "runtime_prerequisites_invalid", "运行时前置必须是对象", field=field
+        )
+    unknown = sorted(set(value) - set(RUNTIME_PREREQUISITE_KEYS))
+    if unknown:
+        raise AgentAssetError(
+            "runtime_prerequisites_invalid",
+            "运行时前置包含不支持的字段：" + ", ".join(unknown),
+            field=field,
+        )
+    normalized: dict[str, str] = {}
+    limits = {
+        "install_command": MAX_RUNTIME_COMMAND_LENGTH,
+        "init_command": MAX_RUNTIME_COMMAND_LENGTH,
+        "runtime": MAX_RUNTIME_LABEL_LENGTH,
+    }
+    for key in RUNTIME_PREREQUISITE_KEYS:
+        raw = value.get(key)
+        if raw is None:
+            continue
+        if not isinstance(raw, str):
+            raise AgentAssetError(
+                "runtime_prerequisites_invalid", f"运行时前置 {key} 必须是字符串", field=field
+            )
+        text = raw.strip()
+        if not text:
+            raise AgentAssetError(
+                "runtime_prerequisites_invalid", f"运行时前置 {key} 不能为空", field=field
+            )
+        if len(text) > limits[key]:
+            raise AgentAssetError(
+                "runtime_prerequisites_invalid",
+                f"运行时前置 {key} 超过 {limits[key]} 个字符",
+                field=field,
+            )
+        normalized[key] = text
+    if not normalized:
+        return {}
+    if "install_command" not in normalized or "init_command" not in normalized:
+        raise AgentAssetError(
+            "runtime_prerequisites_incomplete",
+            "运行时前置需要同时提供安装命令与初始化命令",
+            field=field,
+        )
+    return normalized
+
+
+def _has_prerequisites(source: AgentAssetSource) -> bool:
+    return bool(source.runtime_prerequisites_json or {})
+
+
+def _load_test_passed(source: AgentAssetSource) -> bool:
+    return (source.load_test_json or {}).get("status") == "passed"
+
+
+def _source_status(
+    source: AgentAssetSource, assets: tuple[ScannedAsset, ...] | list[ScannedAsset]
+) -> str:
+    """A source with configured prerequisites is only ready after a pass."""
+
+    if _has_prerequisites(source):
+        return "ready" if _load_test_passed(source) else "requires_setup"
+    if _load_test_passed(source):
+        return "ready"
+    return _scan_status(assets)
+
+
+
 _RUNTIME_DIRS = (".claude", ".agents", ".codex", ".opencode", ".pi")
 
 
@@ -244,6 +351,565 @@ def asset_counts(assets: tuple[ScannedAsset, ...] | list[ScannedAsset]) -> dict[
         if asset.asset_type in counts:
             counts[asset.asset_type] += 1
     return counts
+
+
+# ---------------------------------------------------------------------------
+# M8-10: isolated CLI load test and generated-asset scanning
+# ---------------------------------------------------------------------------
+
+
+def run_setup_command(
+    command: str, *, cwd: str, env: dict[str, str], timeout: int
+) -> subprocess.CompletedProcess[str]:
+    """Execute one administrator-configured prerequisite command.
+
+    Kept as a tiny module-level helper so tests can replace the shell without
+    invoking npm/network access. Production always uses a login shell in the
+    isolated temporary HOME.
+    """
+
+    return subprocess.run(
+        ["/bin/sh", "-lc", command],
+        cwd=cwd,
+        env=env,
+        timeout=timeout,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _log_tail(chunks: list[str]) -> str:
+    text = "\n".join(chunk for chunk in chunks if chunk).strip()
+    return text[-MAX_LOAD_TEST_LOG_TAIL:]
+
+
+def _append_command_log(chunks: list[str], phase: str, command: str, output: str) -> None:
+    body = (output or "").strip()
+    if body:
+        chunks.append(f"$ {phase}: {command}\n{body}")
+    else:
+        chunks.append(f"$ {phase}: {command}")
+
+
+def _load_test_budget() -> dict[str, int]:
+    return {"files": 0, "bytes": 0}
+
+
+def _read_generated_file(path: Path, root: Path, budget: dict[str, int]) -> dict[str, Any]:
+    resolved = path.resolve()
+    try:
+        resolved.relative_to(root.resolve())
+    except ValueError as error:
+        raise AgentAssetError(
+            "generated_asset_invalid", f"生成的资产路径越界：{path}", status=422
+        ) from error
+    if path.is_symlink() or not path.is_file():
+        raise AgentAssetError(
+            "generated_asset_invalid", f"生成的资产不是普通文件：{path}", status=422
+        )
+    size = path.stat().st_size
+    budget["files"] += 1
+    budget["bytes"] += size
+    if budget["files"] > MAX_ASSET_FILES or budget["bytes"] > MAX_ASSET_BYTES:
+        raise AgentAssetError(
+            "generated_assets_too_large",
+            f"生成的资产超过上限（{MAX_ASSET_FILES} 个文件 / {MAX_ASSET_BYTES} 字节）",
+            status=422,
+        )
+    data = path.read_bytes()
+    return {
+        "path": resolved.relative_to(root.resolve()).as_posix(),
+        "content": _decode_text(data),
+        "sha256": _digest(data),
+        "size": len(data),
+        "mode": "100644",
+    }
+
+
+def _walk_generated_files(
+    directory: Path, root: Path, budget: dict[str, int], *, suffix: str | None = None
+) -> list[dict[str, Any]]:
+    """Read regular files under ``directory``; symlinks are never followed."""
+
+    if not directory.is_dir() or directory.is_symlink():
+        return []
+    files: list[dict[str, Any]] = []
+    for current, dirnames, filenames in os.walk(directory, followlinks=False):
+        current_path = Path(current)
+        dirnames[:] = sorted(
+            name for name in dirnames if not (current_path / name).is_symlink()
+        )
+        for name in sorted(filenames):
+            path = current_path / name
+            if path.is_symlink() or (suffix is not None and path.suffix != suffix):
+                continue
+            files.append(_read_generated_file(path, root, budget))
+    return files
+
+
+def _generated_asset(
+    *,
+    asset_type: str,
+    name: str,
+    path: str,
+    content: str,
+    files: list[dict[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "asset_type": asset_type,
+        "name": name,
+        "path": path,
+        "content": content,
+        "files": files,
+    }
+
+
+def _scan_generated_assets(root: Path) -> list[dict[str, Any]]:
+    """Find the ``.claude`` assets an install/init command generated.
+
+    Skills own every file under ``.claude/skills/<name>/``; commands are
+    recursive Markdown files; subagents are top-level Markdown files. Output is
+    deterministic and bounded, and stays in the source's stored load-test JSON.
+    """
+
+    budget = _load_test_budget()
+    generated: list[dict[str, Any]] = []
+    claude = root / ".claude"
+
+    skills_root = claude / "skills"
+    if skills_root.is_dir() and not skills_root.is_symlink():
+        for skill_dir in sorted(
+            path
+            for path in skills_root.iterdir()
+            if path.is_dir() and not path.is_symlink()
+        ):
+            manifest = skill_dir / "SKILL.md"
+            if not manifest.is_file() or manifest.is_symlink():
+                continue
+            files = _walk_generated_files(skill_dir, root, budget)
+            manifest_file = next(
+                (item for item in files if item["path"] == manifest.relative_to(root).as_posix()),
+                None,
+            )
+            if manifest_file is None:
+                continue
+            generated.append(
+                _generated_asset(
+                    asset_type="skill",
+                    name=skill_dir.name,
+                    path=manifest.relative_to(root).parent.as_posix(),
+                    content=manifest_file["content"],
+                    files=files,
+                )
+            )
+
+    commands_root = claude / "commands"
+    for item in _walk_generated_files(commands_root, root, budget, suffix=".md"):
+        relative = PurePosixPath(item["path"]).relative_to(".claude/commands")
+        name = str(relative.with_suffix(""))
+        generated.append(
+            _generated_asset(
+                asset_type="command",
+                name=name,
+                path=item["path"],
+                content=item["content"],
+                files=[item],
+            )
+        )
+
+    agents_root = claude / "agents"
+    if agents_root.is_dir() and not agents_root.is_symlink():
+        for path in sorted(agents_root.iterdir()):
+            if path.suffix != ".md" or path.is_symlink() or not path.is_file():
+                continue
+            item = _read_generated_file(path, root, budget)
+            generated.append(
+                _generated_asset(
+                    asset_type="subagent",
+                    name=path.stem,
+                    path=item["path"],
+                    content=item["content"],
+                    files=[item],
+                )
+            )
+
+    return sorted(generated, key=lambda item: (item["asset_type"], item["path"]))
+
+
+def _load_test_counts(generated: list[dict[str, Any]]) -> dict[str, int]:
+    counts = {"skill": 0, "command": 0, "subagent": 0}
+    for item in generated:
+        asset_type = item.get("asset_type")
+        if asset_type in counts:
+            counts[asset_type] += 1
+    return counts
+
+
+def load_test_view(result: dict[str, Any]) -> dict[str, Any]:
+    """The API-facing result: counts and paths, never generated file bodies."""
+
+    if not result:
+        return {}
+    generated = result.get("generated") or []
+    if isinstance(generated, dict):
+        counts = {key: int(generated.get(key) or 0) for key in ("skill", "command", "subagent")}
+        assets: list[dict[str, Any]] = []
+    else:
+        counts = _load_test_counts(generated)
+        assets = [
+            {
+                "asset_type": item.get("asset_type"),
+                "name": item.get("name"),
+                "path": item.get("path"),
+            }
+            for item in sorted(
+                generated, key=lambda entry: (entry.get("asset_type", ""), entry.get("path", ""))
+            )
+        ]
+    view: dict[str, Any] = {
+        "status": result.get("status"),
+        "duration_seconds": result.get("duration_seconds"),
+        "ran_at": result.get("ran_at"),
+        "install_command": result.get("install_command"),
+        "init_command": result.get("init_command"),
+        "generated": counts,
+        "assets": assets,
+        "log_tail": result.get("log_tail") or "",
+    }
+    if result.get("runtime"):
+        view["runtime"] = result["runtime"]
+    if result.get("error"):
+        view["error"] = result["error"]
+    return view
+
+
+def _execute_load_test(
+    prerequisites: dict[str, str], *, runner=None
+) -> tuple[dict[str, Any], bool]:
+    """Run install then init in a temp HOME and scan the generated assets.
+
+    Returns ``(stored_result, infrastructure_error)``. A non-zero exit or an
+    empty generated tree is a normal failed test; a timeout/OSError is an
+    infrastructure error surfaced as source.status=error.
+
+    SECURITY: this is process-level isolation, not a sandbox. The commands
+    are administrator-configured and run as the API worker user with the host
+    filesystem and network visible; only HOME/TMPDIR state is disposable.
+    Do not expose this endpoint to untrusted roles.
+    """
+
+    runner = runner or run_setup_command
+    started = time.monotonic()
+    chunks: list[str] = []
+    generated: list[dict[str, Any]] = []
+    status = "passed"
+    error: str | None = None
+    infrastructure_error = False
+    install_command = prerequisites["install_command"]
+    init_command = prerequisites["init_command"]
+
+    with tempfile.TemporaryDirectory(prefix="agent-asset-load-test-") as workdir:
+        env = {
+            "HOME": workdir,
+            "PATH": os.environ.get("PATH") or DEFAULT_SHELL_PATH,
+        }
+        for phase, command in (("install", install_command), ("init", init_command)):
+            try:
+                completed = runner(
+                    command,
+                    cwd=workdir,
+                    env=env,
+                    timeout=LOAD_TEST_TIMEOUT_SECONDS,
+                )
+            except subprocess.TimeoutExpired:
+                status = "failed"
+                error = "load_test_timeout"
+                infrastructure_error = True
+                chunks.append(
+                    f"$ {phase}: {command}\n超时（{LOAD_TEST_TIMEOUT_SECONDS}s）"
+                )
+                break
+            except (OSError, subprocess.SubprocessError) as exc:
+                status = "failed"
+                error = "load_test_execution_failed"
+                infrastructure_error = True
+                chunks.append(f"$ {phase}: {command}\n执行失败：{exc}")
+                break
+            output = "\n".join(
+                part.strip()
+                for part in (
+                    getattr(completed, "stdout", ""),
+                    getattr(completed, "stderr", ""),
+                )
+                if part and part.strip()
+            )
+            _append_command_log(chunks, phase, command, output)
+            if int(getattr(completed, "returncode", 1)) != 0:
+                status = "failed"
+                error = f"{phase}_command_failed"
+                break
+
+        if status == "passed":
+            try:
+                generated = _scan_generated_assets(Path(workdir))
+            except AgentAssetError as exc:
+                status = "failed"
+                error = exc.code
+                chunks.append(f"$ scan\n{exc}")
+            else:
+                if not generated:
+                    status = "failed"
+                    error = "no_generated_assets"
+                    chunks.append("$ scan\n命令执行成功，但未发现生成的 Skill/Command/Subagent")
+
+    result: dict[str, Any] = {
+        "status": status,
+        "duration_seconds": round(time.monotonic() - started, 3),
+        "ran_at": datetime.now(UTC).isoformat(timespec="seconds"),
+        "install_command": install_command,
+        "init_command": init_command,
+        "generated": generated,
+        "log_tail": _log_tail(chunks),
+    }
+    if prerequisites.get("runtime"):
+        result["runtime"] = prerequisites["runtime"]
+    if error:
+        result["error"] = error
+    return result, infrastructure_error
+
+
+def _load_test_fingerprint(
+    repo_url: str,
+    requested_ref: str,
+    scan_paths: list[str],
+    prerequisites: dict[str, str],
+) -> str:
+    payload = json.dumps(
+        {
+            "repo_url": repo_url,
+            "requested_ref": requested_ref,
+            "scan_paths": scan_paths,
+            "runtime_prerequisites": prerequisites,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return "sha256:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _cache_load_test_result(token: str, fingerprint: str, result: dict[str, Any]) -> None:
+    now = time.monotonic()
+    with _LOAD_TEST_CACHE_LOCK:
+        for key, (expires_at, _entry) in list(_LOAD_TEST_CACHE.items()):
+            if expires_at <= now:
+                _LOAD_TEST_CACHE.pop(key, None)
+        _LOAD_TEST_CACHE[token] = (
+            now + LOAD_TEST_TOKEN_TTL_SECONDS,
+            {"fingerprint": fingerprint, "result": result},
+        )
+
+
+def _cached_load_test_result(token: str | None, fingerprint: str) -> dict[str, Any] | None:
+    if not token:
+        return None
+    now = time.monotonic()
+    with _LOAD_TEST_CACHE_LOCK:
+        entry = _LOAD_TEST_CACHE.get(token)
+        if entry is None:
+            return None
+        expires_at, payload = entry
+        if expires_at <= now:
+            _LOAD_TEST_CACHE.pop(token, None)
+            return None
+        if payload.get("fingerprint") != fingerprint:
+            return None
+        return payload.get("result")
+
+
+def preview_load_test(
+    *,
+    repo_url: str,
+    requested_ref: str,
+    scan_paths: list[str] | None = None,
+    runtime_prerequisites: dict[str, Any] | None = None,
+    runner=None,
+) -> tuple[dict[str, Any], str]:
+    """Run the add-source load test without persisting a source row."""
+
+    parse_repo_url(repo_url)
+    ref = (requested_ref or "").strip()
+    if not ref:
+        raise AgentAssetError("ref_required", "Ref 不能为空", field="requested_ref")
+    prerequisites = normalize_runtime_prerequisites(runtime_prerequisites)
+    if not prerequisites:
+        raise AgentAssetError(
+            "runtime_prerequisites_required",
+            "请先配置 CLI 安装命令与初始化命令",
+            field="runtime_prerequisites",
+        )
+    normalized_paths = _normalize_paths(scan_paths)
+    result, _infrastructure_error = _execute_load_test(prerequisites, runner=runner)
+    token = secrets.token_urlsafe(24)
+    fingerprint = _load_test_fingerprint(
+        repo_url.strip(), ref, normalized_paths, prerequisites
+    )
+    _cache_load_test_result(token, fingerprint, result)
+    return result, token
+
+
+def run_load_test(
+    session: Session, source_id: str, *, runner=None
+) -> tuple[AgentAssetSource, dict[str, Any]]:
+    """Execute and persist a source-scoped load test with status transitions."""
+
+    source = get_source(session, source_id)
+    prerequisites = normalize_runtime_prerequisites(source.runtime_prerequisites_json)
+    if not prerequisites:
+        raise AgentAssetError(
+            "runtime_prerequisites_required",
+            "该资产源未配置运行时前置命令",
+            field="runtime_prerequisites",
+        )
+    result, infrastructure_error = _execute_load_test(prerequisites, runner=runner)
+    source.load_test_json = result
+    if infrastructure_error:
+        source.status = "error"
+    elif result["status"] == "passed":
+        source.status = "ready"
+    else:
+        source.status = "requires_setup"
+    session.commit()
+    return source, result
+
+
+def _generated_source_assets(
+    source: AgentAssetSource,
+) -> tuple[list[ScannedAsset], dict[str, bytes]]:
+    """Convert the stored generated manifest into scan assets + file bytes."""
+
+    load_test = source.load_test_json or {}
+    if load_test.get("status") != "passed":
+        return [], {}
+    generated = load_test.get("generated") or []
+    if not isinstance(generated, list):
+        raise AgentAssetError(
+            "generated_assets_invalid", "加载测试生成资产格式无效", status=422
+        )
+    assets: list[ScannedAsset] = []
+    blobs: dict[str, bytes] = {}
+    seen: set[tuple[str, str]] = set()
+    for item in generated:
+        if not isinstance(item, dict):
+            raise AgentAssetError(
+                "generated_assets_invalid", "加载测试生成资产格式无效", status=422
+            )
+        asset_type = item.get("asset_type")
+        name = str(item.get("name") or "").strip()
+        path = str(item.get("path") or "").strip().strip("/")
+        if asset_type not in ("skill", "command", "subagent") or not name or not path:
+            raise AgentAssetError(
+                "generated_assets_invalid", "加载测试生成资产缺少类型、名称或路径", status=422
+            )
+        candidate = PurePosixPath(path)
+        if candidate.is_absolute() or any(part in ("", ".", "..") for part in candidate.parts):
+            raise AgentAssetError(
+                "generated_assets_invalid", f"生成资产路径无效：{path}", status=422
+            )
+        key = (asset_type, path)
+        if key in seen:
+            raise AgentAssetError(
+                "generated_assets_invalid", f"生成资产重复：{path}", status=422
+            )
+        seen.add(key)
+        files = item.get("files")
+        if not isinstance(files, list) or not files:
+            raise AgentAssetError(
+                "generated_assets_invalid", f"生成资产缺少文件：{path}", status=422
+            )
+        file_payloads: dict[str, bytes] = {}
+        for file_item in files:
+            if not isinstance(file_item, dict):
+                raise AgentAssetError(
+                    "generated_assets_invalid", f"生成资产文件格式无效：{path}", status=422
+                )
+            file_path = str(file_item.get("path") or "").strip().strip("/")
+            file_candidate = PurePosixPath(file_path)
+            if (
+                not file_path
+                or file_candidate.is_absolute()
+                or any(part in ("", ".", "..") for part in file_candidate.parts)
+            ):
+                raise AgentAssetError(
+                    "generated_assets_invalid", f"生成资产文件路径无效：{file_path}", status=422
+                )
+            content = file_item.get("content")
+            if not isinstance(content, str):
+                raise AgentAssetError(
+                    "generated_assets_invalid", f"生成资产文件缺少内容：{file_path}", status=422
+                )
+            data = content.encode("utf-8")
+            if file_path in blobs and blobs[file_path] != data:
+                raise AgentAssetError(
+                    "generated_asset_conflict", f"生成资产文件映射冲突：{file_path}", status=422
+                )
+            blobs[file_path] = data
+            file_payloads[file_path] = data
+        if not file_payloads:
+            raise AgentAssetError(
+                "generated_assets_invalid", f"生成资产没有文件：{path}", status=422
+            )
+        main_bytes = (
+            _main_generated_file_bytes(asset_type, path, file_payloads, item.get("content"))
+        )
+        metadata: dict[str, Any] = {
+            "description": _generated_description(main_bytes),
+            "files": len(file_payloads),
+            "size": sum(len(data) for data in file_payloads.values()),
+            "runtime_path": _generated_runtime_path(asset_type, name),
+            "prerequisites": [],
+            "generated": True,
+        }
+        if asset_type == "skill":
+            front = _frontmatter(_decode_text(main_bytes))
+            metadata["display_name"] = front.get("name") or name
+        assets.append(
+            ScannedAsset(
+                path=path,
+                asset_type=asset_type,
+                name=name,
+                content_digest=_digest(main_bytes),
+                metadata=metadata,
+            )
+        )
+    return sorted(assets, key=lambda asset: (asset.asset_type, asset.path)), blobs
+
+
+def _main_generated_file_bytes(
+    asset_type: str, path: str, files: dict[str, bytes], content: str | None
+) -> bytes:
+    if isinstance(content, str):
+        return content.encode("utf-8")
+    if asset_type == "skill":
+        manifest = f"{path}/SKILL.md"
+        if manifest in files:
+            return files[manifest]
+    if path in files:
+        return files[path]
+    return next(iter(files.values()))
+
+
+def _generated_runtime_path(asset_type: str, name: str) -> str:
+    if asset_type == "skill":
+        return f"skills/{name}"
+    if asset_type == "command":
+        return f"commands/{name}.md"
+    return f"agents/{name}.md"
+
+
+def _generated_description(content: bytes) -> str:
+    front = _frontmatter(_decode_text(content))
+    return front.get("description") or _command_description(content)
 
 
 def _credential_token(session: Session, credential_id: str) -> str:
@@ -468,6 +1134,7 @@ def create_source(
     credential_id: str | None = None,
     access_token: str | None = None,
     runtime_prerequisites: dict[str, Any] | None = None,
+    load_test_token: str | None = None,
     settings: Settings | None = None,
 ) -> AgentAssetSource:
     tenant_id = str(DEFAULT_TENANT_ID)
@@ -486,6 +1153,24 @@ def create_source(
             "selection_mode_invalid", "选择方式必须是 directory 或 explicit", field="selection_mode"
         )
     scan_paths = _normalize_paths(scan_paths)
+    prerequisites = normalize_runtime_prerequisites(runtime_prerequisites)
+    # The preview token only bridges a load test that ran against this exact
+    # source configuration; any changed field makes it unusable instead of
+    # persisting a stale result for different commands.
+    cached_load_test = None
+    if load_test_token and prerequisites:
+        cached_load_test = _cached_load_test_result(
+            load_test_token,
+            _load_test_fingerprint(
+                repo_url.strip(), default_ref, scan_paths, prerequisites
+            ),
+        )
+    if cached_load_test is not None:
+        load_test_json = cached_load_test
+        status = "ready" if cached_load_test.get("status") == "passed" else "requires_setup"
+    else:
+        load_test_json = {}
+        status = "requires_setup" if prerequisites else "unverified"
     existing = session.scalar(
         select(AgentAssetSource).where(
             AgentAssetSource.tenant_id == tenant_id,
@@ -529,10 +1214,11 @@ def create_source(
         default_ref=default_ref,
         scan_paths_json=scan_paths,
         selection_mode=selection_mode,
-        runtime_prerequisites_json=runtime_prerequisites or {},
+        runtime_prerequisites_json=prerequisites,
         credential_id=credential_id,
-        status="unverified",
+        status=status,
         last_scan_json={},
+        load_test_json=load_test_json,
     )
     session.add(source)
     session.commit()
@@ -610,7 +1296,7 @@ def scan_source(
         if owns_client:
             client.close()
     source.last_scanned_commit = result.resolved_commit
-    source.status = _scan_status(result.assets)
+    source.status = _source_status(source, result.assets)
     source.last_scan_json = _scan_payload(result, ref)
     session.commit()
     return result
@@ -621,13 +1307,27 @@ def scan_source(
 # ---------------------------------------------------------------------------
 
 
-def _selection_digest(commit: str, runtime_key: str, assets: list[ScannedAsset]) -> str:
+def _selection_digest(
+    commit: str,
+    runtime_key: str,
+    assets: list[ScannedAsset],
+    generated_files: dict[str, bytes] | None = None,
+) -> str:
+    document: dict[str, Any] = {
+        "commit": commit,
+        "runtime": runtime_key,
+        "assets": sorted([asset.asset_type, asset.path] for asset in assets),
+    }
+    # Keep non-CLI snapshot digests identical to previous releases. A new load
+    # test can keep the same paths but change generated contents; hashing the
+    # files makes that produce a new frozen snapshot.
+    if generated_files:
+        document["generated"] = {
+            path: _digest(content)
+            for path, content in sorted(generated_files.items())
+        }
     payload = json.dumps(
-        {
-            "commit": commit,
-            "runtime": runtime_key,
-            "assets": sorted([asset.asset_type, asset.path] for asset in assets),
-        },
+        document,
         ensure_ascii=False,
         separators=(",", ":"),
         sort_keys=True,
@@ -645,16 +1345,101 @@ def _validate_runtime(runtime_key: str) -> None:
         )
 
 
+def _source_path_size(
+    path: str, blobs: dict[str, Any], generated_files: dict[str, bytes]
+) -> int:
+    if path in generated_files:
+        return len(generated_files[path])
+    entry = blobs.get(path)
+    return int(entry.size or 0) if entry is not None else 0
+
+
+def _asset_destinations(
+    asset: ScannedAsset, blobs: dict[str, Any], generated_files: dict[str, bytes]
+) -> list[str]:
+    if asset.asset_type == "skill":
+        source_paths = generated_files if asset.metadata.get("generated") else blobs
+        owned = sorted(
+            path
+            for path in source_paths
+            if path == asset.path or path.startswith(asset.path + "/")
+        )
+        return [f"skills/{asset.name}/{path[len(asset.path) + 1:]}" for path in owned]
+    return [str(asset.metadata.get("runtime_path"))]
+
+
+def _check_generated_conflicts(
+    scan_assets: list[ScannedAsset] | tuple[ScannedAsset, ...],
+    generated_assets: list[ScannedAsset],
+    blobs: dict[str, Any],
+    generated_files: dict[str, bytes],
+) -> None:
+    """Reject ambiguous bundle mappings instead of silently overriding files.
+
+    Generated assets are merged into every snapshot. If the Git scan already
+    defines the same runtime destination (even an unselected one), the load
+    test output is ambiguous: generated assets win only when Git has none, and
+    otherwise the operator gets a clear conflict instead of a silent override.
+    """
+
+    git_destinations: set[str] = set()
+    for asset in scan_assets:
+        if asset.metadata.get("generated"):
+            continue
+        git_destinations.update(
+            _asset_destinations(asset, blobs, generated_files)
+        )
+
+    generated_destinations: set[str] = set()
+    for asset in generated_assets:
+        for destination in _asset_destinations(asset, blobs, generated_files):
+            if destination in git_destinations:
+                raise AgentAssetError(
+                    "generated_asset_conflict",
+                    f"生成资产与 Git 扫描资产路径冲突：{destination}",
+                    details={"path": destination},
+                )
+            if destination in generated_destinations:
+                raise AgentAssetError(
+                    "generated_asset_conflict",
+                    f"生成资产文件映射冲突：{destination}",
+                    details={"path": destination},
+                )
+            generated_destinations.add(destination)
+
+
+def _merge_generated_assets(
+    selected: list[ScannedAsset], generated_assets: list[ScannedAsset]
+) -> list[ScannedAsset]:
+    """Generated assets are part of a CLI source's load test, not optional."""
+
+    merged = list(selected)
+    seen = {(asset.asset_type, asset.path) for asset in merged}
+    for asset in generated_assets:
+        key = (asset.asset_type, asset.path)
+        if key not in seen:
+            seen.add(key)
+            merged.append(asset)
+    return merged
+
+
 def _select_assets(
     *,
     scan: ScanResult,
     blobs: dict[str, Any],
     paths: list[str],
     types: dict[str, str] | None,
+    generated_assets: list[ScannedAsset] | None = None,
+    generated_files: dict[str, bytes] | None = None,
 ) -> list[ScannedAsset]:
     types = types or {}
+    generated_assets = generated_assets or []
+    generated_files = generated_files or {}
+    available = [*scan.assets, *generated_assets]
     selected: list[ScannedAsset] = []
-    by_path = {asset.path: asset for asset in scan.assets}
+    by_path: dict[str, ScannedAsset] = {}
+    for asset in available:
+        by_path.setdefault(asset.path, asset)
     seen: set[tuple[str, str]] = set()
 
     def add(asset: ScannedAsset) -> None:
@@ -671,7 +1456,7 @@ def _select_assets(
             add(by_path[path])
             continue
         prefix = path + "/"
-        prefixed = [asset for asset in scan.assets if asset.path.startswith(prefix)]
+        prefixed = [asset for asset in available if asset.path.startswith(prefix)]
         if prefixed:
             for asset in prefixed:
                 add(asset)
@@ -687,11 +1472,15 @@ def _select_assets(
             raise AgentAssetError("asset_type_invalid", f"未知资产类型：{explicit}", details={"path": path})
         if explicit == "skill":
             manifest = f"{path}/SKILL.md"
-            if manifest not in blobs:
+            if manifest not in blobs and manifest not in generated_files:
                 raise AgentAssetError(
                     "skill_manifest_missing", f"Skill 目录缺少 SKILL.md：{path}", details={"path": path}
                 )
-            owned = [candidate for candidate in blobs if candidate == path or candidate.startswith(prefix)]
+            owned = sorted(
+                candidate
+                for candidate in [*blobs, *generated_files]
+                if candidate == path or candidate.startswith(prefix)
+            )
             if not owned:
                 raise AgentAssetError("asset_path_not_found", f"资产路径不存在：{path}", details={"path": path})
             add(
@@ -702,7 +1491,10 @@ def _select_assets(
                     content_digest="",
                     metadata={
                         "files": len(owned),
-                        "size": sum(blobs[candidate].size or 0 for candidate in owned),
+                        "size": sum(
+                            _source_path_size(candidate, blobs, generated_files)
+                            for candidate in owned
+                        ),
                         "runtime_path": f"skills/{_skill_name_from_path(path)}",
                         "prerequisites": [],
                         "explicit": True,
@@ -710,7 +1502,7 @@ def _select_assets(
                 )
             )
             continue
-        if path not in blobs:
+        if path not in blobs and path not in generated_files:
             raise AgentAssetError("asset_path_not_found", f"资产路径不存在：{path}", details={"path": path})
         if not path.endswith(".md"):
             raise AgentAssetError(
@@ -731,7 +1523,7 @@ def _select_assets(
                 content_digest="",
                 metadata={
                     "runtime_path": runtime_path,
-                    "size": blobs[path].size or 0,
+                    "size": _source_path_size(path, blobs, generated_files),
                     "prerequisites": ["openspec CLI"] if "openspec" in path.lower() else [],
                     "explicit": True,
                 },
@@ -753,14 +1545,17 @@ def _pack_assets(
     settings: Settings,
     client: GitHubClient,
     modes: dict[str, str],
+    generated_files: dict[str, bytes] | None = None,
 ) -> tuple[dict[str, bytes], list[dict[str, Any]], str]:
     owner, repo = parse_repo_url(source.repo_url)
+    generated_files = generated_files or {}
     planned: set[str] = set()
     for asset in selected:
         if asset.asset_type == "skill":
+            source_paths = generated_files if asset.metadata.get("generated") else blobs
             planned.update(
                 path
-                for path in blobs
+                for path in source_paths
                 if path == asset.path or path.startswith(asset.path + "/")
             )
         else:
@@ -773,7 +1568,9 @@ def _pack_assets(
             f"资产文件数 {len(planned)} 超过上限 {MAX_ASSET_FILES}",
             details={"count": len(planned)},
         )
-    planned_bytes = sum(blobs[path].size or 0 for path in planned)
+    planned_bytes = sum(
+        _source_path_size(path, blobs, generated_files) for path in planned
+    )
     if planned_bytes > MAX_ASSET_BYTES:
         raise AgentAssetError(
             "asset_size_exceeded",
@@ -785,6 +1582,8 @@ def _pack_assets(
     total_bytes = 0
 
     def read(path: str) -> bytes:
+        if path in generated_files:
+            return generated_files[path]
         entry = blobs[path]
         cached = scan.blob_cache.get(entry.sha)
         if cached is None:
@@ -794,10 +1593,13 @@ def _pack_assets(
 
     for asset in sorted(selected, key=lambda item: (item.asset_type, item.path)):
         asset_files: list[dict[str, Any]] = []
+        is_generated = bool(asset.metadata.get("generated"))
+        mode_for = (lambda path: "100644") if is_generated else (lambda path: modes.get(path, "100644"))
         if asset.asset_type == "skill":
+            source_paths = generated_files if is_generated else blobs
             owned = sorted(
                 path
-                for path in blobs
+                for path in source_paths
                 if path == asset.path or path.startswith(asset.path + "/")
             )
             for path in owned:
@@ -817,7 +1619,7 @@ def _pack_assets(
                         "path": destination,
                         "sha256": _digest(content),
                         "size": len(content),
-                        "mode": modes.get(path, "100644"),
+                        "mode": mode_for(path),
                     }
                 )
         else:
@@ -834,7 +1636,7 @@ def _pack_assets(
                     "path": destination,
                     "sha256": _digest(content),
                     "size": len(content),
-                    "mode": modes.get(asset.path, "100644"),
+                    "mode": mode_for(asset.path),
                 }
             )
         if not asset_files:
@@ -940,8 +1742,18 @@ def resolve_assets(
         )
         commit = scan.resolved_commit
         blobs = {entry.path: entry for entry in scan.tree_entries if entry.entry_type == "blob"}
-        selected = _select_assets(scan=scan, blobs=blobs, paths=paths, types=types)
-        digest = _selection_digest(commit, runtime_key, selected)
+        generated_assets, generated_files = _generated_source_assets(source)
+        _check_generated_conflicts(scan.assets, generated_assets, blobs, generated_files)
+        selected = _select_assets(
+            scan=scan,
+            blobs=blobs,
+            paths=paths,
+            types=types,
+            generated_assets=generated_assets,
+            generated_files=generated_files,
+        )
+        selected = _merge_generated_assets(selected, generated_assets)
+        digest = _selection_digest(commit, runtime_key, selected, generated_files)
         existing = session.scalar(
             select(AgentAssetSnapshot).where(
                 AgentAssetSnapshot.tenant_id == str(DEFAULT_TENANT_ID),
@@ -953,7 +1765,7 @@ def resolve_assets(
             # A repeated resolve is still a successful scan: keep the source
             # view consistent even when no new bundle is written.
             source.last_scanned_commit = commit
-            source.status = _scan_status(scan.assets)
+            source.status = _source_status(source, scan.assets)
             source.last_scan_json = _scan_payload(scan, ref)
             session.commit()
             return existing, snapshot_assets(session, existing.id), False
@@ -970,6 +1782,7 @@ def resolve_assets(
             settings=settings,
             client=client,
             modes=modes,
+            generated_files=generated_files,
         )
         bundle_doc = {
             "schema_version": ASSET_BUNDLE_SCHEMA,
@@ -1021,6 +1834,8 @@ def resolve_assets(
             },
             "tree_digest": tree_digest,
             "resolved_commit": commit,
+            "runtime_prerequisites": dict(source.runtime_prerequisites_json or {}),
+            "load_test": load_test_view(source.load_test_json or {}),
         }
         snapshot = AgentAssetSnapshot(
             id=snapshot_id,
@@ -1031,7 +1846,12 @@ def resolve_assets(
             selection_mode="explicit",
             scan_paths_json=list(source.scan_paths_json or []),
             selection_json=[
-                {"asset_type": asset.asset_type, "path": asset.path, "name": asset.name}
+                {
+                    "asset_type": asset.asset_type,
+                    "path": asset.path,
+                    "name": asset.name,
+                    **({"generated": True} if asset.metadata.get("generated") else {}),
+                }
                 for asset in sorted(selected, key=lambda item: (item.asset_type, item.path))
             ],
             selection_digest=digest,
@@ -1067,7 +1887,7 @@ def resolve_assets(
                 )
             )
         source.last_scanned_commit = commit
-        source.status = _scan_status(scan.assets)
+        source.status = _source_status(source, scan.assets)
         source.last_scan_json = _scan_payload(scan, ref)
         try:
             session.commit()
@@ -1147,6 +1967,11 @@ def asset_snapshot_json(snapshot: AgentAssetSnapshot, assets: list[AgentAsset]) 
         "file_count": snapshot.file_count,
         "asset_count": snapshot.asset_count,
         "runtime_key": snapshot.runtime_key,
+        "runtime_prerequisites": (snapshot.manifest_json or {}).get(
+            "runtime_prerequisites"
+        )
+        or {},
+        "load_test": (snapshot.manifest_json or {}).get("load_test") or {},
         "assets": [
             {
                 "asset_type": asset.asset_type,
@@ -1178,6 +2003,7 @@ def source_dict(
         "selection_mode": source.selection_mode,
         "status": source.status,
         "runtime_prerequisites": source.runtime_prerequisites_json or {},
+        "load_test": load_test_view(source.load_test_json or {}),
         "last_scanned_commit": source.last_scanned_commit,
         "last_scan": scan,
         "counts": scan.get("counts", {"skill": 0, "command": 0, "subagent": 0}),

@@ -17,6 +17,8 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   fetchAssetSources,
   fetchAssetTree,
+  hasRuntimePrerequisites,
+  isLoadTestPassed,
   resolveAgentAssets,
   type AssetSource,
   type AssetType,
@@ -337,6 +339,15 @@ export function EvalWizardPage() {
   const selectedModel = models.data?.find((item) => item.id === draft.modelConfigId) ?? null;
   const selectedPool = pools.data?.find((item) => item.id === draft.poolId) ?? null;
   const selectedSource = sources.data?.find((source) => source.id === draft.assetSourceId) ?? null;
+  const runtimeConfigured = hasRuntimePrerequisites(selectedSource?.runtime_prerequisites);
+  const runtimeLoadTestPassed = isLoadTestPassed(selectedSource?.load_test);
+  // Only sources that declare commands are hard-blocked until the isolated
+  // load test passes; sources without explicit prerequisites keep the prior
+  // warning-only behavior.
+  const runtimeSetupBlocked = Boolean(runtimeConfigured && !runtimeLoadTestPassed);
+  const runtimeSetupWarning = Boolean(
+    selectedSource && (runtimeSetupBlocked || selectedSource.status === "requires_setup"),
+  );
   const totalCases = versionDetail.data?.case_count ?? 0;
   const selectedCaseCount =
     draft.selectionMode === "all"
@@ -661,6 +672,10 @@ export function EvalWizardPage() {
       message.warning("已选择资产但尚未读取冻结：点击「读取资产」，或清空选择后跳过资产");
       return;
     }
+    if (runtimeSetupBlocked) {
+      message.warning("所选资产源的运行时前置未通过加载测试：请先在 Agent 资产页完成加载测试");
+      return;
+    }
     setChecking(true);
     setBlockers([]);
     setCreateNotice(null);
@@ -711,6 +726,10 @@ export function EvalWizardPage() {
       }
       if (draft.assetSourceId && !draft.assetSnapshotId && draft.selectedPaths.length > 0) {
         message.warning("已选择资产但尚未读取冻结：点击「读取资产」，或清空选择后跳过资产");
+        return;
+      }
+      if (runtimeSetupBlocked) {
+        message.warning("所选资产源的运行时前置未通过加载测试：请先在 Agent 资产页完成加载测试");
         return;
       }
       setStep(2);
@@ -1106,6 +1125,15 @@ export function EvalWizardPage() {
             <span className="tag tag-primary">{counts.skill} Skill</span>
             <span className="tag tag-violet">{counts.command} Command</span>
             <span className="tag tag-success">{counts.subagent} Subagent</span>
+            {runtimeConfigured ? (
+              <span className={runtimeLoadTestPassed ? "tag tag-success" : "tag tag-warning"}>
+                {runtimeLoadTestPassed
+                  ? "加载测试通过"
+                  : selectedSource?.load_test.status === "failed"
+                    ? "加载测试失败"
+                    : "加载测试未通过"}
+              </span>
+            ) : null}
           </div>
           <div className="field-row asset-ref-row">
             <div className="field">
@@ -1180,6 +1208,30 @@ export function EvalWizardPage() {
             </div>
           </div>
         </div>
+        {runtimeSetupWarning ? (
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginBottom: 12 }}
+            message={
+              runtimeSetupBlocked
+                ? "运行时前置尚未通过加载测试"
+                : "该资产源需要运行时准备"
+            }
+            description={
+              runtimeConfigured
+                ? `该资产源声明了安装/初始化命令，加载测试${
+                    selectedSource?.load_test.status === "failed" ? "失败" : "尚未通过"
+                  }；通过后才能发起评测。`
+                : "扫描结果中的 Command 依赖运行时前置（如 openspec CLI）；平台不会静默安装，请确认目标沙箱已准备。"
+            }
+            action={
+              <Button size="small" onClick={() => navigate("/assets")}>
+                {runtimeSetupBlocked ? "去完成加载测试" : "去资产页查看"}
+              </Button>
+            }
+          />
+        ) : null}
         <div className="row-between wizard-asset-toolbar">
           <div>
             <strong>选择资产</strong>

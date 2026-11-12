@@ -479,6 +479,50 @@ def test_asset_commit_drift_returns_configuration_changed(
     assert "asset_snapshot.resolved_commit" in error["details"]["changed"]
 
 
+def test_prepare_blocks_asset_source_awaiting_runtime_setup(
+    client: TestClient, session: Session
+) -> None:
+    """M8-10: configured prerequisites need a passed load test before launch."""
+
+    ids = seed_launch(session)
+    snapshot = seed_asset_snapshot(session)
+    source = session.get(AgentAssetSource, snapshot.source_id)
+    assert source is not None
+    source.runtime_prerequisites_json = {
+        "install_command": "npm install -g @fission-ai/openspec",
+        "init_command": "openspec init",
+    }
+    source.status = "requires_setup"
+    source.load_test_json = {}
+    session.commit()
+
+    response = client.post(
+        "/api/v1/evaluations/prepare",
+        json=prepare_body(ids, asset_snapshot_id=snapshot.id),
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["ready"] is False
+    assert body["preparation_id"] is None
+    blocker = next(
+        item for item in body["blockers"] if item["code"] == "asset_runtime_setup_required"
+    )
+    assert "加载测试" in blocker["message"]
+    assert blocker["field"] == "asset_snapshot_id"
+    assert blocker["details"]["source_id"] == source.id
+
+    # A passed load test unblocks the same snapshot.
+    source.load_test_json = {"status": "passed", "generated": []}
+    source.status = "ready"
+    session.commit()
+    unblocked = client.post(
+        "/api/v1/evaluations/prepare",
+        json=prepare_body(ids, asset_snapshot_id=snapshot.id),
+    ).json()
+    assert unblocked["ready"] is True, unblocked
+    assert unblocked["asset_snapshot"]["id"] == snapshot.id
+
+
 def test_revoked_credential_returns_configuration_changed(
     client: TestClient, session: Session
 ) -> None:

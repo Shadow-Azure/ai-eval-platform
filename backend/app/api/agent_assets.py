@@ -37,6 +37,16 @@ class CreateSourceRequest(BaseModel):
     credential_id: str | None = Field(default=None, max_length=36)
     access_token: str | None = Field(default=None, max_length=1000)
     runtime_prerequisites: dict[str, Any] = Field(default_factory=dict)
+    # M8-10: optional token from POST /agent-asset-sources/load-test-preview.
+    # Only the server-side cached result is persisted, never client fields.
+    load_test_token: str | None = Field(default=None, max_length=128)
+
+
+class LoadTestPreviewRequest(BaseModel):
+    repo_url: str = Field(min_length=1, max_length=500)
+    requested_ref: str = Field(default="main", min_length=1, max_length=200)
+    scan_paths: list[str] = Field(default_factory=list, max_length=20)
+    runtime_prerequisites: dict[str, Any] = Field(default_factory=dict)
 
 
 class ScanRequest(BaseModel):
@@ -140,6 +150,7 @@ def create_agent_asset_source(
             credential_id=payload.credential_id,
             access_token=payload.access_token,
             runtime_prerequisites=payload.runtime_prerequisites,
+            load_test_token=payload.load_test_token,
             settings=settings,
         )
     except (asset_service.AgentAssetError, GitClientError) as error:
@@ -167,6 +178,25 @@ def get_agent_asset_source(
     )
     body["latest_snapshot_id"] = snapshot.id if snapshot is not None else None
     return body
+
+
+@router.post("/api/v1/agent-asset-sources/load-test-preview")
+def preview_agent_asset_load_test(
+    payload: LoadTestPreviewRequest,
+    _context: identity.AuthContext = Depends(require_admin),
+) -> dict:
+    """Run the CLI load test for the add-source wizard without persisting it."""
+
+    try:
+        result, token = asset_service.preview_load_test(
+            repo_url=payload.repo_url,
+            requested_ref=payload.requested_ref,
+            scan_paths=payload.scan_paths,
+            runtime_prerequisites=payload.runtime_prerequisites,
+        )
+    except (asset_service.AgentAssetError, GitClientError) as error:
+        raise _http_error(error) from error
+    return {"load_test_token": token, **asset_service.load_test_view(result)}
 
 
 @router.post("/api/v1/agent-asset-sources/scan-preview")
@@ -209,6 +239,23 @@ def scan_agent_asset_source(
     except (asset_service.AgentAssetError, GitClientError) as error:
         raise _http_error(error) from error
     return _scan_body(source_id, result)
+
+
+@router.post("/api/v1/agent-asset-sources/{source_id}/load-test")
+def load_test_agent_asset_source(
+    source_id: str,
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+    _context: identity.AuthContext = Depends(require_admin),
+) -> dict:
+    try:
+        source, result = asset_service.run_load_test(session, source_id)
+    except (asset_service.AgentAssetError, GitClientError) as error:
+        raise _http_error(error) from error
+    return {
+        "source": _source_body(session, source, settings),
+        "load_test": asset_service.load_test_view(result),
+    }
 
 
 @router.get("/api/v1/agent-asset-sources/{source_id}/tree")

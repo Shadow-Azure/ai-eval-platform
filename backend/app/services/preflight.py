@@ -20,6 +20,7 @@ from ..datasets import AdapterNotFound, get_adapter
 from ..defaults import DEFAULT_TENANT_ID
 from ..models import (
     AgentAssetSnapshot,
+    AgentAssetSource,
     Credential,
     Dataset,
     DatasetVersion,
@@ -369,6 +370,13 @@ def check_preparation(
     asset_snapshot = None
     if asset_snapshot_id:
         snapshot = session.get(AgentAssetSnapshot, asset_snapshot_id)
+        source = (
+            session.get(AgentAssetSource, snapshot.source_id)
+            if snapshot is not None and snapshot.tenant_id == tenant_id
+            else None
+        )
+        if source is not None and source.tenant_id != tenant_id:
+            source = None
         if snapshot is None or snapshot.tenant_id != tenant_id:
             blockers.append(
                 PreflightIssue(
@@ -400,6 +408,26 @@ def check_preparation(
                     "asset_snapshot_id",
                 )
             )
+        elif (
+            source is not None
+            and (source.runtime_prerequisites_json or {})
+            and (
+                source.status == "requires_setup"
+                or (source.load_test_json or {}).get("status") != "passed"
+            )
+        ):
+            # M8-10: never launch with a partial/empty CLI-generated source.
+            # The operator gets an actionable blocker instead of a silent
+            # fallback to whatever Git happened to contain.
+            blockers.append(
+                PreflightIssue(
+                    "asset_runtime_setup_required",
+                    f"资产源「{source.name}」配置了运行时前置，但加载测试未通过；"
+                    "请先在资产源页完成加载测试",
+                    "asset_snapshot_id",
+                    {"source_id": source.id, "source_status": source.status},
+                )
+            )
         else:
             asset_snapshot = {
                 "id": snapshot.id,
@@ -416,6 +444,11 @@ def check_preparation(
                 "file_count": snapshot.file_count,
                 "asset_count": snapshot.asset_count,
                 "runtime_key": snapshot.runtime_key,
+                "runtime_prerequisites": (snapshot.manifest_json or {}).get(
+                    "runtime_prerequisites"
+                )
+                or {},
+                "load_test": (snapshot.manifest_json or {}).get("load_test") or {},
                 "assets": [
                     {
                         "asset_type": asset.get("asset_type"),

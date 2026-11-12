@@ -22,9 +22,16 @@ import {
   fetchAssetSource,
   fetchAssetSnapshot,
   fetchAssetSources,
+  hasRuntimePrerequisites,
+  isLoadTestPassed,
+  loadTestAssetSource,
+  previewAssetLoadTest,
   previewAssetScan,
   resolveAgentAssets,
   scanAssetSource,
+  type AssetLoadTest,
+  type AssetLoadTestPreview,
+  type AssetSource,
   type AssetType,
   type ScannedAsset,
 } from "../api/agentAssets";
@@ -49,6 +56,40 @@ function statusTag(status: string) {
   if (status === "requires_setup") return <Tag color="warning">需运行时准备</Tag>;
   if (status === "error") return <Tag color="error">扫描失败</Tag>;
   return <Tag>未扫描</Tag>;
+}
+
+function countAssets(assets: ScannedAsset[]): Record<AssetType, number> {
+  const counts: Record<AssetType, number> = { skill: 0, command: 0, subagent: 0 };
+  for (const asset of assets) counts[asset.asset_type] += 1;
+  return counts;
+}
+
+function loadTestStatusTag(loadTest: AssetLoadTest | null | undefined) {
+  if (loadTest?.status === "passed") return <Tag color="success">加载测试通过</Tag>;
+  if (loadTest?.status === "testing") return <Tag color="processing">测试中…</Tag>;
+  if (loadTest?.status === "failed") return <Tag color="error">加载测试失败</Tag>;
+  return <Tag color="warning">未测试</Tag>;
+}
+
+/** "4 个 Skill / 4 个 Command / 5 个 Agent" (Agent omitted when zero). */
+function generatedCountsLabel(loadTest: AssetLoadTest): string {
+  const { skill, command, subagent } = loadTest.generated;
+  const parts = [`${skill} 个 Skill`, `${command} 个 Command`];
+  if (subagent) parts.push(`${subagent} 个 Agent`);
+  return parts.join(" / ");
+}
+
+function generatedSummary(loadTest: AssetLoadTest): string {
+  const duration =
+    loadTest.duration_seconds !== null && Number.isFinite(loadTest.duration_seconds)
+      ? ` · ${loadTest.duration_seconds}s`
+      : "";
+  return `已生成 ${generatedCountsLabel(loadTest)}${duration}；结果随快照冻结`;
+}
+
+function tailLog(value: string | null): string {
+  if (!value) return "";
+  return value.length > 1600 ? `…${value.slice(-1600)}` : value;
 }
 
 function shortDigest(value: string | null | undefined): string {
@@ -107,6 +148,85 @@ function RuntimeRequirementNote({
       </div>
     </div>
   );
+}
+
+function RuntimePrerequisiteBlock({
+  source,
+  onTest,
+  loading,
+  detail = false,
+}: {
+  source: AssetSource;
+  onTest: () => void;
+  loading: boolean;
+  detail?: boolean;
+}) {
+  const loadTest = source.load_test;
+  const status = loadTest?.status ?? "untested";
+  return (
+    <div className={`asset-runtime${detail ? " asset-runtime-detail" : ""}`}>
+      <div className="asset-runtime-head">
+        <strong>运行时前置</strong>
+        {loadTestStatusTag(loadTest)}
+      </div>
+      {source.runtime_prerequisites.install_command ? (
+        <div className="mono small muted">{source.runtime_prerequisites.install_command}</div>
+      ) : null}
+      {source.runtime_prerequisites.init_command ? (
+        <div className="mono small muted">{source.runtime_prerequisites.init_command}</div>
+      ) : null}
+      {status === "passed" ? (
+        <div className="asset-runtime-result small muted">{generatedSummary(loadTest)}</div>
+      ) : status === "testing" ? (
+        <div className="asset-runtime-result small muted">
+          在隔离环境安装 CLI 并执行初始化，再扫描生成资产…
+        </div>
+      ) : status === "failed" ? (
+        <div className="asset-runtime-error">
+          <strong>加载测试失败</strong>
+          {loadTest.log_tail ? (
+            <pre className="asset-runtime-log">{tailLog(loadTest.log_tail)}</pre>
+          ) : (
+            <span className="small muted">未返回日志；请检查安装/初始化命令后重试。</span>
+          )}
+        </div>
+      ) : (
+        <div className="asset-runtime-result small muted">
+          未测试：加载测试通过后才能用于评测。
+        </div>
+      )}
+      <div>
+        <Button
+          size="small"
+          icon={<Icon name="terminal" size={13} />}
+          loading={loading}
+          onClick={onTest}
+        >
+          {status === "passed" ? "重新测试" : "加载测试"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function useLoadTestMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (sourceId: string) => loadTestAssetSource(sourceId),
+    onSuccess: ({ source, loadTest }, sourceId) => {
+      if (source) queryClient.setQueryData(["asset-source", sourceId], source);
+      queryClient.invalidateQueries({ queryKey: ["asset-sources"] });
+      queryClient.invalidateQueries({ queryKey: ["asset-source", sourceId] });
+      if (loadTest.status === "passed") {
+        message.success(`加载测试通过：生成 ${generatedCountsLabel(loadTest)}`);
+      } else if (loadTest.status === "failed") {
+        message.error("加载测试失败：查看运行时前置日志");
+      } else {
+        message.info("加载测试完成，但未返回结果状态");
+      }
+    },
+    onError: (error) => message.error(error instanceof Error ? error.message : "加载测试失败"),
+  });
 }
 
 function metric(label: string, value: number | string, hint: string, tone?: string) {
@@ -176,6 +296,15 @@ function AddAssetSourceModal({ open, onClose, onCreated }: AddModalProps) {
   const [selectionMode, setSelectionMode] = useState<"directory" | "explicit">("directory");
   const [description, setDescription] = useState("");
   const [accessToken, setAccessToken] = useState("");
+  const [runtimeEnabled, setRuntimeEnabled] = useState(false);
+  const [installCommand, setInstallCommand] = useState("");
+  const [initCommand, setInitCommand] = useState("");
+  const [loadTesting, setLoadTesting] = useState(false);
+  const [loadTestError, setLoadTestError] = useState<string | null>(null);
+  const [loadTest, setLoadTest] = useState<{
+    result: AssetLoadTestPreview;
+    signature: string;
+  } | null>(null);
   const [scan, setScan] = useState<Awaited<ReturnType<typeof previewAssetScan>> | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
   const [manualTypes, setManualTypes] = useState<Record<string, AssetType>>({});
@@ -191,7 +320,28 @@ function AddAssetSourceModal({ open, onClose, onCreated }: AddModalProps) {
     setFilter("all");
     setScanning(false);
     setSaving(false);
+    setRuntimeEnabled(false);
+    setInstallCommand("");
+    setInitCommand("");
+    setLoadTesting(false);
+    setLoadTestError(null);
+    setLoadTest(null);
   }, [open]);
+
+  const runtimeSignature = useMemo(
+    () =>
+      JSON.stringify({
+        repo: repoUrl.trim(),
+        ref: defaultRef.trim() || "main",
+        paths: scanPathsOf(scanPath),
+        install: installCommand.trim(),
+        init: initCommand.trim(),
+        token: accessToken.trim(),
+      }),
+    [accessToken, defaultRef, initCommand, installCommand, repoUrl, scanPath],
+  );
+  const activeLoadTest = loadTest && loadTest.signature === runtimeSignature ? loadTest.result : null;
+  const loadTestPassed = runtimeEnabled && isLoadTestPassed(activeLoadTest);
 
   const filtered = useMemo(() => {
     const assets = scan?.assets ?? [];
@@ -245,6 +395,69 @@ function AddAssetSourceModal({ open, onClose, onCreated }: AddModalProps) {
     }
   }
 
+  async function handleLoadTest() {
+    if (!runtimeEnabled) {
+      message.warning("请先启用运行时前置");
+      return;
+    }
+    if (!repoUrl.trim()) {
+      message.warning("请填写 GitHub 仓库");
+      return;
+    }
+    if (!installCommand.trim() || !initCommand.trim()) {
+      message.warning("请填写安装与初始化命令");
+      return;
+    }
+    const signature = runtimeSignature;
+    setLoadTesting(true);
+    setLoadTest(null);
+    setLoadTestError(null);
+    try {
+      const result = await previewAssetLoadTest({
+        repo_url: repoUrl.trim(),
+        requested_ref: defaultRef.trim() || "main",
+        scan_paths: scanPathsOf(scanPath),
+        runtime_prerequisites: {
+          install_command: installCommand.trim(),
+          init_command: initCommand.trim(),
+        },
+        access_token: accessToken.trim() || undefined,
+      });
+      setLoadTest({ result, signature });
+      if (result.status === "passed") {
+        // The CLI may generate assets that a static scan cannot see. Seed the
+        // result list and selection so "保存资产源" can freeze them.
+        const generated = result.assets;
+        if (generated.length) {
+          setScan((current) => {
+            if (!current) return current;
+            const seen = new Set(current.assets.map((asset) => `${asset.asset_type}:${asset.path}`));
+            const additions = generated.filter(
+              (asset) => asset.path && !seen.has(`${asset.asset_type}:${asset.path}`),
+            );
+            if (!additions.length) return current;
+            const assets = [...current.assets, ...additions];
+            return { ...current, assets, counts: countAssets(assets) };
+          });
+          setSelected((current) => [
+            ...new Set([...current, ...generated.map((asset) => asset.path).filter(Boolean)]),
+          ]);
+        }
+        message.success(`加载测试通过：生成 ${generatedCountsLabel(result)}`);
+      } else if (result.status === "failed") {
+        message.error("加载测试失败：请查看日志并修正命令");
+      } else {
+        message.info("加载测试完成，但未返回结果状态");
+      }
+    } catch (error) {
+      setLoadTest(null);
+      setLoadTestError(error instanceof Error ? error.message : "加载测试失败");
+      message.error(error instanceof Error ? error.message : "加载测试失败");
+    } finally {
+      setLoadTesting(false);
+    }
+  }
+
   async function handleSave() {
     if (!scan) {
       message.warning("请先扫描仓库");
@@ -252,6 +465,10 @@ function AddAssetSourceModal({ open, onClose, onCreated }: AddModalProps) {
     }
     if (!selected.length) {
       message.warning("请至少选择一个资产");
+      return;
+    }
+    if (runtimeEnabled && !loadTestPassed) {
+      message.warning("请先通过加载测试");
       return;
     }
     setSaving(true);
@@ -264,6 +481,13 @@ function AddAssetSourceModal({ open, onClose, onCreated }: AddModalProps) {
         selection_mode: selectionMode,
         description: description.trim() || undefined,
         access_token: accessToken.trim() || undefined,
+        runtime_prerequisites: runtimeEnabled
+          ? {
+              install_command: installCommand.trim(),
+              init_command: initCommand.trim(),
+            }
+          : undefined,
+        load_test_token: runtimeEnabled ? activeLoadTest?.load_test_token ?? undefined : undefined,
       });
       try {
         await resolveAgentAssets({
@@ -288,6 +512,8 @@ function AddAssetSourceModal({ open, onClose, onCreated }: AddModalProps) {
   }
 
   const counts = scan?.counts ?? { skill: 0, command: 0, subagent: 0 };
+  const runtimeBlocked = runtimeEnabled && !loadTestPassed;
+  const saveDisabled = !scan || !selected.length || runtimeBlocked || loadTesting;
 
   return (
     <Modal
@@ -302,7 +528,13 @@ function AddAssetSourceModal({ open, onClose, onCreated }: AddModalProps) {
           <Button icon={<Icon name="refresh" size={14} />} loading={scanning} onClick={handleScan}>
             {scan ? "重新扫描" : "自动扫描"}
           </Button>
-          <Button type="primary" loading={saving} disabled={!scan || !selected.length} onClick={handleSave}>
+          <Button
+            type="primary"
+            loading={saving}
+            disabled={saveDisabled}
+            title={runtimeBlocked ? "启用运行时前置后，需先通过加载测试" : undefined}
+            onClick={handleSave}
+          >
             保存资产源
           </Button>
         </Space>
@@ -351,6 +583,91 @@ function AddAssetSourceModal({ open, onClose, onCreated }: AddModalProps) {
               placeholder="skills, .claude（逗号分隔；留空扫描整库）"
             />
           </div>
+          <div className="asset-field asset-runtime-field">
+            <label className="asset-runtime-toggle">
+              <Checkbox
+                checked={runtimeEnabled}
+                onChange={(event) => setRuntimeEnabled(event.target.checked)}
+              />
+              <span>运行时前置（可选）：需要 CLI 生成命令</span>
+            </label>
+            <div className="asset-hint">适用于 OpenSpec/CodeSpec 等由 CLI 生成 Command 的仓库。</div>
+          </div>
+          {runtimeEnabled ? (
+            <>
+              <div className="asset-field">
+                <label>CLI 安装命令</label>
+                <Input
+                  className="mono"
+                  value={installCommand}
+                  onChange={(event) => setInstallCommand(event.target.value)}
+                  placeholder="npm install -g @fission-ai/openspec"
+                />
+              </div>
+              <div className="asset-field">
+                <label>初始化 / 生成命令</label>
+                <Input
+                  className="mono"
+                  value={initCommand}
+                  onChange={(event) => setInitCommand(event.target.value)}
+                  placeholder="openspec init"
+                />
+              </div>
+              <div className="asset-field">
+                <Space>
+                  <Button
+                    size="small"
+                    icon={<Icon name="terminal" size={13} />}
+                    loading={loadTesting}
+                    onClick={handleLoadTest}
+                  >
+                    {loadTesting ? "测试中…" : loadTestPassed ? "重新测试" : "加载测试"}
+                  </Button>
+                </Space>
+                {loadTesting ? (
+                  <div className="asset-scan-hint">
+                    <Icon name="refresh" size={14} />
+                    <span>在隔离环境安装 CLI 并执行 init，再扫描生成资产…</span>
+                  </div>
+                ) : activeLoadTest?.status === "passed" ? (
+                  <Alert
+                    type="success"
+                    showIcon
+                    style={{ marginTop: 8 }}
+                    message="加载测试通过"
+                    description={`${generatedSummary(activeLoadTest)}。`}
+                  />
+                ) : activeLoadTest?.status === "failed" ? (
+                  <Alert
+                    type="error"
+                    showIcon
+                    style={{ marginTop: 8 }}
+                    message="加载测试失败"
+                    description={
+                      activeLoadTest.log_tail ? (
+                        <pre className="asset-runtime-log">{tailLog(activeLoadTest.log_tail)}</pre>
+                      ) : (
+                        "未返回日志；请检查安装/初始化命令后重试。"
+                      )
+                    }
+                  />
+                ) : loadTestError ? (
+                  <Alert
+                    type="error"
+                    showIcon
+                    style={{ marginTop: 8 }}
+                    message="加载测试请求失败"
+                    description={loadTestError}
+                  />
+                ) : (
+                  <div className="asset-scan-hint">
+                    <Icon name="shield" size={14} />
+                    <span>在隔离环境执行上面两条命令并扫描生成结果，不写入仓库。</span>
+                  </div>
+                )}
+              </div>
+            </>
+          ) : null}
           <div className="asset-field">
             <label>说明</label>
             <Input value={description} onChange={(event) => setDescription(event.target.value)} />
@@ -378,6 +695,22 @@ function AddAssetSourceModal({ open, onClose, onCreated }: AddModalProps) {
               <Icon name="refresh" size={22} />
               <strong>正在读取 Git tree 并识别资产…</strong>
               <span>Skill 以 SKILL.md 目录为单位，Command 与 Subagent 按 Runtime 原生格式识别。</span>
+            </div>
+          ) : scan && scan.assets.length === 0 ? (
+            <div className="asset-scan-placeholder">
+              <Icon name="alert" size={22} />
+              <strong>未发现可识别的 Skill、Command 或 Subagent</strong>
+              <span>
+                该仓库是 CLI 生成型资产源：填写左侧运行时前置并完成「加载测试」后，生成的 Skill 与
+                Command 会出现在这里。
+              </span>
+              {runtimeEnabled ? (
+                <Button type="primary" size="small" loading={loadTesting} onClick={handleLoadTest}>
+                  加载测试
+                </Button>
+              ) : (
+                <span className="small muted">先勾选「运行时前置（可选）」并填写安装/初始化命令。</span>
+              )}
             </div>
           ) : scan ? (
             <>
@@ -553,6 +886,7 @@ function AssetSourceDetail({
     },
     onError: (error) => message.error(error instanceof Error ? error.message : "扫描失败"),
   });
+  const loadTest = useLoadTestMutation();
 
   const source = sourceQuery.data;
   const snapshot = snapshotQuery.data;
@@ -602,7 +936,16 @@ function AssetSourceDetail({
             </span>
             {statusTag(source.status)}
           </div>
-          <RuntimeRequirementNote assets={assets} detail />
+          {source && hasRuntimePrerequisites(source.runtime_prerequisites) ? (
+            <RuntimePrerequisiteBlock
+              source={source}
+              detail
+              loading={loadTest.isPending && loadTest.variables === source.id}
+              onTest={() => loadTest.mutate(source.id)}
+            />
+          ) : (
+            <RuntimeRequirementNote assets={assets} detail />
+          )}
           <Card className="asset-detail-card" title="已发现资产" extra={<span className="muted small">{assets.length} 个</span>}>
             <Table<ScannedAsset>
               rowKey={(record) => `${record.asset_type}:${record.path}`}
@@ -671,6 +1014,7 @@ export function AssetsPage() {
     },
     onError: (error) => message.error(error instanceof Error ? error.message : "扫描失败"),
   });
+  const loadTest = useLoadTestMutation();
 
   function useForEvaluation(sourceId: string) {
     setDetailId(null);
@@ -744,7 +1088,15 @@ export function AssetsPage() {
               <span className={TYPE_TAG_CLASS.command}>Command {source.counts.command}</span>
               <span className={TYPE_TAG_CLASS.subagent}>Subagent {source.counts.subagent}</span>
             </div>
-            <RuntimeRequirementNote assets={source.last_scan.assets} />
+            {hasRuntimePrerequisites(source.runtime_prerequisites) ? (
+              <RuntimePrerequisiteBlock
+                source={source}
+                loading={loadTest.isPending && loadTest.variables === source.id}
+                onTest={() => loadTest.mutate(source.id)}
+              />
+            ) : (
+              <RuntimeRequirementNote assets={source.last_scan.assets} />
+            )}
             <div className="asset-source-note">
               Command 与 Subagent 由所选 Runtime adapter 映射，不保证跨 Agent 格式一致。
             </div>
