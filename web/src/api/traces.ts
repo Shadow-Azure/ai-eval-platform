@@ -1,4 +1,4 @@
-import { ApiError } from "./types";
+import { ApiError, notifyUnauthorized } from "./types";
 import { request } from "./evaluations";
 
 function record(value: unknown): Record<string, unknown> {
@@ -58,6 +58,7 @@ export interface TraceFile {
 
 export interface TraceSession extends Record<string, unknown> {
   id: string;
+  trace_file_id: string | null;
   parent_session_id: string | null;
   status: string;
   ordinal: number;
@@ -197,6 +198,7 @@ function parseSession(value: unknown): TraceSession {
   return {
     ...item,
     id: item.id,
+    trace_file_id: stringValue(item.trace_file_id),
     parent_session_id: stringValue(item.parent_session_id),
     status: typeof item.status === "string" ? item.status : "unknown",
     ordinal: numberValue(item.ordinal) ?? 0,
@@ -394,4 +396,165 @@ export async function createTraceSpanContentUrl(
     }),
     "trace span content",
   );
+}
+
+export interface TraceArchiveDownload {
+  blob: Blob;
+  filename: string;
+}
+
+const CONTROL_CHARS = /[\u0000-\u001f\u007f]/g;
+
+function safeArchiveFilename(raw: string | null): string | null {
+  if (!raw) return null;
+  const segment = raw
+    .replace(CONTROL_CHARS, "")
+    .split(/[\\/]/)
+    .pop()
+    ?.trim()
+    .replace(/^"|"$/g, "")
+    .replace(/^\.+/, "")
+    .slice(0, 180);
+  return segment ? segment : null;
+}
+
+function decodeExtendedFilename(value: string): string | null {
+  // RFC 5987: charset'language'percent-encoded-value
+  const parts = /^([^']*)'([^']*)'(.*)$/.exec(value);
+  const encoded = parts ? parts[3] : value;
+  try {
+    return safeArchiveFilename(decodeURIComponent(encoded));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Read the archive name from `Content-Disposition`.
+ * `filename*` (RFC 5987, UTF-8) wins over the ASCII `filename` fallback.
+ */
+export function parseArchiveFilename(header: string | null): string | null {
+  if (!header) return null;
+  const extended = /filename\*\s*=\s*("([^"]*)"|[^;]+)/i.exec(header);
+  if (extended) {
+    const raw = (extended[2] ?? extended[1]).trim().replace(/^"|"$/g, "");
+    const decoded = decodeExtendedFilename(raw);
+    if (decoded) return decoded;
+  }
+  const plain = /filename\s*=\s*("([^"]*)"|[^;]+)/i.exec(header);
+  if (plain) {
+    return safeArchiveFilename((plain[2] ?? plain[1]).trim());
+  }
+  return null;
+}
+
+function fallbackArchiveFilename(caseRunId: string, attempt: number): string {
+  const safeCase = caseRunId
+    .replace(/[^A-Za-z0-9._-]+/g, "-")
+    .replace(/^[.-]+|[.-]+$/g, "")
+    .slice(0, 80);
+  return `trace-${safeCase || "case"}-attempt-${attempt}.zip`;
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * The JSON helper accepts both `{"error": ...}` and FastAPI's
+ * `{"detail": {"error": ...}}` envelope; archive errors must do the same.
+ */
+function archiveErrorObject(payload: unknown): Record<string, unknown> {
+  const root = record(payload);
+  if (isPlainRecord(root.error)) return root.error;
+  const detail = root.detail;
+  if (isPlainRecord(detail) && isPlainRecord(detail.error)) return detail.error;
+  return {};
+}
+
+function archiveErrorFields(payload: unknown): Record<string, string> {
+  const error = archiveErrorObject(payload);
+  let raw = error.fields;
+  if (!isPlainRecord(raw) && isPlainRecord(error.details) && isPlainRecord(error.details.fields)) {
+    raw = error.details.fields;
+  }
+  if (!isPlainRecord(raw)) return {};
+  const fields: Record<string, string> = {};
+  for (const [name, value] of Object.entries(raw)) {
+    if (typeof value === "string" && value.trim()) fields[name] = value;
+  }
+  return fields;
+}
+
+/** Binary responses reuse the JSON error envelope for non-2xx bodies. */
+async function archiveError(
+  response: Response,
+  fallbackMessage?: string,
+): Promise<ApiError> {
+  const payload: unknown = await response.json().catch(() => null);
+  const error = archiveErrorObject(payload);
+  const details = isPlainRecord(error.details) ? error.details : null;
+  const message =
+    typeof error.message === "string" && error.message.trim()
+      ? error.message
+      : (fallbackMessage ?? `控制面请求失败（HTTP ${response.status}）`);
+  return new ApiError(message, {
+    status: response.status,
+    code: typeof error.code === "string" ? error.code : null,
+    requestId: typeof error.request_id === "string" ? error.request_id : null,
+    fields: archiveErrorFields(payload),
+    details,
+  });
+}
+
+/**
+ * Download the current attempt's trace archive (raw native files + manifest).
+ *
+ * The ZIP is binary, so this deliberately bypasses the JSON `request` helper
+ * while reusing the same `ApiError`/`notifyUnauthorized` semantics.
+ */
+export async function downloadTraceArchive(
+  caseRunId: string,
+  attempt: number,
+  signal?: AbortSignal,
+): Promise<TraceArchiveDownload> {
+  if (!Number.isInteger(attempt) || attempt < 1) {
+    throw new ApiError("轨迹包缺少有效的 attempt 编号", { code: "invalid_request" });
+  }
+  const path = `/api/v1/eval-case-runs/${encodeURIComponent(caseRunId)}/trace/export?attempt=${attempt}`;
+  let response: Response;
+  try {
+    response = await fetch(path, {
+      method: "POST",
+      headers: { Accept: "application/zip" },
+      credentials: "same-origin",
+      signal,
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") throw error;
+    throw new ApiError("无法连接控制面 API，请确认后端服务已启动。", {
+      code: "network_error",
+      cause: error,
+    });
+  }
+  if (!response.ok) {
+    notifyUnauthorized(response.status);
+    throw await archiveError(response);
+  }
+  const contentType = response.headers.get("Content-Type") ?? "";
+  if (/application\/json/i.test(contentType)) {
+    // A 2xx JSON body means the server did not return an archive; surface the
+    // envelope instead of handing a JSON error document to the user as a ZIP.
+    throw await archiveError(response, "轨迹包响应不是有效的 ZIP 文件");
+  }
+  const blob = await response.blob();
+  if (blob.size === 0) {
+    throw new ApiError("轨迹包响应为空，请重试", { code: "invalid_response" });
+  }
+  return {
+    blob,
+    filename:
+      parseArchiveFilename(response.headers.get("Content-Disposition")) ??
+      fallbackArchiveFilename(caseRunId, attempt),
+  };
 }

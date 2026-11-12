@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -14,7 +15,7 @@ from ..db import get_session
 from ..defaults import DEFAULT_PROJECT_ID
 from ..models import Project
 from ..models.trace import TRACE_SPAN_KINDS
-from ..services import identity, trace_queries
+from ..services import identity, trace_export, trace_queries
 from ..services.object_store import object_store_from_settings
 from ..services.trace_redaction import redact_text
 from .dependencies import require_admin, require_session
@@ -61,6 +62,73 @@ def get_attempt_trace(
         )
     except trace_queries.TraceQueryError as exc:
         raise _error(exc.status_code, exc.code, exc.message) from exc
+
+
+@router.post("/api/v1/eval-case-runs/{case_run_id}/trace/export")
+def export_attempt_trace(
+    case_run_id: str,
+    attempt: Annotated[int | None, Query(ge=1)] = None,
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+    context: identity.AuthContext = Depends(require_admin),
+) -> StreamingResponse:
+    """Download the attempt's raw trace package as a streamed ZIP (M8-05)."""
+
+    tenant_id, project_id = _scope(session, context)
+    try:
+        plan = trace_export.plan_trace_export(
+            session,
+            tenant_id=tenant_id,
+            project_id=project_id,
+            case_run_id=case_run_id,
+            attempt_no=attempt,
+        )
+    except trace_queries.TraceQueryError as exc:
+        raise _error(exc.status_code, exc.code, exc.message) from exc
+    except trace_export.TraceExportError as exc:
+        raise _error(exc.status_code, exc.code, exc.message) from exc
+    store = object_store_from_settings(settings)
+    if store is None:
+        raise _error(
+            503,
+            "object_store_unavailable",
+            "对象存储未配置，无法导出轨迹包",
+        )
+    try:
+        archive = trace_export.build_trace_export(plan, store)
+    except trace_export.TraceExportError as exc:
+        raise _error(exc.status_code, exc.code, exc.message) from exc
+    try:
+        identity.record_audit(
+            session,
+            tenant_id=tenant_id,
+            actor_user_id=context.user.id,
+            action="trace.export.download",
+            target_type="eval_case_attempt",
+            target_id=plan.attempt_id,
+            metadata={
+                "result": "completed",
+                "file_count": archive.file_count,
+                "archived_file_count": archive.archived_file_count,
+                "missing_file_count": archive.missing_file_count,
+                "size": archive.size,
+                "attempt_no": archive.attempt_no,
+            },
+        )
+        session.commit()
+    except BaseException:
+        archive.close()
+        raise
+    return StreamingResponse(
+        archive.iter_chunks(),
+        media_type="application/zip",
+        headers={
+            "Cache-Control": "no-store",
+            "Content-Disposition": trace_export.content_disposition(archive.filename),
+            "Content-Length": str(archive.size),
+            "Referrer-Policy": "no-referrer",
+        },
+    )
 
 
 @router.get("/api/v1/trace-sessions/{session_id}/spans")
