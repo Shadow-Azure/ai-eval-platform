@@ -156,68 +156,62 @@ function dockerRun(args, { allowFailure = false, timeout = 1_200_000 } = {}) {
  * so accept that as a fallback. Both fields come from the admin-controlled
  * asset source, never from case data.
  *
- * The commands run verbatim inside the agent container, so the runner host
- * never installs the CLI. An empty pair means "no setup" (old behaviour).
+ * M8-11: at eval time only the install command runs. `init` creates `.claude`
+ * as the `eval` user, which conflicts with the host-side materialization of
+ * the frozen snapshot (EACCES) and would compete for the same tree. The
+ * frozen snapshot is the sole source of `.claude`; `init_command` in the
+ * payload is deliberately ignored, even when present.
+ *
+ * The install command runs verbatim inside the agent container, so the runner
+ * host never installs the CLI. An empty install means "no setup" (old
+ * behaviour).
  */
 const RUNTIME_SETUP_TIMEOUT_MS = 600_000;
 const RUNTIME_SETUP_PATH = "/opt/miniconda3/envs/testbed/bin:/opt/node/bin";
 
 function runtimeSetupFromSnapshot(assetSnapshot) {
   // `runtime_setup` is the frozen contract; fall back to the legacy field only
-  // when the new one carries no command at all.
+  // when the new one carries no command at all. `init_command` is ignored: it
+  // is not part of the eval-time contract any more.
   for (const setup of [assetSnapshot?.runtime_setup, assetSnapshot?.runtime_prerequisites]) {
     if (!setup || typeof setup !== "object") continue;
     const install = typeof setup.install_command === "string" ? setup.install_command.trim() : "";
-    const init = typeof setup.init_command === "string" ? setup.init_command.trim() : "";
-    if (!install && !init) continue;
-    return { install, init };
+    if (!install) continue;
+    return { install };
   }
   return null;
 }
 
 /**
- * Execute install then init in the running agent container with /testbed as
- * cwd. Both phases run as the workspace owner (`eval`) with the same HOME the
- * load test used, so a CLI installed under `$HOME` is found again by init and
- * by the eval-time commands. The commands are frozen, administrator-controlled
- * text (never case data) and run verbatim; only a fixed PATH prefix is added
- * so node/npm from the runtime install are visible. Any non-zero exit or
- * timeout raises `asset_runtime_setup_failed`; callers must abort the case
+ * Execute the install command in the running agent container with /testbed as
+ * cwd. It runs as the workspace owner (`eval`) with the same HOME the load
+ * test used, so a CLI installed under `$HOME` is found again by the agent.
+ * The command is frozen, administrator-controlled text (never case data) and
+ * runs verbatim; only a fixed PATH prefix is added so node/npm from the
+ * runtime install are visible. Any non-zero exit or timeout raises
+ * `asset_runtime_setup_failed` (phase `install`); callers must abort the case
  * instead of running the agent against an image without the CLI.
  */
-function runAssetRuntimeSetup(agentName, { install, init }) {
-  // A half-configured prerequisite (backend validation should prevent it) must
-  // fail before running anything rather than installing without initializing.
-  const phases = [["install", install], ["init", init]];
-  for (const [phase, command] of phases) {
-    if (!command) {
-      throw Object.assign(new Error(`资产运行时前置缺少 ${phase}_command`), {
-        code: "asset_runtime_setup_failed",
-        phase,
-      });
-    }
+function runAssetRuntimeSetup(agentName, { install }) {
+  const script = `export PATH=${RUNTIME_SETUP_PATH}:$PATH\n${install}`;
+  const args = ["exec", "-u", "eval", "-e", "HOME=/home/eval", "-w", "/testbed", agentName, "bash", "-lc", script];
+  let result;
+  try {
+    result = dockerRun(args, { allowFailure: true, timeout: RUNTIME_SETUP_TIMEOUT_MS });
+  } catch (error) {
+    throw Object.assign(new Error(`资产运行时前置 install 执行失败：${error.message}`), {
+      code: "asset_runtime_setup_failed",
+      phase: "install",
+    });
   }
-  for (const [phase, command] of phases) {
-    const script = `export PATH=${RUNTIME_SETUP_PATH}:$PATH\n${command}`;
-    const args = ["exec", "-u", "eval", "-e", "HOME=/home/eval", "-w", "/testbed", agentName, "bash", "-lc", script];
-    let result;
-    try {
-      result = dockerRun(args, { allowFailure: true, timeout: RUNTIME_SETUP_TIMEOUT_MS });
-    } catch (error) {
-      throw Object.assign(new Error(`资产运行时前置 ${phase} 执行失败：${error.message}`), {
-        code: "asset_runtime_setup_failed",
-        phase,
-      });
-    }
-    if (result.status !== 0) {
-      const stderr = (result.stderr || "").slice(-4000);
-      throw Object.assign(
-        new Error(
-          `资产运行时前置 ${phase} 退出码 ${result.status}：${(stderr || result.stdout || "").slice(-800)}`,
-        ),
-        { code: "asset_runtime_setup_failed", phase, setupStderr: stderr },
-      );
-    }
+  if (result.status !== 0) {
+    const stderr = (result.stderr || "").slice(-4000);
+    throw Object.assign(
+      new Error(
+        `资产运行时前置 install 退出码 ${result.status}：${(stderr || result.stdout || "").slice(-800)}`,
+      ),
+      { code: "asset_runtime_setup_failed", phase: "install", setupStderr: stderr },
+    );
   }
 }
 
@@ -304,9 +298,12 @@ async function realCase(dispatch, item, task, { modelToken, runnerRoot }) {
       // The dataset image is fixed; the generic agent runtime is installed
       // after start from Alibaba npm/PyPI sources. No per-agent image.
       dockerRun(["exec", agentName, "bash", "-lc", runtimeAdapter.installScript()], { timeout: 600_000 });
-      // M8-10: run the frozen asset runtime setup (CLI install + init) inside
-      // the same container before the agent starts. A failure aborts the case:
-      // the eval commands would otherwise hit an image without the CLI.
+      // M8-11: run only the frozen asset install command (CLI availability)
+      // inside the same container before the agent starts. `init_command` is
+      // never executed at eval time: it would create `.claude` as `eval` and
+      // collide with the frozen snapshot materialized below. A failure aborts
+      // the case: the eval commands would otherwise hit an image without the
+      // CLI.
       const runtimeSetup = runtimeSetupFromSnapshot(task.asset_snapshot);
       if (runtimeSetup) {
         try {
@@ -356,16 +353,16 @@ async function realCase(dispatch, item, task, { modelToken, runnerRoot }) {
             status: "runtime_setup",
             snapshot_id: task.asset_snapshot?.snapshot_id,
             install: true,
-            init: true,
+            init: false,
           }),
         );
       }
       // M5-01: apply exactly the frozen snapshot to <workspace>/.claude AFTER
-      // the runtime setup runs. `init_command` may regenerate the same tree, so
-      // materializing last keeps the frozen snapshot authoritative: the agent
-      // only ever loads what the platform froze. A missing/invalid bundle fails
-      // the case explicitly; it never silently falls back to repository/host
-      // assets.
+      // the runtime install runs. Eval time never runs `init`, so nothing in
+      // the container competes for `.claude`; materializing last keeps the
+      // frozen snapshot authoritative either way: the agent only ever loads
+      // what the platform froze. A missing/invalid bundle fails the case
+      // explicitly; it never silently falls back to repository/host assets.
       let assetsWritten = [];
       try {
         assetsWritten = await materializeSnapshot(task.asset_snapshot, workdir);
