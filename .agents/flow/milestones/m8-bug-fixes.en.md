@@ -8,7 +8,7 @@ Fix issues exposed in real use after M7, prioritizing defects that affect page r
 kind: milestone
 id: m8
 title: 问题修复
-status: planned
+status: active
 github:
   number: 9
   url: https://github.com/Shadow-Azure/ai-eval-platform/milestone/9
