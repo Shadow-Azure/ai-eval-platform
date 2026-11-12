@@ -9,6 +9,7 @@ priority: P2
 status: in-progress
 scope:
   - .agents/flow/issues/m8-02-recent-evals-pagination.*
+  - .agents/flow/issues/m8-01-runner-records-pagination.*
   - .agents/flow/milestones/m8-bug-fixes.*
   - .agents/flow/roadmap.*
   - scripts/doc-budgets.manifest.json
@@ -26,7 +27,7 @@ github:
 
 ## Background
 
-The overview page's "recent evaluations" card always shows "no evaluation tasks", while the evaluation tasks page has 35 records. Cause: the Table in `web/src/pages/OverviewPage.tsx` is hard-coded with `dataSource={[]}` and never requests the evaluation list; `/api/v1/overview` only returns counts, not recent items; the flat header fields do not match `EvaluationSummary`. The 2026-11-08 PR #19 review already recorded "the recent-evaluations table is a fixed empty array; replace it after M2-05 wires the API", but no follow-up happened. M8-02 wires real data with 5-per-page pagination as a defect fix, without expanding feature scope.
+The overview page's "recent evaluations" card always shows "no evaluation tasks", while the evaluation tasks page has 35 records. Cause: the Table in `web/src/pages/OverviewPage.tsx` is hard-coded with `dataSource={[]}` and never requests the evaluation list; `/api/v1/overview` only returns counts, not recent items; the flat header fields do not match `EvaluationSummary`. The 2026-11-08 PR #19 review already recorded "the recent-evaluations table is a fixed empty array; replace it after M2-05 wires the API", but no follow-up happened. M8-02 wires real data with 5-per-page pagination as a defect fix, without expanding feature scope. This PR also moves #178 (m8-01) from `in-progress` to `done`, because #178 was merged and closed without the corresponding flow update; that one-line closeout restores the flow-online gate and changes no product code.
 
 ## Goals
 

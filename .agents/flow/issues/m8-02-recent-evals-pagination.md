@@ -9,6 +9,7 @@ priority: P2
 status: in-progress
 scope:
   - .agents/flow/issues/m8-02-recent-evals-pagination.*
+  - .agents/flow/issues/m8-01-runner-records-pagination.*
   - .agents/flow/milestones/m8-bug-fixes.*
   - .agents/flow/roadmap.*
   - scripts/doc-budgets.manifest.json
@@ -26,7 +27,7 @@ github:
 
 ## 背景
 
-生产总览页「最近评测」始终显示“暂无评测任务”，但评测任务页有 35 条记录。原因：`web/src/pages/OverviewPage.tsx` 的 Table 固定传入 `dataSource={[]}`，从未请求评测列表；`/api/v1/overview` 只返回计数，不返回最近条目；表头使用的扁平字段与 `EvaluationSummary` 不一致。2026-11-08 的 PR #19 检视已记录“最近评测表固定空数组，M2-05 接入 API 后替换”，后续没有跟进。M8-02 需接入真实数据并每页 5 条分页，先修复缺陷，不扩展新功能。
+生产总览页「最近评测」始终显示“暂无评测任务”，但评测任务页有 35 条记录。原因：`web/src/pages/OverviewPage.tsx` 的 Table 固定传入 `dataSource={[]}`，从未请求评测列表；`/api/v1/overview` 只返回计数，不返回最近条目；表头使用的扁平字段与 `EvaluationSummary` 不一致。2026-11-08 的 PR #19 检视已记录“最近评测表固定空数组，M2-05 接入 API 后替换”，后续没有跟进。M8-02 需接入真实数据并每页 5 条分页，先修复缺陷，不扩展新功能。本 PR 同时把 #178（m8-01）的流程状态从 `in-progress` 改为 `done`：#178 已合并关闭但流程单漏更新，这一行闭环只恢复 flow-online，不改产品代码。
 
 ## 目标
 
