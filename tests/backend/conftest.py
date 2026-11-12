@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
+import uuid
+import warnings
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event, text
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session, sessionmaker
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -64,17 +68,97 @@ def prepare_database(url: str) -> None:
     run_alembic(url, "upgrade", "head")
 
 
-@pytest.fixture
-def database_url(tmp_path: Path) -> str:
+def _quoted(name: str) -> str:
+    return '"' + name.replace('"', '""') + '"'
+
+
+def _ddl(engine, statement: str) -> None:
+    with engine.connect() as connection:
+        connection.execute(text(statement))
+
+
+def _drop_database(engine, name: str) -> None:
+    _ddl(engine, f"DROP DATABASE IF EXISTS {_quoted(name)} WITH (FORCE)")
+
+
+def _create_database(engine, name: str, template: str | None = None) -> None:
+    source = f" TEMPLATE {_quoted(template)}" if template else ""
+    _ddl(engine, f"CREATE DATABASE {_quoted(name)}{source}")
+
+
+@pytest.fixture(scope="session")
+def database_template(tmp_path_factory: pytest.TempPathFactory):
+    """Migrate one template database per session and clone it per test.
+
+    PostgreSQL is cloned with CREATE DATABASE ... TEMPLATE; SQLite by copying the
+    migrated file.  If the test role cannot create databases, fall back to the
+    original per-test migration so local PostgreSQL setups keep working.
+    """
+
     external = os.environ.get("TEST_DATABASE_URL")
-    if external:
+    if not external:
+        template_path = tmp_path_factory.mktemp("db-template") / "template.db"
+        run_alembic(f"sqlite:///{template_path}", "upgrade", "head")
+        yield ("sqlite", template_path)
+        return
+
+    parsed = make_url(external)
+    if "test" not in external.lower():
+        raise RuntimeError("TEST_DATABASE_URL must point to a disposable *test* database")
+    prefix = (parsed.database or "eval_test")[:40]
+    template = f"{prefix}_tmpl"
+    admin = create_engine(external, future=True, isolation_level="AUTOCOMMIT")
+    try:
+        try:
+            _drop_database(admin, template)
+            _create_database(admin, template)
+        except Exception as error:  # pragma: no cover - depends on the PostgreSQL role
+            if os.environ.get("CI"):
+                raise
+            warnings.warn(
+                f"cannot create PostgreSQL template database ({error}); "
+                "falling back to per-test migrations",
+                stacklevel=2,
+            )
+            yield ("fallback", external)
+            return
+        template_url = parsed.set(database=template).render_as_string(hide_password=False)
+        try:
+            run_alembic(template_url, "upgrade", "head")
+            yield ("postgres", external, template)
+        finally:
+            _drop_database(admin, template)
+    finally:
+        admin.dispose()
+
+
+@pytest.fixture
+def database_url(database_template, tmp_path: Path) -> str:
+    kind = database_template[0]
+    if kind == "fallback":
+        external = database_template[1]
         prepare_database(external)
         yield external
         return
-    path = tmp_path / "test.db"
-    url = f"sqlite:///{path}"
-    prepare_database(url)
-    yield url
+    if kind == "sqlite":
+        template_path = database_template[1]
+        path = tmp_path / "test.db"
+        shutil.copyfile(template_path, path)
+        yield f"sqlite:///{path}"
+        return
+
+    admin_url = database_template[1]
+    template = database_template[2]
+    parsed = make_url(admin_url)
+    prefix = (parsed.database or "eval_test")[:40]
+    name = f"{prefix}_t_{uuid.uuid4().hex[:8]}"
+    admin = create_engine(admin_url, future=True, isolation_level="AUTOCOMMIT")
+    try:
+        _create_database(admin, name, template=template)
+        yield parsed.set(database=name).render_as_string(hide_password=False)
+    finally:
+        _drop_database(admin, name)
+        admin.dispose()
 
 
 @pytest.fixture
