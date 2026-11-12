@@ -9,6 +9,7 @@ priority: P2
 status: in-progress
 scope:
   - .agents/flow/issues/m8-04-trace-view-redesign.*
+  - .agents/flow/issues/m8-03-eval-records-pagination.*
   - .agents/flow/milestones/m8-bug-fixes.*
   - .agents/flow/roadmap.*
   - scripts/doc-budgets.manifest.json
