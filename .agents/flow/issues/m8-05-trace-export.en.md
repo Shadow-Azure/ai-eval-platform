@@ -6,11 +6,12 @@ English | [中文](m8-05-trace-export.md)
 kind: issue
 milestone: m8
 priority: P2
-status: in-progress
+status: done
 scope:
   - .agents/flow/issues/m8-05-trace-export.*
   - .agents/flow/issues/m8-03-eval-records-pagination.*
   - .agents/flow/issues/m8-06-agent-asset-not-injected.*
+  - .agents/flow/issues/m8-04-trace-viewer-redesign.*
   - .agents/flow/milestones/m8-bug-fixes.*
   - .agents/flow/roadmap.*
   - scripts/doc-budgets.manifest.json
