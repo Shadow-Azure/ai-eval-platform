@@ -1,12 +1,12 @@
 {
   "title": "固定资源池标签修复 Smoke 报告",
   "eyebrow": "M7-136 · FIXED POOL LABELS",
-  "summary": "历史 fixed provider 标记已从 Runner 标签解析中剥离；固定池评测已由生产 fixed-linux-eval 接收并通过 reconciler 完成。真实执行连续发现容器权限与终端 sequence 冲突，两项均已修复并等待最终部署复测。",
+  "summary": "历史 fixed provider 标记已从 Runner 标签解析中剥离；固定池评测由生产 fixed-linux-eval 接单并成功完成。真实执行连续发现并修复容器权限与终端 sequence 冲突，最终评测结果 resolved、轨迹 ready。",
   "meta": "2026-11-12 · macOS Chrome + 生产 ECS + GitHub Actions",
   "metrics": [
-    { "value": "3", "label": "验收场景" },
+    { "value": "6", "label": "验收场景" },
     { "value": "1", "label": "在线 Runner" },
-    { "value": "1/1", "label": "新评测执行中" },
+    { "value": "1/1", "label": "最终评测 resolved" },
     { "value": "2", "label": "已修复集成缺陷" }
   ],
   "facts": [
@@ -15,6 +15,8 @@
     { "label": "新验证评测", "value": "64e90bd2-e715-4c34-94ff-489782fc9041" },
     { "label": "首次 pickup run", "value": "43121931498 · fixed Runner picked up；暴露 EACCES" },
     { "label": "部署后复测 run", "value": "43125799590 · 权限通过；暴露 sequence 冲突" },
+    { "label": "最终成功评测", "value": "a04b8881-1513-4514-a9f5-b98d2225d6ad" },
+    { "label": "最终 eval-shard run", "value": "43129142105 · execute success" },
     { "label": "Runner", "value": "fixed-linux-eval · self-hosted / Linux / X64 / eval" },
     { "label": "历史池标记", "value": "kind=fixed 仅展示为 provider 元数据，不再成为 runs_on" }
   ],
@@ -45,16 +47,23 @@
       {
         "id": "04",
         "name": "容器产物权限",
-        "status": { "kind": "fixed", "label": "FIXED · PENDING DEPLOY" },
+        "status": { "kind": "fixed", "label": "FIXED · DEPLOYED" },
         "detail": "宿主读取 Claude 原生文件时出现 EACCES；删除容器前由 root 对 /testbed 执行 a+rwX，并用收紧目录权限的 fake Docker 回归复现。",
         "evidence": ["tests/runner/real-task-trace-retention.test.mjs", "runner/scripts/real-task.mjs"]
       },
       {
         "id": "05",
         "name": "终端 sequence 与 heartbeat 冲突",
-        "status": { "kind": "fixed", "label": "FIXED · PENDING DEPLOY" },
+        "status": { "kind": "fixed", "label": "FIXED · DEPLOYED" },
         "detail": "completion/failure 固定使用 sequence 2/3，长任务中会被 heartbeat 先占用；现改保留 terminal/failure 高位 sequence，先红后绿覆盖。",
         "evidence": ["tests/runner/heartbeat-integration.test.mjs", "03-reconciled-complete.png"]
+      },
+      {
+        "id": "06",
+        "name": "最终 fixed Runner 全链路",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "新评测 execute job success，用例 1/1 resolved，trace ingestion ready，Runner job 不再依赖 reconciler 兜底。",
+        "evidence": ["04-final-success.png", "run 43129142105"]
       }
     ]
   },
@@ -68,7 +77,7 @@
         { "label": "Root cause", "value": "Claude 生成的会话路径带有限制权限，宿主进程无法遍历。" },
         { "label": "Fix", "value": "容器仍存在时由 root 对 /testbed 执行 chmod -R a+rwX。" }
       ],
-      "state": { "kind": "fixed", "label": "Fixed · awaiting deploy verification" }
+      "state": { "kind": "fixed", "label": "Fixed · deployed and verified" }
     },
     {
       "severity": "P1",
@@ -79,7 +88,7 @@
         { "label": "Root cause", "value": "real-task 把 completion/failure 固定写成 2/3，而 sidecar 从 2 持续递增。" },
         { "label": "Fix", "value": "终端保留高位 sequence 1000000/1000001，并补心跳后再完成/失败回归。" }
       ],
-      "state": { "kind": "fixed", "label": "Fixed · awaiting deploy verification" }
+      "state": { "kind": "fixed", "label": "Fixed · deployed and verified" }
     }
   ],
   "screenshots": [
@@ -103,6 +112,13 @@
       "label": "03 · 复测完成",
       "caption": "回调序列冲突由 reconciler 收口后，用例仍被恢复为完成并产生 ready 轨迹；该恢复路径证明了数据可用，但 Runner job 仍需修复序列后重跑。",
       "variant": "wide"
+    },
+    {
+      "src": "04-final-success.png",
+      "alt": "最终 fixed-linux 评测完成，执行成功、结果全部解决、轨迹 ready",
+      "label": "04 · 最终成功复测",
+      "caption": "终态修复部署后，新评测 execute job 正常 success；页面显示 1/1 resolved、轨迹可用 1、待处理 0。",
+      "variant": "wide"
     }
   ],
   "coverage": {
@@ -125,18 +141,25 @@
         "coverage": "Computer Use + Actions",
         "conclusion": "新评测从 queued 到 running，未再永久排队。",
         "recommendation": "后续真实用例完成情况由评测详情继续跟踪。"
+      },
+      {
+        "area": "最终生产执行",
+        "coverage": "Actions + Computer Use",
+        "conclusion": "execute job success，用例 resolved，轨迹 ready。",
+        "recommendation": "保留真实 smoke 作为发布后验收证据。"
       }
     ]
   },
   "conclusion": {
     "kind": "pass",
-    "label": "标签与两条集成缺陷已修复，待最终复测",
-    "summary": "历史占位标记不会再生成错误的 kind 标签；生产固定 Runner 已接单，集成测试发现的产物权限与 terminal sequence 冲突均已修复并有回归。",
+    "label": "修复已完成并通过真实生产复测",
+    "summary": "历史占位标记不会再生成错误的 kind 标签；生产固定 Runner 已成功完成新评测，集成测试发现的产物权限与 terminal sequence 冲突均已修复、部署并验证。",
     "points": [
       "707bb3bc 保留为历史超时记录，不自动恢复。",
       "新评测 64e90bd2 已由 fixed-linux-eval 接单。",
-      "权限修复已部署并越过 EACCES；terminal sequence 修复需下一轮部署后复测。",
-      "Reconciler 已验证评测最终完成、结果 resolved、轨迹 ready，但 Runner job 仍需无错误完成。"
+      "最终 eval-shard run 43129142105 execute job success。",
+      "最终评测 a04b8881 结果 resolved、轨迹 ready。",
+      "707bb3bc 保持历史超时记录，由新评测替代验证。"
     ]
   },
   "footer": "AI Eval Platform · M7-136 fixed-pool label smoke · evidence generated from Computer Use and GitHub Actions"

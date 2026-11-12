@@ -6,12 +6,13 @@ English | [中文](m7-fixed-pool-runner-labels.md)
 kind: issue
 milestone: m7
 priority: P1
-status: in-progress
+status: done
 scope:
   - plans/**
   - reports/**
   - runner/**
   - tests/**
+  - .agents/flow/milestones/m7-extension-and-hardening.*
   - backend/app/services/runner_labels.py
   - backend/app/services/runners.py
   - tests/backend/test_runner_labels.py
@@ -47,4 +48,5 @@ At 15:25 on 2026-11-11 (Asia/Shanghai) the user started evaluation 707bb3bc on t
 - The production fixed-linux pool retains the legacy `{"kind": "fixed"}` marker, while the deployed resolver returns self-hosted, linux, eval.
 - New evaluation `64e90bd2-e715-4c34-94ff-489782fc9041` launched on 2026-11-12 was picked up by fixed-linux-eval and entered running state; its eval-shard run is 43121931498.
 - The real run exposed an independent post-container permission issue: host-side scoring and trace capture could not read Claude native files. This branch restores traversal/read/write access to `/testbed` as root before removing the container and adds a permission regression.
+- A second post-deploy run exposed a heartbeat/terminal callback sequence collision. After the sequence fix, new evaluation `a04b8881-1513-4514-a9f5-b98d2225d6ad` completed with a successful execute job, resolved result, and ready trace.
 - The original 707bb3bc remains an immutable historical failure and is not rewritten as a recoverable task.

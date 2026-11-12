@@ -1,5 +1,5 @@
 # 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
 # git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
 #   pnpm run record:i18n -- .agents/flow/issues/m7-fixed-pool-runner-labels.md
-m7-fixed-pool-runner-labels.md: 1f2afc7078b20c88ccfbf573dbf8724714169731
-m7-fixed-pool-runner-labels.en.md: 03279a94d97a467b2624c032aae23711aca6dd28
+m7-fixed-pool-runner-labels.md: b9e07c2167fd6dda1b51e8c451548709830246d6
+m7-fixed-pool-runner-labels.en.md: da26744434744017771752feaf36ea1ac01a8181
