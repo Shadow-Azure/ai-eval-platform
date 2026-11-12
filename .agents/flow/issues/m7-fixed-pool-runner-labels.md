@@ -6,8 +6,12 @@
 kind: issue
 milestone: m7
 priority: P1
-status: ready
+status: in-progress
 scope:
+  - plans/**
+  - reports/**
+  - runner/**
+  - tests/**
   - backend/app/services/runner_labels.py
   - backend/app/services/runners.py
   - tests/backend/test_runner_labels.py
@@ -37,3 +41,10 @@ github:
 - ensure_fixed_pool 新建的池 labels_json 含显式 runs_on。
 - 部署后新建评测能落到实际在线的固定 Runner；已超时的 707bb3bc 需重新发起。
 - 相关 pytest、flow 与文档门禁通过。
+
+## 验收结果
+
+- 生产 fixed-linux 池仍保留历史 `{"kind": "fixed"}`，部署后的解析结果为 self-hosted、linux、eval。
+- 2026-11-12 新评测 `64e90bd2-e715-4c34-94ff-489782fc9041` 已由 fixed-linux-eval 接收并进入运行中；对应 eval-shard run 为 43121931498。
+- 这次真实执行暴露了容器退出后 Claude 原生文件权限不可读的独立问题；本分支在删除容器前由 root 统一恢复 `/testbed` 可读写遍历权限，并补权限回归。
+- 原 707bb3bc 保持历史失败记录，不作为可恢复任务改写。

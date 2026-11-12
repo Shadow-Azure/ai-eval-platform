@@ -55,14 +55,20 @@ done
 case "$*" in
   "create "*) echo fake-container; exit 0 ;;
   "cp "*) exit 0 ;;
+  *"exec"*"chmod -R a+rwX /testbed"*) chmod -R a+rwX "$(cat "$(dirname "$0")/host")"; exit 0 ;;
   *"git apply"*) echo "patch does not apply" >&2; exit 1 ;;
   *"claude --version"*) echo "2.1.278 (Claude Code)"; exit 0 ;;
   *"git"*" diff"*) printf '%s\\n' "diff --git a/app.py b/app.py" "--- a/app.py" "+++ b/app.py" "+fixed"; exit 0 ;;
   *"git"*" add"*) exit 0 ;;
   *"-d --name"*)
+    printf '%s' "$host" > "$(dirname "$0")/host"
     mkdir -p "$host/trace" "$host/.runtime-home/.claude/projects/-testbed"
     printf '%s\\n' '{"type":"user","sessionId":"s1"}' > "$host/.runtime-home/.claude/projects/-testbed/s1.jsonl"
     printf '%s\\n' '{"type":"result","subtype":"success"}' > "$host/trace/claude-stream.jsonl"
+    chmod 000 "$host/.runtime-home/.claude/projects/-testbed/s1.jsonl"
+    chmod 000 "$host/.runtime-home/.claude/projects/-testbed"
+    chmod 000 "$host/.runtime-home/.claude"
+    chmod 000 "$host/.runtime-home"
     exit 0
     ;;
 esac

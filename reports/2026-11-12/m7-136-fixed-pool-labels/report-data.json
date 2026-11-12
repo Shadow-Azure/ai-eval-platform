@@ -1,0 +1,116 @@
+{
+  "title": "固定资源池标签修复 Smoke 报告",
+  "eyebrow": "M7-136 · FIXED POOL LABELS",
+  "summary": "历史 fixed provider 标记已从 Runner 标签解析中剥离；固定池评测已由生产 fixed-linux-eval 接收。真实执行又发现并修复了容器产物权限问题，等待部署后复测。",
+  "meta": "2026-11-12 · macOS Chrome + 生产 ECS + GitHub Actions",
+  "metrics": [
+    { "value": "3", "label": "验收场景" },
+    { "value": "1", "label": "在线 Runner" },
+    { "value": "1/1", "label": "新评测执行中" },
+    { "value": "1", "label": "已修复集成缺陷" }
+  ],
+  "facts": [
+    { "label": "功能 PR", "value": "#137 · merged 38d4bb39476e6693085a92a96bbce7cc452a862c" },
+    { "label": "原问题评测", "value": "707bb3bc · queue_timeout，保持历史记录" },
+    { "label": "新验证评测", "value": "64e90bd2-e715-4c34-94ff-489782fc9041" },
+    { "label": "eval-shard run", "value": "43121931498 · fixed Runner picked up；下游权限缺陷已复现" },
+    { "label": "Runner", "value": "fixed-linux-eval · self-hosted / Linux / X64 / eval" },
+    { "label": "历史池标记", "value": "kind=fixed 仅展示为 provider 元数据，不再成为 runs_on" }
+  ],
+  "matrix": {
+    "columns": ["#", "场景", "结果", "说明", "证据"],
+    "rows": [
+      {
+        "id": "01",
+        "name": "历史 fixed 标记解析",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "{\"kind\":\"fixed\"} 不再被当作标签，默认返回 self-hosted、linux、eval。",
+        "evidence": ["test_runner_labels.py", "backend pytest"]
+      },
+      {
+        "id": "02",
+        "name": "dispatch/manifest 一致性",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "固定池分片的 client_payload 与 manifest 都冻结真实 Runner 标签，显式 runs_on 仍优先。",
+        "evidence": ["test_evaluations.py", "固定池创建回归测试"]
+      },
+      {
+        "id": "03",
+        "name": "生产 fixed Runner 接单",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "新评测 prepare 成功，execute 从 queued 进入 in_progress，页面并发由 0/1 变为 1/1。",
+        "evidence": ["01-fixed-pool-running.png", "02-fixed-pool-online.png", "run 43121931498"]
+      },
+      {
+        "id": "04",
+        "name": "容器产物权限",
+        "status": { "kind": "fixed", "label": "FIXED · PENDING DEPLOY" },
+        "detail": "宿主读取 Claude 原生文件时出现 EACCES；删除容器前由 root 对 /testbed 执行 a+rwX，并用收紧目录权限的 fake Docker 回归复现。",
+        "evidence": ["tests/runner/real-task-trace-retention.test.mjs", "runner/scripts/real-task.mjs"]
+      }
+    ]
+  },
+  "issues": [
+    {
+      "severity": "P1",
+      "title": "Claude 原生文件权限导致宿主评分与清理失败",
+      "facts": [
+        { "label": "Actual", "value": "读取 .runtime-home/.claude 与创建 trace/diagnostics 时出现 EACCES。" },
+        { "label": "Expected", "value": "容器退出后宿主可读取原生文件并执行评分、抓取与清理。" },
+        { "label": "Root cause", "value": "Claude 生成的会话路径带有限制权限，宿主进程无法遍历。" },
+        { "label": "Fix", "value": "容器仍存在时由 root 对 /testbed 执行 chmod -R a+rwX。" }
+      ],
+      "state": { "kind": "fixed", "label": "Fixed · awaiting deploy verification" }
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "01-fixed-pool-running.png",
+      "alt": "生产新评测运行中并显示 fixed-linux 资源池",
+      "label": "01 · 新评测运行中",
+      "caption": "修复部署后新建评测已由 fixed-linux-eval 接收，页面显示运行中和 1/1 Runner。",
+      "variant": "wide"
+    },
+    {
+      "src": "02-fixed-pool-online.png",
+      "alt": "生产资源池页面显示 fixed-linux 有 1 个在线 Runner 和历史 kind=fixed 标记",
+      "label": "02 · 固定池在线",
+      "caption": "生产池仍显示历史 kind=fixed 元数据，但 fixed-linux 有 1 个在线 Runner，标签解析不再使用 kind。",
+      "variant": "wide"
+    }
+  ],
+  "coverage": {
+    "columns": ["范围", "自动化", "结论", "后续建议"],
+    "rows": [
+      {
+        "area": "标签解析",
+        "coverage": "Unit",
+        "conclusion": "历史 fixed 标记和显式标签优先级均有回归。",
+        "recommendation": "保持真实 Runner 标签契约测试。"
+      },
+      {
+        "area": "调度契约",
+        "coverage": "Integration",
+        "conclusion": "dispatch 与 manifest 使用相同 runs_on。",
+        "recommendation": "新增池模式时复用 pool_runner_labels。"
+      },
+      {
+        "area": "生产 pickup",
+        "coverage": "Computer Use + Actions",
+        "conclusion": "新评测从 queued 到 running，未再永久排队。",
+        "recommendation": "后续真实用例完成情况由评测详情继续跟踪。"
+      }
+    ]
+  },
+  "conclusion": {
+    "kind": "pass",
+    "label": "标签修复通过，权限修复待部署复测",
+    "summary": "历史占位标记不会再生成错误的 kind 标签；生产固定 Runner 已接单，集成测试发现的产物权限缺陷已修复并有回归。",
+    "points": [
+      "707bb3bc 保留为历史超时记录，不自动恢复。",
+      "新评测 64e90bd2 已由 fixed-linux-eval 接单。",
+      "本轮新增的权限修复需合并部署后再发起新的固定池评测复测。"
+    ]
+  },
+  "footer": "AI Eval Platform · M7-136 fixed-pool label smoke · evidence generated from Computer Use and GitHub Actions"
+}

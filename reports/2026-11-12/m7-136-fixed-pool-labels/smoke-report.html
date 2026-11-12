@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>固定资源池标签修复 Smoke 报告</title>
+  <style>
+    :root{
+      color-scheme:light;
+      --bg:#f4f7fb;--card:#fff;--ink:#16202f;--ink2:#55637a;--ink3:#7b869b;
+      --line:#dde4ee;--accent:#2563eb;--accent-wash:#e8efff;--good:#157347;
+      --good-wash:#e7f6ee;--warn:#b45309;--warn-wash:#fff2dd;--bad:#c9282e;
+      --bad-wash:#ffeded;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:radial-gradient(circle at 8% 0,#dbe9ff 0,transparent 32rem),radial-gradient(circle at 92% 4%,#e7f1ff 0,transparent 28rem),var(--bg);color:var(--ink);font:14px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Noto Sans CJK SC",sans-serif}
+    main{max-width:1220px;margin:auto;padding:36px 28px 72px}
+    .hero{padding:30px 34px;border:1px solid #dbe3ee;border-radius:24px;background:rgba(255,255,255,.92);box-shadow:0 18px 44px #17202f12}
+    .eyebrow{margin:0;color:var(--accent);font-size:12px;font-weight:800;letter-spacing:.16em;text-transform:uppercase}
+    h1{margin:10px 0 8px;font-size:clamp(28px,4vw,44px);letter-spacing:-.04em}
+    .summary{margin:0;max-width:850px;color:var(--ink2);font-size:15px}
+    .meta{display:block;margin-top:8px;color:var(--ink3);font-size:12px}
+    .metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-top:26px}
+    .metric{padding:16px 18px;border:1px solid var(--line);border-radius:16px;background:#fafbfd}
+    .metric b{display:block;font-size:30px;letter-spacing:-.04em}
+    .metric span{display:block;margin-top:2px;color:var(--ink3);font-size:12px}
+    section{margin-top:28px}
+    .head{display:flex;align-items:baseline;justify-content:space-between;gap:16px;margin:0 4px 14px}
+    h2{margin:0;font-size:21px;letter-spacing:-.03em}
+    .head small{color:var(--ink3);white-space:nowrap}
+    .card{padding:22px;border:1px solid var(--line);border-radius:20px;background:var(--card);box-shadow:0 5px 22px #17202f08}
+    .facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin:0}
+    .fact{padding:13px 16px;border:1px solid #eceff5;border-radius:12px;background:#fafbfd}
+    .fact dt{color:var(--ink3);font-size:11px;font-weight:700}
+    .fact dd{margin:3px 0 0;overflow-wrap:anywhere}
+    code{font-family:var(--mono);font-size:.9em;color:#29456d;overflow-wrap:anywhere}
+    .status{display:inline-flex;padding:3px 8px;border-radius:999px;font-size:11px;font-weight:800;white-space:nowrap;background:#eef1f6;color:var(--ink2)}
+    .status.pass,.status.fixed{background:var(--good-wash);color:var(--good)}
+    .status.warn,.status.manual{background:var(--warn-wash);color:var(--warn)}
+    .status.fail{background:var(--bad-wash);color:var(--bad)}
+    .tableWrap{overflow:auto;border:1px solid var(--line);border-radius:18px;background:var(--card);box-shadow:0 5px 22px #17202f08}
+    table{width:100%;min-width:920px;border-collapse:collapse}
+    th,td{padding:12px 15px;border-bottom:1px solid #edf0f5;text-align:left;vertical-align:top}
+    th{position:sticky;top:0;background:#fafbfe;color:var(--ink2);font-size:12px}
+    tr:last-child td{border-bottom:0}
+    tr:hover{background:#fcfdff}
+    .num{color:var(--ink3);font-family:var(--mono);font-size:12px}
+    .evidence{color:var(--ink3);font-size:12px}
+    .issues{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px}
+    .issueCard{padding:18px 21px;border:1px solid #ffcece;border-left:5px solid var(--bad);border-radius:16px;background:#fffbfb}
+    .issueCard h3{margin:0;color:#b91c1c;font-size:16px}
+    .issueCard p{margin:8px 0;color:var(--ink2)}
+    .issueCard dt{color:var(--ink3);font-size:11px;font-weight:700}
+    .issueCard dd{margin:2px 0 0;color:var(--ink2)}
+    .tag{float:right;padding:3px 8px;border-radius:999px;background:#fee4e4;color:#9a1b21;font-size:11px;font-weight:800}
+    .fixed{display:inline-flex;gap:5px;align-items:center;margin-top:11px;padding:6px 10px;border-radius:999px;background:var(--good-wash);color:var(--good);font-size:12px;font-weight:800}
+    .shots{display:grid;grid-template-columns:repeat(auto-fit,minmax(430px,1fr));gap:16px}
+    figure{margin:0;overflow:hidden;border:1px solid var(--line);border-radius:18px;background:#fff;box-shadow:0 6px 22px #17202f08}
+    figure.wide{grid-column:1/-1}
+    img{display:block;width:100%;max-height:500px;object-fit:contain;background:#eef2f7}
+    figcaption{display:flex;gap:9px;align-items:flex-start;padding:11px 14px;border-top:1px solid #edf0f5;background:#fafbfd;color:var(--ink2);font-size:12.5px}
+    figcaption b{flex:none;color:var(--ink)}
+    .issue-shot{border-color:#ffcece}
+    .conclusion{border:1px solid #c8e5d2;border-radius:20px;background:linear-gradient(135deg,#f2fbf6,white 54%)}
+    .conclusion.warn{border-color:#f1d9a4;background:linear-gradient(135deg,#fff8e8,white 54%)}
+    .conclusion.fail{border-color:#ffc9c9;background:linear-gradient(135deg,#fff5f5,white 54%)}
+    .conclusion ul{margin:12px 0 0;padding-left:20px;color:#344155}
+    .conclusion li+li{margin-top:7px}
+    .empty{padding:20px;text-align:center;color:var(--ink3);background:#fafbfd;border:1px dashed var(--line);border-radius:12px}
+    .foot{margin-top:24px;color:var(--ink3);font-size:12px;text-align:center}
+    @media(max-width:860px){main{padding:22px 14px 52px}.hero{padding:23px}.shots{grid-template-columns:1fr}.head{align-items:flex-start;flex-direction:column;gap:4px}}
+    @media print{body{background:white}main{max-width:none;padding:0}.card,.issueCard,figure,.tableWrap{box-shadow:none;break-inside:avoid}img{max-height:420px}}
+  </style>
+</head>
+<body>
+<main>
+  <header class="hero">
+    <p class="eyebrow">M7-136 · FIXED POOL LABELS</p>
+    <h1>固定资源池标签修复 Smoke 报告</h1>
+    <p class="summary">历史 fixed provider 标记已从 Runner 标签解析中剥离；固定池评测已由生产 fixed-linux-eval 接收。真实执行又发现并修复了容器产物权限问题，等待部署后复测。</p>
+    <span class="meta">2026-11-12 · macOS Chrome + 生产 ECS + GitHub Actions</span>
+    <div class="metrics"><div class="metric"><b>3</b><span>验收场景</span></div><div class="metric"><b>1</b><span>在线 Runner</span></div><div class="metric"><b>1/1</b><span>新评测执行中</span></div><div class="metric"><b>1</b><span>已修复集成缺陷</span></div></div>
+  </header>
+
+  <section>
+    <div class="head"><h2>Environment and Artifact</h2><small>2026-11-12 · macOS Chrome + 生产 ECS + GitHub Actions</small></div>
+    <article class="card"><dl class="facts"><div class="fact"><dt>功能 PR</dt><dd>#137 · merged 38d4bb39476e6693085a92a96bbce7cc452a862c</dd></div><div class="fact"><dt>原问题评测</dt><dd>707bb3bc · queue_timeout，保持历史记录</dd></div><div class="fact"><dt>新验证评测</dt><dd>64e90bd2-e715-4c34-94ff-489782fc9041</dd></div><div class="fact"><dt>eval-shard run</dt><dd>43121931498 · fixed Runner picked up；下游权限缺陷已复现</dd></div><div class="fact"><dt>Runner</dt><dd>fixed-linux-eval · self-hosted / Linux / X64 / eval</dd></div><div class="fact"><dt>历史池标记</dt><dd>kind=fixed 仅展示为 provider 元数据，不再成为 runs_on</dd></div></dl></article>
+  </section>
+
+  <section>
+    <div class="head"><h2>Scenario Matrix</h2><small>3 pass · 1 fixed</small></div>
+    <div class="tableWrap"><table><table><thead><tr><th>#</th><th>场景</th><th>结果</th><th>说明</th><th>证据</th></tr></thead><tbody><tr><td class="num">01</td><td>历史 fixed 标记解析</td><td><span class="status pass">PASS</span></td><td>{&quot;kind&quot;:&quot;fixed&quot;} 不再被当作标签，默认返回 self-hosted、linux、eval。</td><td class="evidence">test_runner_labels.py<br>backend pytest</td></tr><tr><td class="num">02</td><td>dispatch/manifest 一致性</td><td><span class="status pass">PASS</span></td><td>固定池分片的 client_payload 与 manifest 都冻结真实 Runner 标签，显式 runs_on 仍优先。</td><td class="evidence">test_evaluations.py<br>固定池创建回归测试</td></tr><tr><td class="num">03</td><td>生产 fixed Runner 接单</td><td><span class="status pass">PASS</span></td><td>新评测 prepare 成功，execute 从 queued 进入 in_progress，页面并发由 0/1 变为 1/1。</td><td class="evidence">01-fixed-pool-running.png<br>02-fixed-pool-online.png<br>run 43121931498</td></tr><tr><td class="num">04</td><td>容器产物权限</td><td><span class="status fixed">FIXED · PENDING DEPLOY</span></td><td>宿主读取 Claude 原生文件时出现 EACCES；删除容器前由 root 对 /testbed 执行 a+rwX，并用收紧目录权限的 fake Docker 回归复现。</td><td class="evidence">tests/runner/real-task-trace-retention.test.mjs<br>runner/scripts/real-task.mjs</td></tr></tbody></table></table></div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Issues and Observations</h2><small>P1 Claude 原生文件权限导致宿主评分与清理失败</small></div>
+    <div class="issues"><article class="issueCard"><span class="tag">P1</span><h3>Claude 原生文件权限导致宿主评分与清理失败</h3><dl><div><dt>Actual</dt><dd>读取 .runtime-home/.claude 与创建 trace/diagnostics 时出现 EACCES。</dd></div><div><dt>Expected</dt><dd>容器退出后宿主可读取原生文件并执行评分、抓取与清理。</dd></div><div><dt>Root cause</dt><dd>Claude 生成的会话路径带有限制权限，宿主进程无法遍历。</dd></div><div><dt>Fix</dt><dd>容器仍存在时由 root 对 /testbed 执行 chmod -R a+rwX。</dd></div></dl><div class="fixed">Fixed · awaiting deploy verification</div></article></div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Evidence</h2><small>2 screenshots</small></div>
+    <div class="shots"><figure class="wide"><img loading="lazy" src="01-fixed-pool-running.png" alt="生产新评测运行中并显示 fixed-linux 资源池"><figcaption><b>01 · 新评测运行中</b><span>修复部署后新建评测已由 fixed-linux-eval 接收，页面显示运行中和 1/1 Runner。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="02-fixed-pool-online.png" alt="生产资源池页面显示 fixed-linux 有 1 个在线 Runner 和历史 kind=fixed 标记"><figcaption><b>02 · 固定池在线</b><span>生产池仍显示历史 kind=fixed 元数据，但 fixed-linux 有 1 个在线 Runner，标签解析不再使用 kind。</span></figcaption></figure></div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Automated Coverage Assessment</h2><small>3 areas reviewed</small></div>
+    <div class="tableWrap"><table><table><thead><tr><th>范围</th><th>自动化</th><th>结论</th><th>后续建议</th></tr></thead><tbody><tr><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td></tr></tbody></table></table></div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Conclusion</h2><small>标签修复通过，权限修复待部署复测</small></div>
+    <article class="card conclusion pass"><p><strong>历史占位标记不会再生成错误的 kind 标签；生产固定 Runner 已接单，集成测试发现的产物权限缺陷已修复并有回归。</strong></p><ul><li>707bb3bc 保留为历史超时记录，不自动恢复。</li><li>新评测 64e90bd2 已由 fixed-linux-eval 接单。</li><li>本轮新增的权限修复需合并部署后再发起新的固定池评测复测。</li></ul></article>
+  </section>
+
+  <p class="foot">AI Eval Platform · M7-136 fixed-pool label smoke · evidence generated from Computer Use and GitHub Actions</p>
+</main>
+</body>
+</html>
