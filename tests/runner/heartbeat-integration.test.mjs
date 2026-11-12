@@ -126,6 +126,11 @@ test("a real case keeps beating while the agent runs and stops the sidecar befor
     assert.ok(uploadsIndex >= 0 && completedIndex >= 0);
     assert.ok(lastBeatIndex < uploadsIndex, "no heartbeat after the sidecar was stopped");
     assert.ok(lastBeatIndex < completedIndex);
+    assert.ok(
+      requestsFor(ctx, "completed")[0].body.sequence >
+        Math.max(...heartbeats.map((request) => request.body.sequence)),
+      "completion sequence must remain after every heartbeat sequence",
+    );
   } finally {
     rmSync(fakeBin, { recursive: true, force: true });
     await ctx.close();
@@ -133,7 +138,7 @@ test("a real case keeps beating while the agent runs and stops the sidecar befor
 });
 
 test("an exception while the sidecar runs still stops it and keeps the case failure", async () => {
-  const fakeBin = installFakeBin({ failing: true });
+  const fakeBin = installFakeBin({ failing: true, agentSleepSeconds: 2.3 });
   const ctx = await createScenario({ cases, behavior: { tasks: tasksPayload(), modelToken: "model-token-test" } });
   try {
     const result = await runCase(ctx, fakeBin, { RUNNER_HEARTBEAT_INTERVAL_MS: "1000" });
@@ -147,6 +152,33 @@ test("an exception while the sidecar runs still stops it and keeps the case fail
     // wait past one interval and make sure the count is frozen.
     await new Promise((resolve) => setTimeout(resolve, 1600));
     assert.equal(requestsFor(ctx, "heartbeat").length, beatsAtExit, "the sidecar must not survive the failed case");
+  } finally {
+    rmSync(fakeBin, { recursive: true, force: true });
+    await ctx.close();
+  }
+});
+
+test("a completion callback failure reports failure after every heartbeat sequence", async () => {
+  const fakeBin = installFakeBin({ agentSleepSeconds: 2.3 });
+  const ctx = await createScenario({
+    cases,
+    behavior: {
+      tasks: tasksPayload(),
+      modelToken: "model-token-test",
+      completionFailures: 4,
+    },
+  });
+  try {
+    const result = await runCase(ctx, fakeBin, { RUNNER_HEARTBEAT_INTERVAL_MS: "1000" });
+    assert.equal(result.code, 1, result.stderr);
+    const heartbeats = requestsFor(ctx, "heartbeat");
+    const failures = requestsFor(ctx, "failed");
+    assert.ok(heartbeats.length >= 3);
+    assert.equal(failures.length, 1);
+    assert.ok(
+      failures[0].body.sequence > Math.max(...heartbeats.map((request) => request.body.sequence)),
+      "terminal failure sequence must remain after every heartbeat sequence",
+    );
   } finally {
     rmSync(fakeBin, { recursive: true, force: true });
     await ctx.close();

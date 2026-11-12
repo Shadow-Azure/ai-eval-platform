@@ -77,29 +77,29 @@
   <header class="hero">
     <p class="eyebrow">M7-136 · FIXED POOL LABELS</p>
     <h1>固定资源池标签修复 Smoke 报告</h1>
-    <p class="summary">历史 fixed provider 标记已从 Runner 标签解析中剥离；固定池评测已由生产 fixed-linux-eval 接收。真实执行又发现并修复了容器产物权限问题，等待部署后复测。</p>
+    <p class="summary">历史 fixed provider 标记已从 Runner 标签解析中剥离；固定池评测已由生产 fixed-linux-eval 接收并通过 reconciler 完成。真实执行连续发现容器权限与终端 sequence 冲突，两项均已修复并等待最终部署复测。</p>
     <span class="meta">2026-11-12 · macOS Chrome + 生产 ECS + GitHub Actions</span>
-    <div class="metrics"><div class="metric"><b>3</b><span>验收场景</span></div><div class="metric"><b>1</b><span>在线 Runner</span></div><div class="metric"><b>1/1</b><span>新评测执行中</span></div><div class="metric"><b>1</b><span>已修复集成缺陷</span></div></div>
+    <div class="metrics"><div class="metric"><b>3</b><span>验收场景</span></div><div class="metric"><b>1</b><span>在线 Runner</span></div><div class="metric"><b>1/1</b><span>新评测执行中</span></div><div class="metric"><b>2</b><span>已修复集成缺陷</span></div></div>
   </header>
 
   <section>
     <div class="head"><h2>Environment and Artifact</h2><small>2026-11-12 · macOS Chrome + 生产 ECS + GitHub Actions</small></div>
-    <article class="card"><dl class="facts"><div class="fact"><dt>功能 PR</dt><dd>#137 · merged 38d4bb39476e6693085a92a96bbce7cc452a862c</dd></div><div class="fact"><dt>原问题评测</dt><dd>707bb3bc · queue_timeout，保持历史记录</dd></div><div class="fact"><dt>新验证评测</dt><dd>64e90bd2-e715-4c34-94ff-489782fc9041</dd></div><div class="fact"><dt>eval-shard run</dt><dd>43121931498 · fixed Runner picked up；下游权限缺陷已复现</dd></div><div class="fact"><dt>Runner</dt><dd>fixed-linux-eval · self-hosted / Linux / X64 / eval</dd></div><div class="fact"><dt>历史池标记</dt><dd>kind=fixed 仅展示为 provider 元数据，不再成为 runs_on</dd></div></dl></article>
+    <article class="card"><dl class="facts"><div class="fact"><dt>功能 PR</dt><dd>#137 · merged 38d4bb39476e6693085a92a96bbce7cc452a862c</dd></div><div class="fact"><dt>原问题评测</dt><dd>707bb3bc · queue_timeout，保持历史记录</dd></div><div class="fact"><dt>新验证评测</dt><dd>64e90bd2-e715-4c34-94ff-489782fc9041</dd></div><div class="fact"><dt>首次 pickup run</dt><dd>43121931498 · fixed Runner picked up；暴露 EACCES</dd></div><div class="fact"><dt>部署后复测 run</dt><dd>43125799590 · 权限通过；暴露 sequence 冲突</dd></div><div class="fact"><dt>Runner</dt><dd>fixed-linux-eval · self-hosted / Linux / X64 / eval</dd></div><div class="fact"><dt>历史池标记</dt><dd>kind=fixed 仅展示为 provider 元数据，不再成为 runs_on</dd></div></dl></article>
   </section>
 
   <section>
-    <div class="head"><h2>Scenario Matrix</h2><small>3 pass · 1 fixed</small></div>
-    <div class="tableWrap"><table><table><thead><tr><th>#</th><th>场景</th><th>结果</th><th>说明</th><th>证据</th></tr></thead><tbody><tr><td class="num">01</td><td>历史 fixed 标记解析</td><td><span class="status pass">PASS</span></td><td>{&quot;kind&quot;:&quot;fixed&quot;} 不再被当作标签，默认返回 self-hosted、linux、eval。</td><td class="evidence">test_runner_labels.py<br>backend pytest</td></tr><tr><td class="num">02</td><td>dispatch/manifest 一致性</td><td><span class="status pass">PASS</span></td><td>固定池分片的 client_payload 与 manifest 都冻结真实 Runner 标签，显式 runs_on 仍优先。</td><td class="evidence">test_evaluations.py<br>固定池创建回归测试</td></tr><tr><td class="num">03</td><td>生产 fixed Runner 接单</td><td><span class="status pass">PASS</span></td><td>新评测 prepare 成功，execute 从 queued 进入 in_progress，页面并发由 0/1 变为 1/1。</td><td class="evidence">01-fixed-pool-running.png<br>02-fixed-pool-online.png<br>run 43121931498</td></tr><tr><td class="num">04</td><td>容器产物权限</td><td><span class="status fixed">FIXED · PENDING DEPLOY</span></td><td>宿主读取 Claude 原生文件时出现 EACCES；删除容器前由 root 对 /testbed 执行 a+rwX，并用收紧目录权限的 fake Docker 回归复现。</td><td class="evidence">tests/runner/real-task-trace-retention.test.mjs<br>runner/scripts/real-task.mjs</td></tr></tbody></table></table></div>
+    <div class="head"><h2>Scenario Matrix</h2><small>3 pass · 2 fixed</small></div>
+    <div class="tableWrap"><table><table><thead><tr><th>#</th><th>场景</th><th>结果</th><th>说明</th><th>证据</th></tr></thead><tbody><tr><td class="num">01</td><td>历史 fixed 标记解析</td><td><span class="status pass">PASS</span></td><td>{&quot;kind&quot;:&quot;fixed&quot;} 不再被当作标签，默认返回 self-hosted、linux、eval。</td><td class="evidence">test_runner_labels.py<br>backend pytest</td></tr><tr><td class="num">02</td><td>dispatch/manifest 一致性</td><td><span class="status pass">PASS</span></td><td>固定池分片的 client_payload 与 manifest 都冻结真实 Runner 标签，显式 runs_on 仍优先。</td><td class="evidence">test_evaluations.py<br>固定池创建回归测试</td></tr><tr><td class="num">03</td><td>生产 fixed Runner 接单</td><td><span class="status pass">PASS</span></td><td>新评测 prepare 成功，execute 从 queued 进入 in_progress，页面并发由 0/1 变为 1/1。</td><td class="evidence">01-fixed-pool-running.png<br>02-fixed-pool-online.png<br>run 43121931498</td></tr><tr><td class="num">04</td><td>容器产物权限</td><td><span class="status fixed">FIXED · PENDING DEPLOY</span></td><td>宿主读取 Claude 原生文件时出现 EACCES；删除容器前由 root 对 /testbed 执行 a+rwX，并用收紧目录权限的 fake Docker 回归复现。</td><td class="evidence">tests/runner/real-task-trace-retention.test.mjs<br>runner/scripts/real-task.mjs</td></tr><tr><td class="num">05</td><td>终端 sequence 与 heartbeat 冲突</td><td><span class="status fixed">FIXED · PENDING DEPLOY</span></td><td>completion/failure 固定使用 sequence 2/3，长任务中会被 heartbeat 先占用；现改保留 terminal/failure 高位 sequence，先红后绿覆盖。</td><td class="evidence">tests/runner/heartbeat-integration.test.mjs<br>03-reconciled-complete.png</td></tr></tbody></table></table></div>
   </section>
 
   <section>
-    <div class="head"><h2>Issues and Observations</h2><small>P1 Claude 原生文件权限导致宿主评分与清理失败</small></div>
-    <div class="issues"><article class="issueCard"><span class="tag">P1</span><h3>Claude 原生文件权限导致宿主评分与清理失败</h3><dl><div><dt>Actual</dt><dd>读取 .runtime-home/.claude 与创建 trace/diagnostics 时出现 EACCES。</dd></div><div><dt>Expected</dt><dd>容器退出后宿主可读取原生文件并执行评分、抓取与清理。</dd></div><div><dt>Root cause</dt><dd>Claude 生成的会话路径带有限制权限，宿主进程无法遍历。</dd></div><div><dt>Fix</dt><dd>容器仍存在时由 root 对 /testbed 执行 chmod -R a+rwX。</dd></div></dl><div class="fixed">Fixed · awaiting deploy verification</div></article></div>
+    <div class="head"><h2>Issues and Observations</h2><small>P1 Claude 原生文件权限导致宿主评分与清理失败<br>P1 completion/failure sequence 与 heartbeat 冲突</small></div>
+    <div class="issues"><article class="issueCard"><span class="tag">P1</span><h3>Claude 原生文件权限导致宿主评分与清理失败</h3><dl><div><dt>Actual</dt><dd>读取 .runtime-home/.claude 与创建 trace/diagnostics 时出现 EACCES。</dd></div><div><dt>Expected</dt><dd>容器退出后宿主可读取原生文件并执行评分、抓取与清理。</dd></div><div><dt>Root cause</dt><dd>Claude 生成的会话路径带有限制权限，宿主进程无法遍历。</dd></div><div><dt>Fix</dt><dd>容器仍存在时由 root 对 /testbed 执行 chmod -R a+rwX。</dd></div></dl><div class="fixed">Fixed · awaiting deploy verification</div></article><article class="issueCard"><span class="tag">P1</span><h3>completion/failure sequence 与 heartbeat 冲突</h3><dl><div><dt>Actual</dt><dd>长任务 heartbeat 已占用 sequence 2/3，completion 与 failed 回调返回 500。</dd></div><div><dt>Expected</dt><dd>终端回调 sequence 始终晚于该 attempt 的所有 heartbeat。</dd></div><div><dt>Root cause</dt><dd>real-task 把 completion/failure 固定写成 2/3，而 sidecar 从 2 持续递增。</dd></div><div><dt>Fix</dt><dd>终端保留高位 sequence 1000000/1000001，并补心跳后再完成/失败回归。</dd></div></dl><div class="fixed">Fixed · awaiting deploy verification</div></article></div>
   </section>
 
   <section>
-    <div class="head"><h2>Evidence</h2><small>2 screenshots</small></div>
-    <div class="shots"><figure class="wide"><img loading="lazy" src="01-fixed-pool-running.png" alt="生产新评测运行中并显示 fixed-linux 资源池"><figcaption><b>01 · 新评测运行中</b><span>修复部署后新建评测已由 fixed-linux-eval 接收，页面显示运行中和 1/1 Runner。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="02-fixed-pool-online.png" alt="生产资源池页面显示 fixed-linux 有 1 个在线 Runner 和历史 kind=fixed 标记"><figcaption><b>02 · 固定池在线</b><span>生产池仍显示历史 kind=fixed 元数据，但 fixed-linux 有 1 个在线 Runner，标签解析不再使用 kind。</span></figcaption></figure></div>
+    <div class="head"><h2>Evidence</h2><small>3 screenshots</small></div>
+    <div class="shots"><figure class="wide"><img loading="lazy" src="01-fixed-pool-running.png" alt="生产新评测运行中并显示 fixed-linux 资源池"><figcaption><b>01 · 新评测运行中</b><span>修复部署后新建评测已由 fixed-linux-eval 接收，页面显示运行中和 1/1 Runner。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="02-fixed-pool-online.png" alt="生产资源池页面显示 fixed-linux 有 1 个在线 Runner 和历史 kind=fixed 标记"><figcaption><b>02 · 固定池在线</b><span>生产池仍显示历史 kind=fixed 元数据，但 fixed-linux 有 1 个在线 Runner，标签解析不再使用 kind。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="03-reconciled-complete.png" alt="生产复测最终完成，轨迹可用 1，待处理 0"><figcaption><b>03 · 复测完成</b><span>回调序列冲突由 reconciler 收口后，用例仍被恢复为完成并产生 ready 轨迹；该恢复路径证明了数据可用，但 Runner job 仍需修复序列后重跑。</span></figcaption></figure></div>
   </section>
 
   <section>
@@ -108,8 +108,8 @@
   </section>
 
   <section>
-    <div class="head"><h2>Conclusion</h2><small>标签修复通过，权限修复待部署复测</small></div>
-    <article class="card conclusion pass"><p><strong>历史占位标记不会再生成错误的 kind 标签；生产固定 Runner 已接单，集成测试发现的产物权限缺陷已修复并有回归。</strong></p><ul><li>707bb3bc 保留为历史超时记录，不自动恢复。</li><li>新评测 64e90bd2 已由 fixed-linux-eval 接单。</li><li>本轮新增的权限修复需合并部署后再发起新的固定池评测复测。</li></ul></article>
+    <div class="head"><h2>Conclusion</h2><small>标签与两条集成缺陷已修复，待最终复测</small></div>
+    <article class="card conclusion pass"><p><strong>历史占位标记不会再生成错误的 kind 标签；生产固定 Runner 已接单，集成测试发现的产物权限与 terminal sequence 冲突均已修复并有回归。</strong></p><ul><li>707bb3bc 保留为历史超时记录，不自动恢复。</li><li>新评测 64e90bd2 已由 fixed-linux-eval 接单。</li><li>权限修复已部署并越过 EACCES；terminal sequence 修复需下一轮部署后复测。</li><li>Reconciler 已验证评测最终完成、结果 resolved、轨迹 ready，但 Runner job 仍需无错误完成。</li></ul></article>
   </section>
 
   <p class="foot">AI Eval Platform · M7-136 fixed-pool label smoke · evidence generated from Computer Use and GitHub Actions</p>

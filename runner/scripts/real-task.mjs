@@ -23,6 +23,13 @@ import {
   writeDiagnostic,
 } from "../lib/trace-capture.mjs";
 
+// The heartbeat sidecar owns monotonically increasing sequence numbers while
+// the synchronous Docker call blocks this process. Terminal callbacks are sent
+// only after the sidecar stops, so reserve high sequence numbers instead of
+// colliding with heartbeat 2/3 on any run longer than one beat.
+const TERMINAL_SEQUENCE = 1_000_000;
+const TERMINAL_FAILURE_SEQUENCE = TERMINAL_SEQUENCE + 1;
+
 function parseArgs(argv) {
   const args = { dispatch: null, stateDir: ".runner-state", objectRoot: ".runner-objects", token: null, caseRunId: null };
   for (let index = 0; index < argv.length; index += 1) {
@@ -790,7 +797,7 @@ async function main() {
           event_id: `evt_${item.case_run_id}_failed_${dispatch.attempt}`,
           case_run_id: item.case_run_id,
           attempt: dispatch.attempt,
-          sequence: 2,
+          sequence: TERMINAL_FAILURE_SEQUENCE,
           error_code: retryable ? "callback_retryable" : "upload_failed",
           retryable,
           error_summary: `上传清单回调失败：HTTP ${uploadResult.status}`,
@@ -806,7 +813,7 @@ async function main() {
         event_id: `evt_${dispatch.shard_id}_${item.case_run_id}_completed`,
         case_run_id: item.case_run_id,
         attempt: dispatch.attempt,
-        sequence: 2,
+        sequence: TERMINAL_SEQUENCE,
         execution_status: caseResult.executionStatus,
         result_status: caseResult.resultStatus,
         score_manifest: {
@@ -833,7 +840,7 @@ async function main() {
           event_id: `evt_${item.case_run_id}_failed_${dispatch.attempt}`,
           case_run_id: item.case_run_id,
           attempt: dispatch.attempt,
-          sequence: 3,
+          sequence: TERMINAL_FAILURE_SEQUENCE,
           error_code: retryable ? "callback_retryable" : "callback_permanent",
           retryable,
           error_summary: `完成回调失败：HTTP ${result.status}`,
@@ -864,7 +871,7 @@ async function main() {
         event_id: `evt_${dispatch.shard_id}_failed_${dispatch.attempt}`,
         case_run_id: cases[0]?.case_run_id ?? "unknown",
         attempt: dispatch.attempt,
-        sequence: 3,
+        sequence: TERMINAL_FAILURE_SEQUENCE,
         error_code: error.code,
         retryable,
         error_summary: String(error.message ?? error).slice(0, 1000),
