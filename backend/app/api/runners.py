@@ -936,6 +936,8 @@ def shard_tasks(
                 "case_run_id": case.id,
                 "case_key": case.case_key,
                 "prompt": (case.task_json or {}).get("problem_statement", ""),
+                # M8-07: the suffix frozen on the run is appended by the runner.
+                "prompt_suffix": run.prompt_suffix or "",
                 "repo": (case.task_json or {}).get("repo"),
                 "base_commit": (case.task_json or {}).get("base_commit"),
                 "test_patch": (case.task_json or {}).get("test_patch"),

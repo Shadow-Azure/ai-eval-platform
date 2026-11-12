@@ -16,8 +16,11 @@ scope:
   - backend/app/services/preparations.py
   - backend/app/services/evaluations.py
   - backend/app/api/runners.py
+  - backend/app/models/evaluation.py
+  - backend/migrations/versions/0022_eval_run_prompt_suffix.py
   - runner/scripts/real-task.mjs
   - runner/lib/runtime-claude-code.mjs
+  - runner/lib/prompt.mjs
   - web/src/pages/EvalWizardPage.tsx
   - web/src/pages/EvalDetailPage.tsx
   - web/src/api/evaluations.ts

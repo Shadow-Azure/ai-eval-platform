@@ -387,6 +387,9 @@ def _live_identity(
             ),
             "case_count": snapshot.get("case_count"),
         },
+        # M8-07: the appended instructions are part of the confirmed launch
+        # configuration, so a changed suffix invalidates the preparation.
+        "prompt_suffix": snapshot.get("prompt_suffix") or "",
         "runtime": {
             "key": runtime_info.get("key"),
             "adapter_version": adapter.runtime_version if adapter is not None else None,
@@ -476,6 +479,7 @@ def build_preparation(
     case_selection: dict | None = None,
     execution: dict | None = None,
     assets_resolved: bool = True,
+    prompt_suffix: str | None = None,
     settings: Settings | None = None,
     now: datetime | None = None,
 ) -> dict:
@@ -485,6 +489,8 @@ def build_preparation(
     now = _now(now)
     tenant_id = str(DEFAULT_TENANT_ID)
     execution = _normalise_execution(execution, settings)
+    # M8-07: empty/whitespace-only instructions keep today's prompt behaviour.
+    suffix = (prompt_suffix or "").strip()
     try:
         selection = _case_selection(case_selection)
     except PreparationInvalid as exc:
@@ -552,6 +558,7 @@ def build_preparation(
             "resolved_commit": (result.asset_snapshot or {}).get("resolved_commit"),
             "case_selection": selection,
             "execution": execution,
+            "prompt_suffix": suffix,
             "cost_estimate": None,
             "summary": None,
         }
@@ -623,6 +630,7 @@ def build_preparation(
             "scoring_image_digest": result.scoring_image_digest,
             "estimated_job_count": len(case_keys),
         },
+        "prompt_suffix": suffix,
         "warnings": warnings,
         "cost_estimate": cost_estimate,
     }
@@ -635,6 +643,7 @@ def build_preparation(
         "model": snapshot["model"],
         "resource_pool": snapshot["resource_pool"],
         "execution": execution,
+        "prompt_suffix": suffix,
         "resolved": snapshot["resolved"],
         "cost_estimate": cost_estimate,
         "warnings": warnings,
@@ -671,6 +680,7 @@ def build_preparation(
         "resolved_commit": (asset_snapshot or {}).get("resolved_commit"),
         "case_selection": selection,
         "execution": execution,
+        "prompt_suffix": suffix,
         "cost_estimate": cost_estimate,
         "summary": snapshot["summary"],
     }
@@ -789,6 +799,7 @@ def consume_preparation(
         execution_image_digest=resolved.get("execution_image_digest"),
         asset_snapshot_id=(asset_snapshot or {}).get("id"),
         asset_snapshot_json=asset_snapshot,
+        prompt_suffix=snapshot.get("prompt_suffix") or "",
         consistency_json={
             "preparation_id": preparation.id,
             "snapshot_digest": preparation.snapshot_digest,

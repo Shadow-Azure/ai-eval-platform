@@ -140,6 +140,7 @@ def create_synthetic_evaluation(
     asset_snapshot_id: str | None = None,
     asset_snapshot_json: dict | None = None,
     consistency_json: dict | None = None,
+    prompt_suffix: str | None = None,
     settings: Settings | None = None,
     now: datetime | None = None,
 ) -> tuple[EvalRun, bool]:
@@ -284,6 +285,7 @@ def create_synthetic_evaluation(
         asset_snapshot_id=asset_snapshot_id,
         asset_snapshot_json=asset_snapshot_json or {},
         consistency_json=consistency_json or {},
+        prompt_suffix=prompt_suffix or "",
         idempotency_key=idempotency_key[:128],
         created_by=created_by[:128],
         case_timeout_seconds=timeout,
@@ -809,6 +811,7 @@ def evaluation_summary(
         "runtime_version": run.runtime_version,
         "execution_image_digest": run.execution_image_digest,
         "scoring_image_digest": run.scoring_image_digest,
+        "prompt_suffix": run.prompt_suffix or "",
         "asset_snapshot_id": run.asset_snapshot_id,
         "asset_resolved_commit": (run.asset_snapshot_json or {}).get("resolved_commit"),
         "asset_count": (run.asset_snapshot_json or {}).get("asset_count"),
