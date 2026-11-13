@@ -58,7 +58,7 @@ M2 把执行与数据集、Agent 解耦：平台经 repository_dispatch 传 eval
 
 ## GitHub 出口代理
 
-评测容器以 `--network host` 运行，GitHub 出口即 runner 宿主出口；生产在平台 ECS 上以 `deploy/docker-compose.prod.yml` 的 `proxy` 服务运行固定版本 Squid（镜像在 `squid:6.10` 上补装 python3 供 auth helper 使用），同时监听两个端口：3128 是私网监听，不做认证，只接受 RFC1918 来源（`runner_network`，生产收敛到 runner 所在 VPC/子网 CIDR）；3129 是公网监听，要求 HTTP Basic 认证，凭据为平台签发的短期 egress token（放在用户名位、密码留空），供外部 Mac mini 等非 VPC Runner 使用。两个监听共用同一份 GitHub 域名白名单；部署流水线把 3128 绑定到 `RUNNER_EGRESS_PROXY_BIND_ADDRESS`（默认由 `API_BIND_ADDRESS` 派生），3129 默认绑定 0.0.0.0，可用 `RUNNER_EGRESS_PROXY_PUBLIC_BIND_ADDRESS` 收紧；安全组仍需按端口分别限制来源。
+评测容器以 `--network host` 运行，GitHub 出口即 runner 宿主出口；生产在平台 ECS 上以 `deploy/docker-compose.prod.yml` 的 `proxy` 服务运行固定版本 Squid（镜像在 `squid:6.10` 上补装 python3 供 auth helper 使用），同时监听两个端口：3128 是私网监听，不做认证，只接受 RFC1918 来源（`runner_network`，生产收敛到 runner 所在 VPC/子网 CIDR）；3129 是公网监听，要求 HTTP Basic 认证，凭据为平台签发的短期 egress token（放在用户名位、密码留空），供外部 Mac mini 等非 VPC Runner 使用。两个监听共用同一份 GitHub 域名白名单；默认所有池统一走公网 3129：部署流水线从 `ECS_HOST`（公网地址）派生 `RUNNER_EGRESS_PROXY=http://<公网地址>:3129`，每次评测再附带短期 egress token；3128 作为 VPC 内可选直连，绑定 `RUNNER_EGRESS_PROXY_BIND_ADDRESS`（可设为 `API_BIND_ADDRESS`）。3129 默认绑定 0.0.0.0，可用 `RUNNER_EGRESS_PROXY_PUBLIC_BIND_ADDRESS` 收紧；安全组按端口分别限制来源。
 
 API 的 `RUNNER_EGRESS_PROXY` 只接受不含凭据的 http(s) URL，配置后随分片任务 payload 下发，并在同一 payload 里附带 `egress_token`：scope=`egress`，绑定 eval_run/shard/attempt/pool，TTL 与 case token 相同（`max(300, case_timeout_seconds + 900)`），由 `issue_short_token` 用 `RUNNER_TASK_SECRET` 签发；未配置代理时两个字段都不下发，Runner 保持直连。代理侧 `deploy/proxy/egress_auth.py` 用同一个 `RUNNER_TASK_SECRET` 校验 v1 格式的签名、`exp` 与 scope（wire format 与 `backend/app/services/short_token.py` 保持一致），secret 为空时一律拒绝；因此 `RUNNER_TASK_SECRET` 必须同时注入 api 与 proxy 容器。
 

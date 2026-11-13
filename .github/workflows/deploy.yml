@@ -181,6 +181,8 @@ jobs:
       # Empty keeps the compose default (0.0.0.0) for the authenticated public
       # listener; set it to pin 3129 to a specific interface.
       RUNNER_EGRESS_PROXY_PUBLIC_BIND_ADDRESS: ${{ secrets.RUNNER_EGRESS_PROXY_PUBLIC_BIND_ADDRESS }}
+      # M8-14: public host used for the unified proxy URL (all pools).
+      ECS_HOST: ${{ secrets.ECS_HOST }}
       # M5-08: VPC-only Runner callback entry. Empty keeps the loopback
       # default and disables the VPC port binding; set both secrets in the
       # production environment to let spot runners reach the API.
@@ -246,9 +248,12 @@ jobs:
           # the same private network as the callback.
           egress_proxy="${RUNNER_EGRESS_PROXY:-}"
           egress_proxy_bind="${RUNNER_EGRESS_PROXY_BIND_ADDRESS:-}"
-          if [ -z "$egress_proxy" ] && [ -n "$API_BIND_ADDRESS" ]; then
-            egress_proxy="http://${API_BIND_ADDRESS}:3128"
-            egress_proxy_bind="${API_BIND_ADDRESS}"
+          if [ -z "$egress_proxy" ] && [ -n "$ECS_HOST" ]; then
+            # M8-14: unified public path. The 3129 listener requires the
+            # per-run egress token, so every pool shares one URL; the 3128
+            # private listener stays available for explicit VPC overrides.
+            egress_proxy="http://${ECS_HOST}:3129"
+            egress_proxy_bind="${API_BIND_ADDRESS:-127.0.0.1}"
           fi
           expected_hashes="$(
             for name in SECRET_BOX_KEY POSTGRES_PASSWORD AUTH_SESSION_SECRET GATEWAY_TOKEN_SECRET RUNNER_TASK_SECRET RUNNER_HEARTBEAT_TOKEN RUNNER_ADMIN_TOKEN; do
