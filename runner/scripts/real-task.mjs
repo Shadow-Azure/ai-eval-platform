@@ -282,9 +282,20 @@ function runtimeSetupFromSnapshot(assetSnapshot) {
  * the argument list unchanged.
  */
 function runAssetRuntimeSetup(agentName, { install }, egressArgs = []) {
-  const script = `export PATH=${RUNTIME_SETUP_PATH}:$PATH\n${install}`;
+  // M8-20: some dataset images do not expose /home/eval to the eval user at
+  // this point (ENOENT /home/eval/lib). The frozen install command installs
+  // into $HOME, so run it with a guaranteed-writable HOME and put the CLI in
+  // $HOME/bin, which the agent PATH also carries. Print the identity and the
+  // relevant directories so a future regression is visible in the CI log.
+  const script = [
+    "mkdir -p /tmp/eval-home/bin",
+    "export HOME=/tmp/eval-home",
+    `export PATH=${RUNTIME_SETUP_PATH}:/tmp/eval-home/bin:$PATH`,
+    "id; ls -ld /home /home/eval /tmp/eval-home 2>&1 || true",
+    install,
+  ].join("\n");
   const args = [
-    "exec", "-u", "eval", "-e", "HOME=/home/eval", "-w", "/testbed",
+    "exec", "-u", "eval", "-e", "HOME=/tmp/eval-home", "-w", "/testbed",
     ...egressArgs,
     agentName, "bash", "-lc", script,
   ];
@@ -515,7 +526,11 @@ async function realCase(dispatch, item, task, { modelToken, runnerRoot, callback
           }),
         );
       }
-      const execArgs = ["exec", "-u", "eval", "-e", "HOME=/home/eval"];
+      const execArgs = [
+        "exec", "-u", "eval",
+        "-e", "HOME=/tmp/eval-home",
+        "-e", `PATH=${RUNTIME_SETUP_PATH}:/tmp/eval-home/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`,
+      ];
       for (const [key, value] of Object.entries(env)) execArgs.push("-e", `${key}=${value}`);
       execArgs.push(...egressArgs);
       execArgs.push(

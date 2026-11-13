@@ -31,7 +31,7 @@ const INSTALL_COMMAND = 'npm install --prefix "$HOME" --no-audit --no-fund @exam
 const INIT_COMMAND = '"$HOME/node_modules/.bin/openspec-cli" init --yes';
 const LEGACY_INSTALL = 'npm install --prefix "$HOME" @example/legacy-cli';
 const LEGACY_INIT = '"$HOME/node_modules/.bin/legacy-cli" init';
-const SETUP_IDENTITY = "-u eval -e HOME=/home/eval -w /testbed";
+const SETUP_IDENTITY = "-u eval -e HOME=/tmp/eval-home -w /testbed";
 const CHOWN_COMMAND = "chown -R eval:eval /testbed/.claude";
 
 const cases = [{ case_run_id: CASE_RUN_ID, case_key: "case-real", dataset_case_id: "case-real" }];
@@ -490,7 +490,8 @@ test("the egress proxy env reaches the asset install and the agent exec", async 
     }
     // The existing exec identity/order is preserved; proxy flags come after it.
     assert.ok(install.includes(`exec ${SETUP_IDENTITY} `), install);
-    assert.ok(agent.startsWith("exec -u eval -e HOME=/home/eval -e WORKSPACE=/testbed "), agent);
+    assert.ok(agent.startsWith("exec -u eval -e HOME=/tmp/eval-home -e PATH="), agent);
+    assert.ok(agent.includes("-e WORKSPACE=/testbed"), agent);
   } finally {
     rmSync(fakeBin, { recursive: true, force: true });
     await ctx.close();
