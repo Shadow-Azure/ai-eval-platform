@@ -80,6 +80,23 @@ stage_begin rolling_update
 "${COMPOSE[@]}" up -d --remove-orphans
 stage_finish success "API/Web 容器替换完成"
 
+# M8-16: the proxy is not part of the API health check, so a squid that fails
+# to start used to leave only a "Started" line and closed ports. Emit the
+# container state, its logs and a loopback probe so the CI log carries the
+# diagnosis.
+stage_begin proxy_diagnostics
+"${COMPOSE[@]}" ps proxy || true
+"${COMPOSE[@]}" logs --tail=120 proxy || true
+for port in 3128 3129; do
+  if (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then
+    echo "deploy: proxy 127.0.0.1:$port open"
+  else
+    echo "deploy: proxy 127.0.0.1:$port closed" >&2
+  fi
+done
+curl -sS -m 5 -o /dev/null -w "deploy: proxy 3129 no-token http=%{http_code}\n" -x http://127.0.0.1:3129 https://github.com || true
+stage_finish success "代理诊断完成"
+
 stage_begin health_check
 if ! wait_ready 30; then
   echo "deploy: health check failed" >&2
