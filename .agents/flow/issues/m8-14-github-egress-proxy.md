@@ -20,6 +20,7 @@ scope:
   - tests/backend/**
   - tests/runner/**
   - deploy/**
+  - .github/workflows/deploy.yml
   - docs/**
   - plans/**
 adr: []

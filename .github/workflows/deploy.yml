@@ -173,6 +173,11 @@ jobs:
       RUNNER_TASK_SECRET: ${{ secrets.RUNNER_TASK_SECRET }}
       RUNNER_HEARTBEAT_TOKEN: ${{ secrets.RUNNER_HEARTBEAT_TOKEN }}
       RUNNER_ADMIN_TOKEN: ${{ secrets.RUNNER_ADMIN_TOKEN }}
+      # M8-14: optional overrides for the GitHub egress proxy. Empty means the
+      # deploy derives both values from API_BIND_ADDRESS (same VPC as the
+      # runner callback), so no extra secret or host edit is required.
+      RUNNER_EGRESS_PROXY: ${{ secrets.RUNNER_EGRESS_PROXY }}
+      RUNNER_EGRESS_PROXY_BIND_ADDRESS: ${{ secrets.RUNNER_EGRESS_PROXY_BIND_ADDRESS }}
       # M5-08: VPC-only Runner callback entry. Empty keeps the loopback
       # default and disables the VPC port binding; set both secrets in the
       # production environment to let spot runners reach the API.
@@ -233,6 +238,15 @@ jobs:
           if [ -z "$callback_base_url" ] && [ -n "$API_BIND_ADDRESS" ]; then
             callback_base_url="http://${API_BIND_ADDRESS}:8000"
           fi
+          # M8-14: derive the GitHub egress proxy from the VPC bind address
+          # when no explicit override is set, so the runner reaches it over
+          # the same private network as the callback.
+          egress_proxy="${RUNNER_EGRESS_PROXY:-}"
+          egress_proxy_bind="${RUNNER_EGRESS_PROXY_BIND_ADDRESS:-}"
+          if [ -z "$egress_proxy" ] && [ -n "$API_BIND_ADDRESS" ]; then
+            egress_proxy="http://${API_BIND_ADDRESS}:3128"
+            egress_proxy_bind="${API_BIND_ADDRESS}"
+          fi
           expected_hashes="$(
             for name in SECRET_BOX_KEY POSTGRES_PASSWORD AUTH_SESSION_SECRET GATEWAY_TOKEN_SECRET RUNNER_TASK_SECRET RUNNER_HEARTBEAT_TOKEN RUNNER_ADMIN_TOKEN; do
               value="${!name}"
@@ -262,6 +276,8 @@ jobs:
             printf 'RUNNER_HEARTBEAT_TOKEN=%s\n' "$RUNNER_HEARTBEAT_TOKEN"
             printf 'RUNNER_ADMIN_TOKEN=%s\n' "$RUNNER_ADMIN_TOKEN"
             printf 'API_BIND_ADDRESS=%s\n' "$API_BIND_ADDRESS"
+            printf 'RUNNER_EGRESS_PROXY=%s\n' "$egress_proxy"
+            printf 'RUNNER_EGRESS_PROXY_BIND_ADDRESS=%s\n' "$egress_proxy_bind"
             printf 'RUNNER_CALLBACK_BASE_URL=%s\n' "$callback_base_url"
             printf 'RUNNER_SPOT_RUNNER_TARBALL_URL=%s\n' "$RUNNER_SPOT_RUNNER_TARBALL_URL"
             printf 'RUNNER_SCRIPTS_BUNDLE_NAME=%s\n' "$RUNNER_SCRIPTS_BUNDLE_NAME"

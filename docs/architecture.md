@@ -58,9 +58,9 @@ M2 把执行与数据集、Agent 解耦：平台经 repository_dispatch 传 eval
 
 ## GitHub 出口代理
 
-评测容器以 `--network host` 运行，GitHub 出口即 runner 宿主出口；生产在平台 ECS 上以 `deploy/docker-compose.prod.yml` 的 `proxy` 服务运行固定版本 Squid，3128 只绑定到 `RUNNER_EGRESS_PROXY_BIND_ADDRESS`（默认回环，生产设为 ECS 私网地址），安全组只允许 runner 网段访问，Squid 配置中的 `runner_network` 默认 `10.0.0.0/8`，部署时收敛到 runner 所在 VPC/子网 CIDR。
+评测容器以 `--network host` 运行，GitHub 出口即 runner 宿主出口；生产在平台 ECS 上以 `deploy/docker-compose.prod.yml` 的 `proxy` 服务运行固定版本 Squid，3128 只绑定到 `RUNNER_EGRESS_PROXY_BIND_ADDRESS`。部署流水线在 GitHub Secrets 流程中从 `API_BIND_ADDRESS`（ECS 私网地址）派生 `RUNNER_EGRESS_PROXY=http://<私网地址>:3128` 与 `RUNNER_EGRESS_PROXY_BIND_ADDRESS`，无需手工改主机 `.env`；如需不同地址，用同名 secret 覆盖。安全组只允许 runner 网段访问；Squid 的 `runner_network` 默认放行 RFC1918 私网网段，生产再收敛到 runner 所在 VPC/子网 CIDR。
 
-API 的 `RUNNER_EGRESS_PROXY` 只接受不含凭据的 http(s) URL，配置后随分片任务 payload 下发；平台机 `.env` 用 `RUNNER_EGRESS_PROXY=http://<proxy-host>:3128` 启用，并把 `RUNNER_EGRESS_PROXY_BIND_ADDRESS` 设为同一私网地址，空值保持直连。Runner 仅在 `egress_proxy` 非空时给资产 install 与 Agent 的 `docker exec` 注入 `HTTPS_PROXY`、`HTTP_PROXY` 与 `NO_PROXY`，未配置时命令参数与直连行为不变。`NO_PROXY` 从 payload 派生平台回调/模型网关主机与 OSS 资产包主机，并固定包含 `localhost`、`127.0.0.1`、`::1`、npm 镜像 `registry.npmmirror.com` 与默认源 `registry.npmjs.org`。
+API 的 `RUNNER_EGRESS_PROXY` 只接受不含凭据的 http(s) URL，配置后随分片任务 payload 下发；空值保持直连。Runner 仅在 `egress_proxy` 非空时给资产 install 与 Agent 的 `docker exec` 注入 `HTTPS_PROXY`、`HTTP_PROXY` 与 `NO_PROXY`，未配置时命令参数与直连行为不变。`NO_PROXY` 从 payload 派生平台回调/模型网关主机与 OSS 资产包主机，并固定包含 `localhost`、`127.0.0.1`、`::1`、npm 镜像 `registry.npmmirror.com` 与默认源 `registry.npmjs.org`。
 
 白名单和拒绝策略都在 `deploy/proxy/squid.conf`：只允许 `github.com`、`api.github.com`、`codeload.github.com`、`objects.githubusercontent.com`、`release-assets.githubusercontent.com`、`github-releases.githubusercontent.com`、`.github.com` 与 `.githubusercontent.com` 的 443 端口，其余请求由 `http_access deny all` 拒绝并写入访问日志。改白名单或 CIDR 后重建 `proxy` 服务；验证命令：
 
