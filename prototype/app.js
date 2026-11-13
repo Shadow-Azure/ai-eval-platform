@@ -411,7 +411,7 @@ const mock = {
       counts: { skill: 6, command: 4, subagent: 5 },
       note: "静态扫描 0 资产；codespec init（core）生成 4 Command + 6 Skill + 5 Agent（外部 Skill 含 codespec-* 前缀），需要 codespec CLI。",
       runtime: {
-        installCommand: "npm install --prefix \"$HOME\" github:chenmr0/OpenSpec-cn#main-copy-ar",
+        installCommand: "npm ci && npm run build && npm install -g .",
         initCommand: "\"$HOME/node_modules/.bin/codespec\" init --tools claude --profile core",
         status: "untested",
         durationSeconds: null,
@@ -1424,7 +1424,7 @@ function assetSourcesPage() {
       })}
       <div class="banner" style="margin-bottom:16px">${icon("git", 16)}<div><strong>Git 是唯一来源，快照才是执行输入。</strong> 平台只读取仓库树并生成不可变资产包；Runner 不需要获得 GitHub 凭据，也不会在执行时重新拉取分支。</div></div>
       <div class="grid grid-4">
-        ${metricCard("Git 资产源", String(mock.assetSources.length), "<span>默认 Ref 可在启动时覆盖</span>", "git")}
+        ${metricCard("Git 资产源", String(mock.assetSources.length), "<span>默认分支可在启动时覆盖</span>", "git")}
         ${metricCard("Skill", String(totals.skill), "<span>目录中包含 SKILL.md</span>", "sparkles", "success")}
         ${metricCard("Command", String(totals.command), "<span>由 Runtime adapter 识别</span>", "terminal", "violet")}
         ${metricCard("Subagent", String(totals.subagent), "<span>运行时特定格式</span>", "users", "warning")}
@@ -1444,7 +1444,7 @@ function assetSourcesPage() {
                 </div>
                 <p class="dataset-description">${source.description}</p>
                 <div class="asset-source-meta">
-                  <div><span>默认 Ref</span><strong class="mono">${source.defaultRef}</strong></div>
+                  <div><span>默认分支</span><strong class="mono">${source.defaultRef}</strong></div>
                   <div><span>扫描路径</span><strong class="mono">${source.scanPath}</strong></div>
                   <div><span>选择范围</span><strong>${source.selection === "directory" ? "目录下全部" : "指定资产"}</strong></div>
                 </div>
@@ -1763,7 +1763,7 @@ function newEvalPage() {
     content = `
       <div class="eyebrow">Step 2 · Runtime</div>
       <h2 style="font-size:19px;margin-bottom:6px">选择 Agent 与资产源</h2>
-      <p class="small muted" style="margin-bottom:18px">从 Git 仓库加载 Skill、Command 与 Subagent。启动时可以使用配置的默认 Ref，也可以改为其他分支、tag 或 commit。</p>
+      <p class="small muted" style="margin-bottom:18px">从 Git 仓库加载 Skill、Command 与 Subagent。启动时可以使用配置的默认分支，也可以改为其他分支、tag 或 commit。</p>
       <div class="choice-grid">
         ${agents
           .map(
@@ -1778,7 +1778,7 @@ function newEvalPage() {
           )
           .join("")}
       </div>
-      <div class="card-header" style="padding:18px 0 10px;border:0"><div><h3 class="card-title">Git 资产源</h3><p class="card-subtitle">仓库、默认 Ref 与扫描路径来自资产源配置</p></div><button class="btn btn-ghost btn-sm" data-route="/assets">管理资产源 ${icon("arrowRight", 12)}</button></div>
+      <div class="card-header" style="padding:18px 0 10px;border:0"><div><h3 class="card-title">Git 资产源</h3><p class="card-subtitle">仓库、默认分支与扫描路径来自资产源配置</p></div><button class="btn btn-ghost btn-sm" data-route="/assets">管理资产源 ${icon("arrowRight", 12)}</button></div>
       <div class="asset-runtime-panel">
         <div class="field">
           <label class="required">资产源</label>
@@ -1795,19 +1795,19 @@ function newEvalPage() {
         </div>
         <div class="field-row asset-ref-row">
           <div class="field">
-            <label class="required">评测 Ref</label>
+            <label class="required">Agent 版本（分支 / Tag / Commit）</label>
             <input class="input mono" id="asset-ref-input" value="${esc(ui.newEval.assetRef)}" placeholder="分支、tag 或 commit" />
-            <span class="hint">默认填入 ${source.defaultRef}，发起本次评测前可以修改。</span>
+            <span class="hint">默认分支为 ${source.defaultRef}；评测会按该版本 checkout 源码并重新构建/init 资产。</span>
           </div>
           <div class="field">
-            <label>已解析版本</label>
+            <label>将使用的 commit</label>
             <div class="asset-commit-box">
-              <span class="mono" id="asset-commit-label">${refVerified ? `@${ui.newEval.assetCommit}` : "尚未解析当前 Ref"}</span>
+              <span class="mono" id="asset-commit-label">${refVerified ? `@${ui.newEval.assetCommit}` : "尚未解析当前版本"}</span>
               <button class="btn btn-sm" data-action="scan-assets">${icon("refresh", 13)} 读取资产</button>
             </div>
           </div>
         </div>
-        <div id="asset-ref-status" class="banner ${refVerified ? "success" : "warning"}">${icon(refVerified ? "check" : "alert", 15)}<div>${refVerified ? `已从 <span class="mono">${ui.newEval.assetRef}</span> 解析资产；启动时会固定到 commit <span class="mono">${ui.newEval.assetCommit}</span>。` : "<strong>Ref 已修改但尚未解析。</strong> 继续前需要读取该 Ref 下的资产，缺失或冲突会阻止评测启动。"}</div></div>
+        <div id="asset-ref-status" class="banner ${refVerified ? "success" : "warning"}">${icon(refVerified ? "check" : "alert", 15)}<div>${refVerified ? `将按 <span class="mono">${ui.newEval.assetRef}</span> checkout 源码并重新构建资产；启动时固定到 commit <span class="mono">${ui.newEval.assetCommit}</span>。` : "<strong>版本已修改但尚未解析。</strong> 继续前需要解析该版本；缺失或冲突会阻止评测启动。"}</div></div>
       </div>
       <div class="card-header" style="padding:18px 0 9px;border:0"><div><h3 class="card-title">选择资产</h3><p class="card-subtitle">已选择 ${selectedInSource} / ${source.assets.length} 项 · 全选覆盖当前筛选的所有页</p></div><button class="btn btn-ghost btn-sm" data-action="asset-source-detail" data-source="${source.id}">查看资产详情</button></div>
       <div class="asset-select-panel">
@@ -1913,7 +1913,7 @@ function newEvalPage() {
         <div class="summary-item"><span class="summary-label">数据集</span><span class="summary-value">SWE-bench Verified · v2026.10</span></div>
         <div class="summary-item"><span class="summary-label">执行组合</span><span class="summary-value">Codex CLI × ${selectedAssetSource.name} × DeepSeek</span></div>
         <div class="summary-item"><span class="summary-label">Agent 资产</span><span class="summary-value">${ui.newEval.selectedAssets.length} 项 · ${selectedAssetSource.scanPath}</span></div>
-        <div class="summary-item"><span class="summary-label">Git Ref</span><span class="summary-value mono">${ui.newEval.assetRef} @ ${ui.newEval.assetCommit}</span></div>
+        <div class="summary-item"><span class="summary-label">Agent 版本</span><span class="summary-value mono">${ui.newEval.assetRef} @ ${ui.newEval.assetCommit}</span></div>
         <div class="summary-item"><span class="summary-label">资源池</span><span class="summary-value">Linux Spot Pool</span></div>
         <div class="summary-item"><span class="summary-label">超时策略</span><span class="summary-value">单用例 30 分钟 · 失败重试 1 次</span></div>
         <div class="summary-item"><span class="summary-label">附加指令</span><span class="summary-value" style="white-space:pre-wrap">${ui.newEval.promptSuffix ? esc(ui.newEval.promptSuffix) : "未设置"}</span></div>
@@ -2726,7 +2726,7 @@ function openAssetSourceModal(animate = true) {
             <span class="hint">私有仓库通过租户级 GitHub 连接读取。</span>
           </div>
           <div class="field">
-            <label class="required">默认分支 / Ref</label>
+            <label class="required">默认分支</label>
             <input class="input mono" id="wizard-default-ref" value="${esc(wizard.defaultRef)}" />
           </div>
           <div class="field">
@@ -2832,7 +2832,7 @@ function openAssetSourceModal(animate = true) {
                 : `<div class="asset-scan-empty">
                     ${icon("search", 24)}
                     <strong>尚未扫描仓库</strong>
-                    <span>填写仓库、默认 Ref 和扫描路径后点击“自动扫描”。</span>
+                    <span>填写仓库、默认分支和扫描路径后点击“自动扫描”。</span>
                     <button class="btn btn-primary btn-sm" data-action="scan-git-assets" style="margin-top:8px">${icon("search", 13)} 自动扫描</button>
                   </div>`
           }
@@ -2851,7 +2851,7 @@ function openAssetSourceDetail(sourceId) {
     wide: true,
     body: `
       <div class="grid grid-4">
-        ${metricCard("Git Ref", `<span style="font-size:16px;word-break:break-all">${source.defaultRef}</span>`, `<span class="mono">已解析 @${source.commit}</span>`, "git")}
+        ${metricCard("Agent 版本", `<span style="font-size:16px;word-break:break-all">${source.defaultRef}</span>`, `<span class="mono">已解析 @${source.commit}</span>`, "git")}
         ${metricCard("Skill", String(source.counts.skill), "<span>SKILL.md 目录</span>", "sparkles", "success")}
         ${metricCard("Command", String(source.counts.command), "<span>Runtime 命令资产</span>", "terminal", "violet")}
         ${metricCard("Subagent", String(source.counts.subagent), "<span>Runtime 子 Agent</span>", "users", "warning")}
@@ -3219,7 +3219,7 @@ function handleAction(action, target) {
     ui.assetWizard.defaultRef = modalRoot?.querySelector("#wizard-default-ref")?.value.trim() || ui.assetWizard.defaultRef;
     ui.assetWizard.scanPath = modalRoot?.querySelector("#wizard-scan-path")?.value.trim() || ui.assetWizard.scanPath;
     if (!ui.assetWizard.repoUrl || !ui.assetWizard.defaultRef || !ui.assetWizard.scanPath) {
-      toast("仓库、默认 Ref 和扫描路径不能为空", true);
+      toast("仓库、默认分支和扫描路径不能为空", true);
       return;
     }
     const normalizedRepo = ui.assetWizard.repoUrl.toLowerCase();
@@ -3494,7 +3494,7 @@ function handleAction(action, target) {
   }
   if (action === "scan-assets") {
     if (!ui.newEval.assetRef.trim()) {
-      toast("评测 Ref 不能为空", true);
+      toast("Agent 版本不能为空", true);
       return;
     }
     const source = assetSourceById(ui.newEval.assetSource);
@@ -3674,7 +3674,7 @@ function handleAction(action, target) {
   }
   if (action === "eval-next") {
     if (ui.newEvalStep === 2 && ui.newEval.assetRef !== ui.newEval.assetVerifiedRef) {
-      toast("请先读取并确认当前 Git Ref 下的资产", true);
+      toast("请先读取并确认当前 Agent 版本下的资产", true);
       return;
     }
     ui.newEvalStep = Math.min(4, ui.newEvalStep + 1);
@@ -3956,9 +3956,9 @@ document.addEventListener("input", (event) => {
     const summaryRef = document.querySelector("#summary-asset-ref");
     if (status) {
       status.className = `banner ${verified ? "success" : "warning"}`;
-      status.innerHTML = `${icon(verified ? "check" : "alert", 15)}<div>${verified ? `已从 <span class="mono">${esc(ui.newEval.assetRef)}</span> 解析资产；启动时会固定到 commit <span class="mono">${ui.newEval.assetCommit}</span>。` : "<strong>Ref 已修改但尚未解析。</strong> 继续前需要读取该 Ref 下的资产，缺失或冲突会阻止评测启动。"}</div>`;
+      status.innerHTML = `${icon(verified ? "check" : "alert", 15)}<div>${verified ? `将按 <span class="mono">${esc(ui.newEval.assetRef)}</span> checkout 源码并重新构建资产；启动时固定到 commit <span class="mono">${ui.newEval.assetCommit}</span>。` : "<strong>版本已修改但尚未解析。</strong> 继续前需要解析该版本；缺失或冲突会阻止评测启动。"}</div>`;
     }
-    if (commit) commit.textContent = verified ? `@${ui.newEval.assetCommit}` : "尚未解析当前 Ref";
+    if (commit) commit.textContent = verified ? `@${ui.newEval.assetCommit}` : "尚未解析当前版本";
     if (summaryRef) summaryRef.textContent = `${ui.newEval.assetRef} · ${ui.newEval.selectedAssets.length} 项`;
   }
   if (event.target.id === "wizard-repo-url") ui.assetWizard.repoUrl = event.target.value;

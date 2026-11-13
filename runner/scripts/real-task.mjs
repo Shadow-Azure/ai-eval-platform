@@ -6,6 +6,12 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 import { materializeSnapshot } from "../lib/asset-bundle.mjs";
+import {
+  downloadSourceArchive,
+  extractSourceArchive,
+  injectSourceAssets,
+  missingSourceAssets,
+} from "../lib/source-archive.mjs";
 import { verifyToken } from "../lib/auth.mjs";
 import { postCallback } from "../lib/callback-client.mjs";
 import { requireValid, validateDispatch, validateManifest, validateStarted } from "../lib/contracts.mjs";
@@ -243,48 +249,59 @@ function egressProxyEnvArgs(task, callbackBaseUrl) {
  * so accept that as a fallback. Both fields come from the admin-controlled
  * asset source, never from case data.
  *
- * M8-11: at eval time only the install command runs. `init` creates `.claude`
- * as the `eval` user, which conflicts with the host-side materialization of
- * the frozen snapshot (EACCES) and would compete for the same tree. The
- * frozen snapshot is the sole source of `.claude`; `init_command` in the
- * payload is deliberately ignored, even when present.
+ * M8-11: for frozen snapshots only the install command runs. `init` creates
+ * `.claude` as the `eval` user, which conflicts with the host-side
+ * materialization of the frozen snapshot (EACCES) and would compete for the
+ * same tree. The frozen snapshot is the sole source of `.claude` there.
  *
- * The install command runs verbatim inside the agent container, so the runner
- * host never installs the CLI. An empty install means "no setup" (old
- * behaviour).
+ * M8-22: CLI-generated snapshots are different. Their source archive is
+ * extracted from the platform-pinned commit, install builds the CLI from that
+ * checkout, and init regenerates `.claude` inside `/testbed`. Those snapshots
+ * never materialize the frozen bundle.
+ *
+ * The commands run verbatim inside the agent container, so the runner host
+ * never installs the CLI. An empty install means "no setup" (old behaviour).
  */
 const RUNTIME_SETUP_TIMEOUT_MS = 600_000;
 const RUNTIME_SETUP_PATH = "/opt/miniconda3/envs/testbed/bin:/opt/node/bin";
+const SOURCE_CLI_PATH =
+  "/asset-source/node_modules/.bin:/home/eval/node_modules/.bin:/home/eval/bin:/home/eval/.local/bin";
 
 function runtimeSetupFromSnapshot(assetSnapshot) {
   // `runtime_setup` is the frozen contract; fall back to the legacy field only
-  // when the new one carries no command at all. `init_command` is ignored: it
-  // is not part of the eval-time contract any more.
+  // when the new one carries no command at all.
   for (const setup of [assetSnapshot?.runtime_setup, assetSnapshot?.runtime_prerequisites]) {
     if (!setup || typeof setup !== "object") continue;
     const install = typeof setup.install_command === "string" ? setup.install_command.trim() : "";
+    const init = typeof setup.init_command === "string" ? setup.init_command.trim() : "";
     if (!install) continue;
-    return { install };
+    return { install, init };
   }
   return null;
 }
 
 /**
- * Execute the install command in the running agent container with /testbed as
- * cwd. It runs as the workspace owner (`eval`) with the same HOME the load
- * test used, so a CLI installed under `$HOME` is found again by the agent.
- * The command is frozen, administrator-controlled text (never case data) and
- * runs verbatim; only a fixed PATH prefix is added so node/npm from the
- * runtime install are visible. Any non-zero exit or timeout raises
- * `asset_runtime_setup_failed` (phase `install`); callers must abort the case
- * instead of running the agent against an image without the CLI. M8-14 appends
- * the proxy env flags after the existing exec options; an unset proxy leaves
- * the argument list unchanged.
+ * Execute one administrator-configured command as the workspace owner.
+ *
+ * It runs in the agent container with HOME=/home/eval so a CLI installed under
+ * `$HOME` is found again by the agent. The command is frozen,
+ * administrator-controlled text (never case data) and runs verbatim; only a
+ * fixed PATH prefix is added so node/npm from the runtime install are visible.
+ * M8-14 appends the proxy env flags after the existing exec options; an unset
+ * proxy leaves the argument list unchanged.
  */
-function runAssetRuntimeSetup(agentName, { install }, egressArgs = []) {
-  const script = `export PATH=${RUNTIME_SETUP_PATH}:$PATH\n${install}`;
+function runAssetCommand(
+  agentName,
+  { command, cwd, phase, errorCode, egressArgs = [], sourceCli = false },
+) {
+  const path = sourceCli ? `${SOURCE_CLI_PATH}:${RUNTIME_SETUP_PATH}` : RUNTIME_SETUP_PATH;
+  const script = [
+    `export PATH=${path}:$PATH`,
+    "export ASSET_SOURCE_ROOT=/asset-source",
+    command,
+  ].join("\n");
   const args = [
-    "exec", "-u", "eval", "-e", "HOME=/home/eval", "-w", "/testbed",
+    "exec", "-u", "eval", "-e", "HOME=/home/eval", "-w", cwd,
     ...egressArgs,
     agentName, "bash", "-lc", script,
   ];
@@ -292,20 +309,31 @@ function runAssetRuntimeSetup(agentName, { install }, egressArgs = []) {
   try {
     result = dockerRun(args, { allowFailure: true, timeout: RUNTIME_SETUP_TIMEOUT_MS });
   } catch (error) {
-    throw Object.assign(new Error(`资产运行时前置 install 执行失败：${error.message}`), {
-      code: "asset_runtime_setup_failed",
-      phase: "install",
+    throw Object.assign(new Error(`资产 ${phase} 执行失败：${error.message}`), {
+      code: errorCode,
+      phase,
     });
   }
+  const output = [result.stdout || "", result.stderr || ""]
+    .filter((part) => part.trim())
+    .join("\n");
   if (result.status !== 0) {
-    const stderr = (result.stderr || "").slice(-4000);
     throw Object.assign(
-      new Error(
-        `资产运行时前置 install 退出码 ${result.status}：${(stderr || result.stdout || "").slice(-800)}`,
-      ),
-      { code: "asset_runtime_setup_failed", phase: "install", setupStderr: stderr },
+      new Error(`资产 ${phase} 退出码 ${result.status}：${output.slice(-800)}`),
+      { code: errorCode, phase, setupStderr: output.slice(-4000) },
     );
   }
+  return output;
+}
+
+function runAssetRuntimeSetup(agentName, { install }, egressArgs = []) {
+  return runAssetCommand(agentName, {
+    command: install,
+    cwd: "/testbed",
+    phase: "install",
+    errorCode: "asset_runtime_setup_failed",
+    egressArgs,
+  });
 }
 
 
@@ -322,6 +350,9 @@ async function realCase(dispatch, item, task, { modelToken, runnerRoot, callback
   const startedAt = Date.now();
   const workdir = mkdtempSync(join(tmpdir(), "eval-case-"));
   const testPatchPath = join(tmpdir(), `eval-test-${item.case_run_id}.patch`);
+  // Declared outside the try so the cleanup branch can remove the M8-22
+  // checkout even when extraction fails part-way through.
+  let sourceDir = null;
   try {
     if (!task.repo || !task.base_commit) throw new Error("真实用例缺少 repo/base_commit");
     if (!task.prompt) throw new Error("真实用例缺少 problem_statement");
@@ -359,6 +390,36 @@ async function realCase(dispatch, item, task, { modelToken, runnerRoot, callback
       }
       return bundle;
     };
+    const failCase = (
+      code,
+      message,
+      { phase = null, diagnostic = "asset-source-failure.json", extra = {} } = {},
+    ) => {
+      console.error(message);
+      writeDiagnostic(
+        join(workdir, "trace"),
+        diagnostic,
+        `${JSON.stringify({ type: "trace.failed", code, phase, message, ...extra })}\n`,
+      );
+      console.error(JSON.stringify({ status: "case_failed", error_code: code, phase }));
+      return {
+        score: {
+          [task.case_key]: {
+            resolved: false,
+            error: code,
+            message,
+            tests_status: {
+              FAIL_TO_PASS: { success: [], failure: [] },
+              PASS_TO_PASS: { success: [], failure: [] },
+            },
+          },
+        },
+        traceBundle: collectCapture(),
+        executionStatus: "failed",
+        resultStatus: "not_scored",
+        durationMs: Date.now() - startedAt,
+      };
+    };
     const checkout = spawnSync("git", ["-C", workdir, "checkout", task.base_commit], {
       encoding: "utf8",
       timeout: 120_000,
@@ -381,14 +442,39 @@ async function realCase(dispatch, item, task, { modelToken, runnerRoot, callback
       EXECUTION_IMAGE_DIGEST: environmentImage,
     };
     const agentName = `eval-agent-${item.case_run_id.slice(0, 8)}-${process.pid}`;
+    const sourceMode = Boolean(task.asset_snapshot?.source_mode);
+    let sourceRoot = null;
     let agent;
     let containerPatch = "";
+    if (sourceMode) {
+      try {
+        const bytes = await downloadSourceArchive(task.asset_snapshot);
+        sourceDir = mkdtempSync(join(tmpdir(), "eval-source-"));
+        sourceRoot = extractSourceArchive(bytes, join(sourceDir, "repo"));
+        spawnSync("chmod", ["-R", "a+rwX", sourceRoot], {
+          encoding: "utf8",
+          timeout: 120_000,
+        });
+        // M8-22: init owns the generated `.claude` tree. Remove the dataset
+        // repository's own copy so the agent only sees assets built from the
+        // selected ref.
+        rmSync(join(workdir, ".claude"), { recursive: true, force: true });
+      } catch (error) {
+        return failCase(
+          error.code || "source_archive_invalid",
+          `按所选版本获取源码失败：${error.message}`,
+          { phase: "checkout" },
+        );
+      }
+    }
     try {
-      dockerRun([
+      const runArgs = [
         "run", "-d", "--name", agentName, "--network", "host",
         "-v", `${workdir}:/testbed`, "-v", `${runnerRoot}:/runner:ro`,
-        environmentImage, "tail", "-f", "/dev/null",
-      ]);
+      ];
+      if (sourceRoot) runArgs.push("-v", `${sourceRoot}:/asset-source`);
+      runArgs.push(environmentImage, "tail", "-f", "/dev/null");
+      dockerRun(runArgs);
       // The dataset image is fixed; the generic agent runtime is installed
       // after start from Alibaba npm/PyPI sources. No per-agent image.
       dockerRun(["exec", agentName, "bash", "-lc", runtimeAdapter.installScript()], { timeout: 600_000 });
@@ -405,43 +491,184 @@ async function realCase(dispatch, item, task, { modelToken, runnerRoot, callback
         ],
         { timeout: 60_000 },
       );
-      // M8-11: run only the frozen asset install command (CLI availability)
-      // inside the same container before the agent starts. `init_command` is
-      // never executed at eval time: it would create `.claude` as `eval` and
-      // collide with the frozen snapshot materialized below. A failure aborts
-      // the case: the eval commands would otherwise hit an image without the
-      // CLI.
       const runtimeSetup = runtimeSetupFromSnapshot(task.asset_snapshot);
-      if (runtimeSetup) {
+      if (sourceMode) {
+        // M8-22: build the CLI from the selected ref, regenerate `.claude` in
+        // the evaluation workspace, and materialize the repository's selected
+        // static assets from the same checkout. The frozen load-test snapshot
+        // is deliberately not used: it was generated from the default branch.
+        if (!runtimeSetup?.install || !runtimeSetup?.init) {
+          return failCase(
+            "asset_source_setup_missing",
+            "CLI 生成类资产缺少安装或初始化命令，无法按所选版本重建资产",
+          );
+        }
+        let installLog = "";
+        let initLog = "";
         try {
-          runAssetRuntimeSetup(agentName, runtimeSetup, egressArgs);
+          installLog = runAssetCommand(agentName, {
+            command: runtimeSetup.install,
+            cwd: "/asset-source",
+            phase: "install",
+            errorCode: "asset_source_install_failed",
+            egressArgs,
+            sourceCli: true,
+          });
+          initLog = runAssetCommand(agentName, {
+            command: runtimeSetup.init,
+            cwd: "/testbed",
+            phase: "init",
+            errorCode: "asset_source_init_failed",
+            egressArgs,
+            sourceCli: true,
+          });
         } catch (error) {
-          const code = error.code || "asset_runtime_setup_failed";
-          const message = `资产运行时前置失败：${error.message}`;
+          return failCase(
+            error.code || "asset_source_setup_failed",
+            `按所选版本构建资产失败：${error.message}`,
+            {
+              phase: error.phase ?? null,
+              extra: { stderr: (error.setupStderr || "").slice(-4000) },
+            },
+          );
+        }
+        // init runs as `eval`; make the generated tree writable by the runner
+        // user that injects the repository's selected static assets next.
+        dockerRun(["exec", agentName, "chmod", "-R", "a+rwX", "/testbed/.claude"], {
+          allowFailure: true,
+          timeout: 60_000,
+        });
+        let staticFiles = 0;
+        try {
+          staticFiles = injectSourceAssets(task.asset_snapshot, sourceRoot, workdir);
+        } catch (error) {
+          return failCase(
+            error.code || "asset_source_inject_failed",
+            `源码资产注入失败：${error.message}`,
+            { phase: "assets" },
+          );
+        }
+        const missing = missingSourceAssets(task.asset_snapshot, workdir);
+        if (missing.length > 0) {
+          return failCase(
+            "asset_source_init_incomplete",
+            `init 未生成选中资产：${missing.slice(0, 5).join(", ")}`,
+            { phase: "init" },
+          );
+        }
+        // Static files are written by the runner user after init created the
+        // rest as `eval`; hand the whole tree back so the agent can load it.
+        dockerRun(["exec", agentName, "chown", "-R", "eval:eval", "/testbed/.claude"], {
+          allowFailure: true,
+          timeout: 60_000,
+        });
+        // The trace records the pinned version and bounded build/init output
+        // (never a credential): a failed run is diagnosable from the UI.
+        writeDiagnostic(
+          join(workdir, "trace"),
+          "asset-source.json",
+          `${JSON.stringify({
+            type: "asset.source",
+            repo_url: task.asset_snapshot?.repo_url ?? null,
+            requested_ref: task.asset_snapshot?.requested_ref ?? null,
+            resolved_commit: task.asset_snapshot?.resolved_commit ?? null,
+            source_archive_size: task.asset_snapshot?.source_archive_size ?? null,
+            install_command: runtimeSetup.install,
+            init_command: runtimeSetup.init,
+            install_log_tail: installLog.slice(-8000),
+            init_log_tail: initLog.slice(-8000),
+            static_files: staticFiles,
+            assets: (task.asset_snapshot?.assets ?? []).map((asset) => ({
+              asset_type: asset.asset_type,
+              path: asset.path,
+              generated: Boolean(asset.metadata?.generated),
+            })),
+          })}\n`,
+        );
+        console.error(
+          JSON.stringify({
+            status: "asset_source_ready",
+            snapshot_id: task.asset_snapshot?.snapshot_id,
+            resolved_commit: task.asset_snapshot?.resolved_commit,
+            static_files: staticFiles,
+          }),
+        );
+      } else {
+        // M8-11: frozen snapshots run only the install command (CLI
+        // availability) and then materialize exactly the frozen `.claude`
+        // tree. `init_command` is deliberately ignored here: it would create
+        // `.claude` as `eval` and collide with the host-side materialization.
+        if (runtimeSetup) {
+          try {
+            runAssetRuntimeSetup(agentName, runtimeSetup, egressArgs);
+          } catch (error) {
+            const code = error.code || "asset_runtime_setup_failed";
+            const message = `资产运行时前置失败：${error.message}`;
+            console.error(message);
+            writeDiagnostic(
+              join(workdir, "trace"),
+              "runtime-setup-failure.json",
+              `${JSON.stringify({
+                type: "trace.failed",
+                code,
+                phase: error.phase ?? null,
+                message,
+                stderr: error.setupStderr ?? "",
+              })}\n`,
+            );
+            console.error(
+              JSON.stringify({
+                status: "runtime_setup_failed",
+                error_code: code,
+                phase: error.phase ?? null,
+              }),
+            );
+            return {
+              score: {
+                [task.case_key]: {
+                  resolved: false,
+                  error: code,
+                  message,
+                  tests_status: {
+                    FAIL_TO_PASS: { success: [], failure: [] },
+                    PASS_TO_PASS: { success: [], failure: [] },
+                  },
+                },
+              },
+              traceBundle: collectCapture(),
+              executionStatus: "failed",
+              resultStatus: "not_scored",
+              durationMs: Date.now() - startedAt,
+            };
+          }
+          console.error(
+            JSON.stringify({
+              status: "runtime_setup",
+              snapshot_id: task.asset_snapshot?.snapshot_id,
+              install: true,
+              init: false,
+            }),
+          );
+        }
+        // M5-01: apply exactly the frozen snapshot to <workspace>/.claude AFTER
+        // the runtime install runs. A missing/invalid bundle fails the case
+        // explicitly; it never silently falls back to repository/host assets.
+        let assetsWritten = [];
+        try {
+          assetsWritten = await materializeSnapshot(task.asset_snapshot, workdir);
+        } catch (error) {
+          const message = `资产快照加载失败：${error.message}`;
           console.error(message);
           writeDiagnostic(
             join(workdir, "trace"),
-            "runtime-setup-failure.json",
-            `${JSON.stringify({
-              type: "trace.failed",
-              code,
-              phase: error.phase ?? null,
-              message,
-              stderr: error.setupStderr ?? "",
-            })}\n`,
-          );
-          console.error(
-            JSON.stringify({
-              status: "runtime_setup_failed",
-              error_code: code,
-              phase: error.phase ?? null,
-            }),
+            "asset-failure.json",
+            `${JSON.stringify({ type: "trace.failed", code: error.code || "asset_invalid", message })}\n`,
           );
           return {
             score: {
               [task.case_key]: {
                 resolved: false,
-                error: code,
+                error: "asset_invalid",
                 message,
                 tests_status: {
                   FAIL_TO_PASS: { success: [], failure: [] },
@@ -455,65 +682,22 @@ async function realCase(dispatch, item, task, { modelToken, runnerRoot, callback
             durationMs: Date.now() - startedAt,
           };
         }
-        console.error(
-          JSON.stringify({
-            status: "runtime_setup",
-            snapshot_id: task.asset_snapshot?.snapshot_id,
-            install: true,
-            init: false,
-          }),
-        );
-      }
-      // M5-01: apply exactly the frozen snapshot to <workspace>/.claude AFTER
-      // the runtime install runs. Eval time never runs `init`, so nothing in
-      // the container competes for `.claude`; materializing last keeps the
-      // frozen snapshot authoritative either way: the agent only ever loads
-      // what the platform froze. A missing/invalid bundle fails the case
-      // explicitly; it never silently falls back to repository/host assets.
-      let assetsWritten = [];
-      try {
-        assetsWritten = await materializeSnapshot(task.asset_snapshot, workdir);
-      } catch (error) {
-        const message = `资产快照加载失败：${error.message}`;
-        console.error(message);
-        writeDiagnostic(
-          join(workdir, "trace"),
-          "asset-failure.json",
-          `${JSON.stringify({ type: "trace.failed", code: error.code || "asset_invalid", message })}\n`,
-        );
-        return {
-          score: {
-            [task.case_key]: {
-              resolved: false,
-              error: "asset_invalid",
-              message,
-              tests_status: {
-                FAIL_TO_PASS: { success: [], failure: [] },
-                PASS_TO_PASS: { success: [], failure: [] },
-              },
-            },
-          },
-          traceBundle: collectCapture(),
-          executionStatus: "failed",
-          resultStatus: "not_scored",
-          durationMs: Date.now() - startedAt,
-        };
-      }
-      if (assetsWritten.length > 0) {
-        // The host-side materializer writes as the runner user, after the
-        // adapter install chowned the workspace to `eval`; hand the frozen
-        // tree back so the non-root agent can traverse/load it.
-        dockerRun(["exec", agentName, "chown", "-R", "eval:eval", "/testbed/.claude"], {
-          allowFailure: true,
-          timeout: 60_000,
-        });
-        console.error(
-          JSON.stringify({
-            status: "assets_materialized",
-            snapshot_id: task.asset_snapshot?.snapshot_id,
-            files: assetsWritten.length,
-          }),
-        );
+        if (assetsWritten.length > 0) {
+          // The host-side materializer writes as the runner user, after the
+          // adapter install chowned the workspace to `eval`; hand the frozen
+          // tree back so the non-root agent can traverse/load it.
+          dockerRun(["exec", agentName, "chown", "-R", "eval:eval", "/testbed/.claude"], {
+            allowFailure: true,
+            timeout: 60_000,
+          });
+          console.error(
+            JSON.stringify({
+              status: "assets_materialized",
+              snapshot_id: task.asset_snapshot?.snapshot_id,
+              files: assetsWritten.length,
+            }),
+          );
+        }
       }
       const execArgs = ["exec", "-u", "eval", "-e", "HOME=/home/eval"];
       for (const [key, value] of Object.entries(env)) execArgs.push("-e", `${key}=${value}`);
@@ -654,6 +838,13 @@ async function realCase(dispatch, item, task, { modelToken, runnerRoot, callback
       rmSync(workdir, { recursive: true, force: true });
     } catch (error) {
       console.error(`workdir cleanup failed: ${error.message}`);
+    }
+    if (sourceDir) {
+      try {
+        rmSync(sourceDir, { recursive: true, force: true });
+      } catch (error) {
+        console.error(`source checkout cleanup failed: ${error.message}`);
+      }
     }
     try {
       rmSync(testPatchPath, { force: true });

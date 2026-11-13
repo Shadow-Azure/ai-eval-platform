@@ -455,6 +455,14 @@ def check_preparation(
                     # M8-10: the runner executes these frozen commands, so a
                     # later source edit cannot change what this snapshot needs.
                     "runtime_setup": runtime_setup_view(manifest),
+                    # M8-22: CLI-generated snapshots carry a pinned source
+                    # archive; the runner rebuilds `.claude` from it instead of
+                    # injecting the frozen load-test files.
+                    "source_mode": bool(manifest.get("source_mode")),
+                    "repo_url": manifest.get("repo_url"),
+                    "source_archive_key": manifest.get("source_archive_key"),
+                    "source_archive_digest": manifest.get("source_archive_digest"),
+                    "source_archive_size": manifest.get("source_archive_size"),
                     "assets": [
                         {
                             "asset_type": asset.get("asset_type"),

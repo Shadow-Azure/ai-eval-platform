@@ -496,6 +496,17 @@ def freeze_load_test(
     manifest = dict(snapshot.manifest_json or {})
     prerequisites = dict(prerequisites or {})
     manifest["runtime_prerequisites"] = prerequisites
+    # M8-22: CLI-generated sources freeze the resolved commit archive instead
+    # of relying solely on the load-test `.claude` snapshot.
+    manifest["source_mode"] = bool(prerequisites)
+    manifest["repo_url"] = "https://github.com/chenmr0/OpenSpec-cn" if prerequisites else None
+    manifest["source_archive_key"] = (
+        "agent-source-archives/tenant/chenmr0/OpenSpec-cn/" + "d" * 40 + ".tar.gz"
+        if prerequisites
+        else None
+    )
+    manifest["source_archive_digest"] = "sha256:" + "3" * 64 if prerequisites else None
+    manifest["source_archive_size"] = 123 if prerequisites else None
     if status == "passed":
         manifest["load_test"] = {
             "status": "passed",
@@ -550,6 +561,9 @@ def test_prepare_uses_frozen_snapshot_after_source_retest_failure(
         "install_command": LOAD_TEST_PREREQUISITES["install_command"],
         "init_command": LOAD_TEST_PREREQUISITES["init_command"],
     }
+    assert body["asset_snapshot"]["source_mode"] is True
+    assert body["asset_snapshot"]["repo_url"] == "https://github.com/chenmr0/OpenSpec-cn"
+    assert body["asset_snapshot"]["source_archive_key"].endswith(".tar.gz")
 
     created = client.post(
         "/api/v1/evaluations",
@@ -564,6 +578,8 @@ def test_prepare_uses_frozen_snapshot_after_source_retest_failure(
         "install_command": LOAD_TEST_PREREQUISITES["install_command"],
         "init_command": LOAD_TEST_PREREQUISITES["init_command"],
     }
+    assert stored.asset_snapshot_json["source_mode"] is True
+    assert stored.asset_snapshot_json["source_archive_key"].endswith(".tar.gz")
     assert stored.asset_snapshot_json["load_test"]["status"] == "passed"
 
 

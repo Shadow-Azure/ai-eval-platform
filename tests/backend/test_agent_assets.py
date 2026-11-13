@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import gzip
 import hashlib
+import io
 import json
 import subprocess
+import tarfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,6 +36,10 @@ COMMIT_TWO = "b" * 40
 class FakeRepo:
     commit: str = COMMIT_ONE
     files: dict[str, bytes] | None = None
+    # M8-22: the tarball the platform fetches for CLI-generated sources. Keep
+    # it minimal by default so a load test scans only what init generates; a
+    # test that needs repository static assets overrides it.
+    archive_files: dict[str, bytes] | None = None
 
     def __post_init__(self) -> None:
         if self.files is None:
@@ -51,6 +57,8 @@ class FakeRepo:
                 "src/commands/deploy.md": b"# Not a runtime command\n",
                 "SKILL.md": b"# Root skill manifest\n",
             }
+        if self.archive_files is None:
+            self.archive_files = {"package.json": b'{"name":"codespec","version":"1.3.1"}'}
 
 
 class FakeGitHubClient:
@@ -82,6 +90,20 @@ class FakeGitHubClient:
 
     def blob(self, owner: str, repo: str, sha: str) -> bytes:
         return self.blobs[sha]
+
+    def archive(
+        self, owner: str, repo: str, commit: str, *, max_bytes: int = 128 * 1024 * 1024
+    ) -> bytes:
+        buffer = io.BytesIO()
+        with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+            for path, content in (self.repo.archive_files or {}).items():
+                info = tarfile.TarInfo(f"{owner}-{repo}-{commit[:7]}/{path}")
+                info.size = len(content)
+                info.mode = 0o644
+                archive.addfile(info, io.BytesIO(content))
+        data = buffer.getvalue()
+        assert len(data) <= max_bytes
+        return data
 
 
 @pytest.fixture
@@ -567,9 +589,15 @@ def test_load_test_preview_runs_isolated_commands_and_returns_cached_token(
 
     assert [call["command"] for call in calls] == [INSTALL_COMMAND, INIT_COMMAND]
     assert calls[0]["cwd"] == calls[1]["cwd"]
-    assert calls[0]["env"]["HOME"] == calls[0]["cwd"]
+    # M8-22: the checkout is the working directory, while HOME stays a
+    # disposable directory so a CLI installed under $HOME cannot pollute it.
+    assert calls[0]["cwd"].endswith(COMMIT_ONE[:7])
+    assert calls[0]["env"]["HOME"] != calls[0]["cwd"]
     assert calls[0]["env"]["PATH"]
     assert calls[0]["timeout"] == 600
+    assert preview["repo_url"] == "https://github.com/chenmr0/OpenSpec-cn"
+    assert preview["requested_ref"] == "main-copy-ar"
+    assert preview["resolved_commit"] == COMMIT_ONE
 
     created = create_generated_source(client, token=preview["load_test_token"])
     assert created["status"] == "ready"
@@ -753,6 +781,7 @@ def test_tree_includes_generated_assets_and_resolve_freezes_selected_paths(
     seeded: Session,
     monkeypatch: pytest.MonkeyPatch,
     asset_store: StubObjectStore,
+    tmp_path: Path,
 ) -> None:
     """The wizard tree must show CLI-generated assets, not just the Git scan."""
 
@@ -809,6 +838,17 @@ def test_tree_includes_generated_assets_and_resolve_freezes_selected_paths(
         "install_command": INSTALL_COMMAND,
         "init_command": INIT_COMMAND,
     }
+    # M8-22: a CLI-generated source freezes its resolved commit as a source
+    # archive; the runner rebuilds `.claude` from it at eval time.
+    assert manifest["source_mode"] is True
+    assert manifest["repo_url"] == "https://github.com/chenmr0/OpenSpec-cn"
+    assert manifest["source_archive_key"].endswith(f"{COMMIT_ONE}.tar.gz")
+    assert manifest["source_archive_digest"].startswith("sha256:")
+    assert manifest["source_archive_size"] > 0
+    assert asset_store.has(manifest["source_archive_key"])
+    archived = asset_store.bodies[f"/eval-artifacts/{manifest['source_archive_key']}"]
+    extracted = agent_assets.extract_source_archive(archived, tmp_path / "source")
+    assert (extracted / "package.json").is_file()
 
     stored = seeded.get(AgentAssetSnapshot, snapshot["id"])
     assert stored is not None
@@ -820,9 +860,26 @@ def test_tree_includes_generated_assets_and_resolve_freezes_selected_paths(
         "init_command": INIT_COMMAND,
     }
     assert frozen["load_test"]["status"] == "passed"
+    assert frozen["source_mode"] is True
+    assert frozen["source_archive_key"] == manifest["source_archive_key"]
     task_payload = agent_assets.task_asset_payload(frozen, get_settings())
     assert task_payload["runtime_setup"] == frozen["runtime_setup"]
     assert task_payload["bundle_url"].startswith("http://")
+    assert task_payload["source_archive_url"].startswith("http://")
+    assert task_payload["source_archive_digest"] == manifest["source_archive_digest"]
+
+
+def test_extract_source_archive_rejects_traversal(tmp_path: Path) -> None:
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+        info = tarfile.TarInfo("repo/../../escape.txt")
+        payload = b"escaped"
+        info.size = len(payload)
+        archive.addfile(info, io.BytesIO(payload))
+    with pytest.raises(agent_assets.AgentAssetError) as error:
+        agent_assets.extract_source_archive(buffer.getvalue(), tmp_path / "source")
+    assert error.value.code == "source_archive_invalid"
+    assert not (tmp_path / "escape.txt").exists()
 
 
 def test_run_setup_command_decodes_invalid_utf8_with_replacement(tmp_path: Path) -> None:

@@ -71,6 +71,10 @@ export interface AssetLoadTest {
   install_command: string | null;
   init_command: string | null;
   tested_at: string | null;
+  /** M8-22: the checkout the load test ran in. */
+  repo_url?: string;
+  requested_ref?: string;
+  resolved_commit?: string;
 }
 
 export interface AssetLoadTestPreview extends AssetLoadTest {
@@ -241,6 +245,9 @@ function parseLoadTest(raw: unknown): AssetLoadTest {
     install_command: optionalText(record.install_command),
     init_command: optionalText(record.init_command),
     tested_at: optionalText(record.tested_at),
+    repo_url: optionalText(record.repo_url) ?? undefined,
+    requested_ref: optionalText(record.requested_ref) ?? undefined,
+    resolved_commit: optionalText(record.resolved_commit) ?? undefined,
   };
 }
 

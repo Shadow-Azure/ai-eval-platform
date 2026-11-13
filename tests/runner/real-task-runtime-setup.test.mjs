@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
@@ -129,6 +137,16 @@ if [ -n "\${FAKE_WRITE_COMMAND:-}" ]; then
       ;;
   esac
 fi
+if [ -n "\${FAKE_INIT_COMMAND:-}" ]; then
+  case "$*" in
+    *"$FAKE_INIT_COMMAND"*)
+      host="$(cat "$dir/host")"
+      mkdir -p "$host/.claude/commands/opsx"
+      printf '# generated propose\\n' > "$host/.claude/commands/opsx/propose.md"
+      printf 'init-wrote:%s\\n' "$host/.claude/commands/opsx/propose.md" >> "\${FAKE_DOCKER_LOG}"
+      ;;
+  esac
+fi
 case "$*" in
   "create "*) echo fake-container; exit 0 ;;
 esac
@@ -143,6 +161,10 @@ case "$*" in
     printf 'agent-sees:%s|setup-only:%s\\n' \\
       "$(cat "$host/.claude/commands/openspec-propose.md" 2>/dev/null || echo MISSING)" \\
       "$([ -f "$host/.claude/commands/setup-only.md" ] && echo PRESENT || echo MISSING)" \\
+      >> "\${FAKE_DOCKER_LOG}"
+    printf 'agent-source:static:%s|generated:%s\\n' \\
+      "$([ -f "$host/.claude/skills/static-skill/SKILL.md" ] && echo PRESENT || echo MISSING)" \\
+      "$([ -f "$host/.claude/commands/opsx/propose.md" ] && echo PRESENT || echo MISSING)" \\
       >> "\${FAKE_DOCKER_LOG}"
     exit 0
     ;;
@@ -547,6 +569,139 @@ test("no proxy configuration leaves install and agent exec unchanged", async () 
       assert.equal(line.includes("-e NO_PROXY="), false, line);
     }
     assert.ok(install.includes(`exec ${SETUP_IDENTITY} `), install);
+  } finally {
+    rmSync(fakeBin, { recursive: true, force: true });
+    await ctx.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// M8-22: CLI-generated source mode (pinned commit archive + install/init)
+// ---------------------------------------------------------------------------
+
+const SOURCE_INSTALL = "npm ci && npm run build";
+const SOURCE_INIT = "codespec init --tools claude";
+
+/** Build a GitHub-shaped tarball (one wrapper directory) for source mode. */
+function writeSourceArchive(dir, files) {
+  const parent = join(dir, "source-parent");
+  const wrapper = "chenmr0-OpenSpec-cn-abcdef0";
+  for (const [path, content] of Object.entries(files)) {
+    const target = join(parent, wrapper, path);
+    mkdirSync(join(target, ".."), { recursive: true });
+    writeFileSync(target, content);
+  }
+  const archivePath = join(dir, "source.tar.gz");
+  const tar = spawnSync("tar", ["-czf", archivePath, "-C", parent, wrapper], {
+    encoding: "utf8",
+  });
+  assert.equal(tar.status, 0, `tar failed: ${tar.stderr}`);
+  const bytes = readFileSync(archivePath);
+  return {
+    archivePath,
+    digest: `sha256:${createHash("sha256").update(bytes).digest("hex")}`,
+    size: bytes.length,
+  };
+}
+
+test("source mode rebuilds .claude from the pinned archive and skips the frozen snapshot", async () => {
+  const fakeBin = installFakeBin();
+  const logPath = join(fakeBin, "docker.log");
+  const staticSkill = "---\nname: static-skill\n---\n# static\n";
+  const archive = writeSourceArchive(fakeBin, {
+    "package.json": '{"name":"codespec","version":"1.3.1"}',
+    "skills/static-skill/SKILL.md": staticSkill,
+  });
+  const skillSha = `sha256:${createHash("sha256").update(staticSkill).digest("hex")}`;
+  const ctx = await createScenario({
+    cases,
+    behavior: {
+      tasks: tasksPayload({
+        runtimeSetup: { install_command: SOURCE_INSTALL, init_command: SOURCE_INIT },
+        assetSnapshot: {
+          // A broken bundle proves source mode never materializes the frozen
+          // load-test snapshot generated from the default branch.
+          snapshot_id: "snap-frozen-source",
+          asset_count: 2,
+          bundle_url: "file:///nonexistent-frozen-bundle",
+          bundle_digest: `sha256:${"0".repeat(64)}`,
+          source_mode: true,
+          repo_url: "https://github.com/chenmr0/OpenSpec-cn",
+          requested_ref: "main-copy-ar",
+          resolved_commit: "a".repeat(40),
+          source_archive_url: `file://${archive.archivePath}`,
+          source_archive_digest: archive.digest,
+          source_archive_size: archive.size,
+          assets: [
+            {
+              asset_type: "skill",
+              name: "static-skill",
+              path: "skills/static-skill",
+              metadata: {
+                generated: false,
+                files: [{ path: "skills/static-skill/SKILL.md", sha256: skillSha }],
+              },
+            },
+            {
+              asset_type: "command",
+              name: "opsx/propose",
+              path: ".claude/commands/opsx/propose.md",
+              metadata: {
+                generated: true,
+                runtime_path: "commands/opsx/propose.md",
+                files: [{ path: "commands/opsx/propose.md", sha256: "sha256:frozen" }],
+              },
+            },
+          ],
+        },
+      }),
+      modelToken: "model-token-test",
+      uploadUrls: true,
+    },
+  });
+  try {
+    const result = await runCase(ctx, fakeBin, logPath, { FAKE_INIT_COMMAND: SOURCE_INIT });
+    assert.equal(result.code, 0, result.stderr);
+
+    const lines = invocations(logPath);
+    const sourceMount = lines.find((line) => line.includes(":/asset-source"));
+    assert.ok(sourceMount, `missing source mount\n${lines.join("\n")}`);
+    const install = indexOf(lines, SOURCE_INSTALL);
+    const init = indexOf(lines, SOURCE_INIT);
+    const agent = indexOf(lines, "claude-code-smoke.mjs");
+    assert.ok(lines[install].includes("-w /asset-source"), lines[install]);
+    assert.ok(lines[install].includes("ASSET_SOURCE_ROOT=/asset-source"), lines[install]);
+    assert.ok(lines[init].includes("-w /testbed"), lines[init]);
+    assert.ok(install < init && init < agent, "install -> init -> agent");
+    assert.ok(
+      !lines.some((line) => line.includes("asset-bundle.json.gz")),
+      "the frozen bundle must not be downloaded in source mode",
+    );
+    assert.ok(
+      lines.some((line) => line.startsWith("init-wrote:")),
+      `init did not run\n${lines.join("\n")}`,
+    );
+    const agentSource = lines.find((line) => line.startsWith("agent-source:"));
+    assert.ok(agentSource, `agent never recorded source assets\n${lines.join("\n")}`);
+    assert.match(agentSource, /agent-source:static:PRESENT\|generated:PRESENT/);
+
+    const ready = stderrEvents(result).find((item) => item.status === "asset_source_ready");
+    assert.ok(ready, `missing asset_source_ready event\n${result.stderr}`);
+    assert.equal(ready.resolved_commit, "a".repeat(40));
+
+    const completed = requestsFor(ctx, "completed");
+    assert.equal(completed.length, 1);
+    assert.ok(
+      (completed[0].body.trace_manifest?.objects ?? []).some(
+        (object) => object.logical_path === "diagnostics/asset-source.json",
+      ),
+      "the source build record must be part of the trace",
+    );
+    const traceObject = (completed[0].body.trace_manifest?.objects ?? []).find(
+      (object) => object.logical_path === "diagnostics/asset-source.json",
+    );
+    assert.ok(traceObject, "source build record missing from trace manifest");
+    assert.ok(Number(traceObject.size) > 0, "source build record is empty");
   } finally {
     rmSync(fakeBin, { recursive: true, force: true });
     await ctx.close();
