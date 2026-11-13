@@ -64,7 +64,7 @@ API 的 `RUNNER_EGRESS_PROXY` 只接受不含凭据的 http(s) URL，配置后�
 
 Runner 仅在 `egress_proxy` 非空时给资产 install 与 Agent 的 `docker exec` 注入 `HTTPS_PROXY`、`HTTP_PROXY` 与 `NO_PROXY`；有 token 时把地址组合成 `http://<token>:@<proxy-host>:<port>`（token 只含 `[A-Za-z0-9._-]`，无需转义），无 token 时沿用不带凭据的地址（私网监听）。未配置时命令参数与直连行为不变。`NO_PROXY` 从 payload 派生平台回调/模型网关主机与 OSS 资产包主机，并固定包含 `localhost`、`127.0.0.1`、`::1`、npm 镜像 `registry.npmmirror.com` 与默认源 `registry.npmjs.org`。
 
-代理只放行 GitHub：设置代理 env 后，非白名单外部请求会被 Squid 直接拒绝（`http_access deny all`），不会回退直连；因此只有确实需要 GitHub 的评测才应配置 `RUNNER_EGRESS_PROXY`，不需要时保持为空、完全不注入。白名单在 `deploy/proxy/squid.conf`：只允许 `github.com`、`api.github.com`、`codeload.github.com`、`objects.githubusercontent.com`、`release-assets.githubusercontent.com`、`github-releases.githubusercontent.com` 与 `.githubusercontent.com` 的 443 端口，允许/拒绝都写入访问日志。改白名单或 CIDR 后重建 `proxy` 服务。
+代理只放行 GitHub：设置代理 env 后，非白名单外部请求会被 Squid 直接拒绝（`http_access deny all`），不会回退直连；因此只有确实需要 GitHub 的评测才应配置 `RUNNER_EGRESS_PROXY`，不需要时保持为空、完全不注入。白名单在 `deploy/proxy/squid.conf`：只允许 `.github.com` 与 `.githubusercontent.com` 两个通配（分别覆盖 github.com 及其子域、全部 GitHub 资产域名）的 443 端口，允许/拒绝都写入访问日志。改白名单或 CIDR 后重建 `proxy` 服务。
 
 验证命令（token 取一次真实 payload 的 `egress_token`，或按 v1 格式自签一个过期/错 scope 的 token）：
 
