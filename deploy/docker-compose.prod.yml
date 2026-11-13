@@ -206,6 +206,10 @@ services:
       context: ./proxy
       dockerfile: Dockerfile
     image: ${RUNNER_EGRESS_PROXY_IMAGE:-ai-eval-platform-proxy:dev}
+    # M8-16: keep squid in the foreground. Without -N the image's default
+    # command may daemonize and the container exits right after "Started",
+    # leaving 3128/3129 closed.
+    command: ["-N", "-f", "/etc/squid/squid.conf"]
     environment:
       RUNNER_TASK_SECRET: ${RUNNER_TASK_SECRET:-}
     volumes:
