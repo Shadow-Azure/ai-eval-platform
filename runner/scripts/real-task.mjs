@@ -148,6 +148,63 @@ function dockerRun(args, { allowFailure = false, timeout = 1_200_000 } = {}) {
 }
 
 /**
+ * M8-14: evaluation containers use host networking, so their GitHub egress is
+ * the runner host's egress. When the platform sends a forward proxy in the
+ * run-wide task payload, the asset install and the agent exec run behind it;
+ * when the field is absent or empty, no `-e` flag is added and behaviour is
+ * exactly the previous direct-network path.
+ *
+ * NO_PROXY keeps platform and mirror traffic off the proxy: the model
+ * gateway/callback host, object storage (the asset bundle presign), loopback,
+ * the npm mirror used by the runtime adapter and the default registry an
+ * admin-authored install command may use. Hosts are derived from the payload
+ * URLs; the remaining entries are the documented defaults.
+ */
+const DEFAULT_NO_PROXY = [
+  "localhost",
+  "127.0.0.1",
+  "::1",
+  "registry.npmmirror.com",
+  "registry.npmjs.org",
+];
+
+function normalizeEgressProxy(value) {
+  if (typeof value !== "string") return null;
+  const proxy = value.trim();
+  return proxy ? proxy : null;
+}
+
+function hostnameOf(value) {
+  if (typeof value !== "string" || !value) return null;
+  try {
+    return new URL(value).hostname || null;
+  } catch {
+    return null;
+  }
+}
+
+function egressNoProxy(task, callbackBaseUrl) {
+  const hosts = new Set(DEFAULT_NO_PROXY);
+  for (const candidate of [
+    task?.model?.anthropic_base_url,
+    task?.model?.openai_base_url,
+    callbackBaseUrl,
+    task?.asset_snapshot?.bundle_url,
+  ]) {
+    const host = hostnameOf(candidate);
+    if (host) hosts.add(host);
+  }
+  return [...hosts].join(",");
+}
+
+function egressProxyEnvArgs(task, callbackBaseUrl) {
+  const proxy = normalizeEgressProxy(task?.egress_proxy);
+  if (!proxy) return [];
+  const noProxy = egressNoProxy(task, callbackBaseUrl);
+  return ["-e", `HTTPS_PROXY=${proxy}`, "-e", `HTTP_PROXY=${proxy}`, "-e", `NO_PROXY=${noProxy}`];
+}
+
+/**
  * M8-10: CLI-generated assets (OpenSpec/CodeSpec style) declare runtime
  * prerequisites — an install command for the CLI plus an init command that
  * generates the Skill/Command tree. The platform freezes the pair inside the
@@ -190,11 +247,17 @@ function runtimeSetupFromSnapshot(assetSnapshot) {
  * runs verbatim; only a fixed PATH prefix is added so node/npm from the
  * runtime install are visible. Any non-zero exit or timeout raises
  * `asset_runtime_setup_failed` (phase `install`); callers must abort the case
- * instead of running the agent against an image without the CLI.
+ * instead of running the agent against an image without the CLI. M8-14 appends
+ * the proxy env flags after the existing exec options; an unset proxy leaves
+ * the argument list unchanged.
  */
-function runAssetRuntimeSetup(agentName, { install }) {
+function runAssetRuntimeSetup(agentName, { install }, egressArgs = []) {
   const script = `export PATH=${RUNTIME_SETUP_PATH}:$PATH\n${install}`;
-  const args = ["exec", "-u", "eval", "-e", "HOME=/home/eval", "-w", "/testbed", agentName, "bash", "-lc", script];
+  const args = [
+    "exec", "-u", "eval", "-e", "HOME=/home/eval", "-w", "/testbed",
+    ...egressArgs,
+    agentName, "bash", "-lc", script,
+  ];
   let result;
   try {
     result = dockerRun(args, { allowFailure: true, timeout: RUNTIME_SETUP_TIMEOUT_MS });
@@ -222,9 +285,10 @@ function runAssetRuntimeSetup(agentName, { install }) {
  * F2P/P2P tests inside the scoring image. Returns the official report payload
  * plus the trace bytes and terminal statuses.
  */
-async function realCase(dispatch, item, task, { modelToken, runnerRoot }) {
+async function realCase(dispatch, item, task, { modelToken, runnerRoot, callbackBaseUrl }) {
   const datasetAdapter = getDatasetAdapter(task.adapter_key);
   const runtimeAdapter = getRuntimeAdapter(task.runtime_key);
+  const egressArgs = egressProxyEnvArgs(task, callbackBaseUrl);
   const startedAt = Date.now();
   const workdir = mkdtempSync(join(tmpdir(), "eval-case-"));
   const testPatchPath = join(tmpdir(), `eval-test-${item.case_run_id}.patch`);
@@ -307,7 +371,7 @@ async function realCase(dispatch, item, task, { modelToken, runnerRoot }) {
       const runtimeSetup = runtimeSetupFromSnapshot(task.asset_snapshot);
       if (runtimeSetup) {
         try {
-          runAssetRuntimeSetup(agentName, runtimeSetup);
+          runAssetRuntimeSetup(agentName, runtimeSetup, egressArgs);
         } catch (error) {
           const code = error.code || "asset_runtime_setup_failed";
           const message = `资产运行时前置失败：${error.message}`;
@@ -410,6 +474,7 @@ async function realCase(dispatch, item, task, { modelToken, runnerRoot }) {
       }
       const execArgs = ["exec", "-u", "eval", "-e", "HOME=/home/eval"];
       for (const [key, value] of Object.entries(env)) execArgs.push("-e", `${key}=${value}`);
+      execArgs.push(...egressArgs);
       execArgs.push(
         agentName,
         "bash",
@@ -797,7 +862,11 @@ async function main() {
       let caseResult;
       try {
         caseResult = task?.repo
-          ? await realCase(dispatch, item, task, { modelToken, runnerRoot })
+          ? await realCase(dispatch, item, task, {
+              modelToken,
+              runnerRoot,
+              callbackBaseUrl: manifest.callback_base_url,
+            })
           : { ...deterministicCase(dispatch, item), executionStatus: "succeeded", resultStatus: "resolved", durationMs: 0 };
       } finally {
         // Stopped on both success and exception: SIGTERM, up to 5s, then SIGKILL.

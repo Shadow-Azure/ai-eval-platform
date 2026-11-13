@@ -56,6 +56,22 @@ Spot pools are managed by a provisioner: the worker decrypts the tenant connecti
 
 Production deployment binds the Runner callback entry to the VPC private address (`API_BIND_ADDRESS`), the security group allows port 8000 only from the VPC CIDR and never from the internet, and the fixed runner keeps its loopback path; `RUNNER_CALLBACK_BASE_URL` defaults to the address derived from `API_BIND_ADDRESS` and is injected into api and worker (an explicit value overrides it) so spot instances can fetch the manifest and post results, and by default download the actions-runner archive from the fixed `/runner/v1/runner-tarball/<version>.tar.gz` endpoint, which the api streams from OSS with platform credentials and gates on the heartbeat token, so the address does not expire with a presign and the bucket stays private; `RUNNER_SPOT_RUNNER_TARBALL_URL` explicitly overrides it with an external mirror. The same release pipeline builds a deterministic md5-named scripts bundle from `runner/` and `runner-contract/schemas/`, caches it in the same private OSS bucket, and serves it to runners through `/runner/v1/scripts/<name>`; prepare/execute prefer the bundle and use `actions/checkout` only as a fallback, so checkout is no longer the primary path. The pool's `labels_json.runs_on` determines both the runner registration labels and the shard dispatch/manifest `runs_on`, so a custom-label pool receives execute jobs; without it the `self-hosted,linux,eval` default applies. The `/resources` provisioning test is a creation check whose instance is released before runner registration; a real evaluation verifies the full chain.
 
+## GitHub egress proxy
+
+Evaluation containers run with `--network host`, so their GitHub egress is the runner host's egress; production runs a pinned Squid image as the `proxy` service in `deploy/docker-compose.prod.yml`, publishing 3128 only on `RUNNER_EGRESS_PROXY_BIND_ADDRESS` (loopback by default; set it to the ECS private address in production) with the security group restricted to the runner subnet, and the in-config `runner_network` ACL defaults to `10.0.0.0/8` and is narrowed to the runner VPC/subnet CIDR at deploy time.
+
+The API's `RUNNER_EGRESS_PROXY` accepts only a credential-free http(s) URL and is delivered in the shard task payload; set `RUNNER_EGRESS_PROXY=http://<proxy-host>:3128` in the platform host `.env` to enable it and point `RUNNER_EGRESS_PROXY_BIND_ADDRESS` at the same private address, while an empty value keeps direct egress. The Runner injects `HTTPS_PROXY`, `HTTP_PROXY` and `NO_PROXY` into the asset install and the Agent `docker exec` only when `egress_proxy` is non-empty, leaving the command arguments and direct-network behaviour unchanged otherwise. `NO_PROXY` derives the platform callback/model gateway host and the OSS asset-bundle host from the payload and always includes `localhost`, `127.0.0.1`, `::1`, the npm mirror `registry.npmmirror.com` and the default registry `registry.npmjs.org`.
+
+The allowlist and deny policy live in `deploy/proxy/squid.conf`: only port 443 of `github.com`, `api.github.com`, `codeload.github.com`, `objects.githubusercontent.com`, `release-assets.githubusercontent.com`, `github-releases.githubusercontent.com`, `.github.com` and `.githubusercontent.com` is allowed; `http_access deny all` rejects everything else and the access log records it. Recreate the `proxy` service after changing the allowlist or CIDR; verification commands:
+
+```sh
+curl -x http://<proxy-host>:3128 https://api.github.com/rate_limit
+curl -x http://<proxy-host>:3128 https://registry.npmmirror.com/
+docker compose -f deploy/docker-compose.prod.yml logs --tail=100 proxy
+```
+
+The first command should return a GitHub response, the second should be rejected, and the third shows allow/deny records.
+
 ## Agent asset snapshots
 
 `/assets` manages GitHub asset sources: it resolves the Ref, discovers Skills (directories with `SKILL.md`), Commands, and Subagents, and freezes the selected assets into an immutable OSS bundle recording the commit, tree digest, file digests, and manifest. Evaluations reference the frozen snapshot; without an asset source they use only runtime built-ins. The runner maps the snapshot to `.claude/` under an isolated HOME without re-fetching the branch or loading other repository or host assets. Git tokens are encrypted and the console only shows a mask.

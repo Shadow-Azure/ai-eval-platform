@@ -56,6 +56,22 @@ M2 把执行与数据集、Agent 解耦：平台经 repository_dispatch 传 eval
 
 生产部署把 Runner 回调入口绑定到 VPC 私网地址（`API_BIND_ADDRESS`），安全组按 VPC 网段放行 8000（不新增公网入口），固定 Runner 保留回环路径；`RUNNER_CALLBACK_BASE_URL` 默认由 `API_BIND_ADDRESS` 推导并注入 api 与 worker（可显式覆盖），竞价实例据此取 manifest 并回传结果，并默认从固定端点 `/runner/v1/runner-tarball/<版本>.tar.gz` 下载 actions-runner 包：api 以 OSS 凭据流式读取并要求心跳 Token，地址不随预签名过期，OSS 保持私有；`RUNNER_SPOT_RUNNER_TARBALL_URL` 可显式覆盖为外部镜像。同一发布流水线还会把 `runner/` 与 `runner-contract/schemas/` 打成按 md5 命名的确定性脚本包并缓存到同一私有 OSS，由 `/runner/v1/scripts/<name>` 代理给 Runner；prepare/execute 优先从脚本包运行，只有包不可用时才回退 `actions/checkout`，checkout 不再是主路径。池的 `labels_json.runs_on` 同时决定 Runner 注册标签与分片 dispatch/manifest 的 `runs_on`，自定义标签池因此能接到 execute job；未配置时沿用 `self-hosted,linux,eval`。`/resources` 的供给测试是创建验证，实例在注册 Runner 前释放，完整链路由真实评测验证。
 
+## GitHub 出口代理
+
+评测容器以 `--network host` 运行，GitHub 出口即 runner 宿主出口；生产在平台 ECS 上以 `deploy/docker-compose.prod.yml` 的 `proxy` 服务运行固定版本 Squid，3128 只绑定到 `RUNNER_EGRESS_PROXY_BIND_ADDRESS`（默认回环，生产设为 ECS 私网地址），安全组只允许 runner 网段访问，Squid 配置中的 `runner_network` 默认 `10.0.0.0/8`，部署时收敛到 runner 所在 VPC/子网 CIDR。
+
+API 的 `RUNNER_EGRESS_PROXY` 只接受不含凭据的 http(s) URL，配置后随分片任务 payload 下发；平台机 `.env` 用 `RUNNER_EGRESS_PROXY=http://<proxy-host>:3128` 启用，并把 `RUNNER_EGRESS_PROXY_BIND_ADDRESS` 设为同一私网地址，空值保持直连。Runner 仅在 `egress_proxy` 非空时给资产 install 与 Agent 的 `docker exec` 注入 `HTTPS_PROXY`、`HTTP_PROXY` 与 `NO_PROXY`，未配置时命令参数与直连行为不变。`NO_PROXY` 从 payload 派生平台回调/模型网关主机与 OSS 资产包主机，并固定包含 `localhost`、`127.0.0.1`、`::1`、npm 镜像 `registry.npmmirror.com` 与默认源 `registry.npmjs.org`。
+
+白名单和拒绝策略都在 `deploy/proxy/squid.conf`：只允许 `github.com`、`api.github.com`、`codeload.github.com`、`objects.githubusercontent.com`、`release-assets.githubusercontent.com`、`github-releases.githubusercontent.com`、`.github.com` 与 `.githubusercontent.com` 的 443 端口，其余请求由 `http_access deny all` 拒绝并写入访问日志。改白名单或 CIDR 后重建 `proxy` 服务；验证命令：
+
+```sh
+curl -x http://<proxy-host>:3128 https://api.github.com/rate_limit
+curl -x http://<proxy-host>:3128 https://registry.npmmirror.com/
+docker compose -f deploy/docker-compose.prod.yml logs --tail=100 proxy
+```
+
+第一条应返回 GitHub 响应，第二条应被拒绝，第三条显示允许/拒绝记录。
+
 ## Agent 资产快照
 
 `/assets` 管理 GitHub 资产源：解析 Ref、识别 Skill（`SKILL.md` 目录）、Command 与 Subagent，并把选中资产冻结为不可变 OSS 包，记录 commit、tree digest、文件摘要与清单。评测引用冻结快照，无资产源则用内置能力；Runner 在隔离 HOME 中映射到 `.claude/`，不重新拉取分支，也不加载仓库或宿主其他资产。Git 令牌加密保存，页面只显示掩码。

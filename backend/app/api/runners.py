@@ -946,6 +946,9 @@ def shard_tasks(
         "environment_image": dataset_version.environment_image if dataset_version else None,
         "adapter_key": dataset.adapter_key if dataset else "swebench",
         "asset_snapshot": asset_service.task_asset_payload(run.asset_snapshot_json, settings),
+        # M8-14: run-wide forward proxy for GitHub egress. None keeps the
+        # runner on the previous direct-network path.
+        "egress_proxy": settings.runner_egress_proxy or None,
         "cases": [
             {
                 "case_run_id": case.id,

@@ -46,6 +46,10 @@ services:
       # workflow injects the VPC address, while loopback stays the default for
       # the fixed runner on the API host.
       RUNNER_CALLBACK_BASE_URL: ${RUNNER_CALLBACK_BASE_URL:-http://127.0.0.1:8000}
+      # M8-14: forward proxy for GitHub egress from evaluation containers.
+      # Empty keeps the previous direct-network behaviour; set it in the host
+      # .env to the proxy service's private address (http://<vpc-ip>:3128).
+      RUNNER_EGRESS_PROXY: ${RUNNER_EGRESS_PROXY:-}
       # M5-11: empty lets the api derive the permanent proxy URL from the
       # callback base URL; an explicit value overrides it with an external
       # mirror that receives no runner token.
@@ -179,6 +183,18 @@ services:
     depends_on:
       api:
         condition: service_healthy
+
+  # M8-14: allowlisted forward proxy for GitHub egress from evaluation
+  # containers. The runner host reaches it over the VPC private network; the
+  # squid ACL restricts sources to runner_network and destinations to GitHub.
+  # Bind the published port to the host's private address (never a public
+  # interface) and restrict 3128 to the runner CIDR in the security group.
+  proxy:
+    image: squid:6.10
+    volumes:
+      - ./proxy/squid.conf:/etc/squid/squid.conf:ro
+    ports:
+      - "${RUNNER_EGRESS_PROXY_BIND_ADDRESS:-127.0.0.1}:3128:3128"
 
   migrate:
     image: ${API_IMAGE:?API_IMAGE required}
