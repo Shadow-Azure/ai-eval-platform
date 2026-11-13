@@ -12,6 +12,7 @@ scope:
   - .agents/flow/milestones/m8-bug-fixes.*
   - .agents/flow/roadmap.*
   - runner/scripts/real-task.mjs
+  - .github/workflows/backend-ci.yml
   - tests/runner/**
   - plans/**
 adr: []

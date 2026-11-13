@@ -6,6 +6,8 @@ on:
       - "backend/**"
       - "web/**"
       - "tests/**"
+      - "runner/**"
+      - "runner-contract/**"
       - "pyproject.toml"
       - "docker-compose.yml"
       - "deploy/**"
