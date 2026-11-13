@@ -1,4 +1,4 @@
-# [m8-21] Full source mode: clone + scan/build by ref with default-branch and version selection
+# [m8-21] CLI-generated assets: checkout the ref and run install/init at evaluation time
 
 English | [中文](m8-21-source-mode-ref-selection.md)
 
@@ -6,7 +6,7 @@ English | [中文](m8-21-source-mode-ref-selection.md)
 kind: issue
 milestone: m8
 priority: P2
-status: backlog
+status: in-progress
 scope:
   - .agents/flow/issues/m8-21-source-mode-ref-selection.*
   - .agents/flow/milestones/m8-bug-fixes.*
@@ -21,51 +21,42 @@ scope:
   - plans/**
 adr: []
 github:
-  number: null
-  url: null
+  number: 223
+  url: https://github.com/Shadow-Azure/ai-eval-platform/issues/223
 ```
 
 ## Background
 
-- Evaluations currently use the load-test frozen asset snapshot plus a prebuilt tarball: fast and stable, but switching branch/tag/commit requires repackaging and the version cannot be changed per evaluation.
-- The command-less SuperPower source (`obra/superpowers`) stores assets in native directories (`skills/`, `.agents/`, `.claude-plugin/`, `.opencode/`, `.pi/`, …); the platform loader scans and normalizes them into `.claude` — the repo has no `.claude`.
+- The evaluation page already has assetRef (branch/tag/commit), and prepare resolves and scans by ref. But for CLI-generated assets the `init` still runs only in the load test (default branch), its output is frozen into the snapshot, and the evaluation injects that default-branch `.claude`.
+- Command-less assets (SuperPower) use the “scan the repo’s native directories + freeze” path; changing the ref already works there, and this issue leaves that path unchanged.
 
 ## Goals
 
-- Full source mode: every evaluation clones the asset repo at the chosen ref; command-less assets are scanned/normalized by the platform, CLI-generated assets run install/init to produce `.claude`; the frozen snapshot is only a load-test validation record.
-- The asset source keeps a default branch; the eval preparation page accepts an optional agent version (branch/tag/commit); the backend resolves it to a commit and sends it in the payload; the trace records repo/ref/commit.
+- Change only CLI-generated assets: at evaluation time `git clone` + `checkout commit` the selected ref, run the asset source’s install (source build) and init (generate `.claude`), then hand over to the agent; this class no longer injects the frozen snapshot.
+- Keep command-less assets unchanged (load-test scan + frozen snapshot).
+- Record repo/ref/commit, install/init output and the `.claude` inventory in the trace.
 
 ## Plan
 
-### Two asset classes
-| Class | Repo content | At evaluation |
-| --- | --- | --- |
-| command-less (SuperPower) | `skills/`, `.agents/`, `.opencode/`, `.pi/` | clone+checkout → platform scan/normalize → `.claude` → inject; no install/init |
-| CLI-generated (CodeSpec) | source + install/init | clone+checkout → install/build → init generates `.claude` → inject |
-
 ### Flow
-prepare ref → backend resolves commit → payload → runner clone/checkout → scan or install/init → inject → agent.
+prepare ref → backend resolves the commit → payload with repo_url/commit + install/init → runner clone/checkout → install (source build) → init generates `.claude` → agent.
 
-### Frontend prototype (before / after)
+### Changes
+| Layer | Change |
+| --- | --- |
+| Asset source | CLI-generated install_command becomes a source build (e.g. npm ci && npm run build); init_command stays codespec init |
+| Backend | payload gains repo_url + resolved_commit; the class is marked source mode; command-less assets unchanged |
+| Runner | clone/checkout/install/init for this class, skipping frozen injection; HOME uses /tmp/eval-home (m8-20) |
+| Frontend | keep assetRef, add copy saying the ref will be checked out and rebuilt/re-initialized (prototype already shows it) |
+| trace | record repo/ref/commit plus install/init output |
 
-Before (asset source shows "default Ref", evaluation shows "evaluation Ref"): the two screenshots below.
+## Trade-offs
 
-After (asset source shows "default branch", evaluation shows "Agent version (branch / tag / commit)" with copy explaining clone + scan/build): the two screenshots below.
-
-![Before - asset source](https://raw.githubusercontent.com/Shadow-Azure/ai-eval-platform/agent/m8-21/superpower-agent-eval-41d71917e720/prototype/screenshots/m8-21-before-assets.png)
-![Before - evaluation agent version](https://raw.githubusercontent.com/Shadow-Azure/ai-eval-platform/agent/m8-21/superpower-agent-eval-41d71917e720/prototype/screenshots/m8-21-before-eval.png)
-![After - asset source](https://raw.githubusercontent.com/Shadow-Azure/ai-eval-platform/agent/m8-21/superpower-agent-eval-41d71917e720/prototype/screenshots/m8-21-after-assets.png)
-![After - evaluation agent version](https://raw.githubusercontent.com/Shadow-Azure/ai-eval-platform/agent/m8-21/superpower-agent-eval-41d71917e720/prototype/screenshots/m8-21-after-eval.png)
-
-## Phases
-
-1. asset loader scans by ref (command-less);
-2. prepare API + preparation page ref override;
-3. runner full source mode (drop frozen-snapshot injection);
-4. frontend/docs/tests and removal of the old injection path.
+- init returns to evaluation time (CLI-generated only), reversing m8-11’s “no init at eval”; it runs as eval inside /testbed, so ownership stays consistent.
+- Each evaluation adds a clone+install+build+init; shallow clone and dependency caching help.
+- Private repositories use the platform Git credential, injected through the proxy and never written to the trace.
 
 ## Acceptance
 
-- The same agent asset can switch branch/tag/commit at evaluation start and be cloned/scanned/built at that version.
-- The trace records repo/ref/commit; both asset classes inject and run.
-- Before/after prototype screenshots are above.
+- Switching branch/tag/commit for a CLI-generated asset checks out, builds and initializes that version and runs with its `.claude`.
+- Command-less assets behave exactly as before; the trace includes repo/ref/commit and build logs.
