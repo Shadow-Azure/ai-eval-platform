@@ -1444,7 +1444,7 @@ function assetSourcesPage() {
                 </div>
                 <p class="dataset-description">${source.description}</p>
                 <div class="asset-source-meta">
-                  <div><span>默认 Ref</span><strong class="mono">${source.defaultRef}</strong></div>
+                  <div><span>默认分支</span><strong class="mono">${source.defaultRef}</strong></div>
                   <div><span>扫描路径</span><strong class="mono">${source.scanPath}</strong></div>
                   <div><span>选择范围</span><strong>${source.selection === "directory" ? "目录下全部" : "指定资产"}</strong></div>
                 </div>
@@ -1795,19 +1795,19 @@ function newEvalPage() {
         </div>
         <div class="field-row asset-ref-row">
           <div class="field">
-            <label class="required">评测 Ref</label>
+            <label class="required">Agent 版本（分支 / Tag / Commit）</label>
             <input class="input mono" id="asset-ref-input" value="${esc(ui.newEval.assetRef)}" placeholder="分支、tag 或 commit" />
-            <span class="hint">默认填入 ${source.defaultRef}，发起本次评测前可以修改。</span>
+            <span class="hint">默认分支为 ${source.defaultRef}；可填分支、Tag 或 commit。评测会按该版本 clone 仓库并重新扫描/构建资产。</span>
           </div>
           <div class="field">
-            <label>已解析版本</label>
+            <label>将使用的 commit</label>
             <div class="asset-commit-box">
               <span class="mono" id="asset-commit-label">${refVerified ? `@${ui.newEval.assetCommit}` : "尚未解析当前 Ref"}</span>
               <button class="btn btn-sm" data-action="scan-assets">${icon("refresh", 13)} 读取资产</button>
             </div>
           </div>
         </div>
-        <div id="asset-ref-status" class="banner ${refVerified ? "success" : "warning"}">${icon(refVerified ? "check" : "alert", 15)}<div>${refVerified ? `已从 <span class="mono">${ui.newEval.assetRef}</span> 解析资产；启动时会固定到 commit <span class="mono">${ui.newEval.assetCommit}</span>。` : "<strong>Ref 已修改但尚未解析。</strong> 继续前需要读取该 Ref 下的资产，缺失或冲突会阻止评测启动。"}</div></div>
+        <div id="asset-ref-status" class="banner ${refVerified ? "success" : "warning"}">${icon(refVerified ? "check" : "alert", 15)}<div>${refVerified ? `将按 <span class="mono">${ui.newEval.assetRef}</span> clone 仓库并扫描/构建资产；启动时固定到 commit <span class="mono">${ui.newEval.assetCommit}</span>。` : "<strong>版本已修改但尚未解析。</strong> 继续前需要解析该版本；缺失或冲突会阻止评测启动。"}</div></div>
       </div>
       <div class="card-header" style="padding:18px 0 9px;border:0"><div><h3 class="card-title">选择资产</h3><p class="card-subtitle">已选择 ${selectedInSource} / ${source.assets.length} 项 · 全选覆盖当前筛选的所有页</p></div><button class="btn btn-ghost btn-sm" data-action="asset-source-detail" data-source="${source.id}">查看资产详情</button></div>
       <div class="asset-select-panel">
@@ -3956,7 +3956,7 @@ document.addEventListener("input", (event) => {
     const summaryRef = document.querySelector("#summary-asset-ref");
     if (status) {
       status.className = `banner ${verified ? "success" : "warning"}`;
-      status.innerHTML = `${icon(verified ? "check" : "alert", 15)}<div>${verified ? `已从 <span class="mono">${esc(ui.newEval.assetRef)}</span> 解析资产；启动时会固定到 commit <span class="mono">${ui.newEval.assetCommit}</span>。` : "<strong>Ref 已修改但尚未解析。</strong> 继续前需要读取该 Ref 下的资产，缺失或冲突会阻止评测启动。"}</div>`;
+      status.innerHTML = `${icon(verified ? "check" : "alert", 15)}<div>${verified ? `已从 <span class="mono">${esc(ui.newEval.assetRef)}</span> 解析资产；启动时会固定到 commit <span class="mono">${ui.newEval.assetCommit}</span>。` : "<strong>版本已修改但尚未解析。</strong> 继续前需要解析该版本；缺失或冲突会阻止评测启动。"}</div>`;
     }
     if (commit) commit.textContent = verified ? `@${ui.newEval.assetCommit}` : "尚未解析当前 Ref";
     if (summaryRef) summaryRef.textContent = `${ui.newEval.assetRef} · ${ui.newEval.selectedAssets.length} 项`;
