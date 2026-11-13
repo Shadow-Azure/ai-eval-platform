@@ -869,6 +869,21 @@ def test_tree_includes_generated_assets_and_resolve_freezes_selected_paths(
     assert task_payload["source_archive_digest"] == manifest["source_archive_digest"]
 
 
+def test_extract_source_archive_rejects_oversized_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+        info = tarfile.TarInfo("repo/package.json")
+        payload = b"x" * 64
+        info.size = len(payload)
+        archive.addfile(info, io.BytesIO(payload))
+    monkeypatch.setattr(agent_assets, "MAX_SOURCE_EXTRACT_BYTES", 32)
+    with pytest.raises(agent_assets.AgentAssetError) as error:
+        agent_assets.extract_source_archive(buffer.getvalue(), tmp_path / "source")
+    assert error.value.code == "source_archive_too_large"
+
+
 def test_extract_source_archive_rejects_traversal(tmp_path: Path) -> None:
     buffer = io.BytesIO()
     with tarfile.open(fileobj=buffer, mode="w:gz") as archive:

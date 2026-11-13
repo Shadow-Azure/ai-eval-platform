@@ -601,7 +601,7 @@ function AddAssetSourceModal({ open, onClose, onCreated }: AddModalProps) {
             </label>
             <div className="asset-hint">
               适用于 OpenSpec/CodeSpec 等由 CLI 生成 Command 的仓库。加载测试与评测都会先按所选版本
-              checkout 源码，再在仓库根目录执行下面的命令。
+              checkout 源码，再在仓库根目录执行安装/初始化命令。
             </div>
           </div>
           {runtimeEnabled ? (

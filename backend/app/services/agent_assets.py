@@ -24,6 +24,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import signal
 import subprocess
 import tarfile
@@ -64,6 +65,7 @@ LOAD_TEST_TOKEN_TTL_SECONDS = 600
 # downloads a short-lived presigned URL and never receives a Git credential.
 MAX_SOURCE_ARCHIVE_BYTES = 128 * 1024 * 1024
 MAX_SOURCE_ARCHIVE_ENTRIES = 50_000
+MAX_SOURCE_EXTRACT_BYTES = 512 * 1024 * 1024
 MAX_RUNTIME_COMMAND_LENGTH = 2000
 MAX_RUNTIME_LABEL_LENGTH = 100
 MAX_LOAD_TEST_LOG_TAIL = 20_000
@@ -692,6 +694,14 @@ def extract_source_archive(data: bytes, destination: Path | str) -> Path:
                     "source_archive_too_large",
                     f"源码包条目 {len(members)} 超过上限 {MAX_SOURCE_ARCHIVE_ENTRIES}",
                 )
+            declared_bytes = sum(
+                member.size for member in members if member.isfile()
+            )
+            if declared_bytes > MAX_SOURCE_EXTRACT_BYTES:
+                raise AgentAssetError(
+                    "source_archive_too_large",
+                    f"源码包解压后大小 {declared_bytes} 超过上限 {MAX_SOURCE_EXTRACT_BYTES}",
+                )
             for member in members:
                 name = member.name.replace("\\", "/")
                 while name.startswith("./"):
@@ -886,6 +896,10 @@ def _run_load_test_from_checkout(
     archive = client.archive(owner, repo, commit, max_bytes=MAX_SOURCE_ARCHIVE_BYTES)
     with tempfile.TemporaryDirectory(prefix="agent-asset-source-") as source_tmp:
         source_root = extract_source_archive(archive, Path(source_tmp))
+        # The load test validates what install/init generate, not a committed
+        # `.claude` tree: a clean workspace matches the eval-time init and keeps
+        # the generated-asset inventory free of repository-provided files.
+        shutil.rmtree(source_root / ".claude", ignore_errors=True)
         result, _infrastructure_error = _execute_load_test(
             prerequisites, source_dir=source_root, runner=runner
         )

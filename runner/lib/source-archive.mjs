@@ -29,6 +29,7 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import { RuntimeError } from "./runtime-claude-code.mjs";
 
 const MAX_ARCHIVE_ENTRIES = 50_000;
+const MAX_ARCHIVE_DOWNLOAD_BYTES = 128 * 1024 * 1024;
 const MAX_ARCHIVE_EXTRACT_BYTES = 512 * 1024 * 1024;
 const TAR_TIMEOUT_MS = 120_000;
 
@@ -77,6 +78,9 @@ export async function downloadSourceArchive(assetSnapshot, { fetchImpl = fetch }
       });
     }
     bytes = Buffer.from(await response.arrayBuffer());
+  }
+  if (bytes.length > MAX_ARCHIVE_DOWNLOAD_BYTES) {
+    throw new RuntimeError("源码包超过下载大小上限", { code: "source_archive_too_large" });
   }
   const expected = String(assetSnapshot?.source_archive_digest || "");
   if (expected && digest(bytes) !== expected) {
