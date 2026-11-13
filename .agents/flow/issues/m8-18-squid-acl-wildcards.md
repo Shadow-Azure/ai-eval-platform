@@ -9,6 +9,8 @@ priority: P2
 status: in-progress
 scope:
   - .agents/flow/issues/m8-18-squid-acl-wildcards.*
+  - .agents/flow/issues/m8-16-proxy-listen-fix.*
+  - .agents/flow/issues/m8-17-squid-dstdomain-fix.*
   - .agents/flow/milestones/m8-bug-fixes.*
   - .agents/flow/roadmap.*
   - deploy/**
