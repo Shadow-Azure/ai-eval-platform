@@ -4,6 +4,7 @@ set -euo pipefail
 DEPLOY_DIR="${DEPLOY_DIR:-/opt/ai-eval-platform}"
 : "${API_IMAGE:?API_IMAGE required}"
 : "${WEB_IMAGE:?WEB_IMAGE required}"
+: "${PROXY_IMAGE:?PROXY_IMAGE required}"
 : "${GIT_COMMIT:?GIT_COMMIT required}"
 
 source "$DEPLOY_DIR/deploy/common.sh"
@@ -45,6 +46,7 @@ fi
 
 set_env API_IMAGE "$API_IMAGE"
 set_env WEB_IMAGE "$WEB_IMAGE"
+set_env RUNNER_EGRESS_PROXY_IMAGE "$PROXY_IMAGE"
 set_env GIT_COMMIT "$GIT_COMMIT"
 set_env DEPLOY_ENVIRONMENT "$DEPLOY_ENVIRONMENT"
 
@@ -65,7 +67,7 @@ trap on_error ERR
 # images, so the build stage is a real precondition rather than a guess.
 stage_record build success "" "" "GitHub Actions 构建成功后触发部署"
 
-"${COMPOSE[@]}" pull api web
+"${COMPOSE[@]}" pull api web proxy
 stage_begin database_migration
 "${COMPOSE[@]}" --profile tools run --rm migrate
 MIGRATION_REVISION="$(current_database_revision)"

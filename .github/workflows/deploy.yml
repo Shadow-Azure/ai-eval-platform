@@ -39,6 +39,7 @@ jobs:
     outputs:
       api_digest: ${{ steps.api.outputs.digest }}
       web_digest: ${{ steps.web.outputs.digest }}
+      proxy_digest: ${{ steps.proxy.outputs.digest }}
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -69,6 +70,17 @@ jobs:
           provenance: false
           sbom: false
           tags: ${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/ai-eval-platform-web:${{ github.sha }}
+      - name: Build and push egress proxy image
+        id: proxy
+        uses: docker/build-push-action@v6
+        with:
+          context: ./deploy/proxy
+          file: deploy/proxy/Dockerfile
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          sbom: false
+          tags: ${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/ai-eval-platform-proxy:${{ github.sha }}
 
   # M5-08/M5-11: keep one stable actions-runner archive in OSS. Spot cloud-init
   # cannot reliably pull ~10 MB from GitHub inside its timeout, so every deploy
@@ -309,13 +321,14 @@ jobs:
         env:
           API_IMAGE: ${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/ai-eval-platform-api@${{ needs.build.outputs.api_digest }}
           WEB_IMAGE: ${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/ai-eval-platform-web@${{ needs.build.outputs.web_digest }}
+          PROXY_IMAGE: ${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/ai-eval-platform-proxy@${{ needs.build.outputs.proxy_digest }}
           GIT_COMMIT: ${{ github.sha }}
           DEPLOY_TRIGGERED_BY: ${{ github.actor }}
           DEPLOY_RUN_ID: ${{ github.run_id }}
           DEPLOY_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           ssh "root@${{ secrets.ECS_HOST }}" \
-            "cd /opt/ai-eval-platform && API_IMAGE='$API_IMAGE' WEB_IMAGE='$WEB_IMAGE' GIT_COMMIT='$GIT_COMMIT' DEPLOY_TRIGGERED_BY='$DEPLOY_TRIGGERED_BY' DEPLOY_RUN_ID='$DEPLOY_RUN_ID' DEPLOY_RUN_URL='$DEPLOY_RUN_URL' bash deploy/deploy.sh"
+            "cd /opt/ai-eval-platform && API_IMAGE='$API_IMAGE' WEB_IMAGE='$WEB_IMAGE' PROXY_IMAGE='$PROXY_IMAGE' GIT_COMMIT='$GIT_COMMIT' DEPLOY_TRIGGERED_BY='$DEPLOY_TRIGGERED_BY' DEPLOY_RUN_ID='$DEPLOY_RUN_ID' DEPLOY_RUN_URL='$DEPLOY_RUN_URL' bash deploy/deploy.sh"
       - name: Provision initial administrator
         if: env.AUTH_BOOTSTRAP_ADMIN_PASSWORD != ''
         run: |

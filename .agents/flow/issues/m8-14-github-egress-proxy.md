@@ -6,7 +6,7 @@
 kind: issue
 milestone: m8
 priority: P2
-status: in-progress
+status: done
 scope:
   - .agents/flow/issues/m8-14-github-egress-proxy.*
   - .agents/flow/issues/m8-12-case-token-ttl.*

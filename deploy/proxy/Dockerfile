@@ -1,8 +1,9 @@
-# M8-14: the pinned upstream Squid image is Ubuntu-based and ships no Python,
-# while the public listener's auth helper (egress_auth.py) is a stdlib Python 3
-# program. Add only the interpreter here; the helper itself is mounted at
-# runtime so allowlist/secret changes never need an image rebuild.
-FROM squid:6.10
+# M8-14: the public listener's auth helper (egress_auth.py) is a stdlib
+# Python 3 program. Ubuntu's official Squid image is maintained, ships apt and
+# has a resolvable tag (the upstream `squid:6.10` tag does not exist); only the
+# interpreter is added here, the helper itself is mounted at runtime so
+# allowlist/secret changes never need an image rebuild.
+FROM ubuntu/squid:latest
 
 USER root
 RUN apt-get update \

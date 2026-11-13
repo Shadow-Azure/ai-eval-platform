@@ -134,7 +134,7 @@ test("production compose injects the task secret and publishes both listeners", 
 
 test("the proxy image adds Python for the auth helper", () => {
   const dockerfile = read("deploy/proxy/Dockerfile");
-  assert.ok(dockerfile.includes("FROM squid:6.10"));
+  assert.ok(dockerfile.includes("FROM ubuntu/squid"));
   assert.ok(dockerfile.includes("python3"));
 });
 
