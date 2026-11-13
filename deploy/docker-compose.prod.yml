@@ -185,16 +185,35 @@ services:
         condition: service_healthy
 
   # M8-14: allowlisted forward proxy for GitHub egress from evaluation
-  # containers. The runner host reaches it over the VPC private network; the
-  # squid ACL restricts sources to runner_network and destinations to GitHub.
-  # Bind the published port to the host's private address (never a public
-  # interface) and restrict 3128 to the runner CIDR in the security group.
+  # containers. The private listener (3128) has no auth and the runner host
+  # reaches it over the VPC; the public listener (3129) authenticates with the
+  # short-lived egress token in the Basic username slot. Squid's ACLs restrict
+  # sources/destinations to the runner network and GitHub, and the security
+  # group is the outer boundary.
+  #
+  # Bind defaults are 0.0.0.0 so both published ports work out of the box; the
+  # deploy workflow pins 3128 to the host's private address
+  # (RUNNER_EGRESS_PROXY_BIND_ADDRESS) and 3129 stays reachable for the
+  # external Mac mini. On a public interface 3128 still denies non-RFC1918
+  # sources, but restrict it in the security group as well.
+  #
+  # RUNNER_TASK_SECRET is the same secret the API signs egress tokens with;
+  # egress_auth.py re-verifies signature/expiry/scope and fails closed when it
+  # is empty. The helper is mounted so rotating the secret or editing the
+  # allowlist needs no image rebuild.
   proxy:
-    image: squid:6.10
+    build:
+      context: ./proxy
+      dockerfile: Dockerfile
+    image: ${RUNNER_EGRESS_PROXY_IMAGE:-ai-eval-platform-proxy:6.10}
+    environment:
+      RUNNER_TASK_SECRET: ${RUNNER_TASK_SECRET:-}
     volumes:
       - ./proxy/squid.conf:/etc/squid/squid.conf:ro
+      - ./proxy/egress_auth.py:/usr/local/bin/egress_auth.py:ro
     ports:
-      - "${RUNNER_EGRESS_PROXY_BIND_ADDRESS:-127.0.0.1}:3128:3128"
+      - "${RUNNER_EGRESS_PROXY_BIND_ADDRESS:-0.0.0.0}:3128:3128"
+      - "${RUNNER_EGRESS_PROXY_PUBLIC_BIND_ADDRESS:-0.0.0.0}:3129:3129"
 
   migrate:
     image: ${API_IMAGE:?API_IMAGE required}

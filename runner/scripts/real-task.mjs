@@ -151,8 +151,9 @@ function dockerRun(args, { allowFailure = false, timeout = 1_200_000 } = {}) {
  * M8-14: evaluation containers use host networking, so their GitHub egress is
  * the runner host's egress. When the platform sends a forward proxy in the
  * run-wide task payload, the asset install and the agent exec run behind it;
- * when the field is absent or empty, no `-e` flag is added and behaviour is
- * exactly the previous direct-network path.
+ * the short-lived `egress_token` rides in the Basic username slot for the
+ * public listener. When the proxy field is absent or empty, no `-e` flag is
+ * added and behaviour is exactly the previous direct-network path.
  *
  * NO_PROXY keeps platform and mirror traffic off the proxy: the model
  * gateway/callback host, object storage (the asset bundle presign), loopback,
@@ -172,6 +173,34 @@ function normalizeEgressProxy(value) {
   if (typeof value !== "string") return null;
   const proxy = value.trim();
   return proxy ? proxy : null;
+}
+
+const EGRESS_TOKEN_RE = /^[A-Za-z0-9._-]+$/;
+
+function normalizeEgressToken(value) {
+  if (typeof value !== "string") return null;
+  const token = value.trim();
+  return EGRESS_TOKEN_RE.test(token) ? token : null;
+}
+
+/**
+ * Compose the credential-bearing proxy URL for the container. The public
+ * listener authenticates with HTTP Basic, so the short-lived token rides in
+ * the username slot and the password stays empty:
+ * `http://<egress_token>:@<proxy-host>:<port>`. Without a token the payload's
+ * credential-free URL is kept (private listener has no auth); a malformed
+ * token is ignored instead of being spliced into a URL.
+ */
+function credentialedEgressProxy(proxy, token) {
+  if (!token) return proxy;
+  try {
+    const parsed = new URL(proxy);
+    const defaultPort = parsed.protocol === "https:" ? "443" : "80";
+    const authority = parsed.port ? parsed.host : `${parsed.host}:${defaultPort}`;
+    return `${parsed.protocol}//${token}:@${authority}`;
+  } catch {
+    return proxy;
+  }
 }
 
 function hostnameOf(value) {
@@ -200,8 +229,9 @@ function egressNoProxy(task, callbackBaseUrl) {
 function egressProxyEnvArgs(task, callbackBaseUrl) {
   const proxy = normalizeEgressProxy(task?.egress_proxy);
   if (!proxy) return [];
+  const target = credentialedEgressProxy(proxy, normalizeEgressToken(task?.egress_token));
   const noProxy = egressNoProxy(task, callbackBaseUrl);
-  return ["-e", `HTTPS_PROXY=${proxy}`, "-e", `HTTP_PROXY=${proxy}`, "-e", `NO_PROXY=${noProxy}`];
+  return ["-e", `HTTPS_PROXY=${target}`, "-e", `HTTP_PROXY=${target}`, "-e", `NO_PROXY=${noProxy}`];
 }
 
 /**

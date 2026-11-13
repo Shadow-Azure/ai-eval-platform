@@ -58,19 +58,24 @@ Production deployment binds the Runner callback entry to the VPC private address
 
 ## GitHub egress proxy
 
-Evaluation containers run with `--network host`, so their GitHub egress is the runner host's egress; production runs a pinned Squid image as the `proxy` service in `deploy/docker-compose.prod.yml`, publishing 3128 only on `RUNNER_EGRESS_PROXY_BIND_ADDRESS`. The deploy workflow derives `RUNNER_EGRESS_PROXY=http://<private-address>:3128` and `RUNNER_EGRESS_PROXY_BIND_ADDRESS` from `API_BIND_ADDRESS` (the ECS private address) within the GitHub Secrets flow, so no manual host `.env` edit is needed; same-name secrets override the derived values. The security group restricts access to the runner subnet, and Squid's `runner_network` ACL allows the RFC1918 private ranges by default, narrowed to the runner VPC/subnet CIDR in production.
+Evaluation containers run with `--network host`, so their GitHub egress is the runner host's egress; production runs a pinned Squid image as the `proxy` service in `deploy/docker-compose.prod.yml` (the image adds python3 to `squid:6.10` for the auth helper), listening on two ports: 3128 is the private listener with no authentication, accepting only RFC1918 sources (`runner_network`, narrowed in production to the runner VPC/subnet CIDR), while 3129 is the public listener requiring HTTP Basic authentication with the platform-issued short-lived egress token (username slot, empty password) for the external Mac mini and other non-VPC runners. Both listeners share one GitHub destination allowlist; the deploy workflow binds 3128 to `RUNNER_EGRESS_PROXY_BIND_ADDRESS` (derived from `API_BIND_ADDRESS` by default) and binds 3129 to 0.0.0.0 by default, which `RUNNER_EGRESS_PROXY_PUBLIC_BIND_ADDRESS` can narrow; the security group still restricts the sources of each port.
 
-The API's `RUNNER_EGRESS_PROXY` accepts only a credential-free http(s) URL and is delivered in the shard task payload; an empty value keeps direct egress. The Runner injects `HTTPS_PROXY`, `HTTP_PROXY` and `NO_PROXY` into the asset install and the Agent `docker exec` only when `egress_proxy` is non-empty, leaving the command arguments and direct-network behaviour unchanged otherwise. `NO_PROXY` derives the platform callback/model gateway host and the OSS asset-bundle host from the payload and always includes `localhost`, `127.0.0.1`, `::1`, the npm mirror `registry.npmmirror.com` and the default registry `registry.npmjs.org`.
+The API's `RUNNER_EGRESS_PROXY` accepts only a credential-free http(s) URL and is delivered in the shard task payload together with `egress_token`: scope=`egress`, bound to eval_run/shard/attempt/pool, with the same TTL as the case token (`max(300, case_timeout_seconds + 900)`), issued by `issue_short_token` with `RUNNER_TASK_SECRET`; when no proxy is configured neither field is sent and the runner stays on the direct path. The proxy's `deploy/proxy/egress_auth.py` verifies the same v1 wire format with the same `RUNNER_TASK_SECRET` — signature, `exp` and scope (byte-compatible with `backend/app/services/short_token.py`) — and rejects everything when the secret is empty; `RUNNER_TASK_SECRET` must therefore reach both the api and the proxy container.
 
-The allowlist and deny policy live in `deploy/proxy/squid.conf`: only port 443 of `github.com`, `api.github.com`, `codeload.github.com`, `objects.githubusercontent.com`, `release-assets.githubusercontent.com`, `github-releases.githubusercontent.com`, `.github.com` and `.githubusercontent.com` is allowed; `http_access deny all` rejects everything else and the access log records it. Recreate the `proxy` service after changing the allowlist or CIDR; verification commands:
+The Runner injects `HTTPS_PROXY`, `HTTP_PROXY` and `NO_PROXY` into the asset install and the Agent `docker exec` only when `egress_proxy` is non-empty; with a token it composes `http://<token>:@<proxy-host>:<port>` (the token is `[A-Za-z0-9._-]`, so nothing needs escaping), and without one it keeps the credential-free URL for the private listener. Otherwise the command arguments and direct-network behaviour are unchanged. `NO_PROXY` derives the platform callback/model gateway host and the OSS asset-bundle host from the payload and always includes `localhost`, `127.0.0.1`, `::1`, the npm mirror `registry.npmmirror.com` and the default registry `registry.npmjs.org`.
+
+The proxy is GitHub-only: with the proxy env set, non-allowlisted external requests are denied by Squid (`http_access deny all`) and never bypassed through a direct connection; so only evaluations that actually need GitHub should configure `RUNNER_EGRESS_PROXY`, and when it is not needed the value stays empty and nothing is injected. The allowlist lives in `deploy/proxy/squid.conf`: only port 443 of `github.com`, `api.github.com`, `codeload.github.com`, `objects.githubusercontent.com`, `release-assets.githubusercontent.com`, `github-releases.githubusercontent.com`, `.github.com` and `.githubusercontent.com` is allowed, and both allow and deny decisions go to the access log. Recreate the `proxy` service after changing the allowlist or CIDR.
+
+Verification commands (take the token from a real payload's `egress_token`, or self-sign an expired/wrong-scope one with the v1 format):
 
 ```sh
-curl -x http://<proxy-host>:3128 https://api.github.com/rate_limit
-curl -x http://<proxy-host>:3128 https://registry.npmmirror.com/
+curl -x http://<token>:@<proxy-host>:3129 https://api.github.com/rate_limit
+curl -x http://<expired-token>:@<proxy-host>:3129 https://api.github.com/rate_limit
+curl -x http://<token>:@<proxy-host>:3129 https://registry.npmmirror.com/
 docker compose -f deploy/docker-compose.prod.yml logs --tail=100 proxy
 ```
 
-The first command should return a GitHub response, the second should be rejected, and the third shows allow/deny records.
+The first command should return a GitHub response, the second (expired or forged token) a 407 authentication failure, the third (non-allowlisted domain) a denial, and the fourth shows allow/deny records; the private path uses `http://<proxy-host>:3128` without a token.
 
 ## Agent asset snapshots
 

@@ -39,6 +39,7 @@ test("missing asset snapshot is an explicit empty object, never undefined", () =
   const task = buildCaseTask({ case_run_id: "case-1" }, { cases: [] });
   assert.deepEqual(task.asset_snapshot, {});
   assert.equal(task.egress_proxy, null);
+  assert.equal(task.egress_token, null);
   assert.equal(task.adapter_key, "swebench");
   assert.equal(task.runtime_key, "claude-code");
 });
@@ -47,5 +48,18 @@ test("run-wide egress proxy is copied onto every case task", () => {
   const tasks = buildCaseTasks({ ...payload, egress_proxy: "http://10.0.0.10:3128" });
   for (const task of tasks.values()) {
     assert.equal(task.egress_proxy, "http://10.0.0.10:3128");
+    assert.equal(task.egress_token, null);
+  }
+});
+
+test("run-wide egress token is copied onto every case task", () => {
+  const token = "v1.eyJzY29wZSI6ImVncmVzcyJ9.c2lnbmF0dXJl";
+  const tasks = buildCaseTasks({
+    ...payload,
+    egress_proxy: "http://10.0.0.10:3128",
+    egress_token: token,
+  });
+  for (const task of tasks.values()) {
+    assert.equal(task.egress_token, token);
   }
 });

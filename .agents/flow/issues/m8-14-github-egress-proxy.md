@@ -19,6 +19,7 @@ scope:
   - scripts/doc-budgets.manifest.json
   - tests/backend/**
   - tests/runner/**
+  - tests/deploy/**
   - deploy/**
   - .github/workflows/deploy.yml
   - docs/**
@@ -37,14 +38,14 @@ github:
 
 ## 目标
 
-- 后端新增配置 `RUNNER_EGRESS_PROXY`（默认空），随评测任务 manifest/payload 下发。
-- Runner 在资产 install 与 agent 的 exec 环境注入 `HTTPS_PROXY`/`HTTP_PROXY`/`NO_PROXY`；未配置时行为不变。
-- 部署带 allowlist 的正向代理（squid/tinyproxy）在 backend ECS，内网端口，仅 runner 内网可达；白名单仅放行 GitHub 相关域名，拒绝并记录其余请求。
-- 白名单：`github.com`、`api.github.com`、`codeload.github.com`、`objects.githubusercontent.com`、`release-assets.githubusercontent.com`、`github-releases.githubusercontent.com`、`*.githubusercontent.com`。
-- 测试：runner 注入/未注入、payload 携带代理、无配置兼容；部署文档说明白名单维护与验证命令。
+- 后端新增配置 `RUNNER_EGRESS_PROXY`（默认空），随评测任务 payload 下发；新增**动态 egress token**（不使用静态账号密码）。
+- 平台为每次评测签发短期签名 token（scope=egress，TTL=用例超时+余量，绑定 run/shard/attempt）；payload 携带；runner 把它作为代理凭据（Basic 用户名位）；代理侧 auth helper 校验签名/过期/绑定。
+- 代理部署：私网监听（3128，VPC 内池可无认证）+ 公网监听（3129，动态 token 认证）；只放行 GitHub 域名，其余拒绝并记日志；`NO_PROXY` 保证平台/npm 镜像/OSS 直连；仅对需要的命令注入代理。
+- 覆盖 VPC 固定池、阿里云竞态池、外部 Mac mini。
+- 测试：token 签发/过期/伪造拒绝、runner 注入（含凭据）、代理域名白名单、私网/公网路径。
 
 ## 验收
 
-- 评测容器通过代理成功下载 CLI；design→propose→apply 可执行、trace 保留。
-- 未配置代理时行为不变；CI 通过。
-- 代理安全组仅允许 runner；访问日志可审计。
+- 评测容器经代理从 GitHub 实时下载；token 过期、伪造、非白名单域名均被拒绝；无静态账号密码。
+- VPC 固定池/竞态池可走私网 3128；外部 Mac mini 经公网 3129 + 动态 token 可用。
+- 白名单与访问日志可审计；测试与 CI 通过。

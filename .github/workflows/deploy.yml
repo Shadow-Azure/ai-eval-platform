@@ -178,6 +178,9 @@ jobs:
       # runner callback), so no extra secret or host edit is required.
       RUNNER_EGRESS_PROXY: ${{ secrets.RUNNER_EGRESS_PROXY }}
       RUNNER_EGRESS_PROXY_BIND_ADDRESS: ${{ secrets.RUNNER_EGRESS_PROXY_BIND_ADDRESS }}
+      # Empty keeps the compose default (0.0.0.0) for the authenticated public
+      # listener; set it to pin 3129 to a specific interface.
+      RUNNER_EGRESS_PROXY_PUBLIC_BIND_ADDRESS: ${{ secrets.RUNNER_EGRESS_PROXY_PUBLIC_BIND_ADDRESS }}
       # M5-08: VPC-only Runner callback entry. Empty keeps the loopback
       # default and disables the VPC port binding; set both secrets in the
       # production environment to let spot runners reach the API.
@@ -278,6 +281,7 @@ jobs:
             printf 'API_BIND_ADDRESS=%s\n' "$API_BIND_ADDRESS"
             printf 'RUNNER_EGRESS_PROXY=%s\n' "$egress_proxy"
             printf 'RUNNER_EGRESS_PROXY_BIND_ADDRESS=%s\n' "$egress_proxy_bind"
+            printf 'RUNNER_EGRESS_PROXY_PUBLIC_BIND_ADDRESS=%s\n' "$RUNNER_EGRESS_PROXY_PUBLIC_BIND_ADDRESS"
             printf 'RUNNER_CALLBACK_BASE_URL=%s\n' "$callback_base_url"
             printf 'RUNNER_SPOT_RUNNER_TARBALL_URL=%s\n' "$RUNNER_SPOT_RUNNER_TARBALL_URL"
             printf 'RUNNER_SCRIPTS_BUNDLE_NAME=%s\n' "$RUNNER_SCRIPTS_BUNDLE_NAME"

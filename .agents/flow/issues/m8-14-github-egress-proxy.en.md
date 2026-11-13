@@ -19,6 +19,7 @@ scope:
   - scripts/doc-budgets.manifest.json
   - tests/backend/**
   - tests/runner/**
+  - tests/deploy/**
   - deploy/**
   - .github/workflows/deploy.yml
   - docs/**
@@ -37,14 +38,14 @@ github:
 
 ## Goals
 
-- Add a backend setting `RUNNER_EGRESS_PROXY` (default empty) delivered with the evaluation task manifest/payload.
-- The Runner injects `HTTPS_PROXY`/`HTTP_PROXY`/`NO_PROXY` into the asset-install and agent exec environments; behavior is unchanged when unset.
-- Deploy an allowlisted forward proxy (squid/tinyproxy) on the backend ECS on a private port reachable only from the runner; only GitHub domains are allowed and everything else is denied and logged.
-- Allowlist: `github.com`, `api.github.com`, `codeload.github.com`, `objects.githubusercontent.com`, `release-assets.githubusercontent.com`, `github-releases.githubusercontent.com`, `*.githubusercontent.com`.
-- Tests: runner injection/no-injection, payload carrying the proxy, backward compatibility without configuration; deployment docs describing allowlist maintenance and verification commands.
+- Add a backend setting `RUNNER_EGRESS_PROXY` (default empty) delivered with the evaluation task payload, plus **dynamic egress tokens** instead of static credentials.
+- The platform issues a short-lived signed token per run (scope=egress, TTL=case timeout plus grace, bound to run/shard/attempt); the payload carries it; the runner uses it as the proxy credential (Basic username slot); a proxy auth helper validates signature, expiry and binding.
+- Proxy deployment: a private listener (3128, optional no auth for VPC pools) and a public listener (3129, dynamic-token auth); only GitHub domains are allowed, everything else is denied and logged; `NO_PROXY` keeps the platform, npm mirror and OSS direct; only the commands that need GitHub get the proxy.
+- Cover VPC fixed pools, Alibaba spot pools and the external Mac mini.
+- Tests: token issuance/expiry/forgery rejection, runner injection with credentials, proxy domain allowlist, private/public paths.
 
 ## Acceptance
 
-- The evaluation container downloads the CLI through the proxy; design→propose→apply runs and the trace is preserved.
-- Behavior is unchanged when no proxy is configured; CI passes.
-- The proxy security group allows only the runner; access logs remain auditable.
+- The evaluation container downloads from GitHub live through the proxy; expired/forged tokens and non-allowlisted domains are rejected; no static accounts.
+- VPC fixed/spot pools use the private 3128 path; the external Mac mini uses the public 3129 path with a dynamic token.
+- The allowlist and access logs are auditable; tests and CI pass.
