@@ -392,6 +392,19 @@ async function realCase(dispatch, item, task, { modelToken, runnerRoot, callback
       // The dataset image is fixed; the generic agent runtime is installed
       // after start from Alibaba npm/PyPI sources. No per-agent image.
       dockerRun(["exec", agentName, "bash", "-lc", runtimeAdapter.installScript()], { timeout: 600_000 });
+      // M8-19: install commands install into $HOME and not every dataset image
+      // pre-creates the agent home. Create it as root first and log the state
+      // so the eval-user install can never fail with ENOENT /home/eval/lib.
+      dockerRun(
+        [
+          "exec",
+          agentName,
+          "sh",
+          "-c",
+          "mkdir -p /home/eval && chown eval:eval /home/eval && id && ls -ld /home /home/eval",
+        ],
+        { timeout: 60_000 },
+      );
       // M8-11: run only the frozen asset install command (CLI availability)
       // inside the same container before the agent starts. `init_command` is
       // never executed at eval time: it would create `.claude` as `eval` and
