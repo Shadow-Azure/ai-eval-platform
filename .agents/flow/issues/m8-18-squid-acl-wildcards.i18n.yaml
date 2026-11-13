@@ -1,0 +1,5 @@
+# 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
+# git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
+#   pnpm run record:i18n -- .agents/flow/issues/m8-18-squid-acl-wildcards.md
+m8-18-squid-acl-wildcards.md: 68c33b7a4fdbe12b95c3798be6f11a432581e6c3
+m8-18-squid-acl-wildcards.en.md: 4064ce67d4d65ebf06a22c11370af94b355f1277

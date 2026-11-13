@@ -6,7 +6,7 @@ English | [中文](m8-17-squid-dstdomain-fix.md)
 kind: issue
 milestone: m8
 priority: P2
-status: in-progress
+status: done
 scope:
   - .agents/flow/issues/m8-17-squid-dstdomain-fix.*
   - .agents/flow/milestones/m8-bug-fixes.*

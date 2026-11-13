@@ -102,7 +102,7 @@ test("squid exposes a private and an authenticated public listener", () => {
     "http_access allow runner_network !public_port github_domains SSL_ports",
     "http_access allow authenticated public_port github_domains SSL_ports",
     "http_access deny all",
-    "dstdomain github.com",
+    "dstdomain .github.com .githubusercontent.com",
     "access_log stdio:/var/log/squid/access.log squid",
   ]) {
     assert.ok(squid.includes(expected), `squid.conf missing ${expected}`);
