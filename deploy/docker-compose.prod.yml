@@ -205,7 +205,7 @@ services:
     build:
       context: ./proxy
       dockerfile: Dockerfile
-    image: ${RUNNER_EGRESS_PROXY_IMAGE:-ai-eval-platform-proxy:6.10}
+    image: ${RUNNER_EGRESS_PROXY_IMAGE:-ai-eval-platform-proxy:dev}
     environment:
       RUNNER_TASK_SECRET: ${RUNNER_TASK_SECRET:-}
     volumes:
