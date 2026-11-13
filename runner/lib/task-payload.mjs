@@ -2,9 +2,10 @@
  * Assemble per-case task views from the platform's shard tasks response.
  *
  * The top-level response owns run-wide frozen inputs (model, images, runtime,
- * and the M5-01 asset snapshot); each case object only carries case data. This
- * helper is the single place that copies the run-wide snapshot onto every case
- * so the executor cannot silently skip asset injection.
+ * the M5-01 asset snapshot and the M8-14 egress proxy + its short-lived
+ * token); each case object only carries case data. This helper is the single
+ * place that copies the run-wide snapshot, proxy and credential onto every
+ * case so the executor cannot silently skip asset or proxy injection.
  */
 export function buildCaseTask(task, taskPayload) {
   return {
@@ -16,6 +17,8 @@ export function buildCaseTask(task, taskPayload) {
     adapter_key: taskPayload?.adapter_key || "swebench",
     runtime_key: taskPayload?.runtime?.key || "claude-code",
     asset_snapshot: taskPayload?.asset_snapshot ?? {},
+    egress_proxy: taskPayload?.egress_proxy ?? task.egress_proxy ?? null,
+    egress_token: taskPayload?.egress_token ?? task.egress_token ?? null,
   };
 }
 

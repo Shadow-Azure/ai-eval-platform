@@ -56,6 +56,27 @@ M2 把执行与数据集、Agent 解耦：平台经 repository_dispatch 传 eval
 
 生产部署把 Runner 回调入口绑定到 VPC 私网地址（`API_BIND_ADDRESS`），安全组按 VPC 网段放行 8000（不新增公网入口），固定 Runner 保留回环路径；`RUNNER_CALLBACK_BASE_URL` 默认由 `API_BIND_ADDRESS` 推导并注入 api 与 worker（可显式覆盖），竞价实例据此取 manifest 并回传结果，并默认从固定端点 `/runner/v1/runner-tarball/<版本>.tar.gz` 下载 actions-runner 包：api 以 OSS 凭据流式读取并要求心跳 Token，地址不随预签名过期，OSS 保持私有；`RUNNER_SPOT_RUNNER_TARBALL_URL` 可显式覆盖为外部镜像。同一发布流水线还会把 `runner/` 与 `runner-contract/schemas/` 打成按 md5 命名的确定性脚本包并缓存到同一私有 OSS，由 `/runner/v1/scripts/<name>` 代理给 Runner；prepare/execute 优先从脚本包运行，只有包不可用时才回退 `actions/checkout`，checkout 不再是主路径。池的 `labels_json.runs_on` 同时决定 Runner 注册标签与分片 dispatch/manifest 的 `runs_on`，自定义标签池因此能接到 execute job；未配置时沿用 `self-hosted,linux,eval`。`/resources` 的供给测试是创建验证，实例在注册 Runner 前释放，完整链路由真实评测验证。
 
+## GitHub 出口代理
+
+评测容器以 `--network host` 运行，GitHub 出口即 runner 宿主出口；生产在平台 ECS 上以 `deploy/docker-compose.prod.yml` 的 `proxy` 服务运行固定版本 Squid（镜像在 `squid:6.10` 上补装 python3 供 auth helper 使用），同时监听两个端口：3128 是私网监听，不做认证，只接受 RFC1918 来源（`runner_network`，生产收敛到 runner 所在 VPC/子网 CIDR）；3129 是公网监听，要求 HTTP Basic 认证，凭据为平台签发的短期 egress token（放在用户名位、密码留空），供外部 Mac mini 等非 VPC Runner 使用。两个监听共用同一份 GitHub 域名白名单；默认所有池统一走公网 3129：部署流水线从 `ECS_HOST`（公网地址）派生 `RUNNER_EGRESS_PROXY=http://<公网地址>:3129`，每次评测再附带短期 egress token；3128 作为 VPC 内可选直连，绑定 `RUNNER_EGRESS_PROXY_BIND_ADDRESS`（可设为 `API_BIND_ADDRESS`）。3129 默认绑定 0.0.0.0，可用 `RUNNER_EGRESS_PROXY_PUBLIC_BIND_ADDRESS` 收紧；安全组按端口分别限制来源。
+
+API 的 `RUNNER_EGRESS_PROXY` 只接受不含凭据的 http(s) URL，配置后随分片任务 payload 下发，并在同一 payload 里附带 `egress_token`：scope=`egress`，绑定 eval_run/shard/attempt/pool，TTL 与 case token 相同（`max(300, case_timeout_seconds + 900)`），由 `issue_short_token` 用 `RUNNER_TASK_SECRET` 签发；未配置代理时两个字段都不下发，Runner 保持直连。代理侧 `deploy/proxy/egress_auth.py` 用同一个 `RUNNER_TASK_SECRET` 校验 v1 格式的签名、`exp` 与 scope（wire format 与 `backend/app/services/short_token.py` 保持一致），secret 为空时一律拒绝；因此 `RUNNER_TASK_SECRET` 必须同时注入 api 与 proxy 容器。
+
+Runner 仅在 `egress_proxy` 非空时给资产 install 与 Agent 的 `docker exec` 注入 `HTTPS_PROXY`、`HTTP_PROXY` 与 `NO_PROXY`；有 token 时把地址组合成 `http://<token>:@<proxy-host>:<port>`（token 只含 `[A-Za-z0-9._-]`，无需转义），无 token 时沿用不带凭据的地址（私网监听）。未配置时命令参数与直连行为不变。`NO_PROXY` 从 payload 派生平台回调/模型网关主机与 OSS 资产包主机，并固定包含 `localhost`、`127.0.0.1`、`::1`、npm 镜像 `registry.npmmirror.com` 与默认源 `registry.npmjs.org`。
+
+代理只放行 GitHub：设置代理 env 后，非白名单外部请求会被 Squid 直接拒绝（`http_access deny all`），不会回退直连；因此只有确实需要 GitHub 的评测才应配置 `RUNNER_EGRESS_PROXY`，不需要时保持为空、完全不注入。白名单在 `deploy/proxy/squid.conf`：只允许 `github.com`、`api.github.com`、`codeload.github.com`、`objects.githubusercontent.com`、`release-assets.githubusercontent.com`、`github-releases.githubusercontent.com`、`.github.com` 与 `.githubusercontent.com` 的 443 端口，允许/拒绝都写入访问日志。改白名单或 CIDR 后重建 `proxy` 服务。
+
+验证命令（token 取一次真实 payload 的 `egress_token`，或按 v1 格式自签一个过期/错 scope 的 token）：
+
+```sh
+curl -x http://<token>:@<proxy-host>:3129 https://api.github.com/rate_limit
+curl -x http://<expired-token>:@<proxy-host>:3129 https://api.github.com/rate_limit
+curl -x http://<token>:@<proxy-host>:3129 https://registry.npmmirror.com/
+docker compose -f deploy/docker-compose.prod.yml logs --tail=100 proxy
+```
+
+第一条应返回 GitHub 响应，第二条（过期或伪造 token）应返回 407 认证失败，第三条（非白名单域名）应被拒绝，第四条显示允许/拒绝记录；私网路径把地址换成 `http://<proxy-host>:3128` 且不带 token。
+
 ## Agent 资产快照
 
 `/assets` 管理 GitHub 资产源：解析 Ref、识别 Skill（`SKILL.md` 目录）、Command 与 Subagent，并把选中资产冻结为不可变 OSS 包，记录 commit、tree digest、文件摘要与清单。评测引用冻结快照，无资产源则用内置能力；Runner 在隔离 HOME 中映射到 `.claude/`，不重新拉取分支，也不加载仓库或宿主其他资产。Git 令牌加密保存，页面只显示掩码。

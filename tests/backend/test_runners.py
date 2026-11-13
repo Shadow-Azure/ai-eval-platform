@@ -14,11 +14,12 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
-from app.config import get_settings
+from app.config import Settings, get_settings
 from app.defaults import DEFAULT_PROJECT_ID, DEFAULT_TENANT_ID
 from app.models import EvalCaseRun, EvalRun, Outbox, ResourcePool, Runner
 from app.seed import ensure_default_scope
-from case_helpers import auth
+from app.services.short_token import verify_short_token
+from case_helpers import EVAL_ENV_SECRET, auth
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -734,9 +735,91 @@ def test_shard_task_payload_includes_prompt_suffix(
 
 
 # ---------------------------------------------------------------------------
-# M8-12: the case token must outlive the configured case timeout
+# M8-14: the run-wide GitHub egress proxy travels with the shard task payload
 # ---------------------------------------------------------------------------
 
+
+def _shard_task_payload(eval_env: dict, session: Session, client: TestClient) -> dict:
+    run = session.get(EvalRun, eval_env["run_id"])
+    assert run is not None
+    outbox = session.scalar(select(Outbox).where(Outbox.aggregate_id == run.id))
+    assert outbox is not None
+    response = client.get(
+        f"/runner/v1/shards/{eval_env['shard']}/tasks",
+        params={
+            "eval_run_id": run.id,
+            "attempt": 1,
+            "dispatch_key": outbox.dispatch_key,
+        },
+        headers=auth(eval_env),
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_shard_task_payload_includes_egress_proxy_when_configured(
+    eval_env: dict, session: Session, client: TestClient, configure_settings
+) -> None:
+    configure_settings(RUNNER_EGRESS_PROXY=" http://10.0.0.10:3128 ")
+
+    payload = _shard_task_payload(eval_env, session, client)
+
+    assert payload["egress_proxy"] == "http://10.0.0.10:3128"
+
+
+def test_shard_task_payload_keeps_egress_proxy_unset_without_configuration(
+    eval_env: dict, session: Session, client: TestClient, configure_settings
+) -> None:
+    configure_settings(RUNNER_EGRESS_PROXY="")
+
+    payload = _shard_task_payload(eval_env, session, client)
+
+    assert payload.get("egress_proxy") is None
+    assert payload.get("egress_token") is None
+
+
+def test_shard_task_payload_issues_an_egress_token_with_the_case_token_ttl(
+    eval_env: dict, session: Session, client: TestClient, configure_settings
+) -> None:
+    configure_settings(RUNNER_EGRESS_PROXY="http://10.0.0.10:3128")
+    run = session.get(EvalRun, eval_env["run_id"])
+    assert run is not None
+    run.case_timeout_seconds = 7200
+    session.commit()
+
+    payload = _shard_task_payload(eval_env, session, client)
+
+    token = payload["egress_token"]
+    assert isinstance(token, str) and token
+    claims = verify_short_token(token, EVAL_ENV_SECRET)
+    assert claims["scope"] == "egress"
+    assert claims["eval_run_id"] == run.id
+    assert claims["shard_id"] == eval_env["shard"]
+    assert claims["attempt"] == 1
+    assert claims["pool_id"] == (run.resource_pool_id or "default")
+    # Mirrors _case_token_ttl: max(300, case_timeout_seconds + 900).
+    remaining = int(claims["exp"]) - int(datetime.now(UTC).timestamp())
+    assert 7200 + 900 - 5 <= remaining <= 7200 + 900
+
+
+def test_runner_egress_proxy_setting_validation() -> None:
+    assert Settings(runner_egress_proxy="").runner_egress_proxy is None
+    assert (
+        Settings(runner_egress_proxy="http://10.0.0.10:3128").runner_egress_proxy
+        == "http://10.0.0.10:3128"
+    )
+    for invalid in [
+        "10.0.0.10:3128",
+        "ftp://10.0.0.10:3128",
+        "http://user:secret@10.0.0.10:3128",
+    ]:
+        with pytest.raises(ValueError):
+            Settings(runner_egress_proxy=invalid)
+
+
+# ---------------------------------------------------------------------------
+# M8-12: the case token must outlive the configured case timeout
+# ---------------------------------------------------------------------------
 
 def _token_exp(token: str) -> int:
     body = token.split(".")[1]

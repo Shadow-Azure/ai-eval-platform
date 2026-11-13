@@ -46,6 +46,10 @@ services:
       # workflow injects the VPC address, while loopback stays the default for
       # the fixed runner on the API host.
       RUNNER_CALLBACK_BASE_URL: ${RUNNER_CALLBACK_BASE_URL:-http://127.0.0.1:8000}
+      # M8-14: forward proxy for GitHub egress from evaluation containers.
+      # Empty keeps the previous direct-network behaviour; set it in the host
+      # .env to the proxy service's private address (http://<vpc-ip>:3128).
+      RUNNER_EGRESS_PROXY: ${RUNNER_EGRESS_PROXY:-}
       # M5-11: empty lets the api derive the permanent proxy URL from the
       # callback base URL; an explicit value overrides it with an external
       # mirror that receives no runner token.
@@ -179,6 +183,37 @@ services:
     depends_on:
       api:
         condition: service_healthy
+
+  # M8-14: allowlisted forward proxy for GitHub egress from evaluation
+  # containers. The private listener (3128) has no auth and the runner host
+  # reaches it over the VPC; the public listener (3129) authenticates with the
+  # short-lived egress token in the Basic username slot. Squid's ACLs restrict
+  # sources/destinations to the runner network and GitHub, and the security
+  # group is the outer boundary.
+  #
+  # Bind defaults are 0.0.0.0 so both published ports work out of the box; the
+  # deploy workflow pins 3128 to the host's private address
+  # (RUNNER_EGRESS_PROXY_BIND_ADDRESS) and 3129 stays reachable for the
+  # external Mac mini. On a public interface 3128 still denies non-RFC1918
+  # sources, but restrict it in the security group as well.
+  #
+  # RUNNER_TASK_SECRET is the same secret the API signs egress tokens with;
+  # egress_auth.py re-verifies signature/expiry/scope and fails closed when it
+  # is empty. The helper is mounted so rotating the secret or editing the
+  # allowlist needs no image rebuild.
+  proxy:
+    build:
+      context: ./proxy
+      dockerfile: Dockerfile
+    image: ${RUNNER_EGRESS_PROXY_IMAGE:-ai-eval-platform-proxy:6.10}
+    environment:
+      RUNNER_TASK_SECRET: ${RUNNER_TASK_SECRET:-}
+    volumes:
+      - ./proxy/squid.conf:/etc/squid/squid.conf:ro
+      - ./proxy/egress_auth.py:/usr/local/bin/egress_auth.py:ro
+    ports:
+      - "${RUNNER_EGRESS_PROXY_BIND_ADDRESS:-0.0.0.0}:3128:3128"
+      - "${RUNNER_EGRESS_PROXY_PUBLIC_BIND_ADDRESS:-0.0.0.0}:3129:3129"
 
   migrate:
     image: ${API_IMAGE:?API_IMAGE required}

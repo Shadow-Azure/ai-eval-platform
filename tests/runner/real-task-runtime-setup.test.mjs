@@ -36,12 +36,14 @@ const CHOWN_COMMAND = "chown -R eval:eval /testbed/.claude";
 
 const cases = [{ case_run_id: CASE_RUN_ID, case_key: "case-real", dataset_case_id: "case-real" }];
 
-function tasksPayload({ runtimeSetup, runtimePrerequisites, assetSnapshot = {} } = {}) {
+function tasksPayload({ runtimeSetup, runtimePrerequisites, assetSnapshot = {}, egressProxy = null, egressToken = null } = {}) {
   return {
     model: { name: "claude-sonnet-4", anthropic_base_url: "http://127.0.0.1:9" },
     adapter_key: "swebench",
     runtime: { key: "claude-code" },
     environment_image: "eval/swebench:test",
+    egress_proxy: egressProxy,
+    egress_token: egressToken,
     asset_snapshot: {
       snapshot_id: "snap-runtime",
       asset_count: 0,
@@ -424,6 +426,127 @@ test("the legacy runtime_prerequisites field still drives an install-only setup"
     assert.ok(event, `missing runtime_setup event\n${result.stderr}`);
     assert.equal(event.install, true);
     assert.equal(event.init, false);
+  } finally {
+    rmSync(fakeBin, { recursive: true, force: true });
+    await ctx.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// M8-14: GitHub egress proxy injection
+// ---------------------------------------------------------------------------
+
+const EGRESS_PROXY = "http://10.0.0.10:3128";
+// The platform signs tokens with `[A-Za-z0-9._-]` only, so the URL needs no escaping.
+const EGRESS_TOKEN = "v1.eyJzY29wZSI6ImVncmVzcyJ9.c2lnbmF0dXJl";
+const EGRESS_PROXY_WITH_TOKEN = `http://${EGRESS_TOKEN}:@10.0.0.10:3128`;
+
+function proxyEnvFrom(line) {
+  const values = {};
+  const matches = line.matchAll(/-e (HTTPS_PROXY|HTTP_PROXY|NO_PROXY)=([^ ]*)/g);
+  for (const match of matches) values[match[1]] = match[2];
+  return values;
+}
+
+test("the egress proxy env reaches the asset install and the agent exec", async () => {
+  const fakeBin = installFakeBin();
+  const logPath = join(fakeBin, "docker.log");
+  const tasks = tasksPayload({
+    runtimeSetup: { install_command: INSTALL_COMMAND, init_command: INIT_COMMAND },
+    egressProxy: EGRESS_PROXY,
+    egressToken: EGRESS_TOKEN,
+  });
+  // Distinct platform/object-storage hosts prove NO_PROXY is derived from the
+  // payload rather than hard-coded.
+  tasks.model.anthropic_base_url = "http://model-gateway.vpc:8000/model-gateway/anthropic";
+  tasks.asset_snapshot.bundle_url = "https://bucket.oss-cn-hangzhou.aliyuncs.com/asset-bundle.json.gz";
+  const ctx = await createScenario({
+    cases,
+    behavior: { tasks, modelToken: "model-token-test" },
+  });
+  try {
+    const result = await runCase(ctx, fakeBin, logPath);
+    assert.equal(result.code, 0, result.stderr);
+
+    const lines = invocations(logPath);
+    const install = lines[indexOf(lines, INSTALL_COMMAND)];
+    const agent = lines[indexOf(lines, "claude-code-smoke.mjs")];
+    for (const line of [install, agent]) {
+      const env = proxyEnvFrom(line);
+      assert.equal(env.HTTPS_PROXY, EGRESS_PROXY_WITH_TOKEN, line);
+      assert.equal(env.HTTP_PROXY, EGRESS_PROXY_WITH_TOKEN, line);
+      const noProxy = new Set((env.NO_PROXY ?? "").split(","));
+      for (const host of [
+        "localhost",
+        "127.0.0.1",
+        "::1",
+        "registry.npmmirror.com",
+        "registry.npmjs.org",
+        "model-gateway.vpc",
+        "bucket.oss-cn-hangzhou.aliyuncs.com",
+      ]) {
+        assert.ok(noProxy.has(host), `NO_PROXY is missing ${host}: ${line}`);
+      }
+    }
+    // The existing exec identity/order is preserved; proxy flags come after it.
+    assert.ok(install.includes(`exec ${SETUP_IDENTITY} `), install);
+    assert.ok(agent.startsWith("exec -u eval -e HOME=/home/eval -e WORKSPACE=/testbed "), agent);
+  } finally {
+    rmSync(fakeBin, { recursive: true, force: true });
+    await ctx.close();
+  }
+});
+
+test("a proxy without an egress token keeps the credential-free URL", async () => {
+  // Backward compatibility: the VPC private listener has no auth, so an old
+  // payload (or a deliberately credential-free proxy) still works unchanged.
+  const fakeBin = installFakeBin();
+  const logPath = join(fakeBin, "docker.log");
+  const ctx = await createScenario({
+    cases,
+    behavior: {
+      tasks: tasksPayload({ egressProxy: EGRESS_PROXY }),
+      modelToken: "model-token-test",
+    },
+  });
+  try {
+    const result = await runCase(ctx, fakeBin, logPath);
+    assert.equal(result.code, 0, result.stderr);
+
+    const lines = invocations(logPath);
+    const agent = lines[indexOf(lines, "claude-code-smoke.mjs")];
+    const env = proxyEnvFrom(agent);
+    assert.equal(env.HTTPS_PROXY, EGRESS_PROXY, agent);
+    assert.equal(env.HTTP_PROXY, EGRESS_PROXY, agent);
+  } finally {
+    rmSync(fakeBin, { recursive: true, force: true });
+    await ctx.close();
+  }
+});
+
+test("no proxy configuration leaves install and agent exec unchanged", async () => {
+  const fakeBin = installFakeBin();
+  const logPath = join(fakeBin, "docker.log");
+  const ctx = await createScenario({
+    cases,
+    behavior: {
+      tasks: tasksPayload({ runtimeSetup: { install_command: INSTALL_COMMAND, init_command: INIT_COMMAND } }),
+      modelToken: "model-token-test",
+    },
+  });
+  try {
+    const result = await runCase(ctx, fakeBin, logPath);
+    assert.equal(result.code, 0, result.stderr);
+
+    const lines = invocations(logPath);
+    const install = lines[indexOf(lines, INSTALL_COMMAND)];
+    const agent = lines[indexOf(lines, "claude-code-smoke.mjs")];
+    for (const line of [install, agent]) {
+      assert.equal(proxyEnvFrom(line).HTTPS_PROXY, undefined, line);
+      assert.equal(line.includes("-e HTTP_PROXY="), false, line);
+      assert.equal(line.includes("-e NO_PROXY="), false, line);
+    }
+    assert.ok(install.includes(`exec ${SETUP_IDENTITY} `), install);
   } finally {
     rmSync(fakeBin, { recursive: true, force: true });
     await ctx.close();

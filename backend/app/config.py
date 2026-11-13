@@ -1,6 +1,7 @@
 from functools import lru_cache
+from urllib.parse import urlparse
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -106,6 +107,10 @@ class Settings(BaseSettings):
     # Base URL the runner reaches for callbacks/manifests. The fixed runner
     # shares the API host, so loopback is the default.
     runner_callback_base_url: str = "http://127.0.0.1:8000"
+    # M8-14: forward proxy the runner injects into evaluation containers for
+    # GitHub egress. Empty keeps the previous direct-network behaviour; when
+    # set it must be a plain http(s) URL without embedded credentials.
+    runner_egress_proxy: str | None = None
     # Shard dispatch fan-out and reconciliation.
     dispatch_batch_size: int = 8
     dispatch_max_attempts: int = 5
@@ -212,6 +217,25 @@ class Settings(BaseSettings):
     default_scoring_image_digest: str | None = None
 
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173,http://localhost:8080"
+
+    @field_validator("runner_egress_proxy")
+    @classmethod
+    def _validate_runner_egress_proxy(cls, value: str | None) -> str | None:
+        """Accept only a credential-free http(s) proxy URL; empty means off."""
+
+        if value is None:
+            return None
+        proxy = value.strip()
+        if not proxy:
+            return None
+        parsed = urlparse(proxy)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ValueError("RUNNER_EGRESS_PROXY must be an http(s) URL with a host")
+        if parsed.username is not None or parsed.password is not None:
+            raise ValueError("RUNNER_EGRESS_PROXY must not embed credentials")
+        if parsed.query or parsed.fragment:
+            raise ValueError("RUNNER_EGRESS_PROXY must not include a query or fragment")
+        return proxy
 
     @property
     def cors_origin_list(self) -> list[str]:

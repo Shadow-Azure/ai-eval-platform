@@ -927,6 +927,24 @@ def shard_tasks(
     gateway_base = settings.runner_callback_base_url.rstrip("/")
     dataset_version = session.get(DatasetVersion, run.dataset_version_id) if run.dataset_version_id else None
     dataset = session.get(Dataset, dataset_version.dataset_id) if dataset_version else None
+    # M8-14: the public listener authenticates with a short-lived token instead
+    # of static proxy credentials. It reuses the case-token TTL so the
+    # credential outlives the whole case plus the upload grace; the proxy only
+    # checks signature/expiry/scope and never sees the run bindings.
+    egress_proxy = settings.runner_egress_proxy or None
+    egress_token = None
+    if egress_proxy:
+        egress_token = issue_short_token(
+            {
+                "eval_run_id": run.id,
+                "shard_id": shard_id,
+                "attempt": attempt,
+                "pool_id": run.resource_pool_id or "default",
+                "scope": "egress",
+            },
+            effective_task_secret(settings),
+            ttl_seconds=_case_token_ttl(run),
+        )
     return {
         "ok": True,
         "eval_run_id": run.id,
@@ -946,6 +964,11 @@ def shard_tasks(
         "environment_image": dataset_version.environment_image if dataset_version else None,
         "adapter_key": dataset.adapter_key if dataset else "swebench",
         "asset_snapshot": asset_service.task_asset_payload(run.asset_snapshot_json, settings),
+        # M8-14: run-wide forward proxy for GitHub egress plus its short-lived
+        # credential. None keeps the runner on the direct-network path; the
+        # token is only issued when the proxy is configured.
+        "egress_proxy": egress_proxy,
+        "egress_token": egress_token,
         "cases": [
             {
                 "case_run_id": case.id,
