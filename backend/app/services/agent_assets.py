@@ -19,12 +19,15 @@ from __future__ import annotations
 import base64
 import gzip
 import hashlib
+import io
 import json
 import os
 import re
 import secrets
+import shutil
 import signal
 import subprocess
+import tarfile
 import tempfile
 import threading
 import time
@@ -57,6 +60,12 @@ SUPPORTED_RUNTIMES = ("claude-code",)
 # bounded log/asset footprint so a runaway CLI cannot grow the database.
 LOAD_TEST_TIMEOUT_SECONDS = 600
 LOAD_TEST_TOKEN_TTL_SECONDS = 600
+# M8-22: CLI-generated sources are built from the asset repository itself. The
+# platform fetches the resolved commit once as a tarball, so the runner only
+# downloads a short-lived presigned URL and never receives a Git credential.
+MAX_SOURCE_ARCHIVE_BYTES = 128 * 1024 * 1024
+MAX_SOURCE_ARCHIVE_ENTRIES = 50_000
+MAX_SOURCE_EXTRACT_BYTES = 512 * 1024 * 1024
 MAX_RUNTIME_COMMAND_LENGTH = 2000
 MAX_RUNTIME_LABEL_LENGTH = 100
 MAX_LOAD_TEST_LOG_TAIL = 20_000
@@ -630,6 +639,9 @@ def load_test_view(result: dict[str, Any]) -> dict[str, Any]:
     }
     if result.get("runtime"):
         view["runtime"] = result["runtime"]
+    for key in ("repo_url", "requested_ref", "resolved_commit"):
+        if result.get(key):
+            view[key] = result[key]
     if result.get("error"):
         view["error"] = result["error"]
     return view
@@ -661,10 +673,71 @@ def runtime_setup_view(manifest: dict[str, Any] | None) -> dict[str, str]:
     }
 
 
+def extract_source_archive(data: bytes, destination: Path | str) -> Path:
+    """Extract a GitHub commit tarball safely and return the repository root.
+
+    M8-22: the platform downloads the asset repository at the resolved commit
+    instead of asking the runner to clone it. GitHub tarballs wrap every entry
+    in one ``<owner>-<repo>-<sha>/`` directory; stripping that wrapper is the
+    equivalent of a checkout. The standard ``data`` filter rejects absolute
+    paths, traversal and devices, so administrator-configured repositories
+    cannot escape the temporary directory.
+    """
+
+    destination = Path(destination)
+    destination.mkdir(parents=True, exist_ok=True)
+    try:
+        with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as archive:
+            members = archive.getmembers()
+            if len(members) > MAX_SOURCE_ARCHIVE_ENTRIES:
+                raise AgentAssetError(
+                    "source_archive_too_large",
+                    f"源码包条目 {len(members)} 超过上限 {MAX_SOURCE_ARCHIVE_ENTRIES}",
+                )
+            declared_bytes = sum(
+                member.size for member in members if member.isfile()
+            )
+            if declared_bytes > MAX_SOURCE_EXTRACT_BYTES:
+                raise AgentAssetError(
+                    "source_archive_too_large",
+                    f"源码包解压后大小 {declared_bytes} 超过上限 {MAX_SOURCE_EXTRACT_BYTES}",
+                )
+            for member in members:
+                name = member.name.replace("\\", "/")
+                while name.startswith("./"):
+                    name = name[2:]
+                if not name or name == ".":
+                    continue
+                candidate = PurePosixPath(name)
+                if candidate.is_absolute() or any(
+                    part in ("", ".", "..") for part in candidate.parts
+                ):
+                    raise AgentAssetError(
+                        "source_archive_invalid", f"源码包路径非法：{member.name}"
+                    )
+            archive.extractall(destination, filter="data")
+    except AgentAssetError:
+        raise
+    except (tarfile.TarError, OSError, ValueError) as error:
+        raise AgentAssetError(
+            "source_archive_invalid", f"源码包解压失败：{error}"
+        ) from error
+    roots = [path for path in destination.iterdir()]
+    if len(roots) == 1 and roots[0].is_dir() and not roots[0].is_symlink():
+        return roots[0]
+    return destination
+
+
 def _execute_load_test(
-    prerequisites: dict[str, str], *, runner=None
+    prerequisites: dict[str, str], *, source_dir: Path | None = None, runner=None
 ) -> tuple[dict[str, Any], bool]:
     """Run install then init in a temp HOME and scan the generated assets.
+
+    M8-22: CLI-generated sources are validated inside a checkout of the asset
+    repository, because a source-build install command (``npm ci && npm run
+    build``) only works there. ``source_dir`` is that checkout; the caller
+    keeps it alive for the duration of the call. When omitted the old isolated
+    empty directory is used (internal callers only).
 
     Returns ``(stored_result, infrastructure_error)``. A non-zero exit or an
     empty generated tree is a normal failed test; a timeout/OSError is an
@@ -687,6 +760,9 @@ def _execute_load_test(
     init_command = prerequisites["init_command"]
 
     with tempfile.TemporaryDirectory(prefix="agent-asset-load-test-") as workdir:
+        # HOME stays disposable and separate from the checkout so a CLI
+        # installed under $HOME cannot pollute the repository being validated.
+        cwd = str(source_dir) if source_dir is not None else workdir
         env = {
             "HOME": workdir,
             "PATH": os.environ.get("PATH") or DEFAULT_SHELL_PATH,
@@ -695,7 +771,7 @@ def _execute_load_test(
             try:
                 completed = runner(
                     command,
-                    cwd=workdir,
+                    cwd=cwd,
                     env=env,
                     timeout=LOAD_TEST_TIMEOUT_SECONDS,
                 )
@@ -729,7 +805,7 @@ def _execute_load_test(
 
         if status == "passed":
             try:
-                generated = _scan_generated_assets(Path(workdir))
+                generated = _scan_generated_assets(Path(cwd))
             except AgentAssetError as exc:
                 status = "failed"
                 error = exc.code
@@ -805,16 +881,49 @@ def _cached_load_test_result(token: str | None, fingerprint: str) -> dict[str, A
         return payload.get("result")
 
 
+def _run_load_test_from_checkout(
+    client: GitHubClient,
+    *,
+    repo_url: str,
+    requested_ref: str,
+    prerequisites: dict[str, str],
+    runner=None,
+) -> dict[str, Any]:
+    """Fetch the source commit, then run install/init inside that checkout."""
+
+    owner, repo = parse_repo_url(repo_url)
+    commit = client.resolve_commit(owner, repo, requested_ref)
+    archive = client.archive(owner, repo, commit, max_bytes=MAX_SOURCE_ARCHIVE_BYTES)
+    with tempfile.TemporaryDirectory(prefix="agent-asset-source-") as source_tmp:
+        source_root = extract_source_archive(archive, Path(source_tmp))
+        # The load test validates what install/init generate, not a committed
+        # `.claude` tree: a clean workspace matches the eval-time init and keeps
+        # the generated-asset inventory free of repository-provided files.
+        shutil.rmtree(source_root / ".claude", ignore_errors=True)
+        result, _infrastructure_error = _execute_load_test(
+            prerequisites, source_dir=source_root, runner=runner
+        )
+    result["repo_url"] = repo_url.strip()
+    result["requested_ref"] = requested_ref
+    result["resolved_commit"] = commit
+    return result
+
+
 def preview_load_test(
     *,
     repo_url: str,
     requested_ref: str,
     scan_paths: list[str] | None = None,
     runtime_prerequisites: dict[str, Any] | None = None,
+    session: Session | None = None,
+    credential_id: str | None = None,
+    access_token: str | None = None,
+    settings: Settings | None = None,
     runner=None,
 ) -> tuple[dict[str, Any], str]:
     """Run the add-source load test without persisting a source row."""
 
+    settings = settings or get_settings()
     parse_repo_url(repo_url)
     ref = (requested_ref or "").strip()
     if not ref:
@@ -827,13 +936,30 @@ def preview_load_test(
             field="runtime_prerequisites",
         )
     normalized_paths = _normalize_paths(scan_paths)
-    result, _infrastructure_error = _execute_load_test(prerequisites, runner=runner)
-    token = secrets.token_urlsafe(24)
+    token = (access_token or "").strip() or None
+    if token is None and credential_id:
+        if session is None:
+            raise AgentAssetError("credential_not_found", "Git 凭据不存在", field="credential_id")
+        token = _credential_token(session, credential_id)
+    if token is None:
+        token = settings.github_token
+    client = GitHubClient(token=token, api_url=settings.github_api_url)
+    try:
+        result = _run_load_test_from_checkout(
+            client,
+            repo_url=repo_url,
+            requested_ref=ref,
+            prerequisites=prerequisites,
+            runner=runner,
+        )
+    finally:
+        client.close()
+    load_test_token = secrets.token_urlsafe(24)
     fingerprint = _load_test_fingerprint(
         repo_url.strip(), ref, normalized_paths, prerequisites
     )
-    _cache_load_test_result(token, fingerprint, result)
-    return result, token
+    _cache_load_test_result(load_test_token, fingerprint, result)
+    return result, load_test_token
 
 
 def run_load_test(
@@ -842,6 +968,7 @@ def run_load_test(
     """Execute and persist a source-scoped load test with status transitions."""
 
     source = get_source(session, source_id)
+    settings = get_settings()
     prerequisites = normalize_runtime_prerequisites(source.runtime_prerequisites_json)
     if not prerequisites:
         raise AgentAssetError(
@@ -849,14 +976,28 @@ def run_load_test(
             "该资产源未配置运行时前置命令",
             field="runtime_prerequisites",
         )
-    result, infrastructure_error = _execute_load_test(prerequisites, runner=runner)
+    client = GitHubClient(
+        token=_client_token(session, source, settings),
+        api_url=settings.github_api_url,
+    )
+    try:
+        result = _run_load_test_from_checkout(
+            client,
+            repo_url=source.repo_url,
+            requested_ref=source.default_ref,
+            prerequisites=prerequisites,
+            runner=runner,
+        )
+    finally:
+        client.close()
     source.load_test_json = result
-    if infrastructure_error:
-        source.status = "error"
-    elif result["status"] == "passed":
-        source.status = "ready"
+    if result.get("status") != "passed":
+        source.status = "error" if result.get("error") in (
+            "load_test_timeout",
+            "load_test_execution_failed",
+        ) else "requires_setup"
     else:
-        source.status = "requires_setup"
+        source.status = "ready"
     session.commit()
     return source, result
 
@@ -1448,6 +1589,7 @@ def _selection_digest(
     runtime_key: str,
     assets: list[ScannedAsset],
     generated_files: dict[str, bytes] | None = None,
+    source_mode: bool = False,
 ) -> str:
     document: dict[str, Any] = {
         "commit": commit,
@@ -1462,6 +1604,11 @@ def _selection_digest(
             path: _digest(content)
             for path, content in sorted(generated_files.items())
         }
+    # M8-22: source mode changes how the runner builds `.claude`, so a
+    # pre-m8-22 CLI snapshot must not satisfy the same selection. Only CLI
+    # sources include this key, keeping command-less digests unchanged.
+    if source_mode:
+        document["source_mode"] = True
     payload = json.dumps(
         document,
         ensure_ascii=False,
@@ -1823,6 +1970,16 @@ def _bundle_key(tenant_id: str, snapshot_id: str) -> str:
     return f"agent-assets/{tenant_id}/{snapshot_id}/bundle.json.gz"
 
 
+def _source_archive_key(
+    tenant_id: str, owner: str, repo: str, commit: str
+) -> str:
+    """Deduplicate source archives by commit so re-resolving reuses one object."""
+
+    safe_owner = re.sub(r"[^A-Za-z0-9_.-]", "_", owner)
+    safe_repo = re.sub(r"[^A-Za-z0-9_.-]", "_", repo)
+    return f"agent-source-archives/{tenant_id}/{safe_owner}/{safe_repo}/{commit}.tar.gz"
+
+
 def _object_store(settings: Settings) -> ObjectStore:
     if not (settings.s3_endpoint and settings.s3_access_key and settings.s3_secret_key):
         raise AgentAssetError(
@@ -1889,7 +2046,11 @@ def resolve_assets(
             generated_files=generated_files,
         )
         selected = _merge_generated_assets(selected, generated_assets)
-        digest = _selection_digest(commit, runtime_key, selected, generated_files)
+        runtime_prerequisites = dict(source.runtime_prerequisites_json or {})
+        source_mode = bool(runtime_prerequisites)
+        digest = _selection_digest(
+            commit, runtime_key, selected, generated_files, source_mode=source_mode
+        )
         existing = session.scalar(
             select(AgentAssetSnapshot).where(
                 AgentAssetSnapshot.tenant_id == str(DEFAULT_TENANT_ID),
@@ -1907,6 +2068,32 @@ def resolve_assets(
             return existing, snapshot_assets(session, existing.id), False
 
         snapshot_id = new_id()
+        store = object_store or _object_store(settings)
+        # M8-22: a source with administrator-configured install/init commands is
+        # a CLI-generated source. Its generated `.claude` tree depends on the
+        # selected ref, so evaluation must rebuild it from the resolved commit
+        # instead of injecting the load-test snapshot generated from the
+        # default branch.
+        source_archive: bytes | None = None
+        source_archive_key: str | None = None
+        if source_mode:
+            source_archive = client.archive(
+                owner, repo, commit, max_bytes=MAX_SOURCE_ARCHIVE_BYTES
+            )
+            source_archive_key = _source_archive_key(
+                str(DEFAULT_TENANT_ID), owner, repo, commit
+            )
+            try:
+                store.put_bytes(
+                    source_archive_key, source_archive, content_type="application/gzip"
+                )
+            except ObjectStoreError as error:
+                raise AgentAssetError(
+                    "object_store_unavailable",
+                    f"源码包上传失败：{error}",
+                    status=503,
+                    field="asset_snapshot",
+                ) from error
         modes = {entry.path: entry.mode for entry in scan.tree_entries}
         files, assets_payload, tree_digest = _pack_assets(
             source=source,
@@ -1940,7 +2127,6 @@ def resolve_assets(
         bundle = gzip.compress(raw, compresslevel=9, mtime=0)
         bundle_digest = _digest(bundle)
         key = _bundle_key(str(DEFAULT_TENANT_ID), snapshot_id)
-        store = object_store or _object_store(settings)
         try:
             store.put_bytes(key, bundle, content_type="application/gzip")
         except ObjectStoreError as error:
@@ -1952,7 +2138,6 @@ def resolve_assets(
             ) from error
 
         load_test = load_test_view(source.load_test_json or {})
-        runtime_prerequisites = dict(source.runtime_prerequisites_json or {})
         manifest = {
             "schema_version": ASSET_BUNDLE_SCHEMA,
             "files": [
@@ -1978,6 +2163,19 @@ def resolve_assets(
             # freeze it here with the rest of the preparation inputs.
             "runtime_setup": runtime_setup_view(
                 {"runtime_prerequisites": runtime_prerequisites, "load_test": load_test}
+            ),
+            # M8-22: the runner rebuilds a CLI-generated `.claude` tree from
+            # this pinned source archive instead of injecting `files`. The
+            # archive is served through a short-lived presigned URL at dispatch
+            # so no runner host ever stores a long-term Git credential.
+            "source_mode": source_mode,
+            "repo_url": source.repo_url,
+            "source_archive_key": source_archive_key,
+            "source_archive_digest": (
+                _digest(source_archive) if source_archive is not None else None
+            ),
+            "source_archive_size": (
+                len(source_archive) if source_archive is not None else None
             ),
         }
         snapshot = AgentAssetSnapshot(
@@ -2118,6 +2316,14 @@ def asset_snapshot_json(snapshot: AgentAssetSnapshot, assets: list[AgentAsset]) 
         # M8-10: the runner executes this before starting the task, so it must
         # travel with the frozen snapshot rather than the live source row.
         "runtime_setup": runtime_setup_view(snapshot.manifest_json),
+        # M8-22: CLI-generated sources carry the pinned source archive instead
+        # of executing the frozen `.claude` files. Older snapshots omit these
+        # fields and keep the m8-11 frozen-injection behaviour.
+        "source_mode": bool((snapshot.manifest_json or {}).get("source_mode")),
+        "repo_url": (snapshot.manifest_json or {}).get("repo_url"),
+        "source_archive_key": (snapshot.manifest_json or {}).get("source_archive_key"),
+        "source_archive_digest": (snapshot.manifest_json or {}).get("source_archive_digest"),
+        "source_archive_size": (snapshot.manifest_json or {}).get("source_archive_size"),
         "assets": [
             {
                 "asset_type": asset.asset_type,
@@ -2174,12 +2380,26 @@ def task_asset_payload(asset_snapshot: dict[str, Any] | None, settings: Settings
     # M8-10: an older run row may predate runtime_setup; keep the key stable so
     # the runner can always check a single field before executing prerequisites.
     payload.setdefault("runtime_setup", {})
+    payload.setdefault("source_mode", False)
     key = payload.get("bundle_key")
-    if not key:
+    source_key = payload.get("source_archive_key")
+    if not key and not source_key:
         return payload
     try:
         store = _object_store(settings)
-        payload["bundle_url"] = store.presign_get_url(str(key), expires=3600)
     except (AgentAssetError, ObjectStoreError):
         payload["bundle_error"] = "object_store_unavailable"
+        return payload
+    if key:
+        try:
+            payload["bundle_url"] = store.presign_get_url(str(key), expires=3600)
+        except (AgentAssetError, ObjectStoreError):
+            payload["bundle_error"] = "object_store_unavailable"
+    if source_key:
+        # M8-22: the runner downloads and extracts this pinned commit archive
+        # instead of receiving a Git credential for the asset repository.
+        try:
+            payload["source_archive_url"] = store.presign_get_url(str(source_key), expires=3600)
+        except (AgentAssetError, ObjectStoreError):
+            payload["source_archive_error"] = "object_store_unavailable"
     return payload

@@ -177,6 +177,64 @@ class GitHubClient:
             )
         return result
 
+    def archive(
+        self, owner: str, repo: str, commit: str, *, max_bytes: int = 128 * 1024 * 1024
+    ) -> bytes:
+        """Download the source tree at ``commit`` as a gzipped tarball.
+
+        M8-22: CLI-generated assets are built from the asset repository itself,
+        so the platform fetches the resolved commit once and hands the runner a
+        short-lived archive URL. The runner never receives a Git credential and
+        never needs Git on the host; extracting the archive at the pinned
+        commit is equivalent to ``git clone`` + ``git checkout <commit>``.
+        """
+
+        if self._client is None:
+            self._client = httpx.Client(timeout=self.timeout, follow_redirects=True)
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "ai-eval-platform-agent-assets",
+        }
+        if self.token:
+            headers["Authorization"] = f"Bearer {self.token}"
+        path = f"/repos/{owner}/{repo}/tarball/{quote(commit, safe='')}"
+        try:
+            response = self._client.get(
+                f"{self.api_url}{path}", headers=headers, follow_redirects=True
+            )
+        except httpx.HTTPError as error:
+            raise GitClientError(
+                "git_unreachable", f"GitHub API 不可达：{type(error).__name__}", status=502
+            ) from error
+        if response.status_code == 401:
+            raise GitClientError("git_auth_failed", "GitHub 凭据无效或已过期", status=401)
+        if response.status_code == 403:
+            remaining = response.headers.get("x-ratelimit-remaining")
+            if remaining == "0":
+                raise GitClientError(
+                    "git_rate_limited", "GitHub API 速率限制已用尽，请配置访问令牌", status=429
+                )
+            raise GitClientError("git_forbidden", "GitHub 拒绝访问该仓库", status=403)
+        if response.status_code == 404:
+            raise GitClientError("repo_not_found", "仓库或 Ref 不存在", status=404)
+        if response.status_code >= 400:
+            raise GitClientError(
+                "git_request_failed",
+                f"GitHub API 返回 HTTP {response.status_code}",
+                status=502,
+            )
+        content = response.content
+        if not content:
+            raise GitClientError("source_archive_empty", "GitHub 返回了空的源码包", status=502)
+        if len(content) > max_bytes:
+            raise GitClientError(
+                "source_archive_too_large",
+                f"源码包大小 {len(content)} 超过上限 {max_bytes}",
+                status=422,
+            )
+        return content
+
     def blob(self, owner: str, repo: str, sha: str) -> bytes:
         payload = self._get(
             f"/repos/{owner}/{repo}/git/blobs/{quote(sha, safe='')}",

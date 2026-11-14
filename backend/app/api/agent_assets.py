@@ -47,6 +47,10 @@ class LoadTestPreviewRequest(BaseModel):
     requested_ref: str = Field(default="main", min_length=1, max_length=200)
     scan_paths: list[str] = Field(default_factory=list, max_length=20)
     runtime_prerequisites: dict[str, Any] = Field(default_factory=dict)
+    # M8-22: the load test runs inside a checkout of the asset repository, so
+    # private sources use the same token the create/scan preview endpoints use.
+    credential_id: str | None = Field(default=None, max_length=36)
+    access_token: str | None = Field(default=None, max_length=1000)
 
 
 class ScanRequest(BaseModel):
@@ -183,6 +187,8 @@ def get_agent_asset_source(
 @router.post("/api/v1/agent-asset-sources/load-test-preview")
 def preview_agent_asset_load_test(
     payload: LoadTestPreviewRequest,
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
     _context: identity.AuthContext = Depends(require_admin),
 ) -> dict:
     """Run the CLI load test for the add-source wizard without persisting it."""
@@ -193,6 +199,10 @@ def preview_agent_asset_load_test(
             requested_ref=payload.requested_ref,
             scan_paths=payload.scan_paths,
             runtime_prerequisites=payload.runtime_prerequisites,
+            session=session,
+            credential_id=payload.credential_id,
+            access_token=payload.access_token,
+            settings=settings,
         )
     except (asset_service.AgentAssetError, GitClientError) as error:
         raise _http_error(error) from error

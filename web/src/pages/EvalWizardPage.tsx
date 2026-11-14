@@ -1184,7 +1184,7 @@ export function EvalWizardPage() {
           </div>
           <div className="field-row asset-ref-row">
             <div className="field">
-              <label>评测 Ref（可选）</label>
+              <label>Agent 版本（分支 / Tag / Commit）</label>
               <Input
                 className="mono"
                 value={draft.assetRef}
@@ -1198,17 +1198,19 @@ export function EvalWizardPage() {
               />
               <span className="hint">
                 {selectedSource
-                  ? `默认填入 ${selectedSource.default_ref}，发起本次评测前可以修改。`
-                  : "选择资产源后填入默认 Ref"}
+                  ? runtimeConfigured
+                    ? `默认分支为 ${selectedSource.default_ref}；评测会按该版本 checkout 源码并重新构建/init 资产。`
+                    : `默认分支为 ${selectedSource.default_ref}；可填分支、Tag 或 commit。评测会按该版本冻结资产。`
+                  : "选择资产源后填入默认分支"}
               </span>
             </div>
             <div className="field">
-              <label>已解析版本</label>
+              <label>将使用的 commit</label>
               <div className="asset-commit-box">
                 <span className="mono small">
                   {draft.assetSnapshotCommit
                     ? `@${draft.assetSnapshotCommit}`
-                    : "尚未解析当前 Ref"}
+                    : "尚未解析当前版本"}
                 </span>
                 <Button
                   size="small"
@@ -1232,11 +1234,19 @@ export function EvalWizardPage() {
             />
             <div>
               {draft.assetSnapshotId ? (
-                <>
-                  已从 <span className="mono">{draft.assetRef || selectedSource?.default_ref}</span> 冻结{" "}
-                  {draft.assetSnapshotCount} 项资产；启动时会固定到 commit{" "}
-                  <span className="mono">{draft.assetSnapshotCommit}</span>。
-                </>
+                runtimeConfigured ? (
+                  <>
+                    将按 <span className="mono">{draft.assetRef || selectedSource?.default_ref}</span>{" "}
+                    checkout 源码并构建 {draft.assetSnapshotCount} 项资产；启动时会固定到 commit{" "}
+                    <span className="mono">{draft.assetSnapshotCommit}</span>。
+                  </>
+                ) : (
+                  <>
+                    已从 <span className="mono">{draft.assetRef || selectedSource?.default_ref}</span> 冻结{" "}
+                    {draft.assetSnapshotCount} 项资产；启动时会固定到 commit{" "}
+                    <span className="mono">{draft.assetSnapshotCommit}</span>。
+                  </>
+                )
               ) : draft.assetSourceId ? (
                 <>
                   <strong>资产尚未读取冻结。</strong>{" "}
@@ -1253,7 +1263,7 @@ export function EvalWizardPage() {
               ) : (
                 <>
                   <strong>未选择 Agent 资产（可选）。</strong> 可直接进入下一步，只使用 Runtime
-                  内置能力；如需 Skill、Command 或 Subagent，请选择资产源与 Ref 后读取资产。
+                  内置能力；如需 Skill、Command 或 Subagent，请选择资产源与 Agent 版本后读取资产。
                 </>
               )}
             </div>

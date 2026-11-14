@@ -568,7 +568,7 @@ function AddAssetSourceModal({ open, onClose, onCreated }: AddModalProps) {
           </div>
           <div className="asset-field-row">
             <div className="asset-field">
-              <label>默认 Ref</label>
+              <label>默认分支</label>
               <Input value={defaultRef} onChange={(event) => setDefaultRef(event.target.value)} />
             </div>
             <div className="asset-field">
@@ -599,7 +599,10 @@ function AddAssetSourceModal({ open, onClose, onCreated }: AddModalProps) {
               />
               <span>运行时前置（可选）：需要 CLI 生成命令</span>
             </label>
-            <div className="asset-hint">适用于 OpenSpec/CodeSpec 等由 CLI 生成 Command 的仓库。</div>
+            <div className="asset-hint">
+              适用于 OpenSpec/CodeSpec 等由 CLI 生成 Command 的仓库。加载测试与评测都会先按所选版本
+              checkout 源码，再在仓库根目录执行安装/初始化命令。
+            </div>
           </div>
           {runtimeEnabled ? (
             <>
@@ -609,7 +612,7 @@ function AddAssetSourceModal({ open, onClose, onCreated }: AddModalProps) {
                   className="mono"
                   value={installCommand}
                   onChange={(event) => setInstallCommand(event.target.value)}
-                  placeholder='npm install --prefix "$HOME" github:owner/repo#ref'
+                  placeholder='npm ci && npm run build && npm install -g .'
                 />
               </div>
               <div className="asset-field">
@@ -618,7 +621,7 @@ function AddAssetSourceModal({ open, onClose, onCreated }: AddModalProps) {
                   className="mono"
                   value={initCommand}
                   onChange={(event) => setInitCommand(event.target.value)}
-                  placeholder='"$HOME/node_modules/.bin/openspec" init --tools claude'
+                  placeholder="codespec init --tools claude --profile core"
                 />
               </div>
               <div className="asset-field">
@@ -853,7 +856,7 @@ function AddAssetSourceModal({ open, onClose, onCreated }: AddModalProps) {
             <div className="asset-scan-placeholder">
               <Icon name="search" size={24} />
               <strong>尚未扫描仓库</strong>
-              <span>填写仓库、默认 Ref 和扫描路径后点击“自动扫描”。</span>
+              <span>填写仓库、默认分支和扫描路径后点击“自动扫描”。</span>
               <Button type="primary" size="small" loading={scanning} onClick={handleScan}>
                 开始扫描
               </Button>
@@ -1056,7 +1059,7 @@ export function AssetsPage() {
       />
       {sourcesQuery.error ? <QueryError error={sourcesQuery.error} onRetry={() => sourcesQuery.refetch()} /> : null}
       <div className="asset-metric-grid">
-        {metric("Git 资产源", sources.length, "默认 Ref 可在启动时覆盖")}
+        {metric("Git 资产源", sources.length, "默认分支可在启动时覆盖")}
         {metric("Skill", totals.skill, "目录中包含 SKILL.md")}
         {metric("Command", totals.command, "由 Runtime adapter 识别")}
         {metric("Subagent", totals.subagent, "运行时特定格式")}
@@ -1079,7 +1082,7 @@ export function AssetsPage() {
             </p>
             <div className="asset-source-meta">
               <div>
-                <span>默认 Ref</span>
+                <span>默认分支</span>
                 <strong className="mono">{source.default_ref}</strong>
               </div>
               <div>

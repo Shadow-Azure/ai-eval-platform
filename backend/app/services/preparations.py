@@ -313,6 +313,13 @@ def _snapshot_asset(asset: dict | None) -> dict | None:
         # M8-10: frozen install/init commands for the runner; never re-derived
         # from the live source at launch time.
         "runtime_setup": asset.get("runtime_setup") or {},
+        # M8-22: CLI-generated sources freeze a pinned source archive instead
+        # of relying on the load-test `.claude` snapshot.
+        "source_mode": bool(asset.get("source_mode")),
+        "repo_url": asset.get("repo_url"),
+        "source_archive_key": asset.get("source_archive_key"),
+        "source_archive_digest": asset.get("source_archive_digest"),
+        "source_archive_size": asset.get("source_archive_size"),
         "assets": asset.get("assets") or [],
     }
 
