@@ -270,6 +270,12 @@ jobs:
             egress_proxy="http://${ECS_HOST}:3129"
             egress_proxy_bind="${API_BIND_ADDRESS:-127.0.0.1}"
           fi
+          case "${DATASET_IMAGE_REGISTRIES:-}" in
+            *$'\n'*|*$'\r'*)
+              echo "DATASET_IMAGE_REGISTRIES must be a single line" >&2
+              exit 1
+              ;;
+          esac
           expected_hashes="$(
             for name in SECRET_BOX_KEY POSTGRES_PASSWORD AUTH_SESSION_SECRET GATEWAY_TOKEN_SECRET RUNNER_TASK_SECRET RUNNER_HEARTBEAT_TOKEN RUNNER_ADMIN_TOKEN; do
               value="${!name}"

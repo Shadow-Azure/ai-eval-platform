@@ -90,6 +90,7 @@ export function DatasetImageSourcesPage() {
 
   const enabled = sources.filter((source) => source.enabled).length;
   const defaults = new Set((view?.defaults ?? []).map(sourceKey));
+  const allDisabled = !loading && sources.length > 0 && enabled === 0;
 
   return (
     <section className="page">
@@ -102,7 +103,12 @@ export function DatasetImageSourcesPage() {
             <Button onClick={reset} loading={saving} disabled={loading}>
               恢复部署默认
             </Button>
-            <Button type="primary" onClick={save} loading={saving} disabled={loading || !dirty}>
+            <Button
+              type="primary"
+              onClick={save}
+              loading={saving}
+              disabled={loading || !dirty || allDisabled}
+            >
               保存配置
             </Button>
           </Space>
@@ -116,6 +122,15 @@ export function DatasetImageSourcesPage() {
         style={{ marginBottom: 16 }}
       />
       {error ? <Alert type="error" showIcon message={error} style={{ marginBottom: 16 }} /> : null}
+      {allDisabled ? (
+        <Alert
+          type="warning"
+          showIcon
+          message="至少启用一个镜像源"
+          description="全部停用会让下一次导入校验直接阻断；请先启用至少一个源再保存。"
+          style={{ marginBottom: 16 }}
+        />
+      ) : null}
       <div className="dataset-image-source-metrics">
         <Card size="small">
           <Text type="secondary">当前源</Text>

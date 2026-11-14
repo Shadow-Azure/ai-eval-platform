@@ -299,3 +299,18 @@ test("AGENTS keeps the host-migration secret constraint", () => {
   }
   assert.ok(agents.includes("禁止依赖主机 `.env` 首次部署随机生成"));
 });
+
+test("deploy injects dataset image sources from GitHub Secrets", () => {
+  const workflow = read(".github/workflows/deploy.yml");
+  const writer = read("deploy/write-managed-env.sh");
+  const compose = read("deploy/docker-compose.prod.yml");
+  assert.ok(workflow.includes("DATASET_IMAGE_REGISTRIES: ${{ secrets.DATASET_IMAGE_REGISTRIES }}"));
+  assert.ok(workflow.includes("printf 'DATASET_IMAGE_REGISTRIES=%s\\n'"));
+  assert.ok(writer.includes("DATASET_IMAGE_REGISTRIES"));
+  assert.ok(compose.includes("DATASET_IMAGE_REGISTRIES: ${DATASET_IMAGE_REGISTRIES:-docker.io}"));
+  assert.equal(
+    read("deploy/deploy.sh").includes("set_env DATASET_IMAGE_REGISTRIES"),
+    false,
+    "deploy.sh must not overwrite the Secret value written by write-managed-env.sh",
+  );
+});
