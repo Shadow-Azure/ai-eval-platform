@@ -326,7 +326,10 @@ def probe_image(
 ) -> ImageProbe:
     results: list[SourceProbe] = []
     for source in sources:
-        result = probe_source(image, source, timeout=timeout, client=client)
+        try:
+            result = probe_source(image, source, timeout=timeout, client=client)
+        except Exception as exc:  # never let one bad source abort the whole report
+            result = SourceProbe(source=source, status=ERROR, error=type(exc).__name__)
         results.append(result)
         if result.status == FOUND:
             return ImageProbe(image=image, status=FOUND, source=source.name, results=results)
@@ -363,13 +366,14 @@ def probe_case_images(
             "generated_at": generated_at,
         }
     if not sources:
-        # No sources configured means the operator has not opted into the
-        # public-source gate yet. Keep the report explicit instead of silently
-        # pretending the images are available; production deployments set
-        # DATASET_IMAGE_REGISTRIES to enable strict blocking.
+        enabled = bool(getattr(settings, "dataset_image_check_enabled", True))
         return {
-            "status": SKIPPED,
-            "reason": "未配置公开镜像源（DATASET_IMAGE_REGISTRIES），本次未检查",
+            "status": BLOCKED if enabled else SKIPPED,
+            "reason": (
+                "未配置公开镜像源（DATASET_IMAGE_REGISTRIES），无法校验镜像"
+                if enabled
+                else "公开镜像源检查已关闭"
+            ),
             "sources": [],
             "checked": len(unique_images),
             "available": 0,

@@ -741,6 +741,7 @@ def _worker_env(settings: Settings, database_url: str, backend: Path) -> dict[st
         "dataset_image_arch",
         "dataset_image_probe_timeout_seconds",
         "dataset_image_probe_concurrency",
+        "dataset_image_check_enabled",
     ):
         env[key.upper()] = str(getattr(settings, key))
     return env

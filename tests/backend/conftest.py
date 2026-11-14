@@ -30,6 +30,7 @@ os.environ.setdefault("DATABASE_URL", "sqlite:////tmp/ai-eval-platform-tests-def
 os.environ.setdefault("REDIS_URL", "")
 # Dataset tests must not depend on public registry/network availability.
 os.environ.setdefault("DATASET_IMAGE_REGISTRIES", "")
+os.environ.setdefault("DATASET_IMAGE_CHECK_ENABLED", "false")
 
 from app.config import get_settings  # noqa: E402
 from app.db import get_session  # noqa: E402

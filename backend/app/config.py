@@ -105,6 +105,10 @@ class Settings(BaseSettings):
     dataset_image_arch: str = "x86_64"
     dataset_image_probe_timeout_seconds: float = 8.0
     dataset_image_probe_concurrency: int = 8
+    # When enabled (the production default), an empty source list is a hard
+    # configuration error and blocks image-bearing datasets. Tests and
+    # non-image adapters can explicitly disable the check.
+    dataset_image_check_enabled: bool = True
 
     # M2-05 synthetic evaluation loop.
     # Short-term case-token secret (platform signs, runner verifies). When

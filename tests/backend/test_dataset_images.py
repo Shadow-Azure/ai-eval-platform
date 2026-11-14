@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import httpx
-import pytest
-
 from app.config import Settings
 from app.services import dataset_images
 
@@ -87,13 +85,23 @@ def test_probe_case_images_blocks_when_all_sources_404() -> None:
 
 
 def test_probe_case_images_skips_without_sources() -> None:
-    settings = Settings(dataset_image_registries="")
+    settings = Settings(dataset_image_registries="", dataset_image_check_enabled=False)
     check = dataset_images.probe_case_images(
         {"astropy__astropy-12907": "swebench/sweb.eval.x86_64.astropy_1776_astropy-12907:latest"},
         settings=settings,
     )
     assert check["status"] == dataset_images.SKIPPED
     assert check["checked"] == 1
+
+
+def test_probe_case_images_blocks_when_sources_are_not_configured() -> None:
+    settings = Settings(dataset_image_registries="", dataset_image_check_enabled=True)
+    check = dataset_images.probe_case_images(
+        {"astropy__astropy-12907": "swebench/sweb.eval.x86_64.astropy_1776_astropy-12907:latest"},
+        settings=settings,
+    )
+    assert check["status"] == dataset_images.BLOCKED
+    assert "未配置公开镜像源" in check["reason"]
 
 
 def test_probe_source_auth_required_is_not_treated_as_missing() -> None:
