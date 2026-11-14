@@ -177,6 +177,9 @@ jobs:
       S3_SECRET_KEY: ${{ secrets.S3_SECRET_KEY }}
       ALIYUN_REGION: ${{ secrets.ALIYUN_REGION }}
       DATABASE_STORAGE_LIMIT_BYTES: ${{ secrets.DATABASE_STORAGE_LIMIT_BYTES }}
+      # M8-26: ordered public dataset image sources. The deploy writes this
+      # value into the backend .env; administrators can override it in the UI.
+      DATASET_IMAGE_REGISTRIES: ${{ secrets.DATASET_IMAGE_REGISTRIES }}
       DISPATCH_TOKEN: ${{ secrets.FLOW_TOKEN }}
       SECRET_BOX_KEY: ${{ secrets.SECRET_BOX_KEY }}
       POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
@@ -288,6 +291,7 @@ jobs:
             printf 'S3_ADDRESSING_STYLE=virtual\n'
             printf 'GITHUB_TOKEN=%s\n' "$DISPATCH_TOKEN"
             printf 'DATABASE_STORAGE_LIMIT_BYTES=%s\n' "$DATABASE_STORAGE_LIMIT_BYTES"
+            printf 'DATASET_IMAGE_REGISTRIES=%s\n' "$DATASET_IMAGE_REGISTRIES"
             printf 'SECRET_BOX_KEY=%s\n' "$SECRET_BOX_KEY"
             printf 'POSTGRES_PASSWORD=%s\n' "$POSTGRES_PASSWORD"
             printf 'AUTH_SESSION_SECRET=%s\n' "$AUTH_SESSION_SECRET"

@@ -34,6 +34,9 @@ services:
       # for the usage watermark. 0 leaves it unconfigured; set it in the host
       # .env to the volume/budget the deployment should be measured against.
       DATABASE_STORAGE_LIMIT_BYTES: ${DATABASE_STORAGE_LIMIT_BYTES:-0}
+      # M8-26: deploy-time default public image sources; administrators may
+      # override the ordered list from the console.
+      DATASET_IMAGE_REGISTRIES: ${DATASET_IMAGE_REGISTRIES:-docker.io}
       REDIS_URL: redis://redis:6379/0
       S3_ENDPOINT: ${S3_ENDPOINT:-}
       S3_BUCKET: ${S3_BUCKET:-}
@@ -129,6 +132,7 @@ services:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-eval}:${POSTGRES_PASSWORD:?}@postgres:5432/${POSTGRES_DB:-eval}
       REDIS_URL: redis://redis:6379/0
       WORKER_HEARTBEAT_PATH: /tmp/worker-heartbeat
+      DATASET_IMAGE_REGISTRIES: ${DATASET_IMAGE_REGISTRIES:-docker.io}
       # M5-15: reap uploads abandoned by a crashed validation worker.
       DATASET_IMPORT_STALE_SECONDS: ${DATASET_IMPORT_STALE_SECONDS:-7200}
       DATASET_IMPORT_DIR: ${DATASET_IMPORT_DIR:-/tmp/eval-dataset-imports}

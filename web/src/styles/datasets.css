@@ -955,3 +955,68 @@
   flex-direction: column;
   align-items: flex-start;
 }
+
+/* M8-26: dataset image source settings. */
+.dataset-image-source-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.dataset-image-source-metric {
+  margin: 4px 0;
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.dataset-image-source-ok {
+  color: var(--success);
+}
+
+.dataset-image-source-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.dataset-image-source-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.dataset-image-source-row.is-disabled {
+  opacity: 0.66;
+}
+
+.dataset-image-source-order {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  color: #fff;
+  background: var(--primary);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.dataset-image-source-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.dataset-image-source-fields {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) minmax(180px, 1.4fr) minmax(100px, 0.8fr);
+  gap: 8px;
+  margin-bottom: 8px;
+}

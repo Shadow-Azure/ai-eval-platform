@@ -49,6 +49,8 @@ set_env WEB_IMAGE "$WEB_IMAGE"
 set_env RUNNER_EGRESS_PROXY_IMAGE "$PROXY_IMAGE"
 set_env GIT_COMMIT "$GIT_COMMIT"
 set_env DEPLOY_ENVIRONMENT "$DEPLOY_ENVIRONMENT"
+# M8-26: keep the deploy-time default in the same .env the backend reads.
+set_env DATASET_IMAGE_REGISTRIES "${DATASET_IMAGE_REGISTRIES:-docker.io}"
 
 on_error() {
   echo "deploy: failed, rolling back" >&2

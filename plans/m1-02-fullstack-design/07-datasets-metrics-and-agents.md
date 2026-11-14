@@ -42,6 +42,14 @@ class DatasetAdapter(Protocol):
 `image_check.status=blocked` 的导入，避免校验后源状态变化造成半可用版本。Runner 的 case task 接收
 per-case 镜像，版本级镜像仅在 case 未携带镜像时回退。
 
+## 1.2 公开镜像源的默认与覆盖（M8-26）
+
+部署默认源由 GitHub Secrets 的 `DATASET_IMAGE_REGISTRIES` 提供，deploy workflow 经
+`deploy/write-managed-env.sh` 写入后端 `.env`，compose 的 api/worker 注入同名变量。管理员可在
+`/settings/dataset-images` 调整当前环境的覆盖；覆盖持久化到 `dataset_image_sources_setting.sources_json`
+（有序、含 enabled），探测时优先使用覆盖，删除覆盖后回退部署默认。上传 worker 与 legacy 导入都读取
+同一生效列表，保存后下一次校验生效，不需要重启。
+
 ## 2. 五文件任务包与 OSS 布局
 
 架构固定任务包为 `task.toml`、`instruction.md`、`environment/Dockerfile`、`tests/test.sh`、`solution/solve.sh`。建议 manifest 另存于版本级索引，记录每个文件 digest、评分镜像 digest、可见性和运行时约束。

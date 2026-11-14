@@ -37,7 +37,7 @@ from ..datasets import (
 )
 from ..defaults import DEFAULT_PROJECT_ID, DEFAULT_TENANT_ID
 from ..models import Dataset, DatasetCase, DatasetImport, DatasetVersion, DatasetVersionMetric, MetricDefinition
-from .dataset_images import DatasetImageUnavailable, image_for_case, probe_case_images
+from .dataset_images import DatasetImageUnavailable, effective_sources, image_for_case, probe_case_images
 from .metrics import register_adapter_metrics
 
 
@@ -549,7 +549,11 @@ def import_dataset_version(
         if image:
             case_images[normalized.case_key] = image
     if case_images:
-        check = probe_case_images(case_images, settings=settings)
+        check = probe_case_images(
+            case_images,
+            settings=settings,
+            sources=effective_sources(session, settings),
+        )
         if check.get("status") == "blocked":
             raise DatasetImageUnavailable(check)
 

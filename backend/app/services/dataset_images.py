@@ -16,7 +16,7 @@ the resolved per-case image and how to surface the report.
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -24,8 +24,11 @@ from typing import Any
 from urllib.parse import quote
 
 import httpx
+from sqlalchemy import select
 
 from ..config import Settings, get_settings
+from ..defaults import DEFAULT_TENANT_ID
+from ..models import DatasetImageSourcesSetting
 
 SWEBENCH_IMAGE_TEMPLATE = "swebench/sweb.eval.{arch}.{org}_1776_{repo}-{issue}:latest"
 DEFAULT_ARCH = "x86_64"
@@ -62,9 +65,15 @@ class RegistrySource:
     name: str
     registry: str
     prefix: str = ""
+    enabled: bool = True
 
-    def as_dict(self) -> dict[str, str]:
-        return {"name": self.name, "registry": self.registry, "prefix": self.prefix}
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "registry": self.registry,
+            "prefix": self.prefix,
+            "enabled": self.enabled,
+        }
 
 
 @dataclass
@@ -183,6 +192,132 @@ def configured_sources(settings: Settings | None = None) -> list[RegistrySource]
         seen.add(key)
         sources.append(source)
     return sources
+
+
+def source_from_mapping(raw: Mapping[str, Any]) -> RegistrySource:
+    """Normalize one API/DB source record and validate its registry shape."""
+
+    name = str(raw.get("name") or "").strip()
+    registry_raw = str(raw.get("registry") or "").strip()
+    prefix = str(raw.get("prefix") or "").strip().strip("/")
+    enabled = bool(raw.get("enabled", True))
+    if not name:
+        raise ValueError("镜像源名称不能为空")
+    if not registry_raw:
+        raise ValueError("registry 不能为空")
+    parsed = parse_registry_source(registry_raw if not prefix else f"{registry_raw}/{prefix}")
+    if parsed is None:
+        raise ValueError(f"registry 格式非法：{registry_raw}")
+    return RegistrySource(name=name[:200], registry=parsed.registry, prefix=parsed.prefix, enabled=enabled)
+
+
+def parse_source_records(records: Any) -> list[RegistrySource]:
+    if not isinstance(records, list):
+        raise ValueError("sources 必须是数组")
+    if not records:
+        raise ValueError("至少保留一个镜像源")
+    if len(records) > 20:
+        raise ValueError("镜像源最多 20 个")
+    sources: list[RegistrySource] = []
+    seen: set[tuple[str, str]] = set()
+    for item in records:
+        if not isinstance(item, Mapping):
+            raise ValueError("每个镜像源必须是对象")
+        source = source_from_mapping(item)
+        key = (source.registry, source.prefix)
+        if key in seen:
+            raise ValueError(f"重复的 registry/namespace：{source.registry}/{source.prefix}".rstrip("/"))
+        seen.add(key)
+        sources.append(source)
+    return sources
+
+
+def source_records(sources: Iterable[RegistrySource]) -> list[dict[str, Any]]:
+    return [source.as_dict() for source in sources]
+
+
+def default_sources(settings: Settings | None = None) -> list[RegistrySource]:
+    return configured_sources(settings)
+
+
+def override_row(session, tenant_id: str = str(DEFAULT_TENANT_ID)) -> DatasetImageSourcesSetting | None:
+    return session.scalar(
+        select(DatasetImageSourcesSetting).where(DatasetImageSourcesSetting.tenant_id == tenant_id)
+    )
+
+
+def override_sources(session, tenant_id: str = str(DEFAULT_TENANT_ID)) -> list[RegistrySource] | None:
+    row = override_row(session, tenant_id)
+    if row is None or not row.sources_json:
+        return None
+    try:
+        return parse_source_records(row.sources_json)
+    except ValueError:
+        # A malformed persisted override must not brick imports; fall back to
+        # the deploy-time default. The API surfaces a validation error on save.
+        return None
+
+
+def effective_sources(
+    session,
+    settings: Settings | None = None,
+    tenant_id: str = str(DEFAULT_TENANT_ID),
+) -> list[RegistrySource]:
+    override = override_sources(session, tenant_id)
+    return override if override is not None else default_sources(settings)
+
+
+def sources_view(
+    session,
+    settings: Settings | None = None,
+    tenant_id: str = str(DEFAULT_TENANT_ID),
+) -> dict[str, Any]:
+    defaults = default_sources(settings)
+    override = override_sources(session, tenant_id)
+    effective = override if override is not None else defaults
+    default_keys = {(source.registry, source.prefix) for source in defaults}
+    row = override_row(session, tenant_id)
+    return {
+        "defaults": [
+            {**source.as_dict(), "is_default": True}
+            for source in defaults
+        ],
+        "override": [
+            {**source.as_dict(), "is_default": (source.registry, source.prefix) in default_keys}
+            for source in override or []
+        ],
+        "effective": [
+            {**source.as_dict(), "is_default": (source.registry, source.prefix) in default_keys}
+            for source in effective
+        ],
+        "using_override": override is not None,
+        "updated_by": row.updated_by if row else None,
+        "updated_at": row.updated_at.isoformat(timespec="seconds") if row and row.updated_at else None,
+    }
+
+
+def save_override(
+    session,
+    sources: list[RegistrySource],
+    *,
+    updated_by: str | None,
+    tenant_id: str = str(DEFAULT_TENANT_ID),
+) -> DatasetImageSourcesSetting:
+    row = override_row(session, tenant_id)
+    if row is None:
+        row = DatasetImageSourcesSetting(tenant_id=tenant_id, sources_json=[])
+        session.add(row)
+    row.sources_json = source_records(sources)
+    row.updated_by = (updated_by or "")[:128] or None
+    session.flush()
+    return row
+
+
+def clear_override(session, tenant_id: str = str(DEFAULT_TENANT_ID)) -> None:
+    row = override_row(session, tenant_id)
+    if row is not None:
+        session.delete(row)
+        session.flush()
 
 
 def _split_image(image: str) -> tuple[str, str]:
@@ -346,6 +481,7 @@ def probe_case_images(
     case_images: Mapping[str, str],
     *,
     settings: Settings | None = None,
+    sources: list[RegistrySource] | None = None,
     client: httpx.Client | None = None,
 ) -> dict[str, Any]:
     """Probe every unique case image against the ordered public sources.
@@ -357,6 +493,11 @@ def probe_case_images(
 
     settings = settings or get_settings()
     sources = configured_sources(settings)
+    sources = [
+        source
+        for source in (sources if sources is not None else configured_sources(settings))
+        if source.enabled
+    ]
     unique_images = sorted({image for image in case_images.values() if image})
     generated_at = datetime.now(UTC).isoformat(timespec="seconds")
     if not case_images or not unique_images:
