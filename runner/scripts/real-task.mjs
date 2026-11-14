@@ -370,9 +370,13 @@ async function realCase(dispatch, item, task, { modelToken, runnerRoot, callback
     } finally {
       dockerRun(["rm", "-f", source], { allowFailure: true });
     }
-    spawnSync("chmod", ["-R", "a+rwX", workdir], { encoding: "utf8", timeout: 120_000 });
+    // M8-27: create the agent-writable directories *before* the recursive
+    // chmod. Creating trace afterwards made its mode depend on the runner
+    // process umask (0022 -> 0755) and owner, so a non-root eval user could
+    // not write the agent trace/diagnostics.
     mkdirSync(join(workdir, ".runtime-home"), { recursive: true, mode: 0o777 });
-    mkdirSync(join(workdir, "trace"), { recursive: true });
+    mkdirSync(join(workdir, "trace"), { recursive: true, mode: 0o777 });
+    spawnSync("chmod", ["-R", "a+rwX", workdir], { encoding: "utf8", timeout: 120_000 });
     let runtimeVersion = runtimeAdapter.runtimeVersion ?? null;
     const collectCapture = (fallbackText = null) => {
       const capture = () =>
