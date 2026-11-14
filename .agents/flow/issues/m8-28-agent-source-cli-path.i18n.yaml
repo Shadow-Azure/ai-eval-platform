@@ -1,0 +1,5 @@
+# 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
+# git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
+#   pnpm run record:i18n -- .agents/flow/issues/m8-28-agent-source-cli-path.md
+m8-28-agent-source-cli-path.md: 8f69425e39cd8203434778b8c6df10ff714457a0
+m8-28-agent-source-cli-path.en.md: ca534accf80547b4839860ec8176ba1b179baa7f

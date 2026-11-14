@@ -24,7 +24,11 @@ export function installScript() {
 
 export function agentScript() {
   return [
-    "export PATH=/opt/miniconda3/envs/testbed/bin:/opt/node/bin:$PATH",
+    // M8-28: expose every source package bin entry on a stable PATH. This is
+    // generic for any source-mode CLI (not just codespec); the Agent PATH also
+    // gets the package/node_modules bin directories.
+    "export PATH=/home/eval/bin:/asset-source/bin:/asset-source/node_modules/.bin:/home/eval/node_modules/.bin:/home/eval/.local/bin:/opt/miniconda3/envs/testbed/bin:/opt/node/bin:$PATH",
+    "node /runner/scripts/link-source-bins.mjs /asset-source /home/eval/bin || true",
     "cd /testbed",
     "node /runner/scripts/claude-code-smoke.mjs",
   ].join("; ");
