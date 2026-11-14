@@ -288,3 +288,45 @@ test("common.sh bounds retention, reads the rollback state and removes by image 
   assert.equal(helper.includes("docker system prune"), false, "a global prune could delete unrelated images");
   assert.equal(helper.includes("docker image prune"), false, "cleanup must target known platform image ids");
 });
+
+test("a failing docker listing falls back to a skipped stage without firing the rollback trap", () => {
+  const sandbox = writeSandbox(retentionFixture());
+  try {
+    // Replace docker with a CLI whose every call fails, as if the daemon were
+    // unavailable after a healthy deploy. deploy.sh calls prune in an `if`,
+    // which must keep its ERR trap (the rollback path) from firing.
+    writeFileSync(
+      join(sandbox.bin, "docker"),
+      "#!/usr/bin/env bash\necho 'Cannot connect to the Docker daemon' >&2\nexit 1\n",
+    );
+    chmodSync(join(sandbox.bin, "docker"), 0o755);
+    const script = [
+      "set -euo pipefail",
+      'source "${COMMON_SH:?}"',
+      'trap \'echo "TRAP_FIRED"; exit 9\' ERR',
+      'if prune_old_images; then echo "PRUNE_RESULT=ok"; else echo "PRUNE_RESULT=skipped"; fi',
+      'echo "DEPLOY_SURVIVED"',
+    ].join("\n");
+    const result = spawnSync("bash", ["-c", script], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${sandbox.bin}:${process.env.PATH}`,
+        FAKE_DOCKER_STATE: sandbox.state,
+        DEPLOY_DIR: sandbox.host,
+        COMMON_SH: common,
+        API_IMAGE: `${API_REPO}@sha256:api-running`,
+        WEB_IMAGE: `${WEB_REPO}@sha256:web-running`,
+        RUNNER_EGRESS_PROXY_IMAGE: `${PROXY_REPO}@sha256:proxy-running`,
+      },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /PRUNE_RESULT=skipped/);
+    assert.match(result.stdout, /DEPLOY_SURVIVED/);
+    assert.match(result.stderr, /docker image ls failed/);
+    assert.equal(result.stdout.includes("TRAP_FIRED"), false);
+    assert.equal(result.stderr.includes("TRAP_FIRED"), false);
+  } finally {
+    rmSync(sandbox.dir, { recursive: true, force: true });
+  }
+});
