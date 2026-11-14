@@ -20,14 +20,14 @@ ${ids.map((id) => `  - ${id}`).join("\n")}
 \`\`\`
 `;
 
-const milestone = (id, status = "active") => `# ${id}
+const milestone = (id, status = "active", keepOpen = null) => `# ${id}
 
 \`\`\`yaml flow
 kind: milestone
 id: ${id}
 title: ${id} title
 status: ${status}
-github:
+${keepOpen === null ? "" : `keep-open: ${keepOpen}\n`}github:
   number: null
   url: null
 \`\`\`
@@ -113,4 +113,55 @@ test("extracts only explicit issue references", () => {
 
 test("reports changed files outside the issue scope union", () => {
   assert.deepEqual(uncoveredFiles(["src/a.js", "docs/a.md"], ["src/**"]), ["docs/a.md"]);
+});
+
+test("accepts a keep-open milestone when every issue is done", async () => {
+  const root = fixture({
+    ".agents/flow/roadmap.md": roadmap(["m0"]),
+    ".agents/flow/milestones/m0-first.md": milestone("m0", "active", true),
+    ".agents/flow/issues/m0-01-first.md": issue({
+      status: "done",
+      number: 1,
+      url: "https://github.com/o/r/issues/1",
+    }),
+  });
+  try {
+    const { tree, errors } = await loadFlowTree(path.join(root, ".agents/flow"));
+    assert.deepEqual(errors, []);
+    assert.deepEqual(validateTree(tree), []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("still requires milestone done once every issue is done without keep-open", async () => {
+  const root = fixture({
+    ".agents/flow/roadmap.md": roadmap(["m0"]),
+    ".agents/flow/milestones/m0-first.md": milestone("m0", "active"),
+    ".agents/flow/issues/m0-01-first.md": issue({
+      status: "done",
+      number: 1,
+      url: "https://github.com/o/r/issues/1",
+    }),
+  });
+  try {
+    const { tree } = await loadFlowTree(path.join(root, ".agents/flow"));
+    assert.match(validateTree(tree).join("\n"), /全部 issue 已 done/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects a non-boolean keep-open", async () => {
+  const root = fixture({
+    ".agents/flow/roadmap.md": roadmap(["m0"]),
+    ".agents/flow/milestones/m0-first.md": milestone("m0", "active", "yes"),
+    ".agents/flow/issues/m0-01-first.md": issue(),
+  });
+  try {
+    const { tree } = await loadFlowTree(path.join(root, ".agents/flow"));
+    assert.match(validateTree(tree).join("\n"), /keep-open 只能是 true\/false/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

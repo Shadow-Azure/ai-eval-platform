@@ -6,7 +6,7 @@
 kind: issue
 milestone: m8
 priority: P2
-status: in-progress
+status: done
 scope:
   - .agents/flow/issues/m8-15-proxy-image-ci.*
   - .agents/flow/issues/m8-14-github-egress-proxy.*

@@ -16,7 +16,7 @@ English | [中文](README.md)
 
 Each work document contains exactly one `yaml flow` fence. Bilingual pairs keep that fence byte-for-byte identical.
 
-The roadmap contains `kind: roadmap` and `milestones`. A milestone contains `kind: milestone`, `id`, `title`, `status`, and `github: {number, url}`. An issue contains `kind: issue`, `milestone`, `priority`, `status`, `scope`, `adr`, and `github: {number, url}`. One bootstrap issue in the first milestone may use `bootstrap: true` until its GitHub number is assigned.
+The roadmap contains `kind: roadmap` and `milestones`. A milestone contains `kind: milestone`, `id`, `title`, `status`, optional `keep-open`, and `github: {number, url}`. An issue contains `kind: issue`, `milestone`, `priority`, `status`, `scope`, `adr`, and `github: {number, url}`. One bootstrap issue in the first milestone may use `bootstrap: true` until its GitHub number is assigned.
 
 ## Closed sets
 
@@ -29,7 +29,7 @@ The roadmap contains `kind: roadmap` and `milestones`. A milestone contains `kin
 - The local issue number matches its GitHub issue number; commits and PR titles must contain `(#N)`.
 - An issue with `github.number: null` must remain in `backlog`.
 - Issues move serially across milestones at the same priority and may run in parallel within the same milestone and priority.
-- A milestone is `done` only when all of its issues are `done`.
+- A milestone is `done` only when all of its issues are `done`; a standing milestone marked `keep-open: true` (for example a bug-fix milestone that keeps taking similar issues) may stay `active` after all its issues are done.
 
 ## Gates
 

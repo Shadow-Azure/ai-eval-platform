@@ -1,5 +1,5 @@
 # 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
 # git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
 #   pnpm run record:i18n -- .agents/flow/issues/m8-15-proxy-image-ci.md
-m8-15-proxy-image-ci.md: 1efb9521a99a3159fa9a7436bddd9948b786f38e
-m8-15-proxy-image-ci.en.md: 032d4b2ba49b5ead8db0ac0f7ac5a9a96c5aefc0
+m8-15-proxy-image-ci.md: 4ba54bd4ef0d5476b7a6cbeeb7cd041e97bb0f82
+m8-15-proxy-image-ci.en.md: bc884f433fd7a4c0f8350ceffb03f856569b2c59
