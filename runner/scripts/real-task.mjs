@@ -441,7 +441,9 @@ async function realCase(dispatch, item, task, { modelToken, runnerRoot, callback
         workspace: datasetAdapter.workspacePath(),
         constraints: datasetAdapter.constraints(task),
       }),
-      MAX_TURNS: process.env.REAL_TASK_MAX_TURNS || "30",
+      // M8-30: design + propose + apply/subagent needs more than 30 turns;
+      // keep it overridable for cost/experiments.
+      MAX_TURNS: process.env.REAL_TASK_MAX_TURNS || "80",
       TIMEOUT_MS: process.env.REAL_TASK_TIMEOUT_MS || "900000",
       EXECUTION_IMAGE_DIGEST: environmentImage,
     };
