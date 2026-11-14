@@ -3845,6 +3845,61 @@ tbody tr.clickable {
   padding: 7px 0;
 }
 
+.image-check-box {
+  background: #fff;
+}
+
+.image-check-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.image-check-source {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  background: #fbfdff;
+  font-size: 11px;
+}
+
+.image-check-source b {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  color: #fff;
+  background: var(--primary);
+  font-size: 9px;
+}
+
+.image-check-table {
+  margin-top: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.image-check-table th,
+.image-check-table td {
+  height: auto;
+  padding: 8px 10px;
+  font-size: 10px;
+}
+
+.image-check-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
 .kbd {
   padding: 1px 5px;
   border: 1px solid #d8dee7;

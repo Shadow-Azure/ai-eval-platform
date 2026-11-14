@@ -557,6 +557,7 @@ const ui = {
   },
   datasetLoading: false,
   importStep: 1,
+  importImageCheck: "failed",
   importProgress: 0,
   importTimer: null,
   newEvalStep: 1,
@@ -1320,6 +1321,16 @@ function importPage() {
       </div>
     `;
   } else if (step === 2) {
+    const imagePassed = ui.importImageCheck === "passed";
+    const imageRows = imagePassed
+      ? [
+          { key: "astropy__astropy-12907", image: "swebench/sweb.eval.x86_64.astropy_1776_astropy-12907:latest", source: "Docker Hub", status: "可用" },
+          { key: "django__django-11019", image: "swebench/sweb.eval.x86_64.django_1776_django-11019:latest", source: "Docker Hub", status: "可用" },
+        ]
+      : [
+          { key: "astropy__astropy-12907", image: "swebench/sweb.eval.x86_64.astropy_1776_astropy-12907:latest", source: "4 个源均未命中", status: "未找到" },
+          { key: "django__django-11019", image: "swebench/sweb.eval.x86_64.django_1776_django-11019:latest", source: "4 个源均未命中", status: "未找到" },
+        ];
     content = `
       <div class="eyebrow">Step 2 · Validate</div>
       <h2 style="font-size:19px;margin-bottom:6px">字段校验与环境检查</h2>
@@ -1332,8 +1343,53 @@ function importPage() {
       <div class="banner success">${icon("check", 15)}<div><strong>标准字段完整</strong><br />实例 ID、仓库、base_commit、problem_statement、test_patch 均可解析。</div></div>
       <div class="banner warning" style="margin-top:10px">${icon("alert", 15)}<div><strong>2 个非阻塞警告</strong><br />两条题的参考补丁为空；用例会保留，但不会参与参考解自检。</div></div>
       <div class="review-box" style="margin-top:16px">
-        <div class="row-between"><div><strong>环境与评分任务包</strong><div class="small muted">environment/Dockerfile · tests/test.sh · task.toml</div></div><span class="tag tag-success">可生成</span></div>
+        <div class="row-between"><div><strong>环境与评分任务包</strong><div class="small muted">environment/Dockerfile · tests/test.sh · task.toml</div></div><span class="tag ${imagePassed ? "tag-success" : "tag-warning"}">${imagePassed ? "可生成" : "待镜像检查"}</span></div>
         <div class="row-between" style="margin-top:13px"><div><strong>指标映射</strong><div class="small muted">swebench.resolved / swebench.submitted</div></div><span class="tag tag-primary">解决率</span></div>
+      </div>
+      <div class="review-box image-check-box" style="margin-top:16px">
+        <div class="row-between">
+          <div>
+            <strong>运行时镜像检查</strong>
+            <div class="small muted">每个用例按 instance/架构解析镜像，再按已配置公开源顺序探测；全部不可用则阻止生成版本。</div>
+          </div>
+          <span class="tag ${imagePassed ? "tag-success" : "tag-danger"}">${imagePassed ? "通过" : "未找到"}</span>
+        </div>
+        <div class="image-check-sources">
+          <span class="image-check-source"><b>1</b> Docker Hub ${imagePassed ? '<span class="tag tag-success">200</span>' : '<span class="tag tag-danger">404</span>'}</span>
+          <span class="image-check-source"><b>2</b> DaoCloud ${imagePassed ? '<span class="tag tag-neutral">跳过</span>' : '<span class="tag tag-danger">404</span>'}</span>
+          <span class="image-check-source"><b>3</b> 阿里云加速 ${imagePassed ? '<span class="tag tag-neutral">跳过</span>' : '<span class="tag tag-warning">超时</span>'}</span>
+          <span class="image-check-source"><b>4</b> GHCR ${imagePassed ? '<span class="tag tag-neutral">跳过</span>' : '<span class="tag tag-danger">404</span>'}</span>
+        </div>
+        <div class="table-wrap image-check-table">
+          <table>
+            <thead><tr><th>用例</th><th>解析出的镜像</th><th>命中源</th><th>结果</th></tr></thead>
+            <tbody>
+              ${imageRows.map((row) => `
+                <tr>
+                  <td class="mono">${row.key}</td>
+                  <td class="mono">${row.image}</td>
+                  <td>${row.source}</td>
+                  <td><span class="tag ${imagePassed ? "tag-success" : "tag-danger"}">${row.status}</span></td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        </div>
+        <div class="row-between small muted" style="margin-top:8px">
+          <span>${imagePassed ? "500 / 500 个用例镜像可用" : "2 / 500 个用例镜像未找到"}</span>
+          <span>${imagePassed ? "首个命中：Docker Hub（按配置顺序）" : "已按配置顺序尝试 4 个公开源"}</span>
+        </div>
+        <div class="banner ${imagePassed ? "success" : "danger"}" style="margin-top:12px">
+          ${icon(imagePassed ? "check" : "alert", 15)}
+          <div>${imagePassed
+            ? "所有用例镜像在已配置公开源中可用，可以生成版本。"
+            : "<strong>生成版本已阻断。</strong> 有 2 个用例镜像未在已配置公开源中找到。请先让管理员补充/同步镜像源，或重新检测；不会写入半成品版本。"}</div>
+        </div>
+        <div class="image-check-actions">
+          <button class="btn btn-sm" data-action="image-check-recheck">${icon("refresh", 13)} 重新检测</button>
+          <button class="btn btn-sm" data-action="image-check-toggle">${imagePassed ? "模拟镜像缺失" : "模拟镜像可用"}</button>
+          <button class="btn btn-ghost btn-sm" data-action="image-source-config">${icon("shield", 13)} 查看镜像源配置</button>
+        </div>
       </div>
     `;
   } else {
@@ -1392,7 +1448,7 @@ function importPage() {
               step === 1
                 ? `<button class="btn btn-primary" data-action="import-next">校验数据 ${icon("arrowRight", 13)}</button>`
                 : step === 2
-                  ? `<button class="btn btn-primary" data-action="import-start">生成版本 ${icon("arrowRight", 13)}</button>`
+                  ? `<button class="btn btn-primary" data-action="import-start" ${ui.importImageCheck === "failed" ? "disabled title=\"请先让所有用例镜像在至少一个公开源可用\"" : ""}>${ui.importImageCheck === "failed" ? "镜像不可用，无法生成" : `生成版本 ${icon("arrowRight", 13)}`}</button>`
                   : ui.importProgress >= 100
                     ? `<button class="btn btn-primary" data-action="import-finish">查看数据集 ${icon("arrowRight", 13)}</button>`
                     : `<button class="btn" disabled>导入进行中</button>`
@@ -3505,6 +3561,41 @@ function handleAction(action, target) {
     return;
   }
 
+  if (action === "image-check-toggle") {
+    ui.importImageCheck = ui.importImageCheck === "failed" ? "passed" : "failed";
+    render({ preserveScroll: true });
+    toast(ui.importImageCheck === "passed" ? "已模拟：所有用例镜像可用" : "已模拟：镜像缺失，生成版本被阻断");
+    return;
+  }
+  if (action === "image-check-recheck") {
+    toast("正在按配置顺序重新探测公开镜像源…");
+    setTimeout(() => {
+      if (currentRoute().path !== "/datasets/import" || ui.importStep !== 2) return;
+      render({ preserveScroll: true });
+      toast(ui.importImageCheck === "passed" ? "镜像检查通过" : "仍未找到部分镜像，请补充镜像源");
+    }, 700);
+    return;
+  }
+  if (action === "image-source-config") {
+    modal({
+      title: "公开镜像源配置",
+      subtitle: "按顺序探测；全部不可用时阻止生成数据集版本",
+      body: `
+        <div class="stack">
+          <div class="review-box">
+            <div class="row-between"><div><strong>1 · Docker Hub</strong><div class="small muted mono">registry-1.docker.io</div></div><span class="tag tag-success">已启用</span></div>
+            <div class="row-between" style="margin-top:10px"><div><strong>2 · DaoCloud</strong><div class="small muted mono">docker.m.daocloud.io</div></div><span class="tag tag-success">已启用</span></div>
+            <div class="row-between" style="margin-top:10px"><div><strong>3 · 阿里云加速</strong><div class="small muted mono">&lt;id&gt;.mirror.aliyuncs.com</div></div><span class="tag tag-success">已启用</span></div>
+            <div class="row-between" style="margin-top:10px"><div><strong>4 · GHCR</strong><div class="small muted mono">ghcr.io</div></div><span class="tag tag-success">已启用</span></div>
+          </div>
+          <div class="banner warning">${icon("alert", 15)}<div>按顺序探测；某个源 404/超时会继续下一个。全部不可用时，数据集导入会被阻断。公开源只读，不支持在这里匿名访问私有镜像。</div></div>
+          <div class="banner">${icon("help", 15)}<div>添加自定义源、认证信息和限速策略由管理员配置；原型暂不展开。</div></div>
+        </div>
+      `,
+      footer: `<button class="btn" data-action="close-modal">关闭</button><button class="btn btn-primary" data-action="close-modal">保存配置</button>`,
+    });
+    return;
+  }
   if (action === "import-next") {
     ui.importStep = 2;
     render();
