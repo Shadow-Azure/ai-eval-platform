@@ -76,7 +76,7 @@ jobs:
       - name: pytest (PostgreSQL)
         env:
           TEST_DATABASE_URL: postgresql+psycopg://eval:eval@127.0.0.1:5432/eval_test
-        run: pytest --timeout=120 -x -vv --durations=20
+        run: pytest --durations=20
       - name: Migration dry-run on an empty database
         env:
           PGPASSWORD: eval
