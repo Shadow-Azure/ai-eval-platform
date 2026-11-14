@@ -1,0 +1,5 @@
+# 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
+# git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
+#   pnpm run record:i18n -- .agents/flow/issues/m8-27-runner-trace-permissions.md
+m8-27-runner-trace-permissions.md: 386734cd0f6858700117f6782c0d8aa42ea3ca8d
+m8-27-runner-trace-permissions.en.md: 4b446719075c6c9eb6efe7a95b428771c65169b9
