@@ -998,6 +998,7 @@ export function EvalDetailPage() {
           error={config.error}
           onRetry={() => config.refetch()}
           promptSuffix={data.prompt_suffix}
+          maxTurns={data.max_turns}
         />
       ) : null}
 
@@ -2159,9 +2160,10 @@ interface ConfigPanelProps {
   error: Error | null;
   onRetry: () => void;
   promptSuffix?: string | null;
+  maxTurns?: number | null;
 }
 
-function ConfigPanel({ config, loading, error, onRetry, promptSuffix }: ConfigPanelProps) {
+function ConfigPanel({ config, loading, error, onRetry, promptSuffix, maxTurns }: ConfigPanelProps) {
   if (error) {
     return <Card className="section-gap"><QueryError error={error} onRetry={onRetry} /></Card>;
   }
@@ -2203,6 +2205,7 @@ function ConfigPanel({ config, loading, error, onRetry, promptSuffix }: ConfigPa
                   "未设置"
                 ),
               ],
+              ["最大轮次", `${maxTurns ?? 200} 轮`],
             ]}
           />
         </Card>

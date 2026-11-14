@@ -402,6 +402,8 @@ def _live_identity(
         # M8-07: the appended instructions are part of the confirmed launch
         # configuration, so a changed suffix invalidates the preparation.
         "prompt_suffix": snapshot.get("prompt_suffix") or "",
+        # M8-31: the turn cap is part of the confirmed launch configuration.
+        "max_turns": snapshot.get("max_turns") or evaluation_service.DEFAULT_MAX_TURNS,
         "runtime": {
             "key": runtime_info.get("key"),
             "adapter_version": adapter.runtime_version if adapter is not None else None,
@@ -492,6 +494,7 @@ def build_preparation(
     execution: dict | None = None,
     assets_resolved: bool = True,
     prompt_suffix: str | None = None,
+    max_turns: int | None = None,
     settings: Settings | None = None,
     now: datetime | None = None,
 ) -> dict:
@@ -503,6 +506,13 @@ def build_preparation(
     execution = _normalise_execution(execution, settings)
     # M8-07: empty/whitespace-only instructions keep today's prompt behaviour.
     suffix = (prompt_suffix or "").strip()
+    # M8-31: an omitted cap keeps the platform default of 200 turns.
+    turns = max_turns if max_turns is not None else evaluation_service.DEFAULT_MAX_TURNS
+    if not isinstance(turns, int) or not 1 <= turns <= evaluation_service.MAX_TURNS_LIMIT:
+        raise PreparationInvalid(
+            f"max_turns 必须在 1..{evaluation_service.MAX_TURNS_LIMIT} 之间",
+            field="max_turns",
+        )
     try:
         selection = _case_selection(case_selection)
     except PreparationInvalid as exc:
@@ -571,6 +581,7 @@ def build_preparation(
             "case_selection": selection,
             "execution": execution,
             "prompt_suffix": suffix,
+            "max_turns": turns,
             "cost_estimate": None,
             "summary": None,
         }
@@ -643,6 +654,7 @@ def build_preparation(
             "estimated_job_count": len(case_keys),
         },
         "prompt_suffix": suffix,
+        "max_turns": turns,
         "warnings": warnings,
         "cost_estimate": cost_estimate,
     }
@@ -656,6 +668,7 @@ def build_preparation(
         "resource_pool": snapshot["resource_pool"],
         "execution": execution,
         "prompt_suffix": suffix,
+        "max_turns": turns,
         "resolved": snapshot["resolved"],
         "cost_estimate": cost_estimate,
         "warnings": warnings,
@@ -693,6 +706,7 @@ def build_preparation(
         "case_selection": selection,
         "execution": execution,
         "prompt_suffix": suffix,
+        "max_turns": turns,
         "cost_estimate": cost_estimate,
         "summary": snapshot["summary"],
     }
@@ -812,6 +826,7 @@ def consume_preparation(
         asset_snapshot_id=(asset_snapshot or {}).get("id"),
         asset_snapshot_json=asset_snapshot,
         prompt_suffix=snapshot.get("prompt_suffix") or "",
+        max_turns=snapshot.get("max_turns"),
         consistency_json={
             "preparation_id": preparation.id,
             "snapshot_digest": preparation.snapshot_digest,

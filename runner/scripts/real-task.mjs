@@ -343,7 +343,12 @@ function runAssetRuntimeSetup(agentName, { install }, egressArgs = []) {
  * F2P/P2P tests inside the scoring image. Returns the official report payload
  * plus the trace bytes and terminal statuses.
  */
-async function realCase(dispatch, item, task, { modelToken, runnerRoot, callbackBaseUrl }) {
+async function realCase(
+  dispatch,
+  item,
+  task,
+  { modelToken, runnerRoot, callbackBaseUrl, maxTurns },
+) {
   const datasetAdapter = getDatasetAdapter(task.adapter_key);
   const runtimeAdapter = getRuntimeAdapter(task.runtime_key);
   const egressArgs = egressProxyEnvArgs(task, callbackBaseUrl);
@@ -441,7 +446,9 @@ async function realCase(dispatch, item, task, { modelToken, runnerRoot, callback
         workspace: datasetAdapter.workspacePath(),
         constraints: datasetAdapter.constraints(task),
       }),
-      MAX_TURNS: process.env.REAL_TASK_MAX_TURNS || "30",
+      // M8-31: the frozen manifest cap is authoritative; the task payload is a
+      // fallback for older platforms and 200 covers legacy rows.
+      MAX_TURNS: process.env.REAL_TASK_MAX_TURNS || String(maxTurns || task.max_turns || 200),
       TIMEOUT_MS: process.env.REAL_TASK_TIMEOUT_MS || "900000",
       EXECUTION_IMAGE_DIGEST: environmentImage,
     };
@@ -1104,6 +1111,7 @@ async function main() {
               modelToken,
               runnerRoot,
               callbackBaseUrl: manifest.callback_base_url,
+              maxTurns: manifest.max_turns,
             })
           : { ...deterministicCase(dispatch, item), executionStatus: "succeeded", resultStatus: "resolved", durationMs: 0 };
       } finally {

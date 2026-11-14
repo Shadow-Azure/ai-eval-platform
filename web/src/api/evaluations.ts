@@ -64,6 +64,8 @@ export interface EvaluationSummary {
   asset_count?: number | null;
   /** Frozen custom instructions appended after each case's problem_statement. */
   prompt_suffix?: string | null;
+  /** Frozen cap on model-response turns (one turn may contain multiple tool calls). */
+  max_turns?: number | null;
 }
 
 export interface FrozenAsset {
@@ -205,6 +207,7 @@ export interface CreateEvaluationRequest {
   case_timeout_seconds?: number;
   max_attempts?: number;
   prompt_suffix?: string;
+  max_turns?: number;
 }
 
 export interface PreflightIssue {
@@ -342,6 +345,7 @@ export interface PrepareRequest {
   model_budget_cny?: number;
   shard_size?: number;
   prompt_suffix?: string;
+  max_turns?: number;
 }
 
 export interface MetricResult {
@@ -643,6 +647,7 @@ export function parseEvaluationSummary(payload: unknown): EvaluationSummary {
     asset_resolved_commit: readOptionalString(payload.asset_resolved_commit),
     asset_count: typeof payload.asset_count === "number" ? payload.asset_count : undefined,
     prompt_suffix: readOptionalString(payload.prompt_suffix),
+    max_turns: readOptionalNumber(payload.max_turns),
   };
 }
 

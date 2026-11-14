@@ -309,6 +309,66 @@ def test_prompt_suffix_defaults_to_empty_and_whitespace_is_ignored(
     assert stored.prompt_suffix == ""
 
 
+def test_prepare_freezes_max_turns_and_create_returns_it(
+    client: TestClient, session: Session
+) -> None:
+    """M8-31: the turn cap is part of the frozen launch configuration."""
+
+    ids = seed_launch(session)
+    default = client.post("/api/v1/evaluations/prepare", json=prepare_body(ids))
+    assert default.status_code == 200, default.text
+    assert default.json()["max_turns"] == 200
+    assert default.json()["summary"]["max_turns"] == 200
+    default_preparation = session.get(EvalPreparation, default.json()["preparation_id"])
+    assert default_preparation is not None
+    assert default_preparation.snapshot_json["max_turns"] == 200
+    assert default_preparation.snapshot_json["identity"]["max_turns"] == 200
+
+    response = client.post(
+        "/api/v1/evaluations/prepare",
+        json=prepare_body(ids, max_turns=640),
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["ready"] is True
+    assert body["max_turns"] == 640
+    assert body["summary"]["max_turns"] == 640
+
+    preparation = session.get(EvalPreparation, body["preparation_id"])
+    assert preparation is not None
+    assert preparation.snapshot_json["max_turns"] == 640
+    assert preparation.snapshot_json["identity"]["max_turns"] == 640
+    # The cap participates in the frozen configuration identity/digest.
+    assert preparation.snapshot_digest != default.json()["snapshot_digest"]
+
+    created = client.post(
+        "/api/v1/evaluations",
+        json={"preparation_id": body["preparation_id"], "name": "轮次评测"},
+        headers={"Idempotency-Key": "idem-max-turns"},
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["max_turns"] == 640
+    stored = session.get(EvalRun, created.json()["id"])
+    assert stored is not None
+    assert stored.max_turns == 640
+
+    detail = client.get(f"/api/v1/evaluations/{created.json()['id']}")
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["max_turns"] == 640
+
+
+@pytest.mark.parametrize("max_turns", [0, -1, 1001])
+def test_prepare_rejects_max_turns_out_of_range(
+    client: TestClient, session: Session, max_turns: int
+) -> None:
+    ids = seed_launch(session)
+    response = client.post(
+        "/api/v1/evaluations/prepare",
+        json=prepare_body(ids, max_turns=max_turns),
+    )
+    assert response.status_code == 422
+
+
 def test_prepare_and_create_without_agent_assets(
     client: TestClient, session: Session
 ) -> None:

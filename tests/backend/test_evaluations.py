@@ -47,6 +47,7 @@ def create_eval(
     case_keys: list[str] | None = None,
     shard_size: int | None = None,
     idempotency_key: str | None = None,
+    max_turns: int | None = None,
     now: datetime | None = None,
 ):
     settings = get_settings()
@@ -57,6 +58,7 @@ def create_eval(
         shard_size=shard_size,
         idempotency_key=idempotency_key,
         created_by="agent",
+        max_turns=max_turns,
         settings=settings,
         now=now,
     )
@@ -339,6 +341,96 @@ def test_api_rejects_prompt_suffix_over_limit(seeded: Session, client: TestClien
         json={"case_keys": ["case-a"], "prompt_suffix": "x" * 4001},
     )
     assert response.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# M8-31: per-evaluation Claude Code max turns
+# ---------------------------------------------------------------------------
+
+
+def test_api_create_defaults_max_turns_to_200(seeded: Session, client: TestClient) -> None:
+    response = client.post(
+        "/api/v1/evaluations",
+        json={"case_keys": ["case-a"], "idempotency_key": "api-max-turns-default"},
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["max_turns"] == 200
+    stored = seeded.get(EvalRun, response.json()["id"])
+    assert stored is not None
+    assert stored.max_turns == 200
+
+
+def test_api_create_stores_custom_max_turns(seeded: Session, client: TestClient) -> None:
+    response = client.post(
+        "/api/v1/evaluations",
+        json={
+            "case_keys": ["case-a"],
+            "idempotency_key": "api-max-turns-custom",
+            "max_turns": 750,
+        },
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["max_turns"] == 750
+    stored = seeded.get(EvalRun, body["id"])
+    assert stored is not None
+    assert stored.max_turns == 750
+
+    detail = client.get(f"/api/v1/evaluations/{body['id']}")
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["max_turns"] == 750
+
+
+@pytest.mark.parametrize("max_turns", [0, -1, 1001])
+def test_api_rejects_max_turns_out_of_range(
+    seeded: Session, client: TestClient, max_turns: int
+) -> None:
+    response = client.post(
+        "/api/v1/evaluations",
+        json={
+            "case_keys": ["case-a"],
+            "idempotency_key": f"api-max-turns-{max_turns}",
+            "max_turns": max_turns,
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_summary_falls_back_to_200_when_row_has_no_max_turns(seeded: Session) -> None:
+    """Rows created before 0026 report the platform default instead of None."""
+
+    run, _created = create_eval(seeded, idempotency_key="api-max-turns-legacy")
+    run.max_turns = None
+    try:
+        with seeded.no_autoflush:
+            summary = evaluations.evaluation_summary(run)
+    finally:
+        # Restore the in-memory value so the NOT NULL column never flushes NULL.
+        run.max_turns = 200
+    assert summary["max_turns"] == 200
+
+
+def test_manifest_freezes_max_turns(seeded: Session, configure_settings) -> None:
+    configure_settings(RUNNER_CALLBACK_BASE_URL="http://127.0.0.1:8000")
+    run, _created = create_eval(seeded, shard_size=2, max_turns=750)
+
+    rows = seeded.query(Outbox).filter(Outbox.aggregate_id == run.id).all()
+    assert rows
+    for row in rows:
+        manifest = json.loads(row.payload_json["manifest_text"])
+        validate_payload("manifest", manifest)
+        assert manifest["max_turns"] == 750
+
+
+def test_manifest_defaults_max_turns_to_200(seeded: Session, configure_settings) -> None:
+    configure_settings(RUNNER_CALLBACK_BASE_URL="http://127.0.0.1:8000")
+    run, _created = create_eval(seeded, shard_size=2)
+
+    rows = seeded.query(Outbox).filter(Outbox.aggregate_id == run.id).all()
+    assert rows
+    for row in rows:
+        manifest = json.loads(row.payload_json["manifest_text"])
+        assert manifest["max_turns"] == 200
 
 
 # ---------------------------------------------------------------------------

@@ -57,6 +57,8 @@ import { PageHeading } from "../components/PageHeading";
 const DRAFT_KEY = "ai-eval-platform:eval-wizard-draft:v1";
 const CASE_PAGE_SIZE = 20;
 const MAX_PROMPT_SUFFIX = 4000;
+const DEFAULT_MAX_TURNS = 200;
+const MAX_TURNS = 1000;
 const PROMPT_SUFFIX_PLACEHOLDER =
   "例如：这是非交互评测。请使用 superpowers 技能完成任务；不要向用户提问，自主决策并继续。";
 
@@ -95,6 +97,7 @@ interface WizardDraft {
   executionDigest: string;
   scoringDigest: string;
   promptSuffix: string;
+  maxTurns: string;
 }
 
 function defaultDraft(): WizardDraft {
@@ -121,7 +124,22 @@ function defaultDraft(): WizardDraft {
     executionDigest: "",
     scoringDigest: "",
     promptSuffix: "",
+    maxTurns: "",
   };
+}
+
+/** Empty means the platform default; anything else must be an integer in 1–1000. */
+function parseMaxTurns(raw: string): { value: number | null; error: string | null } {
+  const trimmed = raw.trim();
+  if (!trimmed) return { value: null, error: null };
+  const parsed = Number(trimmed);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > MAX_TURNS) {
+    return {
+      value: null,
+      error: `最大轮次需为 1–${MAX_TURNS} 的整数；留空按默认 ${DEFAULT_MAX_TURNS} 轮`,
+    };
+  }
+  return { value: parsed, error: null };
 }
 
 function stringOrNull(value: unknown): string | null {
@@ -171,6 +189,7 @@ function readDraft(): WizardDraft | null {
       scoringDigest: typeof it.scoringDigest === "string" ? it.scoringDigest : "",
       promptSuffix:
         typeof it.promptSuffix === "string" ? it.promptSuffix.slice(0, MAX_PROMPT_SUFFIX) : "",
+      maxTurns: typeof it.maxTurns === "string" ? it.maxTurns : "",
     };
   } catch {
     return null;
@@ -713,6 +732,10 @@ export function EvalWizardPage() {
       message.warning("所选资产源的运行时前置未通过加载测试：请先在 Agent 资产页完成加载测试");
       return;
     }
+    if (maxTurns.error) {
+      message.warning(maxTurns.error);
+      return;
+    }
     setChecking(true);
     setBlockers([]);
     setCreateNotice(null);
@@ -728,6 +751,7 @@ export function EvalWizardPage() {
         scoring_image_digest: draft.scoringDigest || undefined,
         execution_image_digest: draft.executionDigest || undefined,
         prompt_suffix: draft.promptSuffix.trim() || undefined,
+        ...(maxTurns.value !== null ? { max_turns: maxTurns.value } : {}),
       });
       setPreparation(result);
       if (result.ready) {
@@ -804,6 +828,7 @@ export function EvalWizardPage() {
       : draft.concurrency);
   const selectedMetrics = versionDetail.data?.metrics?.map((metric) => metric.display_name) ?? [];
   const promptSuffix = draft.promptSuffix.trim();
+  const maxTurns = parseMaxTurns(draft.maxTurns);
 
   function renderStepBar() {
     return (
@@ -877,6 +902,16 @@ export function EvalWizardPage() {
             <span className="summary-label">附加指令</span>
             <span className="summary-value">
               {promptSuffix ? `已配置 · ${promptSuffix.length} 字符` : "未设置"}
+            </span>
+          </div>
+          <div className="summary-item">
+            <span className="summary-label">最大轮次</span>
+            <span className="summary-value">
+              {maxTurns.error
+                ? "输入无效（需为 1–1000 的整数）"
+                : maxTurns.value !== null
+                  ? `${maxTurns.value} 轮`
+                  : `默认 ${DEFAULT_MAX_TURNS} 轮`}
             </span>
           </div>
         </div>
@@ -1617,6 +1652,40 @@ export function EvalWizardPage() {
             <strong>示例</strong> · “非交互评测，请勿向用户提问；按需使用 superpowers 技能（using-superpowers、test-driven-development 等）完成任务。”
           </div>
         </div>
+        <div
+          className="row-between"
+          style={{ marginTop: 18, paddingTop: 14, borderTop: "1px solid var(--line)" }}
+        >
+          <div>
+            <h3 style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "var(--ink)" }}>
+              最大轮次（可选）
+            </h3>
+            <p className="small muted" style={{ margin: "2px 0 0" }}>
+              限制 Agent 的模型响应轮次；留空按默认值执行
+            </p>
+          </div>
+          <Tag style={{ marginInlineEnd: 0 }}>可选</Tag>
+        </div>
+        <div className="field" style={{ marginTop: 12 }}>
+          <Input
+            id="wizard-max-turns"
+            type="number"
+            min={1}
+            max={MAX_TURNS}
+            step={1}
+            inputMode="numeric"
+            aria-label="最大轮次"
+            value={draft.maxTurns}
+            onChange={(event) => update({ maxTurns: event.target.value })}
+            placeholder={`默认 ${DEFAULT_MAX_TURNS}`}
+            status={maxTurns.error ? "error" : undefined}
+          />
+          <span className="hint">
+            留空默认 {DEFAULT_MAX_TURNS} 轮；一轮 = 一次模型响应（可能包含多个工具调用），不是一次工具调用。范围 1–
+            {MAX_TURNS}。
+          </span>
+          {maxTurns.error ? <span className="field-error">{maxTurns.error}</span> : null}
+        </div>
         <h3 className="wizard-section-title">高级执行策略</h3>
         <div className="policy-grid">
           <div className="field">
@@ -1817,6 +1886,17 @@ export function EvalWizardPage() {
               {promptSuffix || "未设置"}
             </span>
           </div>
+          <div className="summary-item">
+            <span className="summary-label">最大轮次</span>
+            <span className="summary-value">
+              {maxTurns.error
+                ? "输入无效（需为 1–1000 的整数）"
+                : maxTurns.value !== null
+                  ? `${maxTurns.value} 轮`
+                  : `默认 ${DEFAULT_MAX_TURNS} 轮`}
+            </span>
+          </div>
+
           <div className="summary-item">
             <span className="summary-label">评分镜像 digest</span>
             <span className="summary-value mono small">

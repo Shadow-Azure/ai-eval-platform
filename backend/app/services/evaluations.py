@@ -42,6 +42,11 @@ from .runner_labels import DEFAULT_RUNS_ON, pool_runner_labels
 SHARD_DISPATCH_TOPIC = "eval.shard.dispatch"
 MANIFEST_PATH_TEMPLATE = "/runner/v1/shards/{shard_id}/manifest"
 
+# M8-31: the run-level Claude Code agentic turn cap defaults to 200 and is
+# bounded to 1..1000 so a typo cannot hang a shard or starve the agent.
+DEFAULT_MAX_TURNS = 200
+MAX_TURNS_LIMIT = 1000
+
 TERMINAL_RUN_STATUSES = ("completed", "partial", "failed", "cancelled")
 # M4-05: a budget pause is deliberately non-terminal. While either status is
 # set the scheduler/mutators must not create new work and the run must not be
@@ -141,6 +146,7 @@ def create_synthetic_evaluation(
     asset_snapshot_json: dict | None = None,
     consistency_json: dict | None = None,
     prompt_suffix: str | None = None,
+    max_turns: int | None = None,
     settings: Settings | None = None,
     now: datetime | None = None,
 ) -> tuple[EvalRun, bool]:
@@ -176,6 +182,11 @@ def create_synthetic_evaluation(
     attempts = max_attempts if max_attempts is not None else 2
     if not isinstance(attempts, int) or not 1 <= attempts <= settings.eval_max_case_attempts:
         raise EvaluationInvalid("max_attempts 超出允许范围", field="max_attempts")
+    turns = max_turns if max_turns is not None else DEFAULT_MAX_TURNS
+    if not isinstance(turns, int) or not 1 <= turns <= MAX_TURNS_LIMIT:
+        raise EvaluationInvalid(
+            f"max_turns 必须在 1..{MAX_TURNS_LIMIT} 之间", field="max_turns"
+        )
     idempotency_key = idempotency_key or str(uuid.uuid4())
 
     tenant_id = str(DEFAULT_TENANT_ID)
@@ -293,6 +304,7 @@ def create_synthetic_evaluation(
         created_by=created_by[:128],
         case_timeout_seconds=timeout,
         max_attempts=attempts,
+        max_turns=turns,
     )
     session.add(run)
     session.flush()
@@ -434,6 +446,9 @@ def build_case_dispatches(
             "deadline": deadline.isoformat(timespec="microseconds").replace("+00:00", "Z"),
             "case_timeout_seconds": run.case_timeout_seconds,
             "max_attempts": run.max_attempts,
+            # M8-31: freeze the turn cap into the byte-stable shard manifest.
+            # Rows created before the column existed keep the 200 default.
+            "max_turns": run.max_turns or DEFAULT_MAX_TURNS,
             "runs_on": runs_on,
             "cases": [
                 {
@@ -814,6 +829,8 @@ def evaluation_summary(
         "runtime_version": run.runtime_version,
         "execution_image_digest": run.execution_image_digest,
         "scoring_image_digest": run.scoring_image_digest,
+        # M8-31: rows predating the column (or a NULL snapshot) report 200.
+        "max_turns": run.max_turns or DEFAULT_MAX_TURNS,
         "prompt_suffix": run.prompt_suffix or "",
         "asset_snapshot_id": run.asset_snapshot_id,
         "asset_resolved_commit": (run.asset_snapshot_json or {}).get("resolved_commit"),

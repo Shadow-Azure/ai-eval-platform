@@ -50,6 +50,13 @@ per-case 镜像，版本级镜像仅在 case 未携带镜像时回退。
 （有序、含 enabled），探测时优先使用覆盖，删除覆盖后回退部署默认。上传 worker 与 legacy 导入都读取
 同一生效列表，保存后下一次校验生效，不需要重启。
 
+## 1.3 发起评测的最大轮次（M8-31）
+
+评测向导 Step 3 可选配置 `max_turns`；留空按 200，范围 1–1000。该值随评测快照冻结到
+`eval_run.max_turns`，创建/准备 API 校验并透传，shard manifest 携带它，Runner 用它覆盖
+`REAL_TASK_MAX_TURNS` 默认值。轮次语义是模型响应（assistant turn / API round-trip），一个 turn
+可以包含多个工具调用；它不是工具调用次数，也不是用户消息数。旧评测行没有值时读取为 200。
+
 ## 2. 五文件任务包与 OSS 布局
 
 架构固定任务包为 `task.toml`、`instruction.md`、`environment/Dockerfile`、`tests/test.sh`、`solution/solve.sh`。建议 manifest 另存于版本级索引，记录每个文件 digest、评分镜像 digest、可见性和运行时约束。

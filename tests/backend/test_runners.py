@@ -735,6 +735,39 @@ def test_shard_task_payload_includes_prompt_suffix(
 
 
 # ---------------------------------------------------------------------------
+# M8-31: the run-wide max turns travels with the shard task payload
+# ---------------------------------------------------------------------------
+
+
+def test_shard_task_payload_includes_max_turns(
+    eval_env: dict, session: Session, client: TestClient
+) -> None:
+    run = session.get(EvalRun, eval_env["run_id"])
+    assert run is not None
+    outbox = session.scalar(select(Outbox).where(Outbox.aggregate_id == run.id))
+    assert outbox is not None
+
+    def payload() -> dict:
+        response = client.get(
+            f"/runner/v1/shards/{eval_env['shard']}/tasks",
+            params={
+                "eval_run_id": run.id,
+                "attempt": 1,
+                "dispatch_key": outbox.dispatch_key,
+            },
+            headers=auth(eval_env),
+        )
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    assert payload()["max_turns"] == 200
+
+    run.max_turns = 900
+    session.commit()
+    assert payload()["max_turns"] == 900
+
+
+# ---------------------------------------------------------------------------
 # M8-14: the run-wide GitHub egress proxy travels with the shard task payload
 # ---------------------------------------------------------------------------
 

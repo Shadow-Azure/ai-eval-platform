@@ -127,6 +127,12 @@ class EvalRun(Base, TimestampMixin):
     )
     case_timeout_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=3600)
     max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=2)
+    # M8-31: optional Claude Code agentic turn cap for every case in the run.
+    # Rows created before the column existed fall back to 200 (the same value
+    # the runner uses when REAL_TASK_MAX_TURNS is unset).
+    max_turns: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=200, server_default="200"
+    )
     # M4-02 cancellation/reconciliation: the dispatched GitHub workflow run and
     # the client cancellation request are tracked on the run (A2 consumes both).
     github_run_id: Mapped[str | None] = mapped_column(String(64), nullable=True)

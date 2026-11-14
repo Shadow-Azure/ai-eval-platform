@@ -134,6 +134,8 @@ class PrepareRequest(BaseModel):
     shard_size: int | None = Field(default=None, ge=1, le=255)
     # M8-07: optional instructions appended to every case problem statement.
     prompt_suffix: str | None = Field(default=None, max_length=4000)
+    # M8-31: optional Claude Code agentic turn cap; empty keeps the 200 default.
+    max_turns: int | None = Field(default=None, ge=1, le=1000)
 
 
 class CreateEvaluationRequest(BaseModel):
@@ -172,6 +174,8 @@ class CreateEvaluationRequest(BaseModel):
     asset_types: dict[str, str] = Field(default_factory=dict)
     # M8-07: optional instructions appended to every case problem statement.
     prompt_suffix: str | None = Field(default=None, max_length=4000)
+    # M8-31: optional Claude Code agentic turn cap; empty keeps the 200 default.
+    max_turns: int | None = Field(default=None, ge=1, le=1000)
 
 
 class ResumeBudgetRequest(BaseModel):
@@ -236,6 +240,7 @@ def prepare_evaluation(
         assets_resolved=payload.assets_resolved,
         created_by=context.user.email,
         prompt_suffix=payload.prompt_suffix,
+        max_turns=payload.max_turns,
     )
     return {"status": "ok", **result}
 
@@ -403,6 +408,7 @@ def create_evaluation(
             asset_snapshot_json=frozen_assets,
             consistency_json=check.payload() if payload.dataset_version_id else {},
             prompt_suffix=payload.prompt_suffix,
+            max_turns=payload.max_turns,
             settings=settings,
         )
     except evaluation_service.EvaluationInvalid as exc:
