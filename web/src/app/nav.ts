@@ -35,6 +35,7 @@ export const navGroups: NavGroup[] = [
       { label: "Agent 资产", to: "/assets", icon: "boxes" },
       { label: "模型凭据", to: "/models", icon: "key" },
       { label: "资源池", to: "/resources", icon: "server" },
+      { label: "数据集镜像源", to: "/settings/dataset-images", icon: "server", adminOnly: true },
     ],
   },
   {
@@ -54,6 +55,7 @@ const breadcrumbs: Array<{ test: (path: string) => boolean; crumbs: [string, str
   { test: (path) => path === "/assets", crumbs: ["配置", "Agent 资产"] },
   { test: (path) => path === "/models", crumbs: ["配置", "模型凭据"] },
   { test: (path) => path === "/resources", crumbs: ["配置", "资源池"] },
+  { test: (path) => path === "/settings/dataset-images", crumbs: ["配置", "数据集镜像源"] },
   { test: (path) => path === "/evals/new", crumbs: ["评测", "发起评测"] },
   { test: (path) => path === "/evals", crumbs: ["评测", "评测任务"] },
   { test: (path) => path.startsWith("/deploy"), crumbs: ["交付", "交付流水线"] },

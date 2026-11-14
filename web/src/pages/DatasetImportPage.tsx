@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Alert, Button, Form, Input, Modal, Progress, Select, Space, Tag } from "antd";
+import { Alert, Button, Form, Input, Progress, Select, Space, Tag } from "antd";
 import { useNavigate } from "react-router-dom";
 import {
   cancelDatasetImport,
@@ -66,7 +66,6 @@ export function DatasetImportPage() {
   const [committing, setCommitting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [pollTick, setPollTick] = useState(0);
-  const [imageSourcesOpen, setImageSourcesOpen] = useState(false);
   const runtimes = useQuery({ queryKey: ["runtimes"], queryFn: ({ signal }) => fetchRuntimes(signal) });
 
   useEffect(() => {
@@ -578,8 +577,8 @@ export function DatasetImportPage() {
                               {imageCheck.checked} 个用例 · {imageCheck.available} 个可用
                               {imageCheck.cases_truncated ? ` · 另有 ${imageCheck.cases_truncated} 个未展示` : ""}
                             </span>
-                            <Button size="small" type="link" onClick={() => setImageSourcesOpen(true)}>
-                              查看镜像源配置
+                            <Button size="small" type="link" onClick={() => navigate("/settings/dataset-images")}>
+                              管理镜像源
                             </Button>
                           </div>
                           {imageBlocked ? (
@@ -731,31 +730,7 @@ export function DatasetImportPage() {
           ) : null}
         </div>
       </section>
-      <Modal
-        open={imageSourcesOpen}
-        title="公开镜像源配置"
-        onCancel={() => setImageSourcesOpen(false)}
-        footer={<Button onClick={() => setImageSourcesOpen(false)}>关闭</Button>}
-      >
-        <p className="ds-summary-hint">按顺序探测；某个源 404/超时会继续下一个，全部不可用时阻断数据集版本。</p>
-        <div className="ds-image-sources ds-image-sources-modal">
-          {(imageCheck?.sources ?? []).map((source, index) => (
-            <span className="ds-image-source" key={`${source.registry}-${source.prefix ?? ""}`}>
-              <b>{index + 1}</b>
-              {source.name}
-              <span className="mono ds-summary-hint">{source.registry}{source.prefix ? `/${source.prefix}` : ""}</span>
-            </span>
-          ))}
-          {!imageCheck?.sources?.length ? <span className="ds-summary-hint">尚未配置公开镜像源。</span> : null}
-        </div>
-        <Alert
-          style={{ marginTop: 12 }}
-          type="info"
-          showIcon
-          message="由管理员通过 DATASET_IMAGE_REGISTRIES 配置"
-          description="当前页面只展示本次探测使用的源；镜像构建、推送和私有源认证不在本次导入中处理。"
-        />
-      </Modal>
+
     </section>
   );
 }

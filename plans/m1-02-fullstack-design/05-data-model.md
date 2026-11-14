@@ -53,6 +53,7 @@ tenant ─ workspace ─ project
 | `dataset_version` | id, tenant_id, dataset_id, version, source_uri, source_revision, adapter_version, case_count, status, task_manifest_key, task_manifest_digest, created_at | 不可变；同来源/修订/适配器版本防重 |
 | `dataset_case` | id, tenant_id, dataset_version_id, case_key, ordinal, repo, base_commit, problem_statement, reference_patch_key, test_patch_key, expected_metrics_json, extra_json, environment_image | `(dataset_version_id,case_key)` unique；大补丁可放 OSS；`environment_image` 为 M8-25 的 per-case 运行时镜像，版本级 `dataset_version.environment_image` 仅作单镜像回退 |
 | `dataset_import` | id, tenant_id, dataset_id, source_config_json, status, total_count, valid_count, invalid_count, error_report_key, created_by | 一次导入过程 |
+| `dataset_image_sources_setting` | id, tenant_id, sources_json, updated_by, created_at, updated_at | M8-26 每个租户的公开镜像源覆盖；空行/空列表表示使用部署默认 `DATASET_IMAGE_REGISTRIES`；`(tenant_id)` unique |
 | `metric_definition` | id, tenant_id, dataset_id, metric_key, version, display_name, description, aggregator_key, formula_text, display_kind, unit, direction, denominator_policy, config_json | `(dataset_id,metric_key,version)` unique |
 | `dataset_version_metric` | tenant_id, dataset_version_id, metric_definition_id | 固化该版本采用的指标集合 |
 

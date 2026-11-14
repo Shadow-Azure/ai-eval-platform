@@ -177,6 +177,9 @@ jobs:
       S3_SECRET_KEY: ${{ secrets.S3_SECRET_KEY }}
       ALIYUN_REGION: ${{ secrets.ALIYUN_REGION }}
       DATABASE_STORAGE_LIMIT_BYTES: ${{ secrets.DATABASE_STORAGE_LIMIT_BYTES }}
+      # M8-26: ordered public dataset image sources. The deploy writes this
+      # value into the backend .env; administrators can override it in the UI.
+      DATASET_IMAGE_REGISTRIES: ${{ secrets.DATASET_IMAGE_REGISTRIES }}
       DISPATCH_TOKEN: ${{ secrets.FLOW_TOKEN }}
       SECRET_BOX_KEY: ${{ secrets.SECRET_BOX_KEY }}
       POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
@@ -267,6 +270,12 @@ jobs:
             egress_proxy="http://${ECS_HOST}:3129"
             egress_proxy_bind="${API_BIND_ADDRESS:-127.0.0.1}"
           fi
+          case "${DATASET_IMAGE_REGISTRIES:-}" in
+            *$'\n'*|*$'\r'*)
+              echo "DATASET_IMAGE_REGISTRIES must be a single line" >&2
+              exit 1
+              ;;
+          esac
           expected_hashes="$(
             for name in SECRET_BOX_KEY POSTGRES_PASSWORD AUTH_SESSION_SECRET GATEWAY_TOKEN_SECRET RUNNER_TASK_SECRET RUNNER_HEARTBEAT_TOKEN RUNNER_ADMIN_TOKEN; do
               value="${!name}"
@@ -288,6 +297,7 @@ jobs:
             printf 'S3_ADDRESSING_STYLE=virtual\n'
             printf 'GITHUB_TOKEN=%s\n' "$DISPATCH_TOKEN"
             printf 'DATABASE_STORAGE_LIMIT_BYTES=%s\n' "$DATABASE_STORAGE_LIMIT_BYTES"
+            printf 'DATASET_IMAGE_REGISTRIES=%s\n' "$DATASET_IMAGE_REGISTRIES"
             printf 'SECRET_BOX_KEY=%s\n' "$SECRET_BOX_KEY"
             printf 'POSTGRES_PASSWORD=%s\n' "$POSTGRES_PASSWORD"
             printf 'AUTH_SESSION_SECRET=%s\n' "$AUTH_SESSION_SECRET"

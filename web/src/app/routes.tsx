@@ -5,6 +5,7 @@ import { AssetsPage } from "../pages/AssetsPage";
 import { DatasetDetailPage } from "../pages/DatasetDetailPage";
 import { DeploymentsPage } from "../pages/DeploymentsPage";
 import { DatasetImportPage } from "../pages/DatasetImportPage";
+import { DatasetImageSourcesPage } from "../pages/DatasetImageSourcesPage";
 import { DatasetsPage } from "../pages/DatasetsPage";
 import { EvalDetailPage } from "../pages/EvalDetailPage";
 import { EvalWizardPage } from "../pages/EvalWizardPage";
@@ -38,6 +39,7 @@ export function AppRoutes() {
           <Route path="/deployments" element={<DeploymentsPage />} />
           <Route element={<RequireAdmin />}>
             <Route path="/operations" element={<OperationsPage />} />
+            <Route path="/settings/dataset-images" element={<DatasetImageSourcesPage />} />
           </Route>
           <Route path="/deployment" element={<Navigate to="/deployments" replace />} />
           <Route path="*" element={<NotFoundPage />} />

@@ -497,7 +497,7 @@ def test_import_blocks_when_public_image_check_is_blocked(
 ) -> None:
     from app.services.dataset_images import DatasetImageUnavailable
 
-    def blocked(case_images, *, settings=None, client=None):
+    def blocked(case_images, *, settings=None, sources=None, client=None):
         return {
             "status": "blocked",
             "reason": None,

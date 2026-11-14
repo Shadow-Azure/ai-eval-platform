@@ -38,7 +38,7 @@ from ..config import Settings, get_settings
 from ..datasets import CaseIssue, DatasetAdapter, get_adapter
 from ..datasets.source import SourceFormatError, iter_source_records, source_mode
 from ..models import DatasetImport
-from .dataset_images import DatasetImageUnavailable, image_for_case, probe_case_images
+from .dataset_images import DatasetImageUnavailable, effective_sources, image_for_case, probe_case_images
 from .datasets import (
     DatasetSourceChanged,
     DatasetVersionConflict,
@@ -474,7 +474,11 @@ def validate_uploaded_import(
     report = result.report
     if result.valid and result.images:
         try:
-            report["image_check"] = probe_case_images(result.images, settings=settings)
+            report["image_check"] = probe_case_images(
+                result.images,
+                settings=settings,
+                sources=effective_sources(session, settings),
+            )
         except Exception as exc:  # probe failures must block, never crash the worker
             report["image_check"] = {
                 "status": "blocked",

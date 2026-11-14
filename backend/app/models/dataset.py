@@ -263,3 +263,23 @@ class DatasetVersionMetric(Base, CreatedAtMixin):
             ondelete="RESTRICT",
         ),
     )
+
+
+class DatasetImageSourcesSetting(Base, TimestampMixin):
+    """M8-26: per-tenant override for the ordered public image sources.
+
+    The deploy-time default remains DATASET_IMAGE_REGISTRIES in the backend
+    environment; this row only stores an explicit administrator override. An
+    absent row (or an empty list) means "use the environment default".
+    """
+
+    __tablename__ = "dataset_image_sources_setting"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    tenant_id: Mapped[str] = tenant_fk()
+    sources_json: Mapped[list] = mapped_column(json_type(), default=list, nullable=False)
+    updated_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", name="uq_dataset_image_sources_setting_tenant"),
+    )

@@ -521,6 +521,13 @@ function sidebarPreference() {
   }
 }
 
+const DEFAULT_IMAGE_SOURCES = [
+  { id: "docker-hub", name: "Docker Hub", registry: "registry-1.docker.io", prefix: "", enabled: true, builtin: true },
+  { id: "1panel", name: "1Panel 镜像加速", registry: "docker.1panel.live", prefix: "", enabled: true, builtin: true },
+  { id: "daocloud", name: "DaoCloud", registry: "docker.m.daocloud.io", prefix: "", enabled: false, builtin: false },
+  { id: "ghcr", name: "GHCR", registry: "ghcr.io", prefix: "acme", enabled: false, builtin: false },
+];
+
 const ui = {
   sidebarCollapsed: sidebarPreference(),
   modelFilter: "",
@@ -558,6 +565,8 @@ const ui = {
   datasetLoading: false,
   importStep: 1,
   importImageCheck: "failed",
+  imageSources: DEFAULT_IMAGE_SOURCES.map((source) => ({ ...source })),
+  imageSourcesDirty: false,
   importProgress: 0,
   importTimer: null,
   newEvalStep: 1,
@@ -588,6 +597,8 @@ const ui = {
   showLoginError: false,
 };
 
+
+
 const navItems = [
   { section: "工作台", items: [{ id: "overview", label: "总览", icon: "overview", path: "/overview" }] },
   {
@@ -607,7 +618,10 @@ const navItems = [
   },
   {
     section: "系统",
-    items: [{ id: "deployment", label: "交付流水线", icon: "pipeline", path: "/deployment" }],
+    items: [
+      { id: "dataset-images", label: "数据集镜像源", icon: "server", path: "/settings/dataset-images" },
+      { id: "deployment", label: "交付流水线", icon: "pipeline", path: "/deployment" },
+    ],
   },
 ];
 
@@ -791,6 +805,7 @@ function breadcrumbFor(path) {
   if (path === "/models") return ["配置", "模型凭据"];
   if (path === "/resources") return ["配置", "资源池"];
   if (path.startsWith("/trace/")) return ["评测任务", "评测详情", "会话轨迹"];
+  if (path === "/settings/dataset-images") return ["系统", "数据集镜像源"];
   if (path === "/deployment") return ["系统", "交付流水线"];
   return ["工作台", "总览"];
 }
@@ -1289,6 +1304,81 @@ function datasetDetailPage(id) {
   );
 }
 
+function datasetImageSourcesPage() {
+  const sources = ui.imageSources;
+  const enabledCount = sources.filter((source) => source.enabled).length;
+  const overrideCount = sources.filter((source) => !source.builtin).length;
+  const rows = sources.map((source, index) => `
+    <div class="image-source-row ${source.enabled ? "" : "is-disabled"}">
+      <div class="image-source-order">${index + 1}</div>
+      <div class="image-source-main">
+        <div class="row-between">
+          <div>
+            <strong>${source.name}</strong>
+            <div class="mono small muted">${source.registry}${source.prefix ? `/${source.prefix}` : ""}</div>
+          </div>
+          <div class="row" style="gap:6px">
+            ${source.builtin ? '<span class="tag tag-primary">部署默认</span>' : '<span class="tag">覆盖项</span>'}
+            <span class="tag ${source.enabled ? "tag-success" : "tag-warning"}">${source.enabled ? "已启用" : "已停用"}</span>
+          </div>
+        </div>
+        <div class="row-between" style="margin-top:8px">
+          <div class="small muted">探测顺序 ${index + 1} · ${source.enabled ? "参与镜像检查" : "本次跳过"}</div>
+          <div class="row" style="gap:6px">
+            <button class="btn btn-sm" data-action="image-source-move" data-index="${index}" data-direction="up" ${index === 0 ? "disabled" : ""}>↑</button>
+            <button class="btn btn-sm" data-action="image-source-move" data-index="${index}" data-direction="down" ${index === sources.length - 1 ? "disabled" : ""}>↓</button>
+            <button class="btn btn-sm" data-action="image-source-toggle" data-index="${index}">${source.enabled ? "停用" : "启用"}</button>
+            <button class="btn btn-sm" data-action="image-source-remove" data-index="${index}" ${source.builtin ? "disabled title=\"部署默认源请在 GitHub Secrets 修改\"" : ""}>删除</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `).join("");
+  return shell(`
+    <section class="page">
+      ${pageHeading({
+        eyebrow: "Settings · Dataset runtime",
+        title: "数据集镜像源",
+        description: "按顺序探测公开 registry；这里的覆盖会持久化到平台，下一次导入校验立即生效。",
+        actions: `<button class="btn" data-action="image-source-reset">恢复部署默认</button><button class="btn btn-primary" data-action="image-source-save">保存配置</button>`,
+      })}
+      <div class="banner">${icon("shield", 15)}<div><strong>默认源来自 GitHub Secrets</strong><br />部署 workflow 把默认顺序写入后端 <span class="inline-code">DATASET_IMAGE_REGISTRIES</span>；这里只保存当前环境的覆盖，不需要手工改部署机 .env。</div></div>
+      <div class="grid grid-3" style="margin-top:16px">
+        <div class="review-box"><div class="metric-label">当前源</div><div class="metric-value" style="font-size:22px">${sources.length}</div><div class="small muted">按从上到下顺序探测</div></div>
+        <div class="review-box"><div class="metric-label">已启用</div><div class="metric-value" style="font-size:22px;color:var(--success)">${enabledCount}</div><div class="small muted">停用项不参与导入检查</div></div>
+        <div class="review-box"><div class="metric-label">覆盖项</div><div class="metric-value" style="font-size:22px;color:var(--warning)">${overrideCount}</div><div class="small muted">部署默认之外的源</div></div>
+      </div>
+      <div class="card" style="margin-top:16px">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">镜像源顺序</h2>
+            <div class="small muted">全部不可用会阻断数据集版本；公开源只读，不支持私有 registry 认证。</div>
+          </div>
+          <button class="btn btn-sm" data-action="image-source-add">${icon("plus", 13)} 添加镜像源</button>
+        </div>
+        <div class="stack">${rows}</div>
+      </div>
+      <div class="grid" style="margin-top:16px">
+        <div class="card">
+          <div class="card-header"><div><h2 class="card-title">生效规则</h2></div><span class="tag tag-primary">下一次校验生效</span></div>
+          <div class="stack small">
+            <div class="row-between"><span>1</span><span class="muted">按顺序请求 /v2/&lt;repo&gt;/manifests/&lt;tag&gt;</span></div>
+            <div class="row-between"><span>2</span><span class="muted">命中即通过；404/401/超时继续下一个</span></div>
+            <div class="row-between"><span>3</span><span class="muted">全部不可用 → 导入阻断</span></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header"><div><h2 class="card-title">部署默认</h2></div><span class="tag">GitHub Secrets</span></div>
+          <div class="stack small muted">
+            <div>默认源由 <span class="inline-code">DATASET_IMAGE_REGISTRIES</span> 注入；恢复默认只清除本页覆盖，不修改部署环境。</div>
+            <div>部署后新增/调整默认源需要更新 Secret 并重新部署，不在前端硬编码。</div>
+          </div>
+        </div>
+      </div>
+    </section>
+  `, "/settings/dataset-images");
+}
+
 function importPage() {
   const step = ui.importStep;
   const sidebarSteps = [
@@ -1388,7 +1478,7 @@ function importPage() {
         <div class="image-check-actions">
           <button class="btn btn-sm" data-action="image-check-recheck">${icon("refresh", 13)} 重新检测</button>
           <button class="btn btn-sm" data-action="image-check-toggle">${imagePassed ? "模拟镜像缺失" : "模拟镜像可用"}</button>
-          <button class="btn btn-ghost btn-sm" data-action="image-source-config">${icon("shield", 13)} 查看镜像源配置</button>
+          <button class="btn btn-ghost btn-sm" data-route="/settings/dataset-images">${icon("shield", 13)} 管理镜像源</button>
         </div>
       </div>
     `;
@@ -2666,6 +2756,8 @@ function render(options = {}) {
     html = evalDetailPage(parts[1]);
   } else if (path.startsWith("/trace/")) {
     html = tracePage(parts[1], decodeURIComponent(parts.slice(2).join("/")));
+  } else if (path === "/settings/dataset-images") {
+    html = datasetImageSourcesPage();
   } else if (path === "/deployment") {
     html = deploymentPage();
   } else {
@@ -3574,6 +3666,62 @@ function handleAction(action, target) {
       render({ preserveScroll: true });
       toast(ui.importImageCheck === "passed" ? "镜像检查通过" : "仍未找到部分镜像，请补充镜像源");
     }, 700);
+    return;
+  }
+  if (action === "image-source-move") {
+    const index = Number.parseInt(target.dataset.index || "-1", 10);
+    const direction = target.dataset.direction;
+    const next = direction === "up" ? index - 1 : index + 1;
+    if (index >= 0 && next >= 0 && next < ui.imageSources.length) {
+      [ui.imageSources[index], ui.imageSources[next]] = [ui.imageSources[next], ui.imageSources[index]];
+      ui.imageSourcesDirty = true;
+      render();
+    }
+    return;
+  }
+  if (action === "image-source-toggle") {
+    const index = Number.parseInt(target.dataset.index || "-1", 10);
+    if (ui.imageSources[index]) {
+      ui.imageSources[index].enabled = !ui.imageSources[index].enabled;
+      ui.imageSourcesDirty = true;
+      render();
+    }
+    return;
+  }
+  if (action === "image-source-remove") {
+    const index = Number.parseInt(target.dataset.index || "-1", 10);
+    if (ui.imageSources.length <= 1) {
+      toast("至少保留一个镜像源", true);
+      return;
+    }
+    if (ui.imageSources[index]) {
+      ui.imageSources.splice(index, 1);
+      ui.imageSourcesDirty = true;
+      render();
+    }
+    return;
+  }
+  if (action === "image-source-add") {
+    if (ui.imageSources.some((source) => source.id === "acr-public")) {
+      toast("示例源已存在");
+      return;
+    }
+    ui.imageSources.push({ id: "acr-public", name: "ACR 公开仓库", registry: "crpi-asv0cbh8pj2ubw6j-vpc.cn-hangzhou.personal.cr.aliyuncs.com", prefix: "shadow_azure", enabled: true, builtin: false });
+    ui.imageSourcesDirty = true;
+    render();
+    toast("已添加示例镜像源，保存后生效");
+    return;
+  }
+  if (action === "image-source-save") {
+    ui.imageSourcesDirty = false;
+    toast("镜像源配置已保存；下一次导入校验使用新顺序");
+    return;
+  }
+  if (action === "image-source-reset") {
+    ui.imageSources = DEFAULT_IMAGE_SOURCES.map((source) => ({ ...source }));
+    ui.imageSourcesDirty = false;
+    render();
+    toast("已恢复部署默认源");
     return;
   }
   if (action === "image-source-config") {
