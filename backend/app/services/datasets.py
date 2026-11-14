@@ -37,6 +37,7 @@ from ..datasets import (
 )
 from ..defaults import DEFAULT_PROJECT_ID, DEFAULT_TENANT_ID
 from ..models import Dataset, DatasetCase, DatasetImport, DatasetVersion, DatasetVersionMetric, MetricDefinition
+from .dataset_images import DatasetImageUnavailable, image_for_case, probe_case_images
 from .metrics import register_adapter_metrics
 
 
@@ -243,6 +244,8 @@ def materialize_dataset_version(
     the transaction instead of silently creating a partial version.
     """
 
+    settings = get_settings()
+    image_arch = getattr(settings, "dataset_image_arch", "x86_64")
     tenant_id = str(DEFAULT_TENANT_ID)
     project_id = str(DEFAULT_PROJECT_ID)
     execution_image_digest, scoring_image_digest = _effective_digests(
@@ -414,6 +417,12 @@ def materialize_dataset_version(
                 test_patch=normalized.test_patch,
                 expected_metrics_json=normalized.expected_metrics,
                 extra_json=normalized.extra,
+                environment_image=image_for_case(
+                    adapter_key,
+                    normalized.case_key,
+                    raw,
+                    arch=image_arch,
+                ),
             )
         )
         written += 1
@@ -530,6 +539,19 @@ def import_dataset_version(
     errors = _validate_records(adapter, records)
     if errors:
         raise failed(errors)
+
+    settings = get_settings()
+    arch = getattr(settings, "dataset_image_arch", "x86_64")
+    case_images: dict[str, str] = {}
+    for raw in records:
+        normalized = adapter.normalize_case(raw)
+        image = image_for_case(adapter_key, normalized.case_key, raw, arch=arch)
+        if image:
+            case_images[normalized.case_key] = image
+    if case_images:
+        check = probe_case_images(case_images, settings=settings)
+        if check.get("status") == "blocked":
+            raise DatasetImageUnavailable(check)
 
     return materialize_dataset_version(
         session,

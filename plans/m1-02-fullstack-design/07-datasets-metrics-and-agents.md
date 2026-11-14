@@ -32,6 +32,16 @@ class DatasetAdapter(Protocol):
 
 任务包分“Agent 可见”和“评分专用”两类权限，不能因为同一 OSS manifest 就把参考答案和测试补丁暴露给 Agent。
 
+## 1.1 运行时镜像解析（M8-25）
+
+公开 SWE-bench 数据集不携带 `environment_image`；评测 harness 按 instance 与架构派生镜像名，例如
+`swebench/sweb.eval.x86_64.astropy_1776_astropy-12907:latest`。平台在导入时为每个 case 解析并固化
+`dataset_case.environment_image`，允许记录中的 `docker_image` / `image_name` 覆盖；`dataset_version.environment_image`
+只作为单镜像数据集的兼容回退。导入校验按 `DATASET_IMAGE_REGISTRIES` 的顺序探测公开 registry；全部源
+不可用（404/401/超时）时返回 `dataset_image_unavailable`，在写入任何版本前阻断。提交阶段再次拒绝
+`image_check.status=blocked` 的导入，避免校验后源状态变化造成半可用版本。Runner 的 case task 接收
+per-case 镜像，版本级镜像仅在 case 未携带镜像时回退。
+
 ## 2. 五文件任务包与 OSS 布局
 
 架构固定任务包为 `task.toml`、`instruction.md`、`environment/Dockerfile`、`tests/test.sh`、`solution/solve.sh`。建议 manifest 另存于版本级索引，记录每个文件 digest、评分镜像 digest、可见性和运行时约束。

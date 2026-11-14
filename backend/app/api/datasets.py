@@ -27,6 +27,7 @@ from ..services import dataset_imports as import_service
 from ..services import datasets as dataset_service
 from ..services import identity
 from ..services import metrics as metric_service
+from ..services.dataset_images import DatasetImageUnavailable
 from .dependencies import require_admin
 from .errors import error_detail
 
@@ -91,6 +92,7 @@ def case_summary(case: DatasetCase) -> dict:
         "difficulty": dataset_service.difficulty_level(difficulty_label),
         "difficulty_label": difficulty_label,
         "expected_test_count": dataset_service.case_expected_test_count(case),
+        "environment_image": case.environment_image,
         "created_at": case.created_at.isoformat(timespec="microseconds"),
     }
 
@@ -186,6 +188,15 @@ def create_dataset_import(
             records=payload.records,
             created_by=context.user.email,
         )
+    except DatasetImageUnavailable as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=error_detail(
+                "dataset_image_unavailable",
+                "数据集运行时镜像在已配置公开源中不可用，不能生成版本",
+                details={"image_check": exc.check},
+            ),
+        ) from exc
     except dataset_service.ImportValidationFailed as exc:
         failed = exc.outcome
         raise HTTPException(
@@ -428,6 +439,15 @@ def commit_dataset_import(
             detail=error_detail(
                 "dataset_import_state_conflict",
                 "只有校验通过的导入可以生成版本，请重新校验数据",
+            ),
+        ) from exc
+    except DatasetImageUnavailable as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=error_detail(
+                "dataset_image_unavailable",
+                "数据集运行时镜像在已配置公开源中不可用，不能生成版本",
+                details={"image_check": exc.check},
             ),
         ) from exc
     database_url = _database_url(session)

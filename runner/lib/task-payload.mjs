@@ -13,7 +13,7 @@ export function buildCaseTask(task, taskPayload) {
     model: taskPayload?.model,
     execution_image_digest: taskPayload?.execution_image_digest,
     scoring_image_digest: taskPayload?.scoring_image_digest,
-    environment_image: taskPayload?.environment_image,
+    environment_image: task.environment_image ?? taskPayload?.environment_image,
     adapter_key: taskPayload?.adapter_key || "swebench",
     runtime_key: taskPayload?.runtime?.key || "claude-code",
     asset_snapshot: taskPayload?.asset_snapshot ?? {},

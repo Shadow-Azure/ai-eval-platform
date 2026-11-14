@@ -475,3 +475,29 @@ def test_reaper_expires_abandoned_validated_import(
     assert refreshed.validation_report_json["fatal_code"] == "import_expired"
     assert list(import_dir.iterdir()) == []
     assert list(session.scalars(select(DatasetVersion))) == []
+
+
+def test_begin_commit_blocks_when_image_check_failed(seeded: Session) -> None:
+    from app.defaults import DEFAULT_TENANT_ID
+
+    record = DatasetImport(
+        tenant_id=str(DEFAULT_TENANT_ID),
+        dataset_slug="swebench-verified",
+        dataset_name="SWE-bench Verified",
+        adapter_key="swebench",
+        version="blocked-image-commit",
+        source_uri="",
+        source_revision="rev-0001",
+        status="validated",
+        total_count=1,
+        valid_count=1,
+        invalid_count=0,
+        processed_count=1,
+        created_by="test",
+        validation_report_json={"image_check": {"status": "blocked"}},
+    )
+    seeded.add(record)
+    seeded.commit()
+
+    with pytest.raises(import_service.DatasetImageUnavailable):
+        import_service.begin_commit(seeded, record.id)

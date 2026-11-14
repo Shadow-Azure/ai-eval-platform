@@ -249,6 +249,9 @@ def create_synthetic_evaluation(
                     "base_commit": case.base_commit,
                     "test_patch": case.test_patch,
                     "expected_metrics": case.expected_metrics_json,
+                    # M8-25: freeze the per-instance runner image with the task
+                    # view so a later dataset edit cannot change it.
+                    "environment_image": case.environment_image,
                 },
             }
             for index, case in enumerate(cases)

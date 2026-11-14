@@ -478,3 +478,40 @@ def test_duplicate_detection_uses_adapter_case_key(seeded: Session) -> None:
         assert list(seeded.scalars(select(DatasetCase))) == []
     finally:
         unregister_adapter("simple-keyed")
+
+
+def test_import_stores_per_case_environment_image(seeded: Session) -> None:
+    outcome = do_import(seeded, version="verified-per-case-image")
+    assert outcome.version is not None
+    case = seeded.scalar(
+        select(DatasetCase).where(DatasetCase.dataset_version_id == outcome.version.id)
+    )
+    assert case is not None
+    assert case.environment_image == (
+        "swebench/sweb.eval.x86_64.astropy_1776_astropy-12907:latest"
+    )
+
+
+def test_import_blocks_when_public_image_check_is_blocked(
+    seeded: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.services.dataset_images import DatasetImageUnavailable
+
+    def blocked(case_images, *, settings=None, client=None):
+        return {
+            "status": "blocked",
+            "reason": None,
+            "sources": [],
+            "checked": len(case_images),
+            "available": 0,
+            "cases": [],
+            "unavailable": [],
+            "cases_truncated": 0,
+        }
+
+    monkeypatch.setattr(dataset_service, "probe_case_images", blocked)
+    with pytest.raises(DatasetImageUnavailable):
+        do_import(seeded, version="verified-blocked-image")
+    assert seeded.scalar(
+        select(DatasetVersion).where(DatasetVersion.version == "verified-blocked-image")
+    ) is None

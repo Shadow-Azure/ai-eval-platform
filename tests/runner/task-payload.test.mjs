@@ -63,3 +63,22 @@ test("run-wide egress token is copied onto every case task", () => {
     assert.equal(task.egress_token, token);
   }
 });
+
+test("case-level environment image overrides the run-wide fallback", () => {
+  const tasks = buildCaseTasks({
+    ...payload,
+    cases: [
+      {
+        case_run_id: "case-1",
+        case_key: "a",
+        environment_image: "swebench/sweb.eval.x86_64.astropy_1776_astropy-12907:latest",
+      },
+      { case_run_id: "case-2", case_key: "b" },
+    ],
+  });
+  assert.equal(
+    tasks.get("case-1").environment_image,
+    "swebench/sweb.eval.x86_64.astropy_1776_astropy-12907:latest",
+  );
+  assert.equal(tasks.get("case-2").environment_image, "swebench/env:latest");
+});
