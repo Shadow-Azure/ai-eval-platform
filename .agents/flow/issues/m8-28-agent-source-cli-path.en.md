@@ -11,6 +11,7 @@ scope:
   - .agents/flow/issues/m8-28-agent-source-cli-path.*
   - .agents/flow/milestones/m8-bug-fixes.*
   - runner/adapters/runtimes/claude-code.mjs
+  - runner/scripts/link-source-bins.mjs
   - tests/runner/agent-source-path.test.mjs
 adr: []
 github:
@@ -29,10 +30,10 @@ After the trace permission fix, `/opsx:design` expands but the design skill's `c
 ## Goal
 
 - Add source CLI directories to the Agent PATH.
-- Create a stable `codespec` -> `codespec.js` link under `/asset-source/bin` when present.
+- Add a generic `link-source-bins.mjs` that reads the source package's `bin` map and links every declared command into `/home/eval/bin`; no hard-coded `codespec`.
 - Lock with a runner test; after deploy rerun OpenSpec and confirm design→propose→apply.
 
 ## Acceptance
 
-- `agentScript()` PATH includes source CLI directories and the codespec link.
+- `agentScript()` PATH includes source CLI directories; the generic linker covers any source CLI.
 - Runner CI passes; production trace shows codespec/design stages, not command not found.

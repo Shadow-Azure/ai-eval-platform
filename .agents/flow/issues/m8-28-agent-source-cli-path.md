@@ -11,6 +11,7 @@ scope:
   - .agents/flow/issues/m8-28-agent-source-cli-path.*
   - .agents/flow/milestones/m8-bug-fixes.*
   - runner/adapters/runtimes/claude-code.mjs
+  - runner/scripts/link-source-bins.mjs
   - tests/runner/agent-source-path.test.mjs
 adr: []
 github:
@@ -29,10 +30,10 @@ trace 权限修复后，OpenSpec source-mode 的 `/opsx:design` 已能展开，�
 ## 目标
 
 - Agent PATH 加入 source CLI 目录。
-- 在 `/asset-source/bin` 创建 `codespec` -> `codespec.js` 的稳定链接（存在时）。
+- 新增通用 `link-source-bins.mjs`：读取 source package `package.json` 的 `bin` 映射，把所有声明命令链接到 `/home/eval/bin`，不硬编码 `codespec`。
 - 测试锁定 PATH/链接；部署后重跑 OpenSpec，确认 design→propose→apply 真正执行。
 
 ## 验收
 
-- `agentScript()` PATH 包含 source CLI 目录与 `codespec` 链接。
+- `agentScript()` PATH 包含 source CLI 目录；通用 bin 链接器覆盖任意 source CLI。
 - Runner CI 通过；生产 trace 出现 codespec/design 阶段，而非 command not found。
