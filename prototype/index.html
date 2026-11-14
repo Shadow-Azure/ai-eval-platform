@@ -4596,6 +4596,7 @@ const ui = {
     temporaryModel: "MiniMax-M2.1",
     pool: "linux",
     promptSuffix: "",
+    maxTurns: "",
   },
   traceSpan: "span-root",
   traceFilter: "all",
@@ -5851,6 +5852,7 @@ function evalSummaryAside() {
         <div class="summary-item"><span class="summary-label">模型</span><span class="summary-value">${credential}</span></div>
         <div class="summary-item"><span class="summary-label">资源池</span><span class="summary-value">${pool}</span></div>
         <div class="summary-item"><span class="summary-label">附加指令</span><span class="summary-value">${ui.newEval.promptSuffix ? `已配置 · ${ui.newEval.promptSuffix.length} 字符` : "未设置"}</span></div>
+        <div class="summary-item"><span class="summary-label">最大轮次</span><span class="summary-value">${ui.newEval.maxTurns ? `${esc(ui.newEval.maxTurns)} 轮` : "默认 200 轮"}</span></div>
       </div>
       <div style="padding:0 19px 19px">
         <div class="review-box">
@@ -6056,6 +6058,11 @@ function newEvalPage() {
         <span class="hint">原样追加到数据集的 problem_statement 之后；上限 4000 字符。评测配置与轨迹会保留该文本。</span>
       </div>
       <div class="banner" style="margin-top:2px">${icon("sparkles", 15)}<div><strong>示例</strong> · “非交互评测，请勿向用户提问；按需使用 superpowers 技能（using-superpowers、test-driven-development 等）完成任务。”</div></div>
+      <div class="card-header" style="padding:20px 0 10px;border:0"><div><h3 class="card-title">最大轮次（可选）</h3><p class="card-subtitle">限制 Agent 的模型响应轮次；留空按默认值执行</p></div><span class="tag tag-neutral">可选</span></div>
+      <div class="field">
+        <input class="input" id="max-turns" type="number" min="1" max="1000" step="1" value="${esc(ui.newEval.maxTurns)}" placeholder="默认 200" />
+        <span class="hint">留空默认 200 轮；一轮 = 一次模型响应（可能包含多个工具调用），不是一次工具调用。范围 1–1000。</span>
+      </div>
     `;
   } else {
     const selectedAssetSource = assetSourceById(ui.newEval.assetSource);
@@ -6072,6 +6079,7 @@ function newEvalPage() {
         <div class="summary-item"><span class="summary-label">资源池</span><span class="summary-value">Linux Spot Pool</span></div>
         <div class="summary-item"><span class="summary-label">超时策略</span><span class="summary-value">单用例 30 分钟 · 失败重试 1 次</span></div>
         <div class="summary-item"><span class="summary-label">附加指令</span><span class="summary-value" style="white-space:pre-wrap">${ui.newEval.promptSuffix ? esc(ui.newEval.promptSuffix) : "未设置"}</span></div>
+        <div class="summary-item"><span class="summary-label">最大轮次</span><span class="summary-value">${ui.newEval.maxTurns ? `${esc(ui.newEval.maxTurns)} 轮` : "默认 200 轮"}</span></div>
       </div>
       <div class="banner warning" style="margin-top:15px">${icon("alert", 15)}<div><strong>这会占用资源池并产生模型费用。</strong> 预计 ¥126–158，实际费用以 token 与机时为准。启动后仍可取消排队和执行中的用例。</div></div>
       <div class="field" style="margin-top:16px"><label>通知</label><select class="select"><option>完成后站内通知</option><option>完成后站内通知 + Webhook</option><option>不通知</option></select></div>
@@ -8192,6 +8200,10 @@ document.addEventListener("input", (event) => {
       nextInput.focus();
       nextInput.setSelectionRange(selection, selection);
     }
+  }
+  if (event.target.id === "max-turns") {
+    ui.newEval.maxTurns = event.target.value.replace(/[^0-9]/g, "").slice(0, 4);
+    return;
   }
   if (event.target.id === "prompt-suffix") {
     ui.newEval.promptSuffix = event.target.value;
