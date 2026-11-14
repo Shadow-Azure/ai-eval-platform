@@ -1,0 +1,5 @@
+# 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
+# git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
+#   pnpm run record:i18n -- .agents/flow/issues/m8-23-deploy-image-retention.md
+m8-23-deploy-image-retention.md: 9ee84f26ee0c70a2d263a4c77318486139fbfb1c
+m8-23-deploy-image-retention.en.md: 97589516de75eec750e67cce0d5fe4a8f5023eb5
