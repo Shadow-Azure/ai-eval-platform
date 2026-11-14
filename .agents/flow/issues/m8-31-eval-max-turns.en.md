@@ -29,6 +29,8 @@ scope:
   - tests/backend/test_operations.py
   - tests/runner/task-payload.test.mjs
   - web/src/pages/EvalWizardPage.tsx
+  - web/src/pages/EvalDetailPage.tsx
+  - plans/2026-11-14-pr247-review.md
   - web/src/api/evaluations.ts
   - plans/m1-02-fullstack-design/05-data-model.md
   - plans/m1-02-fullstack-design/07-datasets-metrics-and-agents.md
