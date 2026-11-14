@@ -1,5 +1,5 @@
 # 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
 # git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
 #   pnpm run record:i18n -- .agents/flow/issues/m8-22-cli-source-checkout.md
-m8-22-cli-source-checkout.md: e815608a135b9bfda465c8779eb830060b603b79
-m8-22-cli-source-checkout.en.md: 3a141d94110669803f57929cc5d81ef194dac630
+m8-22-cli-source-checkout.md: 83b96137bc241990608bd0158b65c57303e1ffd0
+m8-22-cli-source-checkout.en.md: 47be4be811ab9f6c09ec0f1fec34a23ed5cf7be1
