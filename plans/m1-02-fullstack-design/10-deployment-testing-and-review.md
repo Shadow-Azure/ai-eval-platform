@@ -16,7 +16,10 @@ main：全量测试 + 文档/流程门禁
   → ECS Compose 滚动更新 API/Worker/Web
   → /healthz + /readyz + DB/Redis/OSS/GitHub/模型网关检查
   → 小范围 smoke：登录、读数据集、创建准备、SSE、轨迹查询
+  → 清理超出保留窗口的旧镜像（保留运行中镜像、回滚 digest 与最近 3 版）
   → 记录 deployment；失败按兼容矩阵回滚应用或向前修复
+
+清理旧镜像是部署成功后的 best-effort 步骤：远端 OCI 仓库按 digest 保留全部版本，本机只保留运行中镜像、`.state/previous.env` 的回滚 digest 与每个仓库最近 N 版（默认 3，上限 10）；删除失败只记录日志，不改变部署成功状态。
 
 已确认 main 合入后的常规迁移与部署不增加人工审批。应用回滚、破坏性 contract（删列/改约束）和生产资源连接变更高风险操作进入独立审批工作流；审批不阻塞常规持续交付。
 ```
@@ -55,7 +58,7 @@ GitHub Actions 建议通过 OIDC assume Aliyun RAM Role，减少长期云 AK；�
 | Realtime | 重复/乱序事件、Redis 重启、SSE 断线、DB 回放、旧 attempt 迟到 |
 | Security | Key 不出现在 payload/log/DB 快照、沙箱隔离、raw 权限、轨迹 XSS |
 | Web E2E | 七条核心流程与空/加载/失败/无权限/部分成功/危险确认 |
-| Deployment | 空库/上一版迁移、健康检查失败、应用回滚、contract 禁止自动回滚 |
+| Deployment | 空库/上一版迁移、健康检查失败、应用回滚、contract 禁止自动回滚、镜像保留窗口边界 |
 
 最低发布演练应真实完成一次“小批量 SWE-bench + 两个 Linux Runner + 一个子 Agent + 一次 Spot/进程中断 + 一次 SSE 重连”，仅用 mock 无法证明并发与轨迹闭环。
 
