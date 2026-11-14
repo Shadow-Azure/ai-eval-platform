@@ -24,7 +24,12 @@ export function installScript() {
 
 export function agentScript() {
   return [
-    "export PATH=/opt/miniconda3/envs/testbed/bin:/opt/node/bin:$PATH",
+    // M8-28: source-mode init/commands call the `codespec` CLI. The package
+    // ships `bin/codespec.js` (not a bare `codespec`), and the source CLI
+    // directories were previously only on the install/init PATH. Expose a
+    // stable command and include those directories for the Agent too.
+    "if [ -f /asset-source/bin/codespec.js ]; then ln -sf /asset-source/bin/codespec.js /asset-source/bin/codespec 2>/dev/null || true; fi",
+    "export PATH=/asset-source/bin:/asset-source/node_modules/.bin:/home/eval/node_modules/.bin:/home/eval/bin:/home/eval/.local/bin:/opt/miniconda3/envs/testbed/bin:/opt/node/bin:$PATH",
     "cd /testbed",
     "node /runner/scripts/claude-code-smoke.mjs",
   ].join("; ");
