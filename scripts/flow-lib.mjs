@@ -235,6 +235,8 @@ export function validateTree(tree, opts = {}) {
       errors.push(`${file}: 缺 title（GitHub milestone 同步用）`);
     if (!MILESTONE_STATUSES.includes(data.status))
       errors.push(`${file}: status 必须是 ${MILESTONE_STATUSES.join(" | ")}（实有 ${JSON.stringify(data.status)}）`);
+    if (data["keep-open"] !== undefined && typeof data["keep-open"] !== "boolean")
+      errors.push(`${file}: keep-open 只能是 true/false`);
     checkGithub(file, data, repo, "milestone", errors);
   }
   if (Array.isArray(order))
@@ -303,8 +305,8 @@ export function validateTree(tree, opts = {}) {
     const allDone = owned.length > 0 && owned.every((i) => i.data.status === "done");
     if (m.data.status === "done" && !allDone)
       errors.push(`${m.file}: status done 但尚有未 done 的 issue`);
-    if (allDone && m.data.status !== "done")
-      errors.push(`${m.file}: 全部 issue 已 done，milestone status 应为 done`);
+    if (allDone && m.data.status !== "done" && m.data["keep-open"] !== true)
+      errors.push(`${m.file}: 全部 issue 已 done，milestone status 应为 done（确需保持打开时设置 keep-open: true）`);
   }
 
   // 优先级推进资格：约束 in-progress / done 的 issue。

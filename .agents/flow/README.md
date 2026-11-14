@@ -18,7 +18,7 @@
 
 roadmap 字段：`kind: roadmap`、`milestones`。
 
-milestone 字段：`kind: milestone`、`id`、`title`、`status`、`github: {number, url}`。
+milestone 字段：`kind: milestone`、`id`、`title`、`status`、`keep-open`（可选）、`github: {number, url}`。
 
 issue 字段：`kind: issue`、`milestone`、`priority`、`status`、`scope`、`adr`、`github: {number, url}`。流程自举时可在首个 milestone 内使用一次 `bootstrap: true`，编号回填后移除。
 
@@ -33,7 +33,7 @@ issue 字段：`kind: issue`、`milestone`、`priority`、`status`、`scope`、`
 - issue 编号与 GitHub issue 编号一致；提交与 PR 标题必须包含 `(#N)`。
 - `github.number` 为 `null` 的 issue 只能处于 `backlog`，同步回填编号后才能流转。
 - 跨 milestone 的同优先级串行；同 milestone 同优先级允许并行。
-- milestone 为 `done` 当且仅当其 issue 全部为 `done`。
+- milestone 为 `done` 当且仅当其 issue 全部为 `done`；标了 `keep-open: true` 的常驻里程碑（如持续接收同类问题的缺陷修复里程碑）可在 issue 全部 done 后保持 `active`。
 
 ## 门禁
 

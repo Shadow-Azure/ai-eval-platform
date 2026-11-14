@@ -6,11 +6,14 @@
 kind: issue
 milestone: m8
 priority: P2
-status: ready
+status: done
 scope:
   - .agents/flow/issues/m8-23-deploy-image-retention.*
   - .agents/flow/milestones/m8-bug-fixes.*
   - .agents/flow/roadmap.*
+  - .agents/flow/README.*
+  - scripts/flow-lib.mjs
+  - tests/flow-lib.test.mjs
   - deploy/deploy.sh
   - deploy/common.sh
   - .github/workflows/deploy.yml
