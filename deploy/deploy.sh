@@ -104,6 +104,17 @@ if ! wait_ready 30; then
 fi
 stage_finish success "/readyz 通过"
 
+# M8-23: bound the local image cache only after the new stack is healthy. The
+# cleanup keeps the running images, the rollback digest and the newest N
+# versions, and is called in a condition so its best-effort failures never
+# trigger the rollback trap or fail an otherwise successful deployment.
+stage_begin image_prune
+if prune_old_images; then
+  stage_finish success "保留 ${PRUNE_KEPT} 个镜像，删除 ${PRUNE_DELETED} 个（失败 ${PRUNE_FAILED}）；${PRUNE_DF}"
+else
+  stage_finish skipped "镜像清理失败，已跳过；部署保持成功"
+fi
+
 stage_begin deployment_record
 stage_finish success "部署结果已写入记录"
 record_deployment succeeded
