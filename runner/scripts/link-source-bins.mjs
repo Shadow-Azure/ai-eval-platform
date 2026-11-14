@@ -14,7 +14,7 @@ import {
   mkdirSync,
   readFileSync,
   rmSync,
-  symlinkSync,
+  writeFileSync,
 } from "node:fs";
 import { join, resolve, sep } from "node:path";
 
@@ -54,8 +54,17 @@ for (const [rawName, target] of Object.entries(declared)) {
   const destination = join(binDir, name);
   try {
     rmSync(destination, { force: true });
-    symlinkSync(source, destination);
-    chmodSync(source, 0o755);
+    // The package bin file is often 0644 in a tarball; a symlink would be
+    // "found but Permission denied". A small wrapper is executable regardless
+    // of the source mode and works for every declared bin entry.
+    const quotedNode = JSON.stringify(process.execPath);
+    const quotedSource = JSON.stringify(source);
+    writeFileSync(
+      destination,
+      `#!/bin/sh\nexec ${quotedNode} ${quotedSource} "$@"\n`,
+      { mode: 0o755 },
+    );
+    chmodSync(destination, 0o755);
     console.log(`[source-bin] ${name} -> ${source}`);
   } catch (error) {
     console.error(`[source-bin] skip ${name}: ${error.message}`);
