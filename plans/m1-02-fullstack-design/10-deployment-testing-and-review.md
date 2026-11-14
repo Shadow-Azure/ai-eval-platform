@@ -18,11 +18,11 @@ main：全量测试 + 文档/流程门禁
   → 小范围 smoke：登录、读数据集、创建准备、SSE、轨迹查询
   → 清理超出保留窗口的旧镜像（保留运行中镜像、回滚 digest 与最近 3 版）
   → 记录 deployment；失败按兼容矩阵回滚应用或向前修复
+```
 
 清理旧镜像是部署成功后的 best-effort 步骤：远端 OCI 仓库按 digest 保留全部版本，本机只保留运行中镜像、`.state/previous.env` 的回滚 digest 与每个仓库最近 N 版（默认 3，上限 10）；删除失败只记录日志，不改变部署成功状态。
 
 已确认 main 合入后的常规迁移与部署不增加人工审批。应用回滚、破坏性 contract（删列/改约束）和生产资源连接变更高风险操作进入独立审批工作流；审批不阻塞常规持续交付。
-```
 
 GitHub Actions 建议通过 OIDC assume Aliyun RAM Role，减少长期云 AK；部署环境使用 GitHub Environment 保护规则。SSH 私钥若必须使用，仅存 GitHub Environment Secret，限制来源与权限，不进入 Runner 评测工作流。
 
