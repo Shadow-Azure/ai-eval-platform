@@ -3953,3 +3953,37 @@ tbody tr.clickable {
     grid-template-columns: 240px minmax(390px, 1fr) 320px;
   }
 }
+
+.image-source-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.image-source-row.is-disabled {
+  background: #fbfcfe;
+  opacity: 0.72;
+}
+
+.image-source-order {
+  display: inline-flex;
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  color: #fff;
+  background: var(--primary);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.image-source-main {
+  flex: 1;
+  min-width: 0;
+}
