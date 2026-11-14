@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Alert, Button, Form, Input, Progress, Select, Space, Tag } from "antd";
+import { Alert, Button, Form, Input, Modal, Progress, Select, Space, Tag } from "antd";
 import { useNavigate } from "react-router-dom";
 import {
   cancelDatasetImport,
@@ -66,6 +66,7 @@ export function DatasetImportPage() {
   const [committing, setCommitting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [pollTick, setPollTick] = useState(0);
+  const [imageSourcesOpen, setImageSourcesOpen] = useState(false);
   const runtimes = useQuery({ queryKey: ["runtimes"], queryFn: ({ signal }) => fetchRuntimes(signal) });
 
   useEffect(() => {
@@ -221,6 +222,11 @@ export function DatasetImportPage() {
   const status = importRecord?.status ?? "";
   const report = importRecord?.report ?? {};
   const errors = importRecord ? importIssues(importRecord) : [];
+  const imageCheck = report.image_check;
+  const imageBlocked = imageCheck?.status === "blocked";
+  const imageCases = imageCheck?.unavailable?.length
+    ? imageCheck.unavailable
+    : imageCheck?.cases ?? [];
   const completeness = Object.entries(report.field_completeness ?? {});
   const activeSide = step;
   const validating = status === "queued" || status === "validating";
@@ -509,7 +515,7 @@ export function DatasetImportPage() {
                           <strong>环境与评分任务包</strong>
                           <div className="ds-summary-hint">environment/Dockerfile · tests/test.sh · task.toml</div>
                         </div>
-                        <Tag color="success">可生成</Tag>
+                        <Tag color={imageBlocked ? "warning" : "success"}>{imageBlocked ? "待镜像检查" : "可生成"}</Tag>
                       </div>
                       <div className="ds-summary-row">
                         <div>
@@ -529,6 +535,72 @@ export function DatasetImportPage() {
                           {(importRecord.file_digest ?? "").slice(0, 18)}…
                         </span>
                       </div>
+                      {imageCheck ? (
+                        <div className="ds-image-check">
+                          <div className="ds-image-check-head">
+                            <div>
+                              <strong>运行时镜像检查</strong>
+                              <div className="ds-summary-hint">
+                                按每个用例的 instance/架构解析镜像，并按配置顺序探测公开源；全部不可用则阻止生成版本。
+                              </div>
+                            </div>
+                            <Tag color={imageBlocked ? "error" : imageCheck.status === "passed" ? "success" : "warning"}>
+                              {imageBlocked ? "未找到" : imageCheck.status === "passed" ? "通过" : "未检查"}
+                            </Tag>
+                          </div>
+                          <div className="ds-image-sources">
+                            {(imageCheck.sources ?? []).map((source, index) => (
+                              <span className="ds-image-source" key={`${source.registry}-${source.prefix ?? ""}`}>
+                                <b>{index + 1}</b>
+                                {source.name}
+                                <Tag color={source.status === "found" ? "success" : source.status === "not_found" ? "error" : "default"}>
+                                  {source.status === "found" ? "200" : source.status === "not_found" ? "404" : source.status}
+                                </Tag>
+                              </span>
+                            ))}
+                            {!imageCheck.sources?.length ? <span className="ds-summary-hint">未配置公开镜像源</span> : null}
+                          </div>
+                          {imageCases.length ? (
+                            <div className="ds-image-cases">
+                              {imageCases.slice(0, 3).map((item) => (
+                                <div className="ds-image-case" key={item.case_key}>
+                                  <span className="mono">{item.case_key}</span>
+                                  <span className="mono ds-summary-hint">{item.image}</span>
+                                  <Tag color={item.status === "found" ? "success" : "error"}>
+                                    {item.status === "found" ? item.source ?? "可用" : "未找到"}
+                                  </Tag>
+                                </div>
+                              ))}
+                            </div>
+                          ) : null}
+                          <div className="ds-image-summary">
+                            <span>
+                              {imageCheck.checked} 个用例 · {imageCheck.available} 个可用
+                              {imageCheck.cases_truncated ? ` · 另有 ${imageCheck.cases_truncated} 个未展示` : ""}
+                            </span>
+                            <Button size="small" type="link" onClick={() => setImageSourcesOpen(true)}>
+                              查看镜像源配置
+                            </Button>
+                          </div>
+                          {imageBlocked ? (
+                            <Alert
+                              type="error"
+                              showIcon
+                              message="生成版本已阻断"
+                              description={`有 ${imageCheck.checked - imageCheck.available} 个用例镜像未在已配置公开源中找到。请先让管理员补充/同步镜像源，或稍后重新上传校验；不会写入半成品版本。`}
+                            />
+                          ) : imageCheck.status === "skipped" ? (
+                            <Alert
+                              type="warning"
+                              showIcon
+                              message="未执行公开镜像源检查"
+                              description={imageCheck.reason ?? "请配置 DATASET_IMAGE_REGISTRIES 后重新上传校验。"}
+                            />
+                          ) : (
+                            <Alert type="success" showIcon message="所有用例镜像在已配置公开源中可用" />
+                          )}
+                        </div>
+                      ) : null}
                     </div>
                   ) : null}
                 </>
@@ -544,7 +616,7 @@ export function DatasetImportPage() {
                   </Button>
                   <Button
                     type="primary"
-                    disabled={status !== "validated" || committing}
+                    disabled={status !== "validated" || committing || imageBlocked}
                     loading={committing}
                     onClick={startCommit}
                   >
@@ -659,6 +731,31 @@ export function DatasetImportPage() {
           ) : null}
         </div>
       </section>
+      <Modal
+        open={imageSourcesOpen}
+        title="公开镜像源配置"
+        onCancel={() => setImageSourcesOpen(false)}
+        footer={<Button onClick={() => setImageSourcesOpen(false)}>关闭</Button>}
+      >
+        <p className="ds-summary-hint">按顺序探测；某个源 404/超时会继续下一个，全部不可用时阻断数据集版本。</p>
+        <div className="ds-image-sources ds-image-sources-modal">
+          {(imageCheck?.sources ?? []).map((source, index) => (
+            <span className="ds-image-source" key={`${source.registry}-${source.prefix ?? ""}`}>
+              <b>{index + 1}</b>
+              {source.name}
+              <span className="mono ds-summary-hint">{source.registry}{source.prefix ? `/${source.prefix}` : ""}</span>
+            </span>
+          ))}
+          {!imageCheck?.sources?.length ? <span className="ds-summary-hint">尚未配置公开镜像源。</span> : null}
+        </div>
+        <Alert
+          style={{ marginTop: 12 }}
+          type="info"
+          showIcon
+          message="由管理员通过 DATASET_IMAGE_REGISTRIES 配置"
+          description="当前页面只展示本次探测使用的源；镜像构建、推送和私有源认证不在本次导入中处理。"
+        />
+      </Modal>
     </section>
   );
 }

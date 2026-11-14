@@ -541,8 +541,39 @@ export interface FieldCompleteness {
   percent: number;
 }
 
+export interface ImageCheckSourceResult {
+  name: string;
+  registry: string;
+  prefix?: string;
+  status: string;
+  http_status?: number | null;
+  error?: string | null;
+  elapsed_ms?: number | null;
+}
+
+export interface ImageCheckCase {
+  case_key: string;
+  image: string;
+  status: string;
+  source?: string | null;
+  results?: ImageCheckSourceResult[];
+}
+
+export interface ImageCheckReport {
+  status: "passed" | "blocked" | "skipped" | string;
+  reason?: string | null;
+  sources: ImageCheckSourceResult[];
+  checked: number;
+  available: number;
+  cases: ImageCheckCase[];
+  unavailable: ImageCheckCase[];
+  cases_truncated?: number;
+  generated_at?: string;
+}
+
 export interface ImportReport {
   mode?: string;
+  image_check?: ImageCheckReport;
   total?: number;
   valid?: number;
   invalid?: number;

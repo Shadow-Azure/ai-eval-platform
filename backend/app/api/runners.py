@@ -978,6 +978,10 @@ def shard_tasks(
                 "prompt_suffix": run.prompt_suffix or "",
                 "repo": (case.task_json or {}).get("repo"),
                 "base_commit": (case.task_json or {}).get("base_commit"),
+                # M8-25: SWE-bench needs one environment image per instance;
+                # the version-level image remains the fallback.
+                "environment_image": (case.task_json or {}).get("environment_image")
+                or (dataset_version.environment_image if dataset_version else None),
                 "test_patch": (case.task_json or {}).get("test_patch"),
                 "expected_metrics": (case.task_json or {}).get("expected_metrics", {}),
             }

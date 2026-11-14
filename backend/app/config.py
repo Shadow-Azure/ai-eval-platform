@@ -99,6 +99,12 @@ class Settings(BaseSettings):
     dataset_import_stale_seconds: int = 7200
     dataset_import_error_limit: int = 200
     dataset_import_progress_step: int = 1000
+    # M8-25: ordered public registries probed for per-case environment images.
+    # Comma-separated host[/namespace] entries; the default is Docker Hub.
+    dataset_image_registries: str = "docker.io"
+    dataset_image_arch: str = "x86_64"
+    dataset_image_probe_timeout_seconds: float = 8.0
+    dataset_image_probe_concurrency: int = 8
 
     # M2-05 synthetic evaluation loop.
     # Short-term case-token secret (platform signs, runner verifies). When

@@ -133,6 +133,9 @@ class DatasetCase(Base, CreatedAtMixin):
     test_patch: Mapped[str | None] = mapped_column(Text, nullable=True)
     expected_metrics_json: Mapped[dict] = mapped_column(json_type(), default=dict, nullable=False)
     extra_json: Mapped[dict] = mapped_column(json_type(), default=dict, nullable=False)
+    # M8-25: SWE-bench has one execution image per instance. The version-level
+    # environment_image remains a fallback for single-image datasets.
+    environment_image: Mapped[str | None] = mapped_column(String(300), nullable=True)
 
     __table_args__ = (
         UniqueConstraint("dataset_version_id", "case_key", name="uq_dataset_case_version_case_key"),

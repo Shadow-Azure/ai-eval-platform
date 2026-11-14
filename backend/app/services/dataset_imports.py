@@ -38,6 +38,7 @@ from ..config import Settings, get_settings
 from ..datasets import CaseIssue, DatasetAdapter, get_adapter
 from ..datasets.source import SourceFormatError, iter_source_records, source_mode
 from ..models import DatasetImport
+from .dataset_images import DatasetImageUnavailable, image_for_case, probe_case_images
 from .datasets import (
     DatasetSourceChanged,
     DatasetVersionConflict,
@@ -61,6 +62,7 @@ class DatasetImportStateConflict(Exception):
 class ValidationResult:
     report: dict[str, Any]
     errors: list[CaseIssue] = field(default_factory=list)
+    images: dict[str, str] = field(default_factory=dict)
 
     @property
     def valid(self) -> bool:
@@ -127,9 +129,13 @@ def validate_source_file(
     *,
     error_limit: int = MAX_ERRORS_SAFE,
     progress: Callable[[int], None] | None = None,
+    settings: Settings | None = None,
 ) -> ValidationResult:
     """Stream the file and build the persisted validation report."""
 
+    settings = settings or get_settings()
+    image_arch = getattr(settings, "dataset_image_arch", "x86_64")
+    case_images: dict[str, str] = {}
     fields = tuple(getattr(adapter, "required_fields", ()) or ())
     present = {field_name: 0 for field_name in fields}
     errors: list[CaseIssue] = []
@@ -202,10 +208,16 @@ def validate_source_file(
 
         issues = list(adapter.validate_case(raw))
         case_key: str | None = None
+        normalized = None
         try:
-            case_key = adapter.normalize_case(raw).case_key
+            normalized = adapter.normalize_case(raw)
+            case_key = normalized.case_key
         except (KeyError, TypeError, ValueError):
             case_key = None
+        if not issues and case_key is not None and normalized is not None:
+            image = image_for_case(str(getattr(adapter, "key", "")), str(case_key), raw, arch=image_arch)
+            if image:
+                case_images[str(case_key)] = image
         if case_key is not None:
             if case_key in seen_keys:
                 issues.append(
@@ -253,7 +265,7 @@ def validate_source_file(
         "fatal_message": fatal[1] if fatal else None,
         "generated_at": _now().isoformat(timespec="seconds"),
     }
-    return ValidationResult(report=report, errors=errors)
+    return ValidationResult(report=report, errors=errors, images=case_images)
 
 
 def progress_step() -> int:
@@ -423,6 +435,7 @@ def validate_uploaded_import(
                 adapter,
                 error_limit=max(1, int(settings.dataset_import_error_limit)),
                 progress=on_progress,
+                settings=settings,
             )
         except OSError:
             result = ValidationResult(
@@ -459,6 +472,31 @@ def validate_uploaded_import(
         return result
 
     report = result.report
+    if result.valid and result.images:
+        try:
+            report["image_check"] = probe_case_images(result.images, settings=settings)
+        except Exception as exc:  # probe failures must block, never crash the worker
+            report["image_check"] = {
+                "status": "blocked",
+                "reason": f"镜像探测失败：{type(exc).__name__}",
+                "sources": [],
+                "checked": len(result.images),
+                "available": 0,
+                "cases": [],
+                "unavailable": [],
+                "cases_truncated": 0,
+            }
+    else:
+        report["image_check"] = {
+            "status": "skipped",
+            "reason": "没有可探测的用例镜像" if result.valid else "字段校验未通过，跳过镜像探测",
+            "sources": [],
+            "checked": 0,
+            "available": 0,
+            "cases": [],
+            "unavailable": [],
+            "cases_truncated": 0,
+        }
     record.total_count = int(report["total"])
     record.valid_count = int(report["valid"])
     record.invalid_count = int(report["invalid"])
@@ -699,6 +737,10 @@ def _worker_env(settings: Settings, database_url: str, backend: Path) -> dict[st
         "dataset_import_stale_seconds",
         "dataset_import_error_limit",
         "dataset_import_progress_step",
+        "dataset_image_registries",
+        "dataset_image_arch",
+        "dataset_image_probe_timeout_seconds",
+        "dataset_image_probe_concurrency",
     ):
         env[key.upper()] = str(getattr(settings, key))
     return env
@@ -835,6 +877,11 @@ def begin_commit(session: Session, import_id: str) -> DatasetImport:
     record = session.get(DatasetImport, import_id)
     if record is None:
         raise DatasetImportNotFound(import_id)
+    if record.status != "validated":
+        raise DatasetImportStateConflict(import_id)
+    image_check = (record.validation_report_json or {}).get("image_check") or {}
+    if image_check.get("status") == "blocked":
+        raise DatasetImageUnavailable(image_check)
     now = _now()
     result = session.execute(
         update(DatasetImport)

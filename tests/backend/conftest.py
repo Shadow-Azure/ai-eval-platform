@@ -28,6 +28,8 @@ TEST_VIEWER_PASSWORD = "test-viewer-password"
 # dependency with its own migrated database.
 os.environ.setdefault("DATABASE_URL", "sqlite:////tmp/ai-eval-platform-tests-default.db")
 os.environ.setdefault("REDIS_URL", "")
+# Dataset tests must not depend on public registry/network availability.
+os.environ.setdefault("DATASET_IMAGE_REGISTRIES", "")
 
 from app.config import get_settings  # noqa: E402
 from app.db import get_session  # noqa: E402
