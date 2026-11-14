@@ -6,7 +6,7 @@
 kind: issue
 milestone: m8
 priority: P2
-status: in-progress
+status: done
 scope:
   - .agents/flow/issues/m8-22-cli-source-checkout.*
   - .agents/flow/issues/m8-21-source-mode-ref-selection.*
