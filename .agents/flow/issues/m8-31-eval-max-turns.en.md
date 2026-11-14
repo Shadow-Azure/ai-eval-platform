@@ -12,6 +12,26 @@ scope:
   - .agents/flow/milestones/m8-bug-fixes.*
   - prototype/app.js
   - prototype/index.html
+  - backend/app/api/evaluations.py
+  - backend/app/api/runners.py
+  - backend/app/models/evaluation.py
+  - backend/app/services/evaluations.py
+  - backend/app/services/preparations.py
+  - backend/migrations/versions/0026_eval_run_max_turns.py
+  - runner-contract/schemas/v1/task-manifest.schema.json
+  - runner/lib/task-payload.mjs
+  - runner/scripts/real-task.mjs
+  - tests/backend/test_evaluations.py
+  - tests/backend/test_migrations.py
+  - tests/backend/test_preparations.py
+  - tests/backend/test_runners.py
+  - tests/backend/test_deployment_migration.py
+  - tests/backend/test_operations.py
+  - tests/runner/task-payload.test.mjs
+  - web/src/pages/EvalWizardPage.tsx
+  - web/src/api/evaluations.ts
+  - plans/m1-02-fullstack-design/05-data-model.md
+  - plans/m1-02-fullstack-design/07-datasets-metrics-and-agents.md
 adr: []
 github:
   number: 246

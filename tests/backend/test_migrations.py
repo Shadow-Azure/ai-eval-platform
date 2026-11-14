@@ -212,3 +212,29 @@ def test_trace_tables_migrate_from_dataset_import_head(database_url: str) -> Non
         engine.dispose()
 
     run_alembic(database_url, "upgrade", "head")
+
+
+def test_eval_run_max_turns_column_roundtrip(database_url: str) -> None:
+    """0026 adds the run-level turn cap with the 200 default and reverses it."""
+
+    run_alembic(database_url, "upgrade", "0026_eval_run_max_turns")
+    engine = create_engine(database_url, future=True)
+    try:
+        columns = {
+            column["name"]: column for column in inspect(engine).get_columns("eval_run")
+        }
+        assert "max_turns" in columns
+        assert columns["max_turns"]["nullable"] is False
+        assert str(columns["max_turns"]["default"]).strip("'") == "200"
+    finally:
+        engine.dispose()
+
+    run_alembic(database_url, "downgrade", "0025_dataset_image_sources")
+    engine = create_engine(database_url, future=True)
+    try:
+        columns = {column["name"] for column in inspect(engine).get_columns("eval_run")}
+        assert "max_turns" not in columns
+    finally:
+        engine.dispose()
+
+    run_alembic(database_url, "upgrade", "head")

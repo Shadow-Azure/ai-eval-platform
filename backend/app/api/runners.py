@@ -29,7 +29,7 @@ from ..services import agent_assets as asset_service
 from ..services import case_attempts
 from ..services import runners as runner_service
 from ..services.case_attempts import CaseCallbackError
-from ..services.evaluations import SHARD_DISPATCH_TOPIC
+from ..services.evaluations import DEFAULT_MAX_TURNS, SHARD_DISPATCH_TOPIC
 from ..services.object_store import ObjectMissing, ObjectStoreError, object_store_from_settings
 from ..services.runner_cache import runner_cache_key
 from ..services.runner_scripts_cache import (
@@ -959,6 +959,8 @@ def shard_tasks(
             "openai_base_url": f"{gateway_base}/model-gateway/v1",
             "anthropic_base_url": f"{gateway_base}/model-gateway/anthropic",
         },
+        # M8-31: run-wide agentic turn cap consumed by the runner env.
+        "max_turns": run.max_turns or DEFAULT_MAX_TURNS,
         "execution_image_digest": run.execution_image_digest,
         "scoring_image_digest": run.scoring_image_digest,
         "environment_image": dataset_version.environment_image if dataset_version else None,

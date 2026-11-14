@@ -17,6 +17,8 @@ export function buildCaseTask(task, taskPayload) {
     adapter_key: taskPayload?.adapter_key || "swebench",
     runtime_key: taskPayload?.runtime?.key || "claude-code",
     asset_snapshot: taskPayload?.asset_snapshot ?? {},
+    // M8-31: the run-wide agentic turn cap; the executor falls back to 200.
+    max_turns: taskPayload?.max_turns ?? task.max_turns ?? null,
     egress_proxy: taskPayload?.egress_proxy ?? task.egress_proxy ?? null,
     egress_token: taskPayload?.egress_token ?? task.egress_token ?? null,
   };

@@ -38,10 +38,18 @@ test("run-wide asset snapshot is copied onto every case task", () => {
 test("missing asset snapshot is an explicit empty object, never undefined", () => {
   const task = buildCaseTask({ case_run_id: "case-1" }, { cases: [] });
   assert.deepEqual(task.asset_snapshot, {});
+  assert.equal(task.max_turns, null);
   assert.equal(task.egress_proxy, null);
   assert.equal(task.egress_token, null);
   assert.equal(task.adapter_key, "swebench");
   assert.equal(task.runtime_key, "claude-code");
+});
+
+test("run-wide max turns is copied onto every case task", () => {
+  const tasks = buildCaseTasks({ ...payload, max_turns: 640 });
+  for (const task of tasks.values()) {
+    assert.equal(task.max_turns, 640);
+  }
 });
 
 test("run-wide egress proxy is copied onto every case task", () => {
