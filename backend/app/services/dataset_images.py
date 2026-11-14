@@ -324,16 +324,22 @@ def probe_image(
     timeout: float,
     client: httpx.Client | None = None,
 ) -> ImageProbe:
+    owns_client = client is None
+    client = client or httpx.Client(follow_redirects=True)
     results: list[SourceProbe] = []
-    for source in sources:
-        try:
-            result = probe_source(image, source, timeout=timeout, client=client)
-        except Exception as exc:  # never let one bad source abort the whole report
-            result = SourceProbe(source=source, status=ERROR, error=type(exc).__name__)
-        results.append(result)
-        if result.status == FOUND:
-            return ImageProbe(image=image, status=FOUND, source=source.name, results=results)
-    return ImageProbe(image=image, status=BLOCKED, results=results)
+    try:
+        for source in sources:
+            try:
+                result = probe_source(image, source, timeout=timeout, client=client)
+            except Exception as exc:  # never let one bad source abort the whole report
+                result = SourceProbe(source=source, status=ERROR, error=type(exc).__name__)
+            results.append(result)
+            if result.status == FOUND:
+                return ImageProbe(image=image, status=FOUND, source=source.name, results=results)
+        return ImageProbe(image=image, status=BLOCKED, results=results)
+    finally:
+        if owns_client:
+            client.close()
 
 
 def probe_case_images(

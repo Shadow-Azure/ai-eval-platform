@@ -34,6 +34,7 @@ scope:
   - prototype/**
   - plans/m1-02-fullstack-design/05-data-model.md
   - plans/m1-02-fullstack-design/07-datasets-metrics-and-agents.md
+  - plans/2026-11-14-pr235-review.md
 adr: []
 github:
   number: 234
