@@ -15,6 +15,7 @@ scope:
   - backend/app/services/provisioning/__init__.py
   - backend/app/services/provisioning/aliyun.py
   - tests/backend/**
+  - plans/2026-11-16-pr255-review.md
   - plans/m1-02-fullstack-design/06-execution-and-resource-pools.md
 adr: []
 github:
