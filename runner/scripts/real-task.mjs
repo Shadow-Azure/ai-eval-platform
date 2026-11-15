@@ -449,7 +449,7 @@ async function realCase(
       // M8-31: the frozen manifest cap is authoritative; the task payload is a
       // fallback for older platforms and 200 covers legacy rows.
       MAX_TURNS: process.env.REAL_TASK_MAX_TURNS || String(maxTurns || task.max_turns || 200),
-      TIMEOUT_MS: process.env.REAL_TASK_TIMEOUT_MS || "900000",
+      TIMEOUT_MS: process.env.REAL_TASK_TIMEOUT_MS || "1800000",
       EXECUTION_IMAGE_DIGEST: environmentImage,
     };
     const agentName = `eval-agent-${item.case_run_id.slice(0, 8)}-${process.pid}`;
@@ -721,7 +721,7 @@ async function realCase(
       );
       agent = dockerRun(execArgs, {
         allowFailure: true,
-        timeout: Number(process.env.REAL_TASK_AGENT_TIMEOUT_MS || 1_000_000),
+        timeout: Number(process.env.REAL_TASK_AGENT_TIMEOUT_MS || 1_900_000),
       });
       const version = dockerRun(
         ["exec", agentName, "bash", "-lc", "claude --version 2>/dev/null || true"],
