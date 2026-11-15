@@ -19,7 +19,12 @@ from sqlalchemy.orm import Session
 
 WEBHOOK_SECRET = "github-webhook-test-secret"
 WEBHOOK_PATH = "/api/v1/webhooks/github"
-FAR_FUTURE = datetime(2030, 1, 1, 0, 0, 0)
+FAR_FUTURE = datetime(2030, 1, 1, tzinfo=UTC)
+
+
+def _utc(value: datetime) -> datetime:
+    """PostgreSQL returns aware timestamps; SQLite may return the same instant naive."""
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
 def _payload(action: str = "queued") -> bytes:
@@ -94,7 +99,7 @@ def test_valid_workflow_job_wakes_active_spot_pools(
 ) -> None:
     configure_settings(GITHUB_WEBHOOK_SECRET=WEBHOOK_SECRET)
     body = _payload("queued")
-    now_naive = datetime.now(UTC).replace(tzinfo=None)
+    now = datetime.now(UTC)
 
     response = _post(client, body)
 
@@ -106,10 +111,10 @@ def test_valid_workflow_job_wakes_active_spot_pools(
     fixed = session.get(ResourcePool, pools["fixed"].id)
     disabled = session.get(ResourcePool, pools["disabled"].id)
     assert spot is not None and spot.next_check_at is not None
-    assert spot.next_check_at <= now_naive + timedelta(seconds=5)
+    assert _utc(spot.next_check_at) <= now + timedelta(seconds=5)
     # Non-spot and disabled pools are never woken by a workflow job.
-    assert fixed is not None and fixed.next_check_at == FAR_FUTURE
-    assert disabled is not None and disabled.next_check_at == FAR_FUTURE
+    assert fixed is not None and _utc(fixed.next_check_at) == FAR_FUTURE
+    assert disabled is not None and _utc(disabled.next_check_at) == FAR_FUTURE
 
 
 def test_invalid_signature_is_rejected(
@@ -123,7 +128,7 @@ def test_invalid_signature_is_rejected(
     assert response.status_code == 401
     session.expire_all()
     spot = session.get(ResourcePool, pools["spot"].id)
-    assert spot is not None and spot.next_check_at == FAR_FUTURE
+    assert spot is not None and _utc(spot.next_check_at) == FAR_FUTURE
 
 
 def test_unset_secret_disables_the_endpoint(
@@ -148,4 +153,4 @@ def test_other_events_are_accepted_and_ignored(
     assert response.json()["status"] == "ignored"
     session.expire_all()
     spot = session.get(ResourcePool, pools["spot"].id)
-    assert spot is not None and spot.next_check_at == FAR_FUTURE
+    assert spot is not None and _utc(spot.next_check_at) == FAR_FUTURE
