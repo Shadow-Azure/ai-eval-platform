@@ -12,6 +12,8 @@ scope:
   - .agents/flow/milestones/m8-bug-fixes.*
   - runner/scripts/real-task.mjs
   - tests/runner/agent-timeout.test.mjs
+  - prototype/app.js
+  - prototype/index.html
 adr: []
 github:
   number: 248

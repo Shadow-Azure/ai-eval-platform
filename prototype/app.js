@@ -564,6 +564,7 @@ const ui = {
   },
   datasetLoading: false,
   importStep: 1,
+  datasetAgentTimeout: "30",
   importImageCheck: "failed",
   imageSources: DEFAULT_IMAGE_SOURCES.map((source) => ({ ...source })),
   imageSourcesDirty: false,
@@ -588,6 +589,7 @@ const ui = {
     pool: "linux",
     promptSuffix: "",
     maxTurns: "",
+    agentTimeout: "30",
   },
   traceSpan: "span-root",
   traceFilter: "all",
@@ -1437,6 +1439,17 @@ function importPage() {
         <div class="row-between"><div><strong>环境与评分任务包</strong><div class="small muted">environment/Dockerfile · tests/test.sh · task.toml</div></div><span class="tag ${imagePassed ? "tag-success" : "tag-warning"}">${imagePassed ? "可生成" : "待镜像检查"}</span></div>
         <div class="row-between" style="margin-top:13px"><div><strong>指标映射</strong><div class="small muted">swebench.resolved / swebench.submitted</div></div><span class="tag tag-primary">解决率</span></div>
       </div>
+      <div class="review-box" style="margin-top:16px">
+        <div class="row-between">
+          <div><strong>执行默认值</strong><div class="small muted">随数据集版本固化；发起评测时可覆盖</div></div>
+          <span class="tag tag-neutral">启动时可改</span>
+        </div>
+        <div class="field" style="margin-top:12px;max-width:360px">
+          <label>Agent 超时（默认）</label>
+          <input class="input" id="dataset-agent-timeout" type="number" min="1" max="1440" step="1" value="${esc(ui.datasetAgentTimeout)}" placeholder="默认 30 分钟" />
+          <span class="hint">默认 30 分钟；范围 1–1440 分钟。保存到数据集版本，发起评测时按本次任务调整。</span>
+        </div>
+      </div>
       <div class="review-box image-check-box" style="margin-top:16px">
         <div class="row-between">
           <div>
@@ -1844,6 +1857,7 @@ function evalSummaryAside() {
         <div class="summary-item"><span class="summary-label">资源池</span><span class="summary-value">${pool}</span></div>
         <div class="summary-item"><span class="summary-label">附加指令</span><span class="summary-value">${ui.newEval.promptSuffix ? `已配置 · ${ui.newEval.promptSuffix.length} 字符` : "未设置"}</span></div>
         <div class="summary-item"><span class="summary-label">最大轮次</span><span class="summary-value">${ui.newEval.maxTurns ? `${esc(ui.newEval.maxTurns)} 轮` : "默认 200 轮"}</span></div>
+        <div class="summary-item"><span class="summary-label">Agent 超时</span><span class="summary-value">${ui.newEval.agentTimeout ? `${esc(ui.newEval.agentTimeout)} 分钟` : `数据集默认 ${esc(ui.datasetAgentTimeout)} 分钟`}</span></div>
       </div>
       <div style="padding:0 19px 19px">
         <div class="review-box">
@@ -2054,6 +2068,11 @@ function newEvalPage() {
         <input class="input" id="max-turns" type="number" min="1" max="1000" step="1" value="${esc(ui.newEval.maxTurns)}" placeholder="默认 200" />
         <span class="hint">留空默认 200 轮；一轮 = 一次模型响应（可能包含多个工具调用），不是一次工具调用。范围 1–1000。</span>
       </div>
+      <div class="card-header" style="padding:20px 0 10px;border:0"><div><h3 class="card-title">Agent 超时（可选）</h3><p class="card-subtitle">单用例 Agent 的 wall-clock 上限；默认来自数据集，可在启动时修改</p></div><span class="tag tag-neutral">可选</span></div>
+      <div class="field">
+        <input class="input" id="agent-timeout" type="number" min="1" max="1440" step="1" value="${esc(ui.newEval.agentTimeout)}" placeholder="默认来自数据集" />
+        <span class="hint">默认来自数据集配置（示例 30 分钟）；本次可覆盖。超时会终止该用例的 Agent，并标记失败。</span>
+      </div>
     `;
   } else {
     const selectedAssetSource = assetSourceById(ui.newEval.assetSource);
@@ -2071,6 +2090,7 @@ function newEvalPage() {
         <div class="summary-item"><span class="summary-label">超时策略</span><span class="summary-value">单用例 30 分钟 · 失败重试 1 次</span></div>
         <div class="summary-item"><span class="summary-label">附加指令</span><span class="summary-value" style="white-space:pre-wrap">${ui.newEval.promptSuffix ? esc(ui.newEval.promptSuffix) : "未设置"}</span></div>
         <div class="summary-item"><span class="summary-label">最大轮次</span><span class="summary-value">${ui.newEval.maxTurns ? `${esc(ui.newEval.maxTurns)} 轮` : "默认 200 轮"}</span></div>
+        <div class="summary-item"><span class="summary-label">Agent 超时</span><span class="summary-value">${ui.newEval.agentTimeout ? `${esc(ui.newEval.agentTimeout)} 分钟` : `数据集默认 ${esc(ui.datasetAgentTimeout)} 分钟`}</span></div>
       </div>
       <div class="banner warning" style="margin-top:15px">${icon("alert", 15)}<div><strong>这会占用资源池并产生模型费用。</strong> 预计 ¥126–158，实际费用以 token 与机时为准。启动后仍可取消排队和执行中的用例。</div></div>
       <div class="field" style="margin-top:16px"><label>通知</label><select class="select"><option>完成后站内通知</option><option>完成后站内通知 + Webhook</option><option>不通知</option></select></div>
@@ -4194,6 +4214,14 @@ document.addEventListener("input", (event) => {
   }
   if (event.target.id === "max-turns") {
     ui.newEval.maxTurns = event.target.value.replace(/[^0-9]/g, "").slice(0, 4);
+    return;
+  }
+  if (event.target.id === "agent-timeout") {
+    ui.newEval.agentTimeout = event.target.value.replace(/[^0-9]/g, "").slice(0, 4);
+    return;
+  }
+  if (event.target.id === "dataset-agent-timeout") {
+    ui.datasetAgentTimeout = event.target.value.replace(/[^0-9]/g, "").slice(0, 4);
     return;
   }
   if (event.target.id === "prompt-suffix") {
