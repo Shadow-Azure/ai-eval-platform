@@ -21,6 +21,8 @@ scope:
   - plans/2026-11-15-pr251-review.md
   - tests/runner/image-sources.test.mjs
   - plans/m1-02-fullstack-design/07-datasets-metrics-and-agents.md
+  - .github/workflows/backend-ci.yml
+  - pyproject.toml
 adr: []
 github:
   number: 250
