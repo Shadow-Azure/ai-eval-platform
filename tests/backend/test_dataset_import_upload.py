@@ -196,6 +196,77 @@ def test_upload_validates_then_commit_creates_immutable_version(
     assert not (import_dir / (detail["file_name"] or "")).exists()
 
 
+def test_upload_freezes_agent_timeout_and_commit_can_edit_it(
+    seeded: Session, client: TestClient, import_dir: Path
+) -> None:
+    records = fixture_records()
+    response = upload(
+        client,
+        content=jsonl_bytes(records),
+        agent_timeout_seconds=2400,
+    )
+    assert response.status_code == 201, response.text
+    created = response.json()["import"]
+    assert created["agent_timeout_seconds"] == 2400
+    created = wait_for_import(client, created["id"], {"validated", "failed"})
+    assert created["status"] == "validated"
+    assert created["agent_timeout_seconds"] == 2400
+
+    # Step 2 may adjust the frozen dataset default before the version exists.
+    commit = client.post(
+        f"/api/v1/dataset-imports/{created['id']}/commit",
+        json={"agent_timeout_seconds": 4500},
+    )
+    assert commit.status_code == 202, commit.text
+    assert commit.json()["import"]["agent_timeout_seconds"] == 4500
+    detail = wait_for_import(client, created["id"], {"succeeded", "failed"})
+    assert detail["status"] == "succeeded"
+    assert detail["agent_timeout_seconds"] == 4500
+    assert detail["version_detail"]["agent_timeout_seconds"] == 4500
+
+    version = seeded.scalar(select(DatasetVersion))
+    assert version is not None
+    assert version.agent_timeout_seconds == 4500
+
+
+def test_upload_commit_keeps_upload_agent_timeout_without_body(
+    seeded: Session, client: TestClient, import_dir: Path
+) -> None:
+    response = upload(
+        client,
+        content=jsonl_bytes(fixture_records()),
+        version="upload-timeout-keep",
+        agent_timeout_seconds=2400,
+    )
+    assert response.status_code == 201, response.text
+    created = wait_for_import(client, response.json()["import"]["id"], {"validated"})
+    assert client.post(f"/api/v1/dataset-imports/{created['id']}/commit").status_code == 202
+    detail = wait_for_import(client, created["id"], {"succeeded", "failed"})
+    assert detail["status"] == "succeeded"
+    assert detail["agent_timeout_seconds"] == 2400
+    version = seeded.scalar(select(DatasetVersion))
+    assert version is not None
+    assert version.agent_timeout_seconds == 2400
+
+
+def test_upload_commit_rejects_agent_timeout_out_of_range(
+    seeded: Session, client: TestClient, import_dir: Path
+) -> None:
+    response = upload(client, content=jsonl_bytes(fixture_records()))
+    assert response.status_code == 201, response.text
+    created = wait_for_import(client, response.json()["import"]["id"], {"validated"})
+    commit = client.post(
+        f"/api/v1/dataset-imports/{created['id']}/commit",
+        json={"agent_timeout_seconds": 59},
+    )
+    assert commit.status_code == 422
+    # A rejected edit must not start materialization.
+    assert (
+        client.get(f"/api/v1/dataset-imports/{created['id']}").json()["status"]
+        == "validated"
+    )
+
+
 def test_upload_accepts_json_array_and_keeps_dataset_name(
     seeded: Session, client: TestClient, import_dir: Path
 ) -> None:

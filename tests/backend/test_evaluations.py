@@ -17,6 +17,7 @@ from app.defaults import DEFAULT_PROJECT_ID, DEFAULT_TENANT_ID
 from app.models import (
     ATTEMPT_STATUSES,
     Dataset,
+    DatasetCase,
     DatasetVersion,
     EvalCaseAttempt,
     EvalCaseRun,
@@ -48,6 +49,8 @@ def create_eval(
     shard_size: int | None = None,
     idempotency_key: str | None = None,
     max_turns: int | None = None,
+    agent_timeout_seconds: int | None = None,
+    dataset_version_id: str | None = None,
     now: datetime | None = None,
 ):
     settings = get_settings()
@@ -59,9 +62,53 @@ def create_eval(
         idempotency_key=idempotency_key,
         created_by="agent",
         max_turns=max_turns,
+        agent_timeout_seconds=agent_timeout_seconds,
+        dataset_version_id=dataset_version_id,
         settings=settings,
         now=now,
     )
+
+
+def seed_dataset_version(
+    session: Session, *, agent_timeout_seconds: int = 1800
+) -> DatasetVersion:
+    tenant, _workspace, project = ensure_default_scope(session)
+    dataset = Dataset(
+        tenant_id=tenant.id,
+        project_id=project.id,
+        slug="dataset-timeout",
+        name="Timeout dataset",
+        adapter_key="swebench",
+    )
+    session.add(dataset)
+    session.flush()
+    version = DatasetVersion(
+        tenant_id=tenant.id,
+        dataset_id=dataset.id,
+        version="v1",
+        source_uri="fixture://timeout",
+        source_revision="rev-timeout",
+        adapter_version="1.0",
+        case_count=2,
+        status="active",
+        agent_timeout_seconds=agent_timeout_seconds,
+    )
+    session.add(version)
+    session.flush()
+    for index in range(2):
+        session.add(
+            DatasetCase(
+                tenant_id=tenant.id,
+                dataset_version_id=version.id,
+                case_key=f"timeout-case-{index}",
+                ordinal=index,
+                repo="django/django",
+                base_commit="c" * 40,
+                problem_statement="fix it",
+            )
+        )
+    session.commit()
+    return version
 
 
 # ---------------------------------------------------------------------------
@@ -431,6 +478,98 @@ def test_manifest_defaults_max_turns_to_200(seeded: Session, configure_settings)
     for row in rows:
         manifest = json.loads(row.payload_json["manifest_text"])
         assert manifest["max_turns"] == 200
+
+
+# ---------------------------------------------------------------------------
+# M8-32: dataset default + launch override Agent wall-clock timeout
+# ---------------------------------------------------------------------------
+
+
+def test_api_create_defaults_agent_timeout_to_1800(
+    seeded: Session, client: TestClient
+) -> None:
+    response = client.post(
+        "/api/v1/evaluations",
+        json={"case_keys": ["case-a"], "idempotency_key": "api-agent-timeout-default"},
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["agent_timeout_seconds"] == 1800
+    stored = seeded.get(EvalRun, response.json()["id"])
+    assert stored is not None
+    assert stored.agent_timeout_seconds == 1800
+
+
+def test_create_inherits_dataset_version_agent_timeout(seeded: Session) -> None:
+    version = seed_dataset_version(seeded, agent_timeout_seconds=2400)
+    run, _created = create_eval(
+        seeded,
+        case_keys=[],
+        dataset_version_id=version.id,
+        idempotency_key="agent-timeout-dataset-default",
+    )
+    assert run.agent_timeout_seconds == 2400
+
+
+def test_create_override_wins_over_dataset_agent_timeout(seeded: Session) -> None:
+    version = seed_dataset_version(seeded, agent_timeout_seconds=2400)
+    run, _created = create_eval(
+        seeded,
+        case_keys=[],
+        dataset_version_id=version.id,
+        agent_timeout_seconds=4500,
+        idempotency_key="agent-timeout-override",
+    )
+    assert run.agent_timeout_seconds == 4500
+
+
+@pytest.mark.parametrize("agent_timeout_seconds", [59, 0, -1, 86401])
+def test_api_rejects_agent_timeout_out_of_range(
+    seeded: Session, client: TestClient, agent_timeout_seconds: int
+) -> None:
+    response = client.post(
+        "/api/v1/evaluations",
+        json={
+            "case_keys": ["case-a"],
+            "idempotency_key": f"api-agent-timeout-{agent_timeout_seconds}",
+            "agent_timeout_seconds": agent_timeout_seconds,
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_summary_falls_back_to_1800_when_row_has_no_agent_timeout(
+    seeded: Session,
+) -> None:
+    """Rows created before 0027 report the platform default instead of NULL."""
+
+    run, _created = create_eval(seeded, idempotency_key="agent-timeout-legacy")
+    run.agent_timeout_seconds = None
+    try:
+        with seeded.no_autoflush:
+            summary = evaluations.evaluation_summary(run)
+    finally:
+        # Restore the in-memory value so the NOT NULL column never flushes NULL.
+        run.agent_timeout_seconds = 1800
+    assert summary["agent_timeout_seconds"] == 1800
+
+
+def test_manifest_freezes_agent_timeout(seeded: Session, configure_settings) -> None:
+    configure_settings(RUNNER_CALLBACK_BASE_URL="http://127.0.0.1:8000")
+    version = seed_dataset_version(seeded, agent_timeout_seconds=2400)
+    run, _created = create_eval(
+        seeded,
+        case_keys=[],
+        dataset_version_id=version.id,
+        shard_size=2,
+        idempotency_key="agent-timeout-manifest",
+    )
+
+    rows = seeded.query(Outbox).filter(Outbox.aggregate_id == run.id).all()
+    assert rows
+    for row in rows:
+        manifest = json.loads(row.payload_json["manifest_text"])
+        validate_payload("manifest", manifest)
+        assert manifest["agent_timeout_seconds"] == 2400
 
 
 # ---------------------------------------------------------------------------

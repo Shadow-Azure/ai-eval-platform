@@ -101,6 +101,11 @@ class DatasetVersion(Base, CreatedAtMixin):
     # inherit them instead of asking for the same values on every run.
     execution_image_digest: Mapped[str | None] = mapped_column(String(128), nullable=True)
     scoring_image_digest: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # M8-32: dataset default Agent wall-clock budget, frozen at import. The
+    # 1800s server default keeps pre-existing rows on the platform fallback.
+    agent_timeout_seconds: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1800, server_default="1800"
+    )
 
     __table_args__ = (
         UniqueConstraint("dataset_id", "version", name="uq_dataset_version_dataset_version"),
@@ -177,6 +182,9 @@ class DatasetImport(Base, CreatedAtMixin):
     storage_key: Mapped[str | None] = mapped_column(String(200), nullable=True)
     execution_image_digest: Mapped[str | None] = mapped_column(String(128), nullable=True)
     scoring_image_digest: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # M8-32: the upload request's dataset default, carried to the materialize
+    # worker. NULL (legacy rows) falls back to the platform default of 1800s.
+    agent_timeout_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     validation_report_json: Mapped[dict] = mapped_column(json_type(), default=dict, nullable=False)
     processed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     status_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

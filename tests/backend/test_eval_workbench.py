@@ -7,6 +7,7 @@ actions, including their guard rails.
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -227,6 +228,15 @@ def test_case_detail_lists_attempts_and_tests(seeded: Session, client: TestClien
     assert body["case"]["id"] == cases[0].id
     assert body["case"]["error_code"] == "runtime_error"
     assert body["run"]["max_attempts"] == run.max_attempts
+    assert body["run"]["agent_timeout_seconds"] == 1800
+    run.agent_timeout_seconds = 4500
+    seeded.commit()
+    assert (
+        client.get(f"/api/v1/eval-case-runs/{cases[0].id}").json()["run"][
+            "agent_timeout_seconds"
+        ]
+        == 4500
+    )
     assert len(body["attempts"]) == 1
     attempt = body["attempts"][0]
     assert attempt["attempt_no"] == 1
@@ -273,6 +283,16 @@ def test_retry_case_creates_attempt_outbox_and_event(
     assert [attempt.attempt_no for attempt in attempts] == [1, 2]
     assert attempts[1].retry_reason == "manual_retry"
     assert len(seeded.scalars(select(Outbox)).all()) == outbox_before + 1
+
+    # M8-32: the retry manifest keeps the run's frozen Agent timeout.
+    retry_outbox = seeded.scalar(
+        select(Outbox).where(
+            Outbox.aggregate_id == run.id, Outbox.dispatch_key.like(f"{run.id}:%:2")
+        )
+    )
+    assert retry_outbox is not None
+    retry_manifest = json.loads(retry_outbox.payload_json["manifest_text"])
+    assert retry_manifest["agent_timeout_seconds"] == run.agent_timeout_seconds
 
     event = seeded.scalar(
         select(EvalEvent).where(EvalEvent.event_type == "case.retry_requested")
@@ -420,6 +440,7 @@ def test_config_snapshot_explains_the_frozen_run(
     assert body["resource_pool"]["max_capacity"] == 8
     assert body["execution"]["case_timeout_seconds"] > 0
     assert body["execution"]["max_attempts"] == 2
+    assert body["execution"]["agent_timeout_seconds"] == 1800
     assert body["execution"]["shard_size"] == run.shard_size
     assert body["execution"]["execution_image_digest"] == "sha256:exec"
     assert body["consistency"]["effective_concurrency"] == 4

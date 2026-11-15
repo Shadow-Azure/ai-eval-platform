@@ -999,6 +999,7 @@ export function EvalDetailPage() {
           onRetry={() => config.refetch()}
           promptSuffix={data.prompt_suffix}
           maxTurns={data.max_turns}
+          agentTimeoutSeconds={data.agent_timeout_seconds}
         />
       ) : null}
 
@@ -2161,9 +2162,18 @@ interface ConfigPanelProps {
   onRetry: () => void;
   promptSuffix?: string | null;
   maxTurns?: number | null;
+  agentTimeoutSeconds?: number | null;
 }
 
-function ConfigPanel({ config, loading, error, onRetry, promptSuffix, maxTurns }: ConfigPanelProps) {
+function ConfigPanel({
+  config,
+  loading,
+  error,
+  onRetry,
+  promptSuffix,
+  maxTurns,
+  agentTimeoutSeconds,
+}: ConfigPanelProps) {
   if (error) {
     return <Card className="section-gap"><QueryError error={error} onRetry={onRetry} /></Card>;
   }
@@ -2216,6 +2226,12 @@ function ConfigPanel({ config, loading, error, onRetry, promptSuffix, maxTurns }
           <SummaryList
             items={[
               ["单用例超时", formatSeconds(config.execution.case_timeout_seconds)],
+              [
+                "Agent 超时",
+                agentTimeoutSeconds != null
+                  ? formatSeconds(agentTimeoutSeconds)
+                  : `${formatSeconds(1800)}（默认）`,
+              ],
               ["失败重试上限", `${config.execution.max_attempts} 次`],
               ["分片大小", `${config.execution.shard_size} 用例 / 次 dispatch`],
               ["请求并发", String(config.execution.requested_concurrency)],
@@ -2743,6 +2759,11 @@ function CaseDrawer({
                   最新 attempt {detail.case.latest_attempt_no} / 上限 {detail.run.max_attempts}
                 </span>
                 <span className="muted small">单用例超时 {formatSeconds(detail.run.case_timeout_seconds)}</span>
+                {detail.run.agent_timeout_seconds != null ? (
+                  <span className="muted small">
+                    Agent 超时 {formatSeconds(detail.run.agent_timeout_seconds)}
+                  </span>
+                ) : null}
               </Space>
               {detail.retry.retryable ? (
                 <Button type="primary" loading={retrying} onClick={() => setRetryConfirmOpen(true)}>

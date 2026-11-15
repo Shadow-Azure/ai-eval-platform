@@ -57,6 +57,14 @@ per-case 镜像，版本级镜像仅在 case 未携带镜像时回退。
 `REAL_TASK_MAX_TURNS` 默认值。轮次语义是模型响应（assistant turn / API round-trip），一个 turn
 可以包含多个工具调用；它不是工具调用次数，也不是用户消息数。旧评测行没有值时读取为 200。
 
+## 1.4 Agent 超时：数据集默认 + 评测覆盖（M8-32）
+
+数据集版本保存 `agent_timeout_seconds`（默认 1800s = 30 分钟，范围 60–86400s = 1–1440 分钟），
+导入时固化。发起评测可传可选的 `agent_timeout_seconds` 覆盖；生效值 = 评测覆盖 > 数据集版本默认 >
+平台兜底 1800s，并冻结到 `eval_run.agent_timeout_seconds`。shard manifest / task payload 携带该值，
+Runner 用它设置 Agent wall-clock 超时；`REAL_TASK_TIMEOUT_MS` 仅保留为运维逃生阀。超时与
+`max_turns` 是两个独立闸门：一个是墙钟时间，一个是模型响应轮次。
+
 ## 2. 五文件任务包与 OSS 布局
 
 架构固定任务包为 `task.toml`、`instruction.md`、`environment/Dockerfile`、`tests/test.sh`、`solution/solve.sh`。建议 manifest 另存于版本级索引，记录每个文件 digest、评分镜像 digest、可见性和运行时约束。

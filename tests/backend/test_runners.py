@@ -768,6 +768,39 @@ def test_shard_task_payload_includes_max_turns(
 
 
 # ---------------------------------------------------------------------------
+# M8-32: the run-wide Agent timeout travels with the shard task payload
+# ---------------------------------------------------------------------------
+
+
+def test_shard_task_payload_includes_agent_timeout(
+    eval_env: dict, session: Session, client: TestClient
+) -> None:
+    run = session.get(EvalRun, eval_env["run_id"])
+    assert run is not None
+    outbox = session.scalar(select(Outbox).where(Outbox.aggregate_id == run.id))
+    assert outbox is not None
+
+    def payload() -> dict:
+        response = client.get(
+            f"/runner/v1/shards/{eval_env['shard']}/tasks",
+            params={
+                "eval_run_id": run.id,
+                "attempt": 1,
+                "dispatch_key": outbox.dispatch_key,
+            },
+            headers=auth(eval_env),
+        )
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    assert payload()["agent_timeout_seconds"] == 1800
+
+    run.agent_timeout_seconds = 4500
+    session.commit()
+    assert payload()["agent_timeout_seconds"] == 4500
+
+
+# ---------------------------------------------------------------------------
 # M8-14: the run-wide GitHub egress proxy travels with the shard task payload
 # ---------------------------------------------------------------------------
 

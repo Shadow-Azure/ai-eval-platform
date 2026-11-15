@@ -18,6 +18,11 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ..agent_timeout import (
+    DEFAULT_AGENT_TIMEOUT_SECONDS,
+    MAX_AGENT_TIMEOUT_SECONDS,
+    MIN_AGENT_TIMEOUT_SECONDS,
+)
 from ..config import get_settings
 from ..datasets import AdapterNotFound, get_adapter
 from ..db import get_session
@@ -44,8 +49,20 @@ class DatasetImportRequest(BaseModel):
     environment_image: str | None = Field(default=None, max_length=300)
     execution_image_digest: str | None = Field(default=None, max_length=128)
     scoring_image_digest: str | None = Field(default=None, max_length=128)
+    # M8-32: dataset default Agent wall-clock budget frozen into the version.
+    agent_timeout_seconds: int | None = Field(
+        default=None, ge=MIN_AGENT_TIMEOUT_SECONDS, le=MAX_AGENT_TIMEOUT_SECONDS
+    )
     records: list[dict[str, Any]] = Field(min_length=1)
     created_by: str = Field(default="console", max_length=128)
+
+
+class DatasetImportCommitRequest(BaseModel):
+    """M8-32: optional Step-2 edit before the immutable version is built."""
+
+    agent_timeout_seconds: int | None = Field(
+        default=None, ge=MIN_AGENT_TIMEOUT_SECONDS, le=MAX_AGENT_TIMEOUT_SECONDS
+    )
 
 
 def dataset_summary(dataset) -> dict:
@@ -73,6 +90,9 @@ def version_summary(version: DatasetVersion) -> dict:
         "environment_image": version.environment_image,
         "execution_image_digest": version.execution_image_digest,
         "scoring_image_digest": version.scoring_image_digest,
+        "agent_timeout_seconds": (
+            version.agent_timeout_seconds or DEFAULT_AGENT_TIMEOUT_SECONDS
+        ),
         "created_at": version.created_at.isoformat(timespec="microseconds"),
     }
 
@@ -142,6 +162,9 @@ def import_summary(record: DatasetImport) -> dict:
         "valid_count": record.valid_count,
         "invalid_count": record.invalid_count,
         "processed_count": record.processed_count,
+        "agent_timeout_seconds": (
+            record.agent_timeout_seconds or DEFAULT_AGENT_TIMEOUT_SECONDS
+        ),
         "file_name": record.file_name,
         "file_size": record.file_size,
         "file_digest": record.file_digest,
@@ -185,6 +208,7 @@ def create_dataset_import(
             environment_image=payload.environment_image,
             execution_image_digest=payload.execution_image_digest,
             scoring_image_digest=payload.scoring_image_digest,
+            agent_timeout_seconds=payload.agent_timeout_seconds,
             records=payload.records,
             created_by=context.user.email,
         )
@@ -315,6 +339,9 @@ async def upload_dataset_import(
     source_revision: Annotated[str, Form(min_length=1, max_length=128)],
     execution_image_digest: Annotated[str | None, Form()] = None,
     scoring_image_digest: Annotated[str | None, Form()] = None,
+    agent_timeout_seconds: Annotated[
+        int | None, Form(ge=MIN_AGENT_TIMEOUT_SECONDS, le=MAX_AGENT_TIMEOUT_SECONDS)
+    ] = None,
     source_uri: Annotated[str | None, Form()] = None,
     _guard: None = Depends(_upload_size_guard),
     session: Session = Depends(get_session),
@@ -398,6 +425,7 @@ async def upload_dataset_import(
         storage_key=storage_key,
         execution_image_digest=(execution_image_digest or "").strip() or None,
         scoring_image_digest=(scoring_image_digest or "").strip() or None,
+        agent_timeout_seconds=agent_timeout_seconds,
         validation_report_json={},
         processed_count=0,
         status_updated_at=now,
@@ -426,13 +454,25 @@ async def upload_dataset_import(
 def commit_dataset_import(
     import_id: str,
     background_tasks: BackgroundTasks,
+    payload: DatasetImportCommitRequest | None = None,
     session: Session = Depends(get_session),
     context: identity.AuthContext = Depends(require_admin),
 ) -> dict:
     try:
-        record = import_service.begin_commit(session, import_id)
+        record = import_service.begin_commit(
+            session,
+            import_id,
+            agent_timeout_seconds=(
+                payload.agent_timeout_seconds if payload is not None else None
+            ),
+        )
     except import_service.DatasetImportNotFound as exc:
         raise _not_found("dataset_import_not_found", "导入记录不存在") from exc
+    except import_service.DatasetImportInvalid as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=error_detail("dataset_import_invalid", str(exc)),
+        ) from exc
     except import_service.DatasetImportStateConflict as exc:
         raise HTTPException(
             status_code=409,

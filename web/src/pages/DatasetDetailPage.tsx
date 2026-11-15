@@ -658,6 +658,11 @@ export function DatasetDetailPage() {
                 </span>
               </Descriptions.Item>
               <Descriptions.Item label="适配器版本">{version.data?.adapter_version ?? "—"}</Descriptions.Item>
+              <Descriptions.Item label="Agent 超时（默认）">
+                {version.data?.agent_timeout_seconds
+                  ? `${Math.round(version.data.agent_timeout_seconds / 60)} 分钟`
+                  : "默认 30 分钟"}
+              </Descriptions.Item>
               <Descriptions.Item label="执行镜像 digest">
                 <Tooltip title={version.data?.execution_image_digest || undefined}>
                   <span className="mono small" style={digestStyle}>

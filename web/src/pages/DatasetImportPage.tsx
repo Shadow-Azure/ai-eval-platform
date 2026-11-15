@@ -17,6 +17,9 @@ import { PageHeading } from "../components/PageHeading";
 const MAX_BYTES = 1024 * 1024 * 1024;
 const ACCEPTED_SUFFIXES = [".json", ".jsonl", ".ndjson"];
 const ACTIVE_STATUSES = new Set(["queued", "validating", "committing"]);
+const DEFAULT_AGENT_TIMEOUT_MINUTES = 30;
+const MIN_AGENT_TIMEOUT_MINUTES = 1;
+const MAX_AGENT_TIMEOUT_MINUTES = 1440;
 const STEP_DESCRIPTIONS: Array<[string, string]> = [
   ["选择类型", "适配器与数据源"],
   ["校验数据", "字段、环境与指标"],
@@ -52,6 +55,39 @@ function importIssues(record: DatasetImportRecord): ImportIssue[] {
   return Array.isArray(errorIssues) ? errorIssues : [];
 }
 
+/** Empty means the platform default (1800s); otherwise 1–1440 whole minutes. */
+function parseAgentTimeout(raw: string): {
+  seconds: number | null;
+  minutes: number | null;
+  error: string | null;
+} {
+  const trimmed = raw.trim();
+  if (!trimmed) return { seconds: null, minutes: null, error: null };
+  const parsed = Number(trimmed);
+  if (
+    !Number.isInteger(parsed) ||
+    parsed < MIN_AGENT_TIMEOUT_MINUTES ||
+    parsed > MAX_AGENT_TIMEOUT_MINUTES
+  ) {
+    return {
+      seconds: null,
+      minutes: null,
+      error: `Agent 超时需为 ${MIN_AGENT_TIMEOUT_MINUTES}–${MAX_AGENT_TIMEOUT_MINUTES} 分钟的整数；留空按默认 ${DEFAULT_AGENT_TIMEOUT_MINUTES} 分钟`,
+    };
+  }
+  return { seconds: parsed * 60, minutes: parsed, error: null };
+}
+
+function minutesFromSeconds(value: number | null | undefined): string {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return "";
+  return String(Math.round(value / 60));
+}
+
+function formatAgentTimeoutSeconds(value: number | null | undefined): string {
+  const minutes = minutesFromSeconds(value);
+  return minutes ? `${minutes} 分钟` : `默认 ${DEFAULT_AGENT_TIMEOUT_MINUTES} 分钟`;
+}
+
 export function DatasetImportPage() {
   const navigate = useNavigate();
   const [form] = Form.useForm<FormValues>();
@@ -65,6 +101,9 @@ export function DatasetImportPage() {
   const [submitting, setSubmitting] = useState(false);
   const [committing, setCommitting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [agentTimeout, setAgentTimeout] = useState(String(DEFAULT_AGENT_TIMEOUT_MINUTES));
+  const agentTimeoutTouched = useRef(false);
+  const parsedAgentTimeout = parseAgentTimeout(agentTimeout);
   const [pollTick, setPollTick] = useState(0);
   const runtimes = useQuery({ queryKey: ["runtimes"], queryFn: ({ signal }) => fetchRuntimes(signal) });
 
@@ -108,6 +147,21 @@ export function DatasetImportPage() {
       setStep(3);
     }
   }, [importRecord]);
+
+  // M8-32: when an existing import already carries a frozen version (duplicate
+  // replay or a loaded import), prefill the Step-2 default from that version.
+  useEffect(() => {
+    if (agentTimeoutTouched.current) return;
+    const seconds =
+      importRecord?.agent_timeout_seconds ??
+      importRecord?.version_detail?.agent_timeout_seconds ??
+      null;
+    const minutes = minutesFromSeconds(seconds);
+    if (minutes) setAgentTimeout(minutes);
+  }, [
+    importRecord?.agent_timeout_seconds,
+    importRecord?.version_detail?.agent_timeout_seconds,
+  ]);
 
   function acceptFile(candidate: File | null | undefined) {
     setFileError(null);
@@ -155,6 +209,9 @@ export function DatasetImportPage() {
           source_revision: values.source_revision,
           execution_image_digest: values.execution_image_digest || undefined,
           scoring_image_digest: values.scoring_image_digest || undefined,
+          ...(parsedAgentTimeout.seconds !== null
+            ? { agent_timeout_seconds: parsedAgentTimeout.seconds }
+            : {}),
         },
         file,
         { onProgress: setUploadRatio },
@@ -171,10 +228,14 @@ export function DatasetImportPage() {
 
   async function startCommit() {
     if (!importRecord) return;
+    if (parsedAgentTimeout.error) return;
     setCommitting(true);
     setActionError(null);
     try {
-      const record = await commitDatasetImport(importRecord.id);
+      const record = await commitDatasetImport(
+        importRecord.id,
+        parsedAgentTimeout.seconds ?? undefined,
+      );
       setImportRecord(record);
       setStep(3);
     } catch (error) {
@@ -216,6 +277,8 @@ export function DatasetImportPage() {
     setFileError(null);
     setFile(null);
     setUploadRatio(null);
+    setAgentTimeout(String(DEFAULT_AGENT_TIMEOUT_MINUTES));
+    agentTimeoutTouched.current = false;
   }
 
   const status = importRecord?.status ?? "";
@@ -525,6 +588,38 @@ export function DatasetImportPage() {
                       </div>
                       <div className="ds-summary-row">
                         <div>
+                          <strong>执行默认值</strong>
+                          <div className="ds-summary-hint">随数据集版本固化；发起评测时可覆盖</div>
+                        </div>
+                        <Tag>启动时可改</Tag>
+                      </div>
+                      <div className="field" style={{ maxWidth: 360, padding: "4px 0 8px" }}>
+                        <label htmlFor="dataset-agent-timeout">Agent 超时（默认）</label>
+                        <Input
+                          id="dataset-agent-timeout"
+                          type="number"
+                          min={MIN_AGENT_TIMEOUT_MINUTES}
+                          max={MAX_AGENT_TIMEOUT_MINUTES}
+                          step={1}
+                          inputMode="numeric"
+                          value={agentTimeout}
+                          onChange={(event) => {
+                            agentTimeoutTouched.current = true;
+                            setAgentTimeout(event.target.value);
+                          }}
+                          placeholder={`默认 ${DEFAULT_AGENT_TIMEOUT_MINUTES} 分钟`}
+                          status={parsedAgentTimeout.error ? "error" : undefined}
+                        />
+                        <span className="hint">
+                          默认 {DEFAULT_AGENT_TIMEOUT_MINUTES} 分钟；范围 {MIN_AGENT_TIMEOUT_MINUTES}–
+                          {MAX_AGENT_TIMEOUT_MINUTES} 分钟。保存到数据集版本，发起评测时按本次任务调整。
+                        </span>
+                        {parsedAgentTimeout.error ? (
+                          <span className="field-error">{parsedAgentTimeout.error}</span>
+                        ) : null}
+                      </div>
+                      <div className="ds-summary-row">
+                        <div>
                           <strong>来源文件</strong>
                           <div className="ds-summary-hint">
                             {importRecord.file_name} · {formatBytes(importRecord.file_size)}
@@ -690,6 +785,16 @@ export function DatasetImportPage() {
                     <div className="ds-summary-row">
                       <span className="ds-summary-label">指标</span>
                       <span>解决率（% Resolved）</span>
+                    </div>
+                    <div className="ds-summary-row">
+                      <span className="ds-summary-label">Agent 超时（默认）</span>
+                      <span>
+                        {formatAgentTimeoutSeconds(
+                          importRecord.version_detail?.agent_timeout_seconds ??
+                            importRecord.agent_timeout_seconds ??
+                            parsedAgentTimeout.seconds,
+                        )}
+                      </span>
                     </div>
                   </div>
                 </div>

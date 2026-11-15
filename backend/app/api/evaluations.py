@@ -19,6 +19,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, sessionmaker
 
+from ..agent_timeout import MAX_AGENT_TIMEOUT_SECONDS, MIN_AGENT_TIMEOUT_SECONDS
 from ..config import Settings, get_settings
 from ..db import get_session
 from ..models import EVAL_RUN_STATUSES
@@ -136,6 +137,10 @@ class PrepareRequest(BaseModel):
     prompt_suffix: str | None = Field(default=None, max_length=4000)
     # M8-31: optional Claude Code agentic turn cap; empty keeps the 200 default.
     max_turns: int | None = Field(default=None, ge=1, le=1000)
+    # M8-32: optional Agent wall-clock override; empty inherits the dataset.
+    agent_timeout_seconds: int | None = Field(
+        default=None, ge=MIN_AGENT_TIMEOUT_SECONDS, le=MAX_AGENT_TIMEOUT_SECONDS
+    )
 
 
 class CreateEvaluationRequest(BaseModel):
@@ -176,6 +181,10 @@ class CreateEvaluationRequest(BaseModel):
     prompt_suffix: str | None = Field(default=None, max_length=4000)
     # M8-31: optional Claude Code agentic turn cap; empty keeps the 200 default.
     max_turns: int | None = Field(default=None, ge=1, le=1000)
+    # M8-32: optional Agent wall-clock override; empty inherits the dataset.
+    agent_timeout_seconds: int | None = Field(
+        default=None, ge=MIN_AGENT_TIMEOUT_SECONDS, le=MAX_AGENT_TIMEOUT_SECONDS
+    )
 
 
 class ResumeBudgetRequest(BaseModel):
@@ -241,6 +250,7 @@ def prepare_evaluation(
         created_by=context.user.email,
         prompt_suffix=payload.prompt_suffix,
         max_turns=payload.max_turns,
+        agent_timeout_seconds=payload.agent_timeout_seconds,
     )
     return {"status": "ok", **result}
 
@@ -409,6 +419,7 @@ def create_evaluation(
             consistency_json=check.payload() if payload.dataset_version_id else {},
             prompt_suffix=payload.prompt_suffix,
             max_turns=payload.max_turns,
+            agent_timeout_seconds=payload.agent_timeout_seconds,
             settings=settings,
         )
     except evaluation_service.EvaluationInvalid as exc:

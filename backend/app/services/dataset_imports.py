@@ -34,6 +34,11 @@ except ImportError:  # pragma: no cover - Windows
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
+from ..agent_timeout import (
+    MAX_AGENT_TIMEOUT_SECONDS,
+    MIN_AGENT_TIMEOUT_SECONDS,
+    is_valid_agent_timeout,
+)
 from ..config import Settings, get_settings
 from ..datasets import CaseIssue, DatasetAdapter, get_adapter
 from ..datasets.source import SourceFormatError, iter_source_records, source_mode
@@ -56,6 +61,10 @@ class DatasetImportNotFound(LookupError):
 
 class DatasetImportStateConflict(Exception):
     """The import is not in a state that allows the requested transition."""
+
+
+class DatasetImportInvalid(ValueError):
+    """A commit request carries an invalid field value."""
 
 
 @dataclass
@@ -587,6 +596,7 @@ def materialize_uploaded_import(
             environment_image=None,
             execution_image_digest=record.execution_image_digest,
             scoring_image_digest=record.scoring_image_digest,
+            agent_timeout_seconds=record.agent_timeout_seconds,
             created_by=record.created_by,
             import_record=record,
             source_digest=record.file_digest,
@@ -874,8 +884,22 @@ def cancel_import(session: Session, import_id: str) -> DatasetImport:
     return record
 
 
-def begin_commit(session: Session, import_id: str) -> DatasetImport:
-    """Atomically move a validated import into the committing phase."""
+def begin_commit(
+    session: Session, import_id: str, *, agent_timeout_seconds: int | None = None
+) -> DatasetImport:
+    """Atomically move a validated import into the committing phase.
+
+    M8-32: the confirmation step may edit the dataset default before the
+    immutable version is built; an omitted value keeps the upload value.
+    """
+
+    if agent_timeout_seconds is not None and not is_valid_agent_timeout(
+        agent_timeout_seconds
+    ):
+        raise DatasetImportInvalid(
+            "agent_timeout_seconds 必须在 "
+            f"{MIN_AGENT_TIMEOUT_SECONDS}..{MAX_AGENT_TIMEOUT_SECONDS} 之间"
+        )
 
     from sqlalchemy import update
 
@@ -888,10 +912,18 @@ def begin_commit(session: Session, import_id: str) -> DatasetImport:
     if image_check.get("status") == "blocked":
         raise DatasetImageUnavailable(image_check)
     now = _now()
+    values: dict[str, Any] = {
+        "status": "committing",
+        "status_updated_at": now,
+        "processed_count": 0,
+        "error_report_json": {},
+    }
+    if agent_timeout_seconds is not None:
+        values["agent_timeout_seconds"] = agent_timeout_seconds
     result = session.execute(
         update(DatasetImport)
         .where(DatasetImport.id == import_id, DatasetImport.status == "validated")
-        .values(status="committing", status_updated_at=now, processed_count=0, error_report_json={})
+        .values(**values)
     )
     session.commit()
     if result.rowcount != 1:
@@ -902,5 +934,7 @@ def begin_commit(session: Session, import_id: str) -> DatasetImport:
     record.status_updated_at = now
     record.processed_count = 0
     record.error_report_json = {}
+    if agent_timeout_seconds is not None:
+        record.agent_timeout_seconds = agent_timeout_seconds
     return record
 

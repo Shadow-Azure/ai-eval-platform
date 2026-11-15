@@ -37,6 +37,7 @@ def seed_launch(
     case_count: int = 3,
     runner_count: int = 2,
     pool_max_capacity: int | None = None,
+    agent_timeout_seconds: int = 1800,
 ) -> dict:
     tenant, _workspace, project = ensure_default_scope(session)
     suffix = uuid4().hex[:8]
@@ -60,6 +61,7 @@ def seed_launch(
         status="active",
         execution_image_digest="sha256:" + "a" * 64,
         scoring_image_digest="sha256:" + "b" * 64,
+        agent_timeout_seconds=agent_timeout_seconds,
     )
     session.add(version)
     session.flush()
@@ -365,6 +367,69 @@ def test_prepare_rejects_max_turns_out_of_range(
     response = client.post(
         "/api/v1/evaluations/prepare",
         json=prepare_body(ids, max_turns=max_turns),
+    )
+    assert response.status_code == 422
+
+
+def test_prepare_freezes_agent_timeout_and_create_returns_it(
+    client: TestClient, session: Session
+) -> None:
+    """M8-32: dataset default, launch override and create agree on one value."""
+
+    ids = seed_launch(session, agent_timeout_seconds=2400)
+    inherited = client.post("/api/v1/evaluations/prepare", json=prepare_body(ids))
+    assert inherited.status_code == 200, inherited.text
+    inherited_body = inherited.json()
+    assert inherited_body["agent_timeout_seconds"] == 2400
+    assert inherited_body["summary"]["agent_timeout_seconds"] == 2400
+    inherited_preparation = session.get(
+        EvalPreparation, inherited_body["preparation_id"]
+    )
+    assert inherited_preparation is not None
+    assert inherited_preparation.snapshot_json["agent_timeout_seconds"] == 2400
+    assert (
+        inherited_preparation.snapshot_json["identity"]["agent_timeout_seconds"]
+        == 2400
+    )
+
+    overridden = client.post(
+        "/api/v1/evaluations/prepare",
+        json=prepare_body(ids, agent_timeout_seconds=4500),
+    )
+    assert overridden.status_code == 200, overridden.text
+    body = overridden.json()
+    assert body["agent_timeout_seconds"] == 4500
+    assert body["summary"]["agent_timeout_seconds"] == 4500
+    preparation = session.get(EvalPreparation, body["preparation_id"])
+    assert preparation is not None
+    assert preparation.snapshot_json["agent_timeout_seconds"] == 4500
+    assert preparation.snapshot_json["identity"]["agent_timeout_seconds"] == 4500
+    assert preparation.snapshot_digest != inherited_body["snapshot_digest"]
+
+    created = client.post(
+        "/api/v1/evaluations",
+        json={"preparation_id": body["preparation_id"], "name": "超时评测"},
+        headers={"Idempotency-Key": "idem-agent-timeout"},
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["agent_timeout_seconds"] == 4500
+    stored = session.get(EvalRun, created.json()["id"])
+    assert stored is not None
+    assert stored.agent_timeout_seconds == 4500
+
+    detail = client.get(f"/api/v1/evaluations/{created.json()['id']}")
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["agent_timeout_seconds"] == 4500
+
+
+@pytest.mark.parametrize("agent_timeout_seconds", [59, 0, -1, 86401])
+def test_prepare_rejects_agent_timeout_out_of_range(
+    client: TestClient, session: Session, agent_timeout_seconds: int
+) -> None:
+    ids = seed_launch(session)
+    response = client.post(
+        "/api/v1/evaluations/prepare",
+        json=prepare_body(ids, agent_timeout_seconds=agent_timeout_seconds),
     )
     assert response.status_code == 422
 

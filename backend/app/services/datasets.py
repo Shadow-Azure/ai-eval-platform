@@ -26,6 +26,12 @@ from typing import Any
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
+from ..agent_timeout import (
+    DEFAULT_AGENT_TIMEOUT_SECONDS,
+    MAX_AGENT_TIMEOUT_SECONDS,
+    MIN_AGENT_TIMEOUT_SECONDS,
+    is_valid_agent_timeout,
+)
 from ..config import get_settings
 from ..datasets import (
     AdapterNotFound,
@@ -228,6 +234,7 @@ def materialize_dataset_version(
     environment_image: str | None = None,
     execution_image_digest: str | None = None,
     scoring_image_digest: str | None = None,
+    agent_timeout_seconds: int | None = None,
     created_by: str = "console",
     task_family: str | None = None,
     environment_kind: str | None = None,
@@ -251,6 +258,17 @@ def materialize_dataset_version(
     execution_image_digest, scoring_image_digest = _effective_digests(
         execution_image_digest, scoring_image_digest
     )
+    # M8-32: the dataset default is frozen with the immutable version. A
+    # missing value keeps the platform fallback for legacy import callers.
+    agent_timeout_seconds = (
+        DEFAULT_AGENT_TIMEOUT_SECONDS
+        if agent_timeout_seconds is None
+        else agent_timeout_seconds
+    )
+    if not is_valid_agent_timeout(agent_timeout_seconds):
+        raise ValueError(
+            f"agent_timeout_seconds 必须在 {MIN_AGENT_TIMEOUT_SECONDS}..{MAX_AGENT_TIMEOUT_SECONDS} 之间"
+        )
     adapter: DatasetAdapter = get_adapter(adapter_key)
 
     dataset = session.scalar(
@@ -396,6 +414,7 @@ def materialize_dataset_version(
         environment_image=environment_image,
         execution_image_digest=execution_image_digest,
         scoring_image_digest=scoring_image_digest,
+        agent_timeout_seconds=agent_timeout_seconds,
         task_manifest_digest=source_digest,
     )
     session.add(dataset_version)
@@ -494,6 +513,7 @@ def import_dataset_version(
     environment_image: str | None = None,
     execution_image_digest: str | None = None,
     scoring_image_digest: str | None = None,
+    agent_timeout_seconds: int | None = None,
     records: list[Mapping[str, Any]],
     created_by: str = "console",
     task_family: str | None = None,
@@ -529,6 +549,20 @@ def import_dataset_version(
                 import_record=record,
                 errors=errors,
             )
+        )
+
+    if agent_timeout_seconds is not None and not is_valid_agent_timeout(agent_timeout_seconds):
+        raise failed(
+            [
+                CaseIssue(
+                    code="invalid_agent_timeout",
+                    field="agent_timeout_seconds",
+                    message=(
+                        "agent_timeout_seconds 必须在 "
+                        f"{MIN_AGENT_TIMEOUT_SECONDS}..{MAX_AGENT_TIMEOUT_SECONDS} 之间"
+                    ),
+                )
+            ]
         )
 
     try:
@@ -568,6 +602,7 @@ def import_dataset_version(
         environment_image=environment_image,
         execution_image_digest=execution_image_digest,
         scoring_image_digest=scoring_image_digest,
+        agent_timeout_seconds=agent_timeout_seconds,
         records=records,
         total_count=len(records),
         created_by=created_by,

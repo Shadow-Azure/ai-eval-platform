@@ -1,5 +1,5 @@
 # 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
 # git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
 #   pnpm run record:i18n -- .agents/flow/issues/m8-32-agent-timeout.md
-m8-32-agent-timeout.md: a0f8e452bad9f983691e7274080e909ebacf73dc
-m8-32-agent-timeout.en.md: 44f82abf699751b18a6150c634e02ea9f7f59e09
+m8-32-agent-timeout.md: 175a55faa3734aa4e4ed2d4e9343e47e2e0c35a9
+m8-32-agent-timeout.en.md: 706c1189197535780f4871cfefbe7e770973538e

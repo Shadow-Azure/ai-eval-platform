@@ -16,6 +16,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from ..agent_timeout import DEFAULT_AGENT_TIMEOUT_SECONDS
 from ..config import get_settings
 from ..models import (
     TRACE_STATUSES,
@@ -385,6 +386,10 @@ def get_case(session: Session, case_run_id: str) -> dict[str, Any]:
             "status": run.status,
             "max_attempts": run.max_attempts,
             "case_timeout_seconds": run.case_timeout_seconds,
+            # M8-32: the frozen Agent wall-clock budget for this run.
+            "agent_timeout_seconds": (
+                run.agent_timeout_seconds or DEFAULT_AGENT_TIMEOUT_SECONDS
+            ),
             "requested_concurrency": run.requested_concurrency,
             "effective_concurrency": run.effective_concurrency,
             "total_cases": run.total_cases,
@@ -686,6 +691,9 @@ def config_snapshot(session: Session, run: EvalRun) -> dict[str, Any]:
             "queue_reason": run.queue_reason,
             "case_timeout_seconds": run.case_timeout_seconds,
             "max_attempts": run.max_attempts,
+            "agent_timeout_seconds": (
+                run.agent_timeout_seconds or DEFAULT_AGENT_TIMEOUT_SECONDS
+            ),
             "execution_image_digest": run.execution_image_digest,
             "scoring_image_digest": run.scoring_image_digest,
             "task_manifest_digest": run.task_manifest_digest,
