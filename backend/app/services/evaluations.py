@@ -44,6 +44,7 @@ from ..models import (
 )
 from ..money import money_str
 from ..runner_contracts import ContractInvalid, validate_payload
+from .dataset_images import effective_sources, source_records
 from .runner_labels import DEFAULT_RUNS_ON, pool_runner_labels
 
 SHARD_DISPATCH_TOPIC = "eval.shard.dispatch"
@@ -481,6 +482,8 @@ def build_case_dispatches(
             "agent_timeout_seconds": (
                 run.agent_timeout_seconds or DEFAULT_AGENT_TIMEOUT_SECONDS
             ),
+            # M8-33: freeze the ordered public image sources for runtime fallback.
+            "image_sources": source_records(effective_sources(session, settings)),
             "runs_on": runs_on,
             "cases": [
                 {
