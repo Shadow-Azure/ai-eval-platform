@@ -10,6 +10,7 @@ status: in-progress
 scope:
   - .agents/flow/issues/m8-35-spot-duration.*
   - .agents/flow/milestones/m8-bug-fixes.*
+  - .agents/flow/issues/m8-34-spot-zero-resident.*
   - backend/app/services/capacity_control.py
   - backend/app/services/provisioning/__init__.py
   - backend/app/services/provisioning/aliyun.py
