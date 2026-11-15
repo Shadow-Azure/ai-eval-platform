@@ -855,3 +855,24 @@ def test_resource_event_dedupe_key_is_unique_per_tenant(
     with pytest.raises(IntegrityError):
         session.flush()
     session.rollback()
+
+
+def test_instance_spec_carries_spot_duration() -> None:
+    # M8-35: the controller freezes the protection window on the request; the
+    # Aliyun RunInstances call must receive it as SpotDuration.
+    from app.services.capacity_control import instance_spec
+    from app.models import ResourcePool
+
+    pool = ResourcePool(
+        id="pool-duration",
+        tenant_id="tenant-duration",
+        project_id="project-duration",
+        name="duration",
+        provider_key="aliyun",
+        provisioning_mode="spot",
+        status="active",
+        instance_config_json={"instance_type": "ecs.g7.large"},
+    )
+    spec = instance_spec(pool, spot_duration_hours=2)
+    assert spec.spot is True
+    assert spec.spot_duration_hours == 2

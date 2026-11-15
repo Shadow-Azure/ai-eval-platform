@@ -207,3 +207,9 @@ waiting_for_price → requested → creating → cloud-init/user_data → regist
 一个 ephemeral runner；runner 退出后实例立即关机/terminate，controller 以 Runner 可接单状态而非实例状态判定容量。
 GitHub `workflow_job` webhook 触发 reconcile，30s 轮询兜底；容量公式 `desired = queued_jobs - (online+registering)`。
 冷启动由预烘焙 AMI/预拉镜像承担，不引入 warm pool。
+
+## 竞价资源 SpotDuration 保底（M8-35）
+
+竞价实例在创建时按本次评测最长 `case_timeout_seconds` 向上取整设置 Aliyun `SpotDuration`（1–6 小时），
+使 job 在保底窗口内不被竞价回收。并发批次取最大超时；超过 6 小时时不能静默创建无保底实例，应明确
+回退按量/fixed 或报可诊断错误。`SpotDuration` 写入实例 cost_json 便于排障，不改变零常驻语义。

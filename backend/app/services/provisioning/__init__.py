@@ -54,6 +54,9 @@ class InstanceSpec:
     instance_type: str
     image_id: str | None = None
     spot: bool = True
+    # M8-35: Aliyun spot protection window in whole hours (1..6). None keeps
+    # the provider default (SpotAsPriceGo without a guaranteed duration).
+    spot_duration_hours: int | None = None
 
 
 class ProvisionerError(Exception):
