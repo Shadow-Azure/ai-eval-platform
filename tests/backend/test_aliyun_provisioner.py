@@ -563,6 +563,81 @@ def test_sync_reclaims_instance_after_runner_heartbeat_loss(
     assert runner.deregistered_at == clock
 
 
+def test_sync_reclaims_offline_ephemeral_runner_after_short_grace(
+    session: Session, scope: dict[str, str], clock: datetime
+) -> None:
+    """M8-34: a one-job runner exiting must free capacity in ~60s, not ~390s."""
+
+    connection = _connection(session, scope)
+    pool = _pool(session, scope, connection)
+    instance, runner = _instance_with_runner(session, scope, connection, pool, clock)
+    instance.ready_at = clock - timedelta(minutes=5)
+    runner.status = "offline"
+    # 61s is past the new fast grace but far below the old
+    # heartbeat_timeout + lost_grace window.
+    runner.last_heartbeat_at = clock - timedelta(seconds=61)
+    session.flush()
+    transport = FakeAliyun()
+    transport.instances["i-test-1"] = {"InstanceId": "i-test-1", "Status": "Running"}
+
+    counts = _provisioner(transport=transport).sync(
+        session=session, connection=connection, pool=pool, now=clock
+    )
+
+    assert counts["interrupted"] == 1
+    assert instance.status == "released"
+    assert instance.cost_json["reclaimed_reason"] == "runner_exited"
+    events = [
+        event
+        for event in session.scalars(select(ResourceEvent))
+        if event.event_type == capacity_control.EVENT_INSTANCE_INTERRUPTED
+    ]
+    assert any(event.payload_json.get("reason") == "runner_exited" for event in events)
+
+
+def test_sync_does_not_reclaim_a_healthy_long_running_job(
+    session: Session, scope: dict[str, str], clock: datetime
+) -> None:
+    connection = _connection(session, scope)
+    pool = _pool(session, scope, connection)
+    instance, runner = _instance_with_runner(session, scope, connection, pool, clock)
+    runner.status = "busy"
+    runner.last_heartbeat_at = clock - timedelta(seconds=30)
+    session.flush()
+    transport = FakeAliyun()
+    transport.instances["i-test-1"] = {"InstanceId": "i-test-1", "Status": "Running"}
+
+    counts = _provisioner(transport=transport).sync(
+        session=session, connection=connection, pool=pool, now=clock
+    )
+
+    assert counts["interrupted"] == 0
+    assert instance.status == "online"
+    assert transport.delete_calls == []
+
+
+def test_sync_reclaims_missing_runner_after_short_grace(
+    session: Session, scope: dict[str, str], clock: datetime
+) -> None:
+    connection = _connection(session, scope)
+    pool = _pool(session, scope, connection)
+    instance, runner = _instance_with_runner(session, scope, connection, pool, clock)
+    instance.ready_at = clock - timedelta(seconds=61)
+    instance.runner_id = None
+    session.delete(runner)
+    session.flush()
+    transport = FakeAliyun()
+    transport.instances["i-test-1"] = {"InstanceId": "i-test-1", "Status": "Running"}
+
+    counts = _provisioner(transport=transport).sync(
+        session=session, connection=connection, pool=pool, now=clock
+    )
+
+    assert counts["interrupted"] == 1
+    assert instance.status == "released"
+    assert instance.cost_json["reclaimed_reason"] == "runner_exited"
+
+
 def test_sync_failure_keeps_tick_running(
     session: Session, scope: dict[str, str], clock: datetime
 ) -> None:
