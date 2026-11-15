@@ -10,6 +10,7 @@ status: in-progress
 scope:
   - .agents/flow/issues/m8-34-spot-zero-resident.*
   - .agents/flow/milestones/m8-bug-fixes.*
+  - .agents/flow/issues/m8-33-runtime-image-fallback.*
   - backend/app/config.py
   - backend/app/main.py
   - .github/workflows/deploy.yml
