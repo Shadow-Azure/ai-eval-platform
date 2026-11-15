@@ -18,6 +18,7 @@ scope:
   - runner/scripts/real-task.mjs
   - tests/backend/**
   - tests/runner/**
+  - plans/2026-11-15-pr251-review.md
   - tests/runner/image-sources.test.mjs
   - plans/m1-02-fullstack-design/07-datasets-metrics-and-agents.md
 adr: []

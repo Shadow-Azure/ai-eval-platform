@@ -164,6 +164,8 @@ function dockerRun(args, { allowFailure = false, timeout = 1_200_000 } = {}) {
  */
 function resolveRuntimeImage(image, sources, { traceDir = null } = {}) {
   const timeoutMs = Number(process.env.REAL_TASK_IMAGE_PULL_TIMEOUT_MS || 180_000) || 180_000;
+  const budgetMs = Number(process.env.REAL_TASK_IMAGE_RESOLVE_BUDGET_MS || 300_000) || 300_000;
+  const deadline = Date.now() + budgetMs;
   const candidates = imageCandidates(image, sources);
   const attempts = [];
   const record = (entry) => {
@@ -178,7 +180,12 @@ function resolveRuntimeImage(image, sources, { traceDir = null } = {}) {
     }
   };
   for (const ref of candidates) {
-    const local = dockerRun(["image", "inspect", ref], { allowFailure: true, timeout: 15_000 });
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      record({ ref, source: sourceLabel(ref, sources), result: "budget_exhausted" });
+      break;
+    }
+    const local = dockerRun(["image", "inspect", ref], { allowFailure: true, timeout: Math.min(15_000, remaining) });
     if (local.status === 0) {
       record({ ref, source: sourceLabel(ref, sources), result: "local" });
       return { image: ref, attempts };
@@ -186,7 +193,10 @@ function resolveRuntimeImage(image, sources, { traceDir = null } = {}) {
     const startedAt = Date.now();
     let pull;
     try {
-      pull = dockerRun(["pull", ref], { allowFailure: true, timeout: timeoutMs });
+      pull = dockerRun(["pull", ref], {
+        allowFailure: true,
+        timeout: Math.min(timeoutMs, Math.max(1_000, deadline - Date.now())),
+      });
     } catch (error) {
       record({
         ref,
@@ -1393,6 +1403,9 @@ async function main() {
   } catch (error) {
     if (error instanceof ContractError) {
       fail(error.message, error.code, 1);
+    }
+    if (error?.code === "image_unavailable") {
+      fail(String(error.message ?? error), "image_unavailable", 1);
     }
     if (error?.code === "callback_retryable" || error?.code === "callback_permanent" || error?.code === "upload_failed") {
       const retryable = error.code !== "callback_permanent";

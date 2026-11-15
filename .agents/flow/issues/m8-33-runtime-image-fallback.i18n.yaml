@@ -1,5 +1,5 @@
 # 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
 # git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
 #   pnpm run record:i18n -- .agents/flow/issues/m8-33-runtime-image-fallback.md
-m8-33-runtime-image-fallback.md: ec038349af0255bb6e4815c744679a5504f4454d
-m8-33-runtime-image-fallback.en.md: d4cbb841722eba79b6727d3347ac3825cfb1c4d0
+m8-33-runtime-image-fallback.md: b02e126541210e5dfe2371d56e97f355c7c7e07f
+m8-33-runtime-image-fallback.en.md: 019d20cc3a7ed513d2c491b2277cafff0773af7f
