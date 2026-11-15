@@ -14,6 +14,7 @@ scope:
   - tests/runner/agent-timeout.test.mjs
   - prototype/app.js
   - prototype/index.html
+  - plans/2026-11-15-pr249-review.md
   - backend/app/services/case_attempts.py
   - tests/backend/test_eval_workbench.py
   - backend/app/agent_timeout.py
