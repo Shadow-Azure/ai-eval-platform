@@ -366,6 +366,7 @@ class AliyunEcsClient:
         user_data: str,
         zone_id: str | None = None,
         internet_max_bandwidth_out: int = 100,
+        spot_duration_hours: int | None = None,
     ) -> str:
         params: dict[str, object] = {
             "RegionId": region_id,
@@ -389,6 +390,8 @@ class AliyunEcsClient:
         }
         if zone_id:
             params["ZoneId"] = zone_id
+        if spot_duration_hours is not None:
+            params["SpotDuration"] = int(spot_duration_hours)
         payload = self.call("RunInstances", params)
         instances = (payload.get("InstanceIdSets") or {}).get("InstanceIdSet") or []
         if not instances or not isinstance(instances[0], str):
@@ -822,6 +825,7 @@ class AliyunEcsProvisioner:
                 user_data=user_data,
                 zone_id=zone_id,
                 internet_max_bandwidth_out=int(config.get("internet_max_bandwidth_out") or 100),
+                spot_duration_hours=spec.spot_duration_hours,
             )
         except ProvisionerError:
             # Do not leave a JIT runner pointing at an instance that never
@@ -844,6 +848,7 @@ class AliyunEcsProvisioner:
                 "region": region,
                 "zone_id": zone_id,
                 "instance_type": spec.instance_type,
+                "spot_duration_hours": spec.spot_duration_hours,
                 "image_id": image_id,
                 "vswitch_id": vswitch_id,
                 "security_group_id": security_group_id,
