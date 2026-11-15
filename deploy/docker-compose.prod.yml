@@ -73,6 +73,9 @@ services:
       RUNNER_ADMIN_TOKEN: ${RUNNER_ADMIN_TOKEN:-}
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
       GITHUB_REPO: ${GITHUB_REPO:-Shadow-Azure/ai-eval-platform}
+      # M8-34: HMAC secret for the GitHub workflow_job webhook; empty disables
+      # the endpoint and leaves the 30s capacity poll as the fallback.
+      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
       DEPLOY_ENVIRONMENT: ${DEPLOY_ENVIRONMENT:-production}
       # M3-05 console identity. AUTH_SESSION_SECRET is injected from GitHub
       # Secrets before deploy so a replacement host preserves existing sessions

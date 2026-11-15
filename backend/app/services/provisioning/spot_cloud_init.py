@@ -129,6 +129,11 @@ Environment=RUNNER_ALLOW_RUNASROOT=1
 WorkingDirectory=/opt/actions-runner
 ExecStart=/bin/bash -lc 'exec ./run.sh --jitconfig "$JIT_CONFIG"'
 Restart=no
+# M8-34 zero-resident spot pool: the runner is one-job and exits as soon as the
+# job completes. ExecStopPost runs only after the unit stops (never on a normal
+# start), so powering the instance off here leaves no online/offline orphan for
+# the capacity controller to wait on.
+ExecStopPost=/sbin/shutdown -h now
 
 [Install]
 WantedBy=multi-user.target

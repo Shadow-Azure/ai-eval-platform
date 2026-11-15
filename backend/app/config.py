@@ -132,6 +132,12 @@ class Settings(BaseSettings):
     github_repo: str = "Shadow-Azure/ai-eval-platform"
     github_token: str | None = None
     github_dispatch_event_type: str = "eval-shard"
+    # M8-34: secret configured on the GitHub webhook for ``workflow_job``
+    # events. The API verifies X-Hub-Signature-256 with it and only marks active
+    # spot pools due; no provider call happens in the request. Empty disables
+    # the endpoint (503) so an unconfigured deployment cannot be woken by an
+    # unauthenticated caller.
+    github_webhook_secret: str | None = None
     # M5-18: deployments page reads and controls the production environment
     # recorded by the deploy workflow (DEPLOY_ENVIRONMENT in .env).
     deploy_environment: str = "production"
@@ -153,8 +159,11 @@ class Settings(BaseSettings):
     dispatch_capacity_retry_seconds: float = 10.0
     # M4-03 spot capacity controller: how often a pool is re-evaluated and how
     # many instances one tick may create (a bounded batch keeps one worker pass
-    # cheap even when a large queue arrives at once).
-    eval_capacity_check_seconds: int = 300
+    # cheap even when a large queue arrives at once). M8-34 makes this a fast
+    # fallback poll: the GitHub ``workflow_job`` webhook wakes the controller
+    # immediately, while 30s keeps the queue moving when a webhook is lost.
+    # Override with EVAL_CAPACITY_CHECK_SECONDS.
+    eval_capacity_check_seconds: int = 30
     eval_capacity_batch_size: int = 5
     # M5-19 resource-pool console: "today's resource cost" aggregates over a
     # local calendar day. Operators are in China (UTC+8), so the default window
@@ -170,9 +179,13 @@ class Settings(BaseSettings):
     # A spot instance is reclaimed when it never starts or never registers a
     # runner; queued attempts stay queued and the next tick retries.
     eval_spot_register_timeout_seconds: int = 1200
-    # Grace after the runner heartbeat timeout before an instance whose runner
-    # vanished is reclaimed (the lifecycle reaper retries the attempt first).
-    eval_spot_runner_lost_grace_seconds: int = 300
+    # Grace before an instance whose ephemeral runner exited is reclaimed. A
+    # one-job runner stops heartbeating when it exits; 60s is long enough to
+    # absorb the worker's offline sweep and short enough not to starve queued
+    # shards (M8-34). Instances that never register still use
+    # eval_spot_register_timeout_seconds. Override with
+    # EVAL_SPOT_RUNNER_LOST_GRACE_SECONDS.
+    eval_spot_runner_lost_grace_seconds: int = 60
     # M4-02 execution lifecycle timeouts (design 06 §7). Five independent
     # clocks instead of one total timeout: platform queue, agent execution,
     # scoring, upload grace period and heartbeat. The agent execution timeout

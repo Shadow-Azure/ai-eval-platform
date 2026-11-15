@@ -10,7 +10,7 @@ Provider flow:
     verify  -> DescribeInstances (read-only credential check)
     create  -> generate JIT config -> RunInstances(SpotAsPriceGo, UserData)
     sync    -> DescribeInstances -> Running/Stopped/locks -> link runner,
-               detect interruption/heartbeat loss/create timeout
+               detect runner exit/interruption/heartbeat loss/create timeout
     release -> delete JIT runner -> DeleteInstance
 
 Secrets policy: the Aliyun AccessKey pair is decrypted from the tenant
@@ -1104,23 +1104,46 @@ class AliyunEcsProvisioner:
                     )
                 continue
             if instance.status == "online":
-                # The worker's offline sweep may have already flipped the
-                # runner, or the row is gone after a restart. Reclaim only
-                # after the same heartbeat grace so a healthy long job is
-                # never killed by a single stale sample.
+                # The ephemeral runner exits right after its single job (M8-34),
+                # so an offline/missing row means the instance is now idle and
+                # paying rent for nothing. Reclaim after the short lost grace.
+                # A runner that still reports online/busy is handled above and
+                # keeps the longer heartbeat timeout, so a healthy long job is
+                # never killed by one stale sample.
                 last_seen = _aware(runner.last_heartbeat_at) if runner is not None else None
+                # The row can disappear after a database restore/reset. The
+                # instance is only marked online after a live registration, so
+                # its ready time is the best available exit anchor.
+                anchor = _aware(instance.ready_at) or _aware(instance.created_at)
                 if runner is None:
-                    if age > timeout + lost_grace:
+                    if anchor is not None and now - anchor > lost_grace:
                         counters["interrupted"] += 1
                         self._reclaim(
                             session,
                             pool,
                             instance,
-                            reason="runner_missing",
+                            reason="runner_exited",
                             now=now,
                             event_type=EVENT_INSTANCE_INTERRUPTED,
+                            detail="runner_missing",
                         )
+                elif runner.status == "offline" and (
+                    (last_seen or anchor) is not None
+                    and now - (last_seen or anchor) >= lost_grace
+                ):
+                    counters["interrupted"] += 1
+                    self._reclaim(
+                        session,
+                        pool,
+                        instance,
+                        reason="runner_exited",
+                        now=now,
+                        event_type=EVENT_INSTANCE_INTERRUPTED,
+                        detail=f"last_heartbeat={_iso(last_seen)}",
+                    )
                 elif last_seen is not None and now - last_seen > heartbeat_timeout + lost_grace:
+                    # Fallback for a row that is neither live nor marked
+                    # offline (for example a worker sweep has not run yet).
                     counters["interrupted"] += 1
                     self._reclaim(
                         session,

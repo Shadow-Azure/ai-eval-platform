@@ -73,6 +73,28 @@ def test_bootstrap_contains_jit_and_installs_runner_once() -> None:
     )
 
 
+def test_bootstrap_powers_off_after_the_runner_exits() -> None:
+    document = yaml.safe_load(
+        render_cloud_init(
+            platform_base_url="http://platform.example",
+            runner_name="spot-abc",
+            resource_pool_id="pool-1",
+            labels=["self-hosted"],
+            encoded_jit="single-use-jit-value",
+            heartbeat_token="heartbeat-token",
+            runner_tarball_url="https://oss.example/actions-runner.tar.gz",
+        )
+    )
+    bootstrap = _files(document)["/etc/eval/bootstrap.sh"]
+    runner_unit = bootstrap.split("<<'RUNNER_UNIT'\n", 1)[1].split("\nRUNNER_UNIT", 1)[0]
+    # Zero-resident lifecycle: a one-job runner exiting powers the spot instance
+    # off. ExecStopPost is a stop hook, not a boot/start command, so a freshly
+    # started runner never triggers it.
+    assert "ExecStopPost=/sbin/shutdown -h now" in runner_unit
+    assert "ExecStartPre" not in runner_unit
+    assert bootstrap.count("ExecStopPost=/sbin/shutdown -h now") == 1
+
+
 def test_cleanup_removes_jit_env_and_cloud_init_user_data() -> None:
     document = yaml.safe_load(
         render_cloud_init(

@@ -200,3 +200,10 @@ waiting_for_price → requested → creating → cloud-init/user_data → regist
 例：500 用例、8 个在线 Linux Runner、requested concurrency=8、每用例 20 分钟，则约 8 路并行、63 波，理想执行约 21 小时，另计启动/评分/重试；增加到 32 个 Runner 后理论约 5.3 小时。实际排期还受分片、模型限流和实例启动时间影响。
 
 以下情况应启用架构预留的队列后端：持续需要 50–100 以上并发、要求秒级确定性派发、GitHub 排队/限流成为主要故障，或需要比 workflow_job 更精细的公平调度。切换时保留 in-job 执行脚本、任务包、回调与 OSS 契约，只替换 ExecutionBackend。
+
+## 竞争态池零常驻生命周期（M8-34）
+
+竞争态 spot 池不保留常驻实例：无 queued job 时 `current_size=0`。每个 shard job 临时创建一台 spot 实例 +
+一个 ephemeral runner；runner 退出后实例立即关机/terminate，controller 以 Runner 可接单状态而非实例状态判定容量。
+GitHub `workflow_job` webhook 触发 reconcile，30s 轮询兜底；容量公式 `desired = queued_jobs - (online+registering)`。
+冷启动由预烘焙 AMI/预拉镜像承担，不引入 warm pool。
