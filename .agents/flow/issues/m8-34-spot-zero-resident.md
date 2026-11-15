@@ -12,6 +12,8 @@ scope:
   - .agents/flow/milestones/m8-bug-fixes.*
   - backend/app/config.py
   - backend/app/main.py
+  - .github/workflows/deploy.yml
+  - deploy/docker-compose.prod.yml
   - backend/app/api/**
   - backend/app/services/capacity_control.py
   - backend/app/services/provisioning/**

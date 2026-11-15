@@ -6,7 +6,7 @@ English | [中文](m8-33-runtime-image-fallback.md)
 kind: issue
 milestone: m8
 priority: P2
-status: in-progress
+status: done
 scope:
   - .agents/flow/issues/m8-33-runtime-image-fallback.*
   - .agents/flow/milestones/m8-bug-fixes.*
