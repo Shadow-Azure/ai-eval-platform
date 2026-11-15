@@ -157,6 +157,9 @@ def test_create_builds_run_cases_attempts_and_contract_outbox(
         manifest = json.loads(manifest_text)
         validate_payload("manifest", manifest)
         assert manifest["runs_on"] == ["self-hosted", "linux", "eval"]
+        # M8-33: the runtime fallback list is frozen into the manifest.
+        assert isinstance(manifest["image_sources"], list)
+        assert all({"name", "registry"} <= set(source) for source in manifest["image_sources"])
         import hashlib
 
         assert client_payload["manifest_digest"] == (

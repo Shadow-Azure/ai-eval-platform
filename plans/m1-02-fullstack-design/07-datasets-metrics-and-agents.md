@@ -65,6 +65,14 @@ per-case 镜像，版本级镜像仅在 case 未携带镜像时回退。
 Runner 用它设置 Agent wall-clock 超时；`REAL_TASK_TIMEOUT_MS` 仅保留为运维逃生阀。超时与
 `max_turns` 是两个独立闸门：一个是墙钟时间，一个是模型响应轮次。
 
+## 1.5 运行时镜像源解析与回退（M8-33）
+
+导入校验使用的公开源（m8-25/26）在评测运行时也应生效：shard manifest/task payload 冻结当前生效的
+`image_sources`（DB 覆盖 > `DATASET_IMAGE_REGISTRIES`，仅 enabled），Runner 对每个 case image 先检查本地缓存，
+未命中则按源顺序构造 registry/prefix 镜像引用并 `docker pull`；镜像不存在、连接/首字节超时或下载超过单源预算时
+继续下一个源，全部失败才以 `image_unavailable` 终止。最终使用的源和尝试链写入 trace/诊断，便于定位
+“导入校验成功但运行时拉不到”的问题。公开源不涉及私有 registry 认证。
+
 ## 2. 五文件任务包与 OSS 布局
 
 架构固定任务包为 `task.toml`、`instruction.md`、`environment/Dockerfile`、`tests/test.sh`、`solution/solve.sh`。建议 manifest 另存于版本级索引，记录每个文件 digest、评分镜像 digest、可见性和运行时约束。

@@ -794,6 +794,8 @@ def test_shard_task_payload_includes_agent_timeout(
         return response.json()
 
     assert payload()["agent_timeout_seconds"] == 1800
+    assert isinstance(payload()["image_sources"], list)
+    assert payload()["image_sources"] == json.loads(outbox.payload_json["manifest_text"])["image_sources"]
 
     run.agent_timeout_seconds = 4500
     session.commit()

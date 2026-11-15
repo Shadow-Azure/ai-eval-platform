@@ -23,6 +23,7 @@ import { getDatasetAdapter, getRuntimeAdapter } from "../lib/adapters.mjs";
 import { composePrompt } from "../lib/prompt.mjs";
 import { startHeartbeatSidecar, stopHeartbeatSidecar } from "./heartbeat-agent.mjs";
 import { buildCaseTasks } from "../lib/task-payload.mjs";
+import { imageCandidates, sourceLabel } from "../lib/image-sources.mjs";
 import {
   collectTraceBundle,
   dedupeTraceObjects,
@@ -151,6 +152,65 @@ function dockerRun(args, { allowFailure = false, timeout = 1_200_000 } = {}) {
     });
   }
   return { status: result.status, stdout: result.stdout || "", stderr: result.stderr || "" };
+}
+
+/**
+ * M8-33: resolve one case image across the frozen public registry sources.
+ *
+ * A cold spot instance has no local image. Docker Hub may be unreachable while
+ * a configured mirror works; try the local cache first, then each source ref
+ * with a bounded pull. The resolved ref is used for every later Docker command
+ * so the scoring step does not silently fall back to Docker Hub.
+ */
+function resolveRuntimeImage(image, sources, { traceDir = null } = {}) {
+  const timeoutMs = Number(process.env.REAL_TASK_IMAGE_PULL_TIMEOUT_MS || 180_000) || 180_000;
+  const candidates = imageCandidates(image, sources);
+  const attempts = [];
+  const record = (entry) => {
+    attempts.push(entry);
+    if (traceDir) {
+      try {
+        writeFileSync(join(traceDir, "image-sources.json"), `${JSON.stringify({ image, sources, attempts }, null, 2)}\n`);
+      } catch {
+        // Diagnostics must never fail the case; the attempt summary still
+        // reaches the error message.
+      }
+    }
+  };
+  for (const ref of candidates) {
+    const local = dockerRun(["image", "inspect", ref], { allowFailure: true, timeout: 15_000 });
+    if (local.status === 0) {
+      record({ ref, source: sourceLabel(ref, sources), result: "local" });
+      return { image: ref, attempts };
+    }
+    const startedAt = Date.now();
+    let pull;
+    try {
+      pull = dockerRun(["pull", ref], { allowFailure: true, timeout: timeoutMs });
+    } catch (error) {
+      record({
+        ref,
+        source: sourceLabel(ref, sources),
+        result: "error",
+        elapsed_ms: Date.now() - startedAt,
+        error: String(error?.message || error).slice(0, 400),
+      });
+      continue;
+    }
+    record({
+      ref,
+      source: sourceLabel(ref, sources),
+      result: pull.status === 0 ? "pulled" : "failed",
+      elapsed_ms: Date.now() - startedAt,
+      stderr: pull.status === 0 ? undefined : (pull.stderr || "").slice(-400),
+    });
+    if (pull.status === 0) return { image: ref, attempts };
+  }
+  const summary = attempts.map((entry) => `${entry.ref}=${entry.source}:${entry.result}`).join(", ");
+  throw Object.assign(new Error(`image_unavailable: 所有镜像源均不可用（${summary}）`), {
+    code: "image_unavailable",
+    attempts,
+  });
 }
 
 /**
@@ -371,10 +431,18 @@ async function realCase(
     if (!modelToken) throw new Error("manifest 未签发 model token");
     if (!task.model?.anthropic_base_url) throw new Error("tasks 未返回模型网关地址");
 
+    // M8-33: create the trace dir before resolving the image so the attempt
+    // chain can be recorded even when every source fails.
+    mkdirSync(join(workdir, "trace"), { recursive: true, mode: 0o777 });
+    const resolvedEnvironmentImage =
+      Array.isArray(task.image_sources) && task.image_sources.length > 0
+        ? resolveRuntimeImage(environmentImage, task.image_sources, { traceDir: join(workdir, "trace") }).image
+        : environmentImage;
+
     // The SWE-bench scoring image already contains the repo checkout at the
     // instance base commit; copy it out instead of cloning from GitHub, which
     // is not reliably reachable from the fixed runner network.
-    const source = dockerRun(["create", environmentImage]).stdout.trim();
+    const source = dockerRun(["create", resolvedEnvironmentImage]).stdout.trim();
     try {
       dockerRun(["cp", `${source}:/testbed/.`, workdir], { timeout: 300_000 });
     } finally {
@@ -489,7 +557,7 @@ async function realCase(
         "-v", `${workdir}:/testbed`, "-v", `${runnerRoot}:/runner:ro`,
       ];
       if (sourceRoot) runArgs.push("-v", `${sourceRoot}:/asset-source`);
-      runArgs.push(environmentImage, "tail", "-f", "/dev/null");
+      runArgs.push(resolvedEnvironmentImage, "tail", "-f", "/dev/null");
       dockerRun(runArgs);
       // The dataset image is fixed; the generic agent runtime is installed
       // after start from Alibaba npm/PyPI sources. No per-agent image.
@@ -817,9 +885,9 @@ async function realCase(
 
     try {
       writeFileSync(testPatchPath, task.test_patch || "");
-      dockerRun(datasetAdapter.applyTestPatchArgs(environmentImage, workdir, testPatchPath), { timeout: 120_000 });
+      dockerRun(datasetAdapter.applyTestPatchArgs(resolvedEnvironmentImage, workdir, testPatchPath), { timeout: 120_000 });
       const testResult = dockerRun(
-        datasetAdapter.testArgs(environmentImage, workdir, datasetAdapter.testIds(task)),
+        datasetAdapter.testArgs(resolvedEnvironmentImage, workdir, datasetAdapter.testIds(task)),
         { allowFailure: true, timeout: 1_800_000 },
       );
       const report = datasetAdapter.parseReport(task, `${testResult.stdout}\n${testResult.stderr}`);

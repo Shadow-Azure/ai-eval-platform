@@ -22,6 +22,8 @@ export function buildCaseTask(task, taskPayload) {
     // M8-32: the frozen Agent wall-clock budget; the executor falls back to 1800s.
     agent_timeout_seconds:
       taskPayload?.agent_timeout_seconds ?? task.agent_timeout_seconds ?? null,
+    // M8-33: ordered public registry sources for runtime image fallback.
+    image_sources: taskPayload?.image_sources ?? task.image_sources ?? [],
     egress_proxy: taskPayload?.egress_proxy ?? task.egress_proxy ?? null,
     egress_token: taskPayload?.egress_token ?? task.egress_token ?? null,
   };

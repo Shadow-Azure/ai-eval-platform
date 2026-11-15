@@ -9,6 +9,7 @@ Routes consumed by the deployed fixed-runner heartbeat agent:
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Literal
@@ -928,6 +929,10 @@ def shard_tasks(
     gateway_base = settings.runner_callback_base_url.rstrip("/")
     dataset_version = session.get(DatasetVersion, run.dataset_version_id) if run.dataset_version_id else None
     dataset = session.get(Dataset, dataset_version.dataset_id) if dataset_version else None
+    try:
+        shard_manifest = json.loads(row.payload_json.get("manifest_text") or "{}")
+    except (TypeError, ValueError):
+        shard_manifest = {}
     # M8-14: the public listener authenticates with a short-lived token instead
     # of static proxy credentials. It reuses the case-token TTL so the
     # credential outlives the whole case plus the upload grace; the proxy only
@@ -966,6 +971,8 @@ def shard_tasks(
         "agent_timeout_seconds": (
             run.agent_timeout_seconds or DEFAULT_AGENT_TIMEOUT_SECONDS
         ),
+        # M8-33: ordered public registry sources for runtime image fallback.
+        "image_sources": shard_manifest.get("image_sources", []),
         "execution_image_digest": run.execution_image_digest,
         "scoring_image_digest": run.scoring_image_digest,
         "environment_image": dataset_version.environment_image if dataset_version else None,
