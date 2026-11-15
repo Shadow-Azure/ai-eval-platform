@@ -19,6 +19,7 @@ scope:
   - backend/app/services/capacity_control.py
   - backend/app/services/provisioning/**
   - tests/backend/**
+  - plans/2026-11-15-pr253-review.md
   - plans/m1-02-fullstack-design/06-execution-and-resource-pools.md
   - plans/m1-02-fullstack-design/07-datasets-metrics-and-agents.md
 adr: []
