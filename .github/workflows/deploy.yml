@@ -182,7 +182,7 @@ jobs:
       DATASET_IMAGE_REGISTRIES: ${{ secrets.DATASET_IMAGE_REGISTRIES }}
       DISPATCH_TOKEN: ${{ secrets.FLOW_TOKEN }}
       # M8-34: GitHub workflow_job webhook secret; empty disables the webhook.
-      GITHUB_WEBHOOK_SECRET: ${{ secrets.GITHUB_WEBHOOK_SECRET }}
+      GITHUB_WEBHOOK_SECRET: ${{ secrets.EVAL_GITHUB_WEBHOOK_SECRET }}
       SECRET_BOX_KEY: ${{ secrets.SECRET_BOX_KEY }}
       POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
       AUTH_SESSION_SECRET: ${{ secrets.AUTH_SESSION_SECRET }}
