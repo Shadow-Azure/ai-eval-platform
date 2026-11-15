@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ..agent_timeout import DEFAULT_AGENT_TIMEOUT_SECONDS
 from ..config import Settings, get_settings
 from ..db import get_session
 from ..model_gateway.tokens import GatewayClaims, issue_gateway_token
@@ -961,6 +962,10 @@ def shard_tasks(
         },
         # M8-31: run-wide agentic turn cap consumed by the runner env.
         "max_turns": run.max_turns or DEFAULT_MAX_TURNS,
+        # M8-32: run-wide Agent wall-clock budget consumed by the runner env.
+        "agent_timeout_seconds": (
+            run.agent_timeout_seconds or DEFAULT_AGENT_TIMEOUT_SECONDS
+        ),
         "execution_image_digest": run.execution_image_digest,
         "scoring_image_digest": run.scoring_image_digest,
         "environment_image": dataset_version.environment_image if dataset_version else None,

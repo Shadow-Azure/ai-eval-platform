@@ -50,7 +50,7 @@ tenant ─ workspace ─ project
 | 表 | 关键字段 | 说明 |
 |---|---|---|
 | `dataset` | id, tenant_id, project_id, slug, name, adapter_key, task_family, environment_kind, metadata_json | 稳定目录实体 |
-| `dataset_version` | id, tenant_id, dataset_id, version, source_uri, source_revision, adapter_version, case_count, status, task_manifest_key, task_manifest_digest, created_at | 不可变；同来源/修订/适配器版本防重 |
+| `dataset_version` | id, tenant_id, dataset_id, version, source_uri, source_revision, adapter_version, case_count, status, task_manifest_key, task_manifest_digest, agent_timeout_seconds, created_at | 不可变；同来源/修订/适配器版本防重 |
 | `dataset_case` | id, tenant_id, dataset_version_id, case_key, ordinal, repo, base_commit, problem_statement, reference_patch_key, test_patch_key, expected_metrics_json, extra_json, environment_image | `(dataset_version_id,case_key)` unique；大补丁可放 OSS；`environment_image` 为 M8-25 的 per-case 运行时镜像，版本级 `dataset_version.environment_image` 仅作单镜像回退 |
 | `dataset_import` | id, tenant_id, dataset_id, source_config_json, status, total_count, valid_count, invalid_count, error_report_key, created_by | 一次导入过程 |
 | `dataset_image_sources_setting` | id, tenant_id, sources_json, updated_by, created_at, updated_at | M8-26 每个租户的公开镜像源覆盖；空行/空列表表示使用部署默认 `DATASET_IMAGE_REGISTRIES`；`(tenant_id)` unique |
@@ -87,7 +87,7 @@ asset_snapshot_id, model_snapshot_json, credential_id, credential_mode,
 resource_pool_id, resource_pool_snapshot_json,
 requested_concurrency, effective_concurrency, shard_size,
 model_budget_usd, budget_spent_usd, budget_version, pause_reason,
-case_timeout_seconds, max_attempts, max_turns,
+case_timeout_seconds, max_attempts, max_turns, agent_timeout_seconds,
 metric_schema_json, task_manifest_digest, scoring_image_digest,
 total_cases, queued_count, running_count, succeeded_count, failed_count,
 resolved_count, unresolved_count, trace_pending_count,

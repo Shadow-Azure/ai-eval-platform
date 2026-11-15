@@ -33,6 +33,7 @@ from datetime import UTC, datetime
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from ..agent_timeout import DEFAULT_AGENT_TIMEOUT_SECONDS
 from ..config import Settings, get_settings
 from ..models import (
     DatasetVersionMetric,
@@ -817,6 +818,10 @@ def build_retry_dispatch(
         "deadline": deadline.isoformat(timespec="microseconds").replace("+00:00", "Z"),
         "case_timeout_seconds": run.case_timeout_seconds,
         "max_attempts": run.max_attempts,
+        # M8-32: retries keep the run's frozen Agent wall-clock budget.
+        "agent_timeout_seconds": (
+            run.agent_timeout_seconds or DEFAULT_AGENT_TIMEOUT_SECONDS
+        ),
         "runs_on": runs_on,
         "cases": [
             {

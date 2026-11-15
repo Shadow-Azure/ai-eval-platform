@@ -21,6 +21,13 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ..agent_timeout import (
+    DEFAULT_AGENT_TIMEOUT_SECONDS,
+    MAX_AGENT_TIMEOUT_SECONDS,
+    MIN_AGENT_TIMEOUT_SECONDS,
+    effective_agent_timeout,
+    is_valid_agent_timeout,
+)
 from ..config import Settings, get_settings
 from ..defaults import DEFAULT_TENANT_ID
 from ..models import (
@@ -404,6 +411,10 @@ def _live_identity(
         "prompt_suffix": snapshot.get("prompt_suffix") or "",
         # M8-31: the turn cap is part of the confirmed launch configuration.
         "max_turns": snapshot.get("max_turns") or evaluation_service.DEFAULT_MAX_TURNS,
+        # M8-32: so is the effective Agent wall-clock budget.
+        "agent_timeout_seconds": (
+            snapshot.get("agent_timeout_seconds") or DEFAULT_AGENT_TIMEOUT_SECONDS
+        ),
         "runtime": {
             "key": runtime_info.get("key"),
             "adapter_version": adapter.runtime_version if adapter is not None else None,
@@ -495,6 +506,7 @@ def build_preparation(
     assets_resolved: bool = True,
     prompt_suffix: str | None = None,
     max_turns: int | None = None,
+    agent_timeout_seconds: int | None = None,
     settings: Settings | None = None,
     now: datetime | None = None,
 ) -> dict:
@@ -512,6 +524,15 @@ def build_preparation(
         raise PreparationInvalid(
             f"max_turns 必须在 1..{evaluation_service.MAX_TURNS_LIMIT} 之间",
             field="max_turns",
+        )
+    # M8-32: validate the launch override before resolving the dataset default.
+    if agent_timeout_seconds is not None and not is_valid_agent_timeout(
+        agent_timeout_seconds
+    ):
+        raise PreparationInvalid(
+            "agent_timeout_seconds 必须在 "
+            f"{MIN_AGENT_TIMEOUT_SECONDS}..{MAX_AGENT_TIMEOUT_SECONDS} 之间",
+            field="agent_timeout_seconds",
         )
     try:
         selection = _case_selection(case_selection)
@@ -551,6 +572,17 @@ def build_preparation(
     dataset = session.get(Dataset, version.dataset_id) if version is not None else None
     if dataset is not None and dataset.tenant_id != tenant_id:
         dataset = None
+    # M8-32: empty launch override -> dataset version default -> 1800s.
+    agent_timeout = effective_agent_timeout(
+        agent_timeout_seconds,
+        version.agent_timeout_seconds if version is not None else None,
+    )
+    if not is_valid_agent_timeout(agent_timeout):
+        raise PreparationInvalid(
+            "agent_timeout_seconds 必须在 "
+            f"{MIN_AGENT_TIMEOUT_SECONDS}..{MAX_AGENT_TIMEOUT_SECONDS} 之间",
+            field="agent_timeout_seconds",
+        )
 
     case_keys: list[str] = []
     blockers: list[PreflightIssue] = list(result.blockers)
@@ -582,6 +614,7 @@ def build_preparation(
             "execution": execution,
             "prompt_suffix": suffix,
             "max_turns": turns,
+            "agent_timeout_seconds": agent_timeout,
             "cost_estimate": None,
             "summary": None,
         }
@@ -655,6 +688,7 @@ def build_preparation(
         },
         "prompt_suffix": suffix,
         "max_turns": turns,
+        "agent_timeout_seconds": agent_timeout,
         "warnings": warnings,
         "cost_estimate": cost_estimate,
     }
@@ -669,6 +703,7 @@ def build_preparation(
         "execution": execution,
         "prompt_suffix": suffix,
         "max_turns": turns,
+        "agent_timeout_seconds": agent_timeout,
         "resolved": snapshot["resolved"],
         "cost_estimate": cost_estimate,
         "warnings": warnings,
@@ -707,6 +742,7 @@ def build_preparation(
         "execution": execution,
         "prompt_suffix": suffix,
         "max_turns": turns,
+        "agent_timeout_seconds": agent_timeout,
         "cost_estimate": cost_estimate,
         "summary": snapshot["summary"],
     }
@@ -827,6 +863,7 @@ def consume_preparation(
         asset_snapshot_json=asset_snapshot,
         prompt_suffix=snapshot.get("prompt_suffix") or "",
         max_turns=snapshot.get("max_turns"),
+        agent_timeout_seconds=snapshot.get("agent_timeout_seconds"),
         consistency_json={
             "preparation_id": preparation.id,
             "snapshot_digest": preparation.snapshot_digest,

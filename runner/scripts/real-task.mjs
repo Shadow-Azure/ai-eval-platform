@@ -347,11 +347,16 @@ async function realCase(
   dispatch,
   item,
   task,
-  { modelToken, runnerRoot, callbackBaseUrl, maxTurns },
+  { modelToken, runnerRoot, callbackBaseUrl, maxTurns, agentTimeoutSeconds },
 ) {
   const datasetAdapter = getDatasetAdapter(task.adapter_key);
   const runtimeAdapter = getRuntimeAdapter(task.runtime_key);
   const egressArgs = egressProxyEnvArgs(task, callbackBaseUrl);
+  // M8-32: the frozen manifest value wins; the task payload/1800s cover older
+  // platforms. REAL_TASK_TIMEOUT_MS remains the operator escape hatch.
+  const agentTimeoutMs =
+    (Number(agentTimeoutSeconds || task.agent_timeout_seconds || 1800) || 1800) *
+    1000;
   const startedAt = Date.now();
   const workdir = mkdtempSync(join(tmpdir(), "eval-case-"));
   const testPatchPath = join(tmpdir(), `eval-test-${item.case_run_id}.patch`);
@@ -449,7 +454,7 @@ async function realCase(
       // M8-31: the frozen manifest cap is authoritative; the task payload is a
       // fallback for older platforms and 200 covers legacy rows.
       MAX_TURNS: process.env.REAL_TASK_MAX_TURNS || String(maxTurns || task.max_turns || 200),
-      TIMEOUT_MS: process.env.REAL_TASK_TIMEOUT_MS || "900000",
+      TIMEOUT_MS: process.env.REAL_TASK_TIMEOUT_MS || String(agentTimeoutMs),
       EXECUTION_IMAGE_DIGEST: environmentImage,
     };
     const agentName = `eval-agent-${item.case_run_id.slice(0, 8)}-${process.pid}`;
@@ -721,7 +726,11 @@ async function realCase(
       );
       agent = dockerRun(execArgs, {
         allowFailure: true,
-        timeout: Number(process.env.REAL_TASK_AGENT_TIMEOUT_MS || 1_000_000),
+        // M8-32: the outer container kill must outlive the inner Agent timeout.
+        timeout: Number(
+          process.env.REAL_TASK_AGENT_TIMEOUT_MS ||
+            Math.max(1_900_000, agentTimeoutMs + 120_000),
+        ),
       });
       const version = dockerRun(
         ["exec", agentName, "bash", "-lc", "claude --version 2>/dev/null || true"],
@@ -1112,6 +1121,7 @@ async function main() {
               runnerRoot,
               callbackBaseUrl: manifest.callback_base_url,
               maxTurns: manifest.max_turns,
+              agentTimeoutSeconds: manifest.agent_timeout_seconds,
             })
           : { ...deterministicCase(dispatch, item), executionStatus: "succeeded", resultStatus: "resolved", durationMs: 0 };
       } finally {

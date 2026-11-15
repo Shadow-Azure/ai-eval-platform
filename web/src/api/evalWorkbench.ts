@@ -191,6 +191,8 @@ export interface EvalCaseDetail {
     status: string;
     max_attempts: number;
     case_timeout_seconds: number;
+    /** M8-32: effective Agent wall-clock timeout for this run (seconds), when exposed. */
+    agent_timeout_seconds?: number | null;
     requested_concurrency: number;
     effective_concurrency: number | null;
     total_cases: number;
@@ -241,6 +243,7 @@ export async function fetchEvaluationCase(
       status: str(run.status),
       max_attempts: num(run.max_attempts, "max_attempts"),
       case_timeout_seconds: num(run.case_timeout_seconds, "case_timeout_seconds"),
+      agent_timeout_seconds: optNum(run.agent_timeout_seconds),
       requested_concurrency: num(run.requested_concurrency, "requested_concurrency"),
       effective_concurrency: optNum(run.effective_concurrency),
       total_cases: num(run.total_cases, "total_cases"),

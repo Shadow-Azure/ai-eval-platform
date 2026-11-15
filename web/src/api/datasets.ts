@@ -70,6 +70,8 @@ export interface DatasetVersion {
   adapter_version: string;
   execution_image_digest: string | null;
   scoring_image_digest: string | null;
+  /** M8-32: default Agent wall-clock timeout frozen with the version (seconds). */
+  agent_timeout_seconds: number | null;
   created_at: string;
 }
 
@@ -188,6 +190,10 @@ function parseVersion(item: Record<string, unknown>): DatasetVersion {
     adapter_version: text(item.adapter_version),
     execution_image_digest: optionalText(item.execution_image_digest),
     scoring_image_digest: optionalText(item.scoring_image_digest),
+    agent_timeout_seconds:
+      typeof item.agent_timeout_seconds === "number" && Number.isFinite(item.agent_timeout_seconds)
+        ? item.agent_timeout_seconds
+        : null,
     created_at: text(item.created_at),
   };
 }
@@ -500,6 +506,8 @@ export async function createDatasetImport(body: {
   source_revision: string;
   execution_image_digest?: string;
   scoring_image_digest?: string;
+  /** M8-32: default Agent timeout in seconds; omitted keeps the platform default. */
+  agent_timeout_seconds?: number;
   records: Record<string, unknown>[];
 }): Promise<ImportResult> {
   const payload = await request("/api/v1/dataset-imports", {
@@ -605,6 +613,8 @@ export interface DatasetImportRecord {
   file_name: string | null;
   file_size: number | null;
   file_digest: string | null;
+  /** M8-32: default Agent timeout chosen for this import (seconds), if stored. */
+  agent_timeout_seconds: number | null;
   report: ImportReport;
   error_report: ImportReport;
   created_by: string;
@@ -638,6 +648,11 @@ function parseImportRecord(payload: unknown): DatasetImportRecord {
     file_name: optionalText(payload.file_name),
     file_size: typeof payload.file_size === "number" ? payload.file_size : null,
     file_digest: optionalText(payload.file_digest),
+    agent_timeout_seconds:
+      typeof payload.agent_timeout_seconds === "number" &&
+      Number.isFinite(payload.agent_timeout_seconds)
+        ? payload.agent_timeout_seconds
+        : null,
     report: parseReport(payload.report),
     error_report: parseReport(payload.error_report),
     created_by: text(payload.created_by),
@@ -678,6 +693,8 @@ export interface UploadImportMeta {
   source_revision: string;
   execution_image_digest?: string;
   scoring_image_digest?: string;
+  /** M8-32: default Agent timeout in seconds; sent to freeze it with the version. */
+  agent_timeout_seconds?: number;
 }
 
 export function uploadDatasetImport(
@@ -690,6 +707,8 @@ export function uploadDatasetImport(
     for (const [key, value] of Object.entries(meta)) {
       if (typeof value === "string" && value.trim()) {
         form.append(key, value);
+      } else if (key === "agent_timeout_seconds" && typeof value === "number") {
+        form.append(key, String(value));
       }
     }
     form.append("file", file);
@@ -732,8 +751,20 @@ export function uploadDatasetImport(
   });
 }
 
-export async function commitDatasetImport(importId: string): Promise<DatasetImportRecord> {
-  const payload = await request(`/api/v1/dataset-imports/${importId}/commit`, { method: "POST" });
+export async function commitDatasetImport(
+  importId: string,
+  agentTimeoutSeconds?: number,
+): Promise<DatasetImportRecord> {
+  const hasTimeout = typeof agentTimeoutSeconds === "number";
+  const payload = await request(`/api/v1/dataset-imports/${importId}/commit`, {
+    method: "POST",
+    ...(hasTimeout
+      ? {
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ agent_timeout_seconds: agentTimeoutSeconds }),
+        }
+      : {}),
+  });
   if (!isRecord(payload) || !isRecord(payload.import)) {
     throw new ApiError("提交响应无效", { code: "invalid_response" });
   }

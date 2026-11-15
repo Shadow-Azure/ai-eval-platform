@@ -59,6 +59,9 @@ const CASE_PAGE_SIZE = 20;
 const MAX_PROMPT_SUFFIX = 4000;
 const DEFAULT_MAX_TURNS = 200;
 const MAX_TURNS = 1000;
+const DEFAULT_AGENT_TIMEOUT_SECONDS = 1800;
+const MIN_AGENT_TIMEOUT_MINUTES = 1;
+const MAX_AGENT_TIMEOUT_MINUTES = 1440;
 const PROMPT_SUFFIX_PLACEHOLDER =
   "例如：这是非交互评测。请使用 superpowers 技能完成任务；不要向用户提问，自主决策并继续。";
 
@@ -98,6 +101,7 @@ interface WizardDraft {
   scoringDigest: string;
   promptSuffix: string;
   maxTurns: string;
+  agentTimeout: string;
 }
 
 function defaultDraft(): WizardDraft {
@@ -125,6 +129,7 @@ function defaultDraft(): WizardDraft {
     scoringDigest: "",
     promptSuffix: "",
     maxTurns: "",
+    agentTimeout: "",
   };
 }
 
@@ -140,6 +145,34 @@ function parseMaxTurns(raw: string): { value: number | null; error: string | nul
     };
   }
   return { value: parsed, error: null };
+}
+
+/** Empty means the dataset-version default; otherwise 1–1440 whole minutes. */
+function parseAgentTimeout(raw: string): {
+  seconds: number | null;
+  minutes: number | null;
+  error: string | null;
+} {
+  const trimmed = raw.trim();
+  if (!trimmed) return { seconds: null, minutes: null, error: null };
+  const parsed = Number(trimmed);
+  if (
+    !Number.isInteger(parsed) ||
+    parsed < MIN_AGENT_TIMEOUT_MINUTES ||
+    parsed > MAX_AGENT_TIMEOUT_MINUTES
+  ) {
+    return {
+      seconds: null,
+      minutes: null,
+      error: `Agent 超时需为 ${MIN_AGENT_TIMEOUT_MINUTES}–${MAX_AGENT_TIMEOUT_MINUTES} 分钟的整数；留空使用数据集默认值`,
+    };
+  }
+  return { seconds: parsed * 60, minutes: parsed, error: null };
+}
+
+function formatAgentTimeout(seconds: number | null | undefined): string {
+  if (typeof seconds !== "number" || !Number.isFinite(seconds) || seconds <= 0) return "—";
+  return `${Math.round(seconds / 60)} 分钟`;
 }
 
 function stringOrNull(value: unknown): string | null {
@@ -190,6 +223,7 @@ function readDraft(): WizardDraft | null {
       promptSuffix:
         typeof it.promptSuffix === "string" ? it.promptSuffix.slice(0, MAX_PROMPT_SUFFIX) : "",
       maxTurns: typeof it.maxTurns === "string" ? it.maxTurns : "",
+      agentTimeout: typeof it.agentTimeout === "string" ? it.agentTimeout : "",
     };
   } catch {
     return null;
@@ -585,6 +619,7 @@ export function EvalWizardPage() {
       selectionKeys: [],
       executionDigest: "",
       scoringDigest: "",
+      agentTimeout: "",
     });
   }
 
@@ -595,6 +630,7 @@ export function EvalWizardPage() {
       selectionCount: Math.min(50, Math.max(1, version?.case_count ?? 50)),
       executionDigest: "",
       scoringDigest: "",
+      agentTimeout: "",
     });
   }
 
@@ -736,6 +772,10 @@ export function EvalWizardPage() {
       message.warning(maxTurns.error);
       return;
     }
+    if (agentTimeout.error) {
+      message.warning(agentTimeout.error);
+      return;
+    }
     setChecking(true);
     setBlockers([]);
     setCreateNotice(null);
@@ -752,6 +792,9 @@ export function EvalWizardPage() {
         execution_image_digest: draft.executionDigest || undefined,
         prompt_suffix: draft.promptSuffix.trim() || undefined,
         ...(maxTurns.value !== null ? { max_turns: maxTurns.value } : {}),
+        ...(agentTimeout.seconds !== null
+          ? { agent_timeout_seconds: agentTimeout.seconds }
+          : {}),
       });
       setPreparation(result);
       if (result.ready) {
@@ -829,6 +872,16 @@ export function EvalWizardPage() {
   const selectedMetrics = versionDetail.data?.metrics?.map((metric) => metric.display_name) ?? [];
   const promptSuffix = draft.promptSuffix.trim();
   const maxTurns = parseMaxTurns(draft.maxTurns);
+  const agentTimeout = parseAgentTimeout(draft.agentTimeout);
+  const datasetAgentTimeoutSeconds =
+    versionDetail.data?.agent_timeout_seconds ?? DEFAULT_AGENT_TIMEOUT_SECONDS;
+  const preparedAgentTimeoutSeconds =
+    preparation?.agent_timeout_seconds ??
+    summary?.agent_timeout_seconds ??
+    summary?.execution.agent_timeout_seconds ??
+    null;
+  const effectiveAgentTimeoutSeconds =
+    preparedAgentTimeoutSeconds ?? agentTimeout.seconds ?? datasetAgentTimeoutSeconds;
 
   function renderStepBar() {
     return (
@@ -912,6 +965,16 @@ export function EvalWizardPage() {
                 : maxTurns.value !== null
                   ? `${maxTurns.value} 轮`
                   : `默认 ${DEFAULT_MAX_TURNS} 轮`}
+            </span>
+          </div>
+          <div className="summary-item">
+            <span className="summary-label">Agent 超时</span>
+            <span className="summary-value">
+              {agentTimeout.error
+                ? `输入无效（需为 ${MIN_AGENT_TIMEOUT_MINUTES}–${MAX_AGENT_TIMEOUT_MINUTES} 的整数）`
+                : `${formatAgentTimeout(effectiveAgentTimeoutSeconds)}（${
+                    agentTimeout.seconds !== null ? "本次覆盖" : "数据集默认"
+                  }）`}
             </span>
           </div>
         </div>
@@ -1686,6 +1749,40 @@ export function EvalWizardPage() {
           </span>
           {maxTurns.error ? <span className="field-error">{maxTurns.error}</span> : null}
         </div>
+        <div
+          className="row-between"
+          style={{ marginTop: 18, paddingTop: 14, borderTop: "1px solid var(--line)" }}
+        >
+          <div>
+            <h3 style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "var(--ink)" }}>
+              Agent 超时（可选）
+            </h3>
+            <p className="small muted" style={{ margin: "2px 0 0" }}>
+              单用例 Agent 的 wall-clock 上限；默认来自数据集，可在启动时修改
+            </p>
+          </div>
+          <Tag style={{ marginInlineEnd: 0 }}>可选</Tag>
+        </div>
+        <div className="field" style={{ marginTop: 12 }}>
+          <Input
+            id="wizard-agent-timeout"
+            type="number"
+            min={MIN_AGENT_TIMEOUT_MINUTES}
+            max={MAX_AGENT_TIMEOUT_MINUTES}
+            step={1}
+            inputMode="numeric"
+            aria-label="Agent 超时"
+            value={draft.agentTimeout}
+            onChange={(event) => update({ agentTimeout: event.target.value })}
+            placeholder={`默认来自数据集（${formatAgentTimeout(datasetAgentTimeoutSeconds)}）`}
+            status={agentTimeout.error ? "error" : undefined}
+          />
+          <span className="hint">
+            默认来自数据集配置（{formatAgentTimeout(datasetAgentTimeoutSeconds)}）；本次可覆盖。超时会终止该用例的
+            Agent，并标记失败。
+          </span>
+          {agentTimeout.error ? <span className="field-error">{agentTimeout.error}</span> : null}
+        </div>
         <h3 className="wizard-section-title">高级执行策略</h3>
         <div className="policy-grid">
           <div className="field">
@@ -1894,6 +1991,16 @@ export function EvalWizardPage() {
                 : maxTurns.value !== null
                   ? `${maxTurns.value} 轮`
                   : `默认 ${DEFAULT_MAX_TURNS} 轮`}
+            </span>
+          </div>
+          <div className="summary-item">
+            <span className="summary-label">Agent 超时</span>
+            <span className="summary-value">
+              {agentTimeout.error
+                ? `输入无效（需为 ${MIN_AGENT_TIMEOUT_MINUTES}–${MAX_AGENT_TIMEOUT_MINUTES} 的整数）`
+                : `${formatAgentTimeout(effectiveAgentTimeoutSeconds)}（${
+                    agentTimeout.seconds !== null ? "本次覆盖" : "数据集默认"
+                  }）`}
             </span>
           </div>
 

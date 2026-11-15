@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import pytest
-from app.models import DatasetImport
+from app.models import DatasetImport, DatasetVersion
 from app.seed import ensure_default_scope
 from dataset_helpers import fixture_records
 from fastapi.testclient import TestClient
@@ -119,6 +119,58 @@ def test_import_applies_platform_default_image_digests(
     body = post_import(client, records=fixture_records())
     assert body["version"]["execution_image_digest"] == execution
     assert body["version"]["scoring_image_digest"] == scoring
+
+
+def test_import_freezes_agent_timeout_and_exposes_it(
+    seeded: Session, client: TestClient
+) -> None:
+    body = post_import(
+        client, records=fixture_records(), agent_timeout_seconds=2700
+    )
+    version_id = body["version"]["id"]
+    assert body["version"]["agent_timeout_seconds"] == 2700
+    stored = seeded.get(DatasetVersion, version_id)
+    assert stored is not None
+    assert stored.agent_timeout_seconds == 2700
+
+    detail = client.get(f"/api/v1/dataset-versions/{version_id}")
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["agent_timeout_seconds"] == 2700
+
+    versions = client.get(
+        f"/api/v1/datasets/{body['dataset']['id']}/versions"
+    ).json()
+    assert versions["items"][0]["agent_timeout_seconds"] == 2700
+
+
+def test_import_defaults_agent_timeout_to_1800(
+    seeded: Session, client: TestClient
+) -> None:
+    body = post_import(client, records=fixture_records())
+    assert body["version"]["agent_timeout_seconds"] == 1800
+    stored = seeded.get(DatasetVersion, body["version"]["id"])
+    assert stored is not None
+    assert stored.agent_timeout_seconds == 1800
+
+
+@pytest.mark.parametrize("agent_timeout_seconds", [59, 0, 86401])
+def test_import_rejects_agent_timeout_out_of_range(
+    seeded: Session, client: TestClient, agent_timeout_seconds: int
+) -> None:
+    response = client.post(
+        "/api/v1/dataset-imports",
+        json={
+            "dataset_slug": "swebench-verified",
+            "dataset_name": "SWE-bench Verified",
+            "adapter_key": "swebench",
+            "version": "bad-timeout",
+            "source_uri": "fixture",
+            "source_revision": "rev-0001",
+            "agent_timeout_seconds": agent_timeout_seconds,
+            "records": fixture_records(),
+        },
+    )
+    assert response.status_code == 422
 
 
 def test_import_endpoint_validation_failure_is_diagnosable(

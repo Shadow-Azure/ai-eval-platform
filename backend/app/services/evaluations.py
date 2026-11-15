@@ -19,6 +19,13 @@ from urllib.parse import urlencode
 from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session
 
+from ..agent_timeout import (
+    DEFAULT_AGENT_TIMEOUT_SECONDS,
+    MAX_AGENT_TIMEOUT_SECONDS,
+    MIN_AGENT_TIMEOUT_SECONDS,
+    effective_agent_timeout,
+    is_valid_agent_timeout,
+)
 from ..config import Settings
 from ..defaults import DEFAULT_PROJECT_ID, DEFAULT_TENANT_ID
 from ..models import (
@@ -147,6 +154,7 @@ def create_synthetic_evaluation(
     consistency_json: dict | None = None,
     prompt_suffix: str | None = None,
     max_turns: int | None = None,
+    agent_timeout_seconds: int | None = None,
     settings: Settings | None = None,
     now: datetime | None = None,
 ) -> tuple[EvalRun, bool]:
@@ -187,6 +195,15 @@ def create_synthetic_evaluation(
         raise EvaluationInvalid(
             f"max_turns 必须在 1..{MAX_TURNS_LIMIT} 之间", field="max_turns"
         )
+    # M8-32: an empty launch override inherits the dataset version default.
+    if agent_timeout_seconds is not None and not is_valid_agent_timeout(
+        agent_timeout_seconds
+    ):
+        raise EvaluationInvalid(
+            "agent_timeout_seconds 必须在 "
+            f"{MIN_AGENT_TIMEOUT_SECONDS}..{MAX_AGENT_TIMEOUT_SECONDS} 之间",
+            field="agent_timeout_seconds",
+        )
     idempotency_key = idempotency_key or str(uuid.uuid4())
 
     tenant_id = str(DEFAULT_TENANT_ID)
@@ -218,6 +235,7 @@ def create_synthetic_evaluation(
         return existing, False
 
     case_specs: list[dict] = []
+    dataset_agent_timeout: int | None = None
     if dataset_version_id:
         version = session.get(DatasetVersion, dataset_version_id)
         if version is None or version.tenant_id != tenant_id:
@@ -227,6 +245,7 @@ def create_synthetic_evaluation(
             raise EvaluationInvalid("数据集不存在", field="dataset_version_id")
         if version.status != "active" or version.case_count <= 0:
             raise EvaluationInvalid("数据集版本不可用", field="dataset_version_id")
+        dataset_agent_timeout = version.agent_timeout_seconds
         cases = list(
             session.scalars(
                 select(DatasetCase)
@@ -276,6 +295,14 @@ def create_synthetic_evaluation(
         ]
     total_cases = len(case_specs)
 
+    agent_timeout = effective_agent_timeout(agent_timeout_seconds, dataset_agent_timeout)
+    if not is_valid_agent_timeout(agent_timeout):
+        raise EvaluationInvalid(
+            "agent_timeout_seconds 必须在 "
+            f"{MIN_AGENT_TIMEOUT_SECONDS}..{MAX_AGENT_TIMEOUT_SECONDS} 之间",
+            field="agent_timeout_seconds",
+        )
+
     run = EvalRun(
         tenant_id=tenant_id,
         project_id=project_id,
@@ -305,6 +332,7 @@ def create_synthetic_evaluation(
         case_timeout_seconds=timeout,
         max_attempts=attempts,
         max_turns=turns,
+        agent_timeout_seconds=agent_timeout,
     )
     session.add(run)
     session.flush()
@@ -449,6 +477,10 @@ def build_case_dispatches(
             # M8-31: freeze the turn cap into the byte-stable shard manifest.
             # Rows created before the column existed keep the 200 default.
             "max_turns": run.max_turns or DEFAULT_MAX_TURNS,
+            # M8-32: the frozen Agent wall-clock budget for every case.
+            "agent_timeout_seconds": (
+                run.agent_timeout_seconds or DEFAULT_AGENT_TIMEOUT_SECONDS
+            ),
             "runs_on": runs_on,
             "cases": [
                 {
@@ -831,6 +863,10 @@ def evaluation_summary(
         "scoring_image_digest": run.scoring_image_digest,
         # M8-31: rows predating the column (or a NULL snapshot) report 200.
         "max_turns": run.max_turns or DEFAULT_MAX_TURNS,
+        # M8-32: same fallback rule for the Agent wall-clock budget.
+        "agent_timeout_seconds": (
+            run.agent_timeout_seconds or DEFAULT_AGENT_TIMEOUT_SECONDS
+        ),
         "prompt_suffix": run.prompt_suffix or "",
         "asset_snapshot_id": run.asset_snapshot_id,
         "asset_resolved_commit": (run.asset_snapshot_json or {}).get("resolved_commit"),

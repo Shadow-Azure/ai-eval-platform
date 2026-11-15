@@ -19,6 +19,9 @@ export function buildCaseTask(task, taskPayload) {
     asset_snapshot: taskPayload?.asset_snapshot ?? {},
     // M8-31: the run-wide agentic turn cap; the executor falls back to 200.
     max_turns: taskPayload?.max_turns ?? task.max_turns ?? null,
+    // M8-32: the frozen Agent wall-clock budget; the executor falls back to 1800s.
+    agent_timeout_seconds:
+      taskPayload?.agent_timeout_seconds ?? task.agent_timeout_seconds ?? null,
     egress_proxy: taskPayload?.egress_proxy ?? task.egress_proxy ?? null,
     egress_token: taskPayload?.egress_token ?? task.egress_token ?? null,
   };

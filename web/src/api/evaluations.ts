@@ -66,6 +66,8 @@ export interface EvaluationSummary {
   prompt_suffix?: string | null;
   /** Frozen cap on model-response turns (one turn may contain multiple tool calls). */
   max_turns?: number | null;
+  /** M8-32: effective Agent wall-clock timeout frozen into the run (seconds). */
+  agent_timeout_seconds?: number | null;
 }
 
 export interface FrozenAsset {
@@ -208,6 +210,8 @@ export interface CreateEvaluationRequest {
   max_attempts?: number;
   prompt_suffix?: string;
   max_turns?: number;
+  /** M8-32: optional Agent wall-clock override in seconds; omitted keeps the dataset default. */
+  agent_timeout_seconds?: number;
 }
 
 export interface PreflightIssue {
@@ -241,6 +245,8 @@ export interface ResolvedExecutionPolicy {
   shard_size: number;
   execution_image_digest: string | null;
   scoring_image_digest: string | null;
+  /** M8-32: some responses carry the effective Agent timeout inside execution. */
+  agent_timeout_seconds?: number | null;
 }
 
 export interface CostRange {
@@ -306,6 +312,8 @@ export interface PreparationSummary {
   };
   cost_estimate: CostEstimate | null;
   warnings: PreflightIssue[];
+  /** M8-32: effective Agent wall-clock timeout (seconds) after applying overrides. */
+  agent_timeout_seconds?: number | null;
 }
 
 export interface PrepareResponse {
@@ -326,6 +334,8 @@ export interface PrepareResponse {
   execution: ResolvedExecutionPolicy | null;
   cost_estimate: CostEstimate | null;
   summary: PreparationSummary | null;
+  /** M8-32: effective Agent wall-clock timeout (seconds) after applying overrides. */
+  agent_timeout_seconds?: number | null;
 }
 
 export interface PrepareRequest {
@@ -346,6 +356,8 @@ export interface PrepareRequest {
   shard_size?: number;
   prompt_suffix?: string;
   max_turns?: number;
+  /** M8-32: optional Agent wall-clock override in seconds; omitted keeps the dataset default. */
+  agent_timeout_seconds?: number;
 }
 
 export interface MetricResult {
@@ -648,6 +660,7 @@ export function parseEvaluationSummary(payload: unknown): EvaluationSummary {
     asset_count: typeof payload.asset_count === "number" ? payload.asset_count : undefined,
     prompt_suffix: readOptionalString(payload.prompt_suffix),
     max_turns: readOptionalNumber(payload.max_turns),
+    agent_timeout_seconds: readOptionalNumber(payload.agent_timeout_seconds),
   };
 }
 
@@ -925,6 +938,7 @@ function parseExecutionPolicy(value: unknown): ResolvedExecutionPolicy | null {
     shard_size: readCountOrZero(value.shard_size),
     execution_image_digest: readOptionalString(value.execution_image_digest),
     scoring_image_digest: readOptionalString(value.scoring_image_digest),
+    agent_timeout_seconds: readOptionalNumber(value.agent_timeout_seconds),
   };
 }
 
@@ -1000,6 +1014,10 @@ function parsePreparationSummary(value: unknown): PreparationSummary | null {
     },
     cost_estimate: parseCostEstimate(value.cost_estimate),
     warnings: parseIssues(value.warnings),
+    agent_timeout_seconds:
+      readOptionalNumber(value.agent_timeout_seconds) ??
+      execution.agent_timeout_seconds ??
+      null,
   };
 }
 
@@ -1027,6 +1045,7 @@ export function parsePrepare(payload: unknown): PrepareResponse {
     execution: parseExecutionPolicy(payload.execution),
     cost_estimate: parseCostEstimate(payload.cost_estimate),
     summary: parsePreparationSummary(payload.summary),
+    agent_timeout_seconds: readOptionalNumber(payload.agent_timeout_seconds),
   };
 }
 

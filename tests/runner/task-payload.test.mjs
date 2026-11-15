@@ -52,6 +52,17 @@ test("run-wide max turns is copied onto every case task", () => {
   }
 });
 
+test("run-wide agent timeout is copied onto every case task", () => {
+  const tasks = buildCaseTasks({ ...payload, agent_timeout_seconds: 4500 });
+  for (const task of tasks.values()) {
+    assert.equal(task.agent_timeout_seconds, 4500);
+  }
+  // Legacy payloads stay explicit instead of becoming undefined.
+  for (const task of buildCaseTasks(payload).values()) {
+    assert.equal(task.agent_timeout_seconds, null);
+  }
+});
+
 test("run-wide egress proxy is copied onto every case task", () => {
   const tasks = buildCaseTasks({ ...payload, egress_proxy: "http://10.0.0.10:3128" });
   for (const task of tasks.values()) {

@@ -238,3 +238,42 @@ def test_eval_run_max_turns_column_roundtrip(database_url: str) -> None:
         engine.dispose()
 
     run_alembic(database_url, "upgrade", "head")
+
+
+def test_agent_timeout_columns_roundtrip(database_url: str) -> None:
+    """0027 freezes the dataset default and run effective Agent timeout."""
+
+    run_alembic(database_url, "upgrade", "0027_agent_timeout")
+    engine = create_engine(database_url, future=True)
+    try:
+        for table in ("dataset_version", "eval_run"):
+            columns = {
+                column["name"]: column
+                for column in inspect(engine).get_columns(table)
+            }
+            assert "agent_timeout_seconds" in columns
+            assert columns["agent_timeout_seconds"]["nullable"] is False
+            assert (
+                str(columns["agent_timeout_seconds"]["default"]).strip("'") == "1800"
+            )
+        import_columns = {
+            column["name"]: column
+            for column in inspect(engine).get_columns("dataset_import")
+        }
+        assert "agent_timeout_seconds" in import_columns
+        assert import_columns["agent_timeout_seconds"]["nullable"] is True
+    finally:
+        engine.dispose()
+
+    run_alembic(database_url, "downgrade", "0026_eval_run_max_turns")
+    engine = create_engine(database_url, future=True)
+    try:
+        for table in ("dataset_version", "dataset_import", "eval_run"):
+            columns = {
+                column["name"] for column in inspect(engine).get_columns(table)
+            }
+            assert "agent_timeout_seconds" not in columns
+    finally:
+        engine.dispose()
+
+    run_alembic(database_url, "upgrade", "head")

@@ -133,6 +133,11 @@ class EvalRun(Base, TimestampMixin):
     max_turns: Mapped[int] = mapped_column(
         Integer, nullable=False, default=200, server_default="200"
     )
+    # M8-32: the frozen effective Agent wall-clock budget for every case in the
+    # run (launch override > dataset version default > 1800s platform fallback).
+    agent_timeout_seconds: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1800, server_default="1800"
+    )
     # M4-02 cancellation/reconciliation: the dispatched GitHub workflow run and
     # the client cancellation request are tracked on the run (A2 consumes both).
     github_run_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
