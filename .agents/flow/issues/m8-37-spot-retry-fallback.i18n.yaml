@@ -1,5 +1,5 @@
 # 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
 # git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
 #   pnpm run record:i18n -- .agents/flow/issues/m8-37-spot-retry-fallback.md
-m8-37-spot-retry-fallback.md: 257112421e66f38312a431b64f13ef763602a727
-m8-37-spot-retry-fallback.en.md: 32d45df10e325c4a03f95e324904a1367cf0925e
+m8-37-spot-retry-fallback.md: 82cc1301789ca6b2898ecd3167eeb062a68a63ee
+m8-37-spot-retry-fallback.en.md: 618a1e6cc0cfe1684a116328c469176b78e7d5f9

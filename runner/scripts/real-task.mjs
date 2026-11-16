@@ -1116,7 +1116,11 @@ async function main() {
         attempt: dispatch.attempt,
         // runner_id is optional in the contract; omit (not undefined) when the
         // agent env does not provide one, or schema validation rejects it.
-        ...(process.env.RUNNER_ID ? { runner_id: process.env.RUNNER_ID } : {}),
+        // GitHub Actions always exposes RUNNER_NAME; cloud-init only sets
+        // RUNNER_ID inside heartbeat.sh, which the job does not inherit.
+        ...(process.env.RUNNER_ID || process.env.RUNNER_NAME
+          ? { runner_id: process.env.RUNNER_ID || process.env.RUNNER_NAME }
+          : {}),
         occurred_at: new Date().toISOString(),
       });
       const startedResult = await postStartedWithCapacityWait(

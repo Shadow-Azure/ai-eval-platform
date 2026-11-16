@@ -93,6 +93,21 @@ const indexOfLast = (ctx, predicate) =>
 
 const statusOf = (result) => JSON.parse(result.stdout.trim().split("\n").at(-1)).status;
 
+test("started callback falls back to RUNNER_NAME when RUNNER_ID is absent", async () => {
+  const fakeBin = installFakeBin();
+  const ctx = await createScenario({ cases, behavior: { tasks: tasksPayload(), modelToken: "model-token-test" } });
+  try {
+    const result = await runCase(ctx, fakeBin, { RUNNER_NAME: "spot-fallback-runner" });
+    assert.equal(result.code, 0, result.stderr);
+    const started = requestsFor(ctx, "started");
+    assert.equal(started.length, 1);
+    assert.equal(started[0].body.runner_id, "spot-fallback-runner");
+  } finally {
+    rmSync(fakeBin, { recursive: true, force: true });
+    await ctx.close();
+  }
+});
+
 test("a real case keeps beating while the agent runs and stops the sidecar before completion", async () => {
   const fakeBin = installFakeBin();
   const ctx = await createScenario({ cases, behavior: { tasks: tasksPayload(), modelToken: "model-token-test" } });
