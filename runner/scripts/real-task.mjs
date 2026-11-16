@@ -1209,7 +1209,7 @@ async function main() {
         // before releasing the claim so the run fails fast and diagnosably.
         const code = error?.code || "runtime_error";
         const message = String(error?.message || error).slice(0, 1000);
-        console.error(`case failed before completion (${code}): ${message}`);
+        console.log(`case failed before completion (${code}): ${message}`);
         try {
           await postCallback(`${manifest.callback_base_url}/runner/v1/case-runs/${item.case_run_id}/failed`, requireValid("failure", {
             schema_version: "1.0",
@@ -1225,7 +1225,10 @@ async function main() {
         } catch (callbackError) {
           console.error(`failed callback error: ${callbackError?.message || callbackError}`);
         }
-        continue;
+        // Keep the shard's historical failure semantics: the finally block
+        // stops the heartbeat sidecar and main() turns the error into a
+        // non-zero exit. The platform already has the per-case failure.
+        throw error;
       } finally {
         // Stopped on both success and exception: SIGTERM, up to 5s, then SIGKILL.
         try {
