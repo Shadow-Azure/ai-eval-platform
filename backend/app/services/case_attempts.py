@@ -802,6 +802,12 @@ def build_retry_dispatch(
     from datetime import timedelta
     from urllib.parse import urlencode
 
+    # M8-36: retry manifests must carry every frozen run-wide field. Keep the
+    # defaults/source lookups local so this module does not import evaluations
+    # at import time (evaluations imports the callback handlers).
+    from .dataset_images import effective_sources, source_records
+    from .evaluations import DEFAULT_MAX_TURNS
+
     run = ctx.run
     retry_shard_id = f"{ctx.attempt.shard_id}-o{ctx.case_run.ordinal}a{new_attempt_no}"[:64]
     dispatch_key = f"{run.id}:{retry_shard_id}:{new_attempt_no}"
@@ -818,10 +824,13 @@ def build_retry_dispatch(
         "deadline": deadline.isoformat(timespec="microseconds").replace("+00:00", "Z"),
         "case_timeout_seconds": run.case_timeout_seconds,
         "max_attempts": run.max_attempts,
-        # M8-32: retries keep the run's frozen Agent wall-clock budget.
+        # M8-31/M8-32: retries keep the run's frozen turn cap and Agent budget.
+        "max_turns": run.max_turns or DEFAULT_MAX_TURNS,
         "agent_timeout_seconds": (
             run.agent_timeout_seconds or DEFAULT_AGENT_TIMEOUT_SECONDS
         ),
+        # M8-33/M8-36: retries must not silently fall back to Docker Hub.
+        "image_sources": source_records(effective_sources(session, settings)),
         "runs_on": runs_on,
         "cases": [
             {

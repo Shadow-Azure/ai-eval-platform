@@ -6,7 +6,7 @@ English | [中文](m8-35-spot-duration.md)
 kind: issue
 milestone: m8
 priority: P1
-status: in-progress
+status: done
 scope:
   - .agents/flow/issues/m8-35-spot-duration.*
   - .agents/flow/milestones/m8-bug-fixes.*

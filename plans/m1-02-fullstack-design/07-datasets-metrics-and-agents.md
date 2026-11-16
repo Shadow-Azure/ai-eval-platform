@@ -224,3 +224,9 @@ Dataset version ready
 - Runtime 资产映射的临时目录快照测试；
 - 一份主 Agent + 子 Agent 原生轨迹 fixture 和归一化 golden；
 - 同输入重复导入、解析器重放和旧版本兼容测试。
+
+## 1.6 retry 与首次 manifest 的一致性（M8-36）
+
+首次、retry、resume 的 shard manifest 必须由同一字段集合构建，至少同时携带 `image_sources`、`max_turns`、
+`agent_timeout_seconds`。retry 不得丢源，否则会静默回退 Docker Hub。镜像/容器失败时 Runner 必须先发
+`/failed` 回调再退出，平台应立即标 failed，而不是等 heartbeat timeout。
