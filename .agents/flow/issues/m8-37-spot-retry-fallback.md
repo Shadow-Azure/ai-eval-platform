@@ -6,7 +6,7 @@
 kind: issue
 milestone: m8
 priority: P1
-status: in-progress
+status: done
 scope:
   - .agents/flow/issues/m8-37-spot-retry-fallback.*
   - .agents/flow/issues/m8-36-unified-image-sources.*
