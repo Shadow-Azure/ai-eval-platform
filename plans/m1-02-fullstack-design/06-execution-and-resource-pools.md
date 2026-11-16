@@ -213,3 +213,10 @@ GitHub `workflow_job` webhook 触发 reconcile，30s 轮询兜底；容量公式
 竞价实例在创建时按本次评测最长 `case_timeout_seconds` 向上取整设置 Aliyun `SpotDuration`（1–6 小时），
 使 job 在保底窗口内不被竞价回收。并发批次取最大超时；超过 6 小时时不能静默创建无保底实例，应明确
 回退按量/fixed 或报可诊断错误。`SpotDuration` 写入实例 cost_json 便于排障，不改变零常驻语义。
+
+
+## spot 中断快速重试（M8-37）
+
+消费 `provider_stopped` 后，平台立即把该实例上的 active attempt 标为 `spot_interrupted`，释放 runner 绑定，
+并重新申请原竞争态 spot 池；同一 case 的 spot 重试独立计数，最多 3 次，第 4 次标 `spot_retry_exhausted`。
+不默认切 fixed/on-demand；可选配置兜底池。这样不再把云侧停止伪装成 300s `heartbeat_timeout`。
