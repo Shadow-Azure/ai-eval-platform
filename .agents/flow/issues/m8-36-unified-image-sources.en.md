@@ -10,6 +10,7 @@ status: in-progress
 scope:
   - .agents/flow/issues/m8-36-unified-image-sources.*
   - .agents/flow/milestones/m8-bug-fixes.*
+  - .agents/flow/issues/m8-35-spot-duration.*
   - backend/app/services/case_attempts.py
   - runner/scripts/real-task.mjs
   - tests/backend/**
