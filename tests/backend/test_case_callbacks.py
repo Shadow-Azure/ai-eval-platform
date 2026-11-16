@@ -341,6 +341,15 @@ def test_retryable_failure_creates_exactly_one_new_attempt_and_dispatch(
     assert len(retry) == 1
     validate_payload("dispatch", retry[0].payload_json["client_payload"])
     assert retry[0].payload_json["client_payload"]["shard_id"].startswith(env["shard"])
+    import json
+
+    retry_manifest = json.loads(retry[0].payload_json["manifest_text"])
+    # M8-36: attempt 2 carries the same run-wide fields as attempt 1; leaving
+    # image_sources out silently falls back to Docker Hub.
+    assert "image_sources" in retry_manifest
+    assert isinstance(retry_manifest["image_sources"], list)
+    assert retry_manifest["max_turns"]
+    assert retry_manifest["agent_timeout_seconds"] == 1800
 
     # duplicate retry callback (same event_id) must not create a third attempt
     duplicate = client.post(case_url(env, case_run_id, "failed"), json=body, headers=auth(env))

@@ -1202,6 +1202,30 @@ async function main() {
               agentTimeoutSeconds: manifest.agent_timeout_seconds,
             })
           : { ...deterministicCase(dispatch, item), executionStatus: "succeeded", resultStatus: "resolved", durationMs: 0 };
+      } catch (error) {
+        // M8-36: an image/pull/exec setup failure used to exit the shard
+        // without a terminal callback. The platform then waited for the
+        // heartbeat timeout, hiding the real error. Report the case failure
+        // before releasing the claim so the run fails fast and diagnosably.
+        const code = error?.code || "runtime_error";
+        const message = String(error?.message || error).slice(0, 1000);
+        console.error(`case failed before completion (${code}): ${message}`);
+        try {
+          await postCallback(`${manifest.callback_base_url}/runner/v1/case-runs/${item.case_run_id}/failed`, requireValid("failure", {
+            schema_version: "1.0",
+            event_id: `evt_${item.case_run_id}_failed_${dispatch.attempt}`,
+            case_run_id: item.case_run_id,
+            attempt: dispatch.attempt,
+            sequence: TERMINAL_FAILURE_SEQUENCE,
+            error_code: code,
+            retryable: false,
+            error_summary: message,
+            phase: "executing",
+          }), { eventId: `evt_${item.case_run_id}_failed_${dispatch.attempt}`, token });
+        } catch (callbackError) {
+          console.error(`failed callback error: ${callbackError?.message || callbackError}`);
+        }
+        continue;
       } finally {
         // Stopped on both success and exception: SIGTERM, up to 5s, then SIGKILL.
         try {
