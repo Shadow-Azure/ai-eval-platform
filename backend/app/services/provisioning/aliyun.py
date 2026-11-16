@@ -36,7 +36,14 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ...config import Settings
-from ...models import Connection, Credential, ProvisionedInstance, ResourcePool, Runner
+from ...models import (
+    Connection,
+    Credential,
+    EvalCaseAttempt,
+    ProvisionedInstance,
+    ResourcePool,
+    Runner,
+)
 from ...money import UNIT_PRICE, Money, money_str
 from ...secrets import SecretBoxError, get_secret_box
 from .. import runner_cache
@@ -917,6 +924,29 @@ class AliyunEcsProvisioner:
         if instance.runner_id:
             runner = session.get(Runner, instance.runner_id)
             if runner is not None:
+                # M8-37: settle a live attempt before the runner disappears so
+                # the case can immediately request a new spot instance instead
+                # of waiting for the 300s heartbeat reaper.
+                if runner.status in ("online", "busy"):
+                    from .. import case_attempts
+
+                    active_case = session.scalar(
+                        select(EvalCaseAttempt.eval_case_run_id)
+                        .where(
+                            EvalCaseAttempt.runner_id == runner.id,
+                            EvalCaseAttempt.status.in_(
+                                case_attempts.SPOT_ACTIVE_ATTEMPT_STATUSES
+                            ),
+                        )
+                        .order_by(EvalCaseAttempt.started_at.desc())
+                        .limit(1)
+                    )
+                    if active_case is None and runner.busy_case_attempt_id:
+                        active_case = runner.busy_case_attempt_id
+                    if active_case:
+                        case_attempts.handle_spot_interruption(
+                            session, case_run_id=active_case, now=now
+                        )
                 runner.status = "offline"
                 runner.deregistered_at = runner.deregistered_at or now
                 session.flush()

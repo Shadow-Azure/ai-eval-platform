@@ -938,3 +938,129 @@ def handle_failed(
         "status": ctx.attempt.status,
         "retry_queued": retry_queued,
     }
+
+
+# ---------------------------------------------------------------------------
+# spot interruption (M8-37)
+# ---------------------------------------------------------------------------
+
+SPOT_RETRY_LIMIT = 3
+SPOT_INTERRUPTED = "spot_interrupted"
+SPOT_RETRY_EXHAUSTED = "spot_retry_exhausted"
+SPOT_ACTIVE_ATTEMPT_STATUSES = (
+    "pending",
+    "dispatching",
+    "queued",
+    "leased",
+    "running",
+    "scoring",
+    "uploading",
+)
+
+
+def handle_spot_interruption(
+    session: Session, *, case_run_id: str, now: datetime | None = None
+) -> bool:
+    """Fail the active attempt fast and re-dispatch a new spot attempt (M8-37).
+
+    The provider stopped the instance under a running job. Waiting for the
+    300s heartbeat reaper wastes the whole agent window and turns an
+    infrastructure event into ``heartbeat_timeout``. This settles the attempt
+    as ``spot_interrupted`` and immediately creates the next attempt, capped at
+    ``SPOT_RETRY_LIMIT`` independent of the run's normal ``max_attempts``.
+
+    Returns True when at least one retry dispatch was queued.
+    """
+
+    now = now or datetime.now(UTC)
+    case_run = session.get(EvalCaseRun, case_run_id)
+    if case_run is None:
+        return False
+    run = session.get(EvalRun, case_run.eval_run_id)
+    if run is None or run.status in evaluations.TERMINAL_RUN_STATUSES:
+        return False
+    if run.status in evaluations.PAUSED_RUN_STATUSES:
+        return False
+    attempts = list(
+        session.scalars(
+            select(EvalCaseAttempt)
+            .where(
+                EvalCaseAttempt.eval_case_run_id == case_run.id,
+                EvalCaseAttempt.status.in_(SPOT_ACTIVE_ATTEMPT_STATUSES),
+            )
+            .order_by(EvalCaseAttempt.attempt_no)
+        )
+    )
+    retried = False
+    for attempt in attempts:
+        prior = int(
+            session.scalar(
+                select(func.count())
+                .select_from(EvalCaseAttempt)
+                .where(
+                    EvalCaseAttempt.eval_case_run_id == case_run.id,
+                    EvalCaseAttempt.error_code == SPOT_INTERRUPTED,
+                )
+            )
+            or 0
+        )
+        ctx = CaseContext(session, case_run, run, attempt)
+        attempt.status = "failed"
+        attempt.ended_at = now
+        attempt.error_code = SPOT_INTERRUPTED
+        attempt.error_summary = "云侧停止了 spot 实例（provider_stopped）"
+        attempt.retry_reason = "spot_interruption"
+        lifecycle.release_runner_binding(session, attempt)
+        sequence = next_free_sequence(session, case_run, attempt)
+        session.add(
+            EvalEvent(
+                tenant_id=case_run.tenant_id,
+                eval_run_id=run.id,
+                eval_case_run_id=case_run.id,
+                attempt_no=attempt.attempt_no,
+                sequence=sequence,
+                event_type="case.spot_interrupted",
+                payload_json={
+                    "error_code": SPOT_INTERRUPTED,
+                    "attempt_no": attempt.attempt_no,
+                    "spot_retry_no": prior,
+                },
+            )
+        )
+        if prior < SPOT_RETRY_LIMIT:
+            outbox = build_retry_dispatch(
+                session,
+                ctx,
+                new_attempt_no=attempt.attempt_no + 1,
+                settings=get_settings(),
+                now=now,
+                retry_reason="spot_interruption",
+            )
+            session.add(outbox)
+            case_run.execution_status = "queued"
+            case_run.error_code = SPOT_INTERRUPTED
+            case_run.error_summary = "spot 实例被云侧停止，已重新申请竞争态资源池"
+            session.add(
+                EvalEvent(
+                    tenant_id=case_run.tenant_id,
+                    eval_run_id=run.id,
+                    eval_case_run_id=case_run.id,
+                    attempt_no=attempt.attempt_no,
+                    sequence=sequence + 1,
+                    event_type="case.retry_queued",
+                    payload_json={
+                        "new_attempt_no": attempt.attempt_no + 1,
+                        "spot_retry_no": prior + 1,
+                        "reason": "spot_interruption",
+                    },
+                )
+            )
+            retried = True
+        else:
+            case_run.execution_status = "failed"
+            case_run.error_code = SPOT_RETRY_EXHAUSTED
+            case_run.error_summary = f"spot 实例连续被回收 {SPOT_RETRY_LIMIT} 次，已停止重试"
+        refresh_run_progress(session, run, now=now)
+    if attempts:
+        session.commit()
+    return retried
