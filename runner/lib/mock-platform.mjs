@@ -59,7 +59,11 @@ export async function startMockPlatform({
       // M4-02: an opt-in tasks endpoint lets a test drive the real-repo path
       // (real-task only runs the agent when /tasks returns a task with repo).
       if (behavior.tasks) headers["x-runner-tasks-url"] = `${state.baseUrl}/tasks`;
-      if (behavior.modelToken) headers["x-runner-model-token"] = behavior.modelToken;
+      const modelToken =
+        typeof behavior.modelToken === "function"
+          ? behavior.modelToken()
+          : behavior.modelToken;
+      if (modelToken) headers["x-runner-model-token"] = modelToken;
       response.writeHead(200, headers);
       response.end(getManifest());
       return;

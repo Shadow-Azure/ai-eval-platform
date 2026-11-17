@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 from app.config import Settings, get_settings
 from app.defaults import DEFAULT_PROJECT_ID, DEFAULT_TENANT_ID
-from app.models import EvalCaseRun, EvalRun, Outbox, ResourcePool, Runner
+from app.models import EvalCaseRun, EvalRun, ModelConfig, Outbox, ResourcePool, Runner
 from app.seed import ensure_default_scope
 from app.services.short_token import verify_short_token
 from case_helpers import EVAL_ENV_SECRET, auth
@@ -926,5 +926,60 @@ def test_manifest_case_token_ttl_covers_case_timeout(
     run.case_timeout_seconds = 60
     session.commit()
     assert _token_exp(token()) - int(datetime.now(UTC).timestamp()) >= 300
+
+
+def test_manifest_model_token_ttl_covers_agent_timeout(
+    eval_env: dict, session: Session, client: TestClient
+) -> None:
+    """M8-41: the model token must outlive the agent, not just image pull."""
+
+    run = session.get(EvalRun, eval_env["run_id"])
+    assert run is not None
+    outbox = session.scalar(select(Outbox).where(Outbox.aggregate_id == run.id))
+    assert outbox is not None
+
+    config = ModelConfig(
+        tenant_id=run.tenant_id,
+        project_id=str(DEFAULT_PROJECT_ID),
+        provider="anthropic",
+        display_name="m8-41 test model",
+        base_url="https://example.invalid",
+        model_name="claude-test",
+    )
+    session.add(config)
+    session.flush()
+    run.model_config_id = config.id
+    run.model_name = "claude-test"
+    run.case_timeout_seconds = 3600
+    run.agent_timeout_seconds = 1800
+    session.commit()
+
+    def model_token() -> str:
+        response = client.get(
+            f"/runner/v1/shards/{eval_env['shard']}/manifest",
+            params={
+                "eval_run_id": run.id,
+                "attempt": 1,
+                "dispatch_key": outbox.dispatch_key,
+            },
+            headers=auth(eval_env),
+        )
+        assert response.status_code == 200, response.text
+        token = response.headers.get("X-Runner-Model-Token")
+        assert token, "manifest did not issue a model token"
+        return token
+
+    now = int(datetime.now(UTC).timestamp())
+    assert _token_exp(model_token()) - now >= 2099  # 1800 + 300 grace
+
+    run.case_timeout_seconds = 600
+    run.agent_timeout_seconds = 300
+    session.commit()
+    assert _token_exp(model_token()) - int(datetime.now(UTC).timestamp()) >= 599
+
+    run.case_timeout_seconds = 60
+    run.agent_timeout_seconds = 600
+    session.commit()
+    assert _token_exp(model_token()) - int(datetime.now(UTC).timestamp()) >= 59
 
 

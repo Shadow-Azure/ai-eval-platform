@@ -617,6 +617,28 @@ def _case_token_ttl(run: EvalRun) -> int:
     return max(CASE_TOKEN_MIN_TTL_SECONDS, timeout + CASE_TOKEN_GRACE_SECONDS)
 
 
+def _model_token_ttl(run: EvalRun, settings: Settings) -> int:
+    """M8-41: model tokens must outlive the agent, not just the image pull.
+
+    The token is minted before the runner pulls the (large) SWE-bench image.
+    With a fixed 900s TTL a 15-minute image pull plus a 30-minute agent left
+    the agent calling the gateway with an expired token. Cover the agent
+    timeout with a small grace, bounded by the case deadline.
+    """
+
+    agent_timeout = int(
+        getattr(run, "agent_timeout_seconds", 0) or DEFAULT_AGENT_TIMEOUT_SECONDS
+    )
+    case_timeout = int(
+        getattr(run, "case_timeout_seconds", 0)
+        or settings.eval_execution_timeout_seconds
+    )
+    return max(
+        1,
+        min(case_timeout, max(settings.gateway_token_ttl_seconds, agent_timeout + 300)),
+    )
+
+
 @router.get("/runner/v1/shards/{shard_id}/manifest")
 def shard_manifest(
     shard_id: str,
@@ -672,7 +694,7 @@ def shard_manifest(
         model_token = issue_gateway_token(
             model_claims,
             settings.gateway_secret,
-            ttl_seconds=settings.gateway_token_ttl_seconds,
+            ttl_seconds=_model_token_ttl(run, settings),
         )
         gateway_base = settings.runner_callback_base_url.rstrip("/")
         model_headers = {
