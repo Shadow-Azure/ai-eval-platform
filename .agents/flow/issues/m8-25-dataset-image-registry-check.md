@@ -6,7 +6,7 @@
 kind: issue
 milestone: m8
 priority: P2
-status: in-progress
+status: done
 scope:
   - .agents/flow/issues/m8-25-dataset-image-registry-check.*
   - .agents/flow/milestones/m8-bug-fixes.*
