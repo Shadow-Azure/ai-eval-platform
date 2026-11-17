@@ -1,5 +1,5 @@
 # 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
 # git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
 #   pnpm run record:i18n -- .agents/flow/issues/m8-40-spot-stop-logs.md
-m8-40-spot-stop-logs.md: d946420a41134fb3bb71ff0a32f9f73a7920380a
-m8-40-spot-stop-logs.en.md: a7c73fd1c15a07fc31e5bf457f7411abc9353ba0
+m8-40-spot-stop-logs.md: b1ff42551c46cb4d8a6fbbb3f7f64da872cd1989
+m8-40-spot-stop-logs.en.md: 5156dd2885a635f2b435c803f317234ffc213b38

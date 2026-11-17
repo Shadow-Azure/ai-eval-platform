@@ -158,7 +158,19 @@ test("an exception while the sidecar runs still stops it and keeps the case fail
   try {
     const result = await runCase(ctx, fakeBin, { RUNNER_HEARTBEAT_INTERVAL_MS: "1000" });
     assert.equal(result.code, 1, "a docker failure must still fail the case");
-    assert.equal(JSON.parse(result.stderr).error_code, "runtime_error");
+    const stderrEvents = result.stderr
+      .split("\n")
+      .flatMap((line) => {
+        try {
+          return [JSON.parse(line)];
+        } catch {
+          return [];
+        }
+      });
+    assert.ok(
+      stderrEvents.some((event) => event.error_code === "runtime_error"),
+      `missing runtime_error in stderr\n${result.stderr}`,
+    );
     assert.equal(requestsFor(ctx, "completed").length, 0);
 
     const beatsAtExit = requestsFor(ctx, "heartbeat").length;

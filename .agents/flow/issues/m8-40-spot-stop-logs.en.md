@@ -13,6 +13,7 @@ scope:
   - backend/app/services/provisioning/aliyun.py
   - runner/scripts/real-task.mjs
   - tests/backend/test_aliyun_provisioner.py
+  - tests/runner/heartbeat-integration.test.mjs
 adr: []
 github:
   number: 268
