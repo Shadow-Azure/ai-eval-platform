@@ -2,6 +2,7 @@
 // 安装本地流程提醒钩子。强校验仍由 verify-flow --diff 在 CI 执行；
 // commit-msg 只负责尽早拦截缺 (#N) 引用的提交，pre-commit 拦截尾随空白。
 
+import { pathToFileURL } from "node:url";
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
@@ -41,6 +42,6 @@ export function installGitHooks({ gitDir = ".git" } = {}) {
   return Object.keys(HOOKS).map((name) => path.join(hooksDir, name));
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   for (const file of installGitHooks()) console.log(`install-git-hooks: ${file} 已写入`);
 }

@@ -2,6 +2,7 @@
 // Route changed paths to the smallest useful local verification. Routing is
 // advisory; the CI doc-sync lane remains the exhaustive backstop.
 
+import { pathToFileURL } from "node:url";
 import { execFileSync } from "node:child_process";
 
 export const ROUTES = [
@@ -93,7 +94,7 @@ function changedPaths() {
   ];
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const paths = changedPaths();
   if (!paths.length) {
     console.log("route-gates: 无改动。");

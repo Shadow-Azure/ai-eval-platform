@@ -15,8 +15,10 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from urllib.parse import urlparse
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -44,6 +46,7 @@ from ..models import (
 )
 from ..money import UNIT_PRICE, Money, MoneyError, money_str
 from ..runtimes.claude_code import get_runtime_adapter
+from ..secrets import SecretBoxError, get_secret_box
 from . import capacity
 from . import evaluations as evaluation_service
 from .preflight import PreflightIssue, check_preparation
@@ -51,6 +54,8 @@ from .preflight import PreflightIssue, check_preparation
 CASE_SELECTION_MODES = ("all", "count", "cases")
 DEFAULT_CASE_TIMEOUT_SECONDS = 3600
 DEFAULT_MAX_ATTEMPTS = 2
+SELF_EVOLUTION_WORKSPACE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]+$")
+SELF_EVOLUTION_TOKEN_PATTERN = re.compile(r"^whk_[A-Za-z0-9_-]+$")
 
 
 class PreparationError(Exception):
@@ -490,6 +495,75 @@ def _normalise_execution(execution: dict | None, settings: Settings) -> dict:
     }
 
 
+def _self_evolution_view(config: dict | None) -> dict:
+    """Report-target fields safe for snapshots/API responses (never the token)."""
+
+    config = config or {}
+    return {
+        "enabled": bool(config.get("enabled")),
+        "base_url": config.get("base_url") or None,
+        "workspace_id": config.get("workspace_id") or None,
+    }
+
+
+def _normalise_self_evolution(config: dict | None) -> tuple[dict, str | None]:
+    """Validate the launch-time self-evolution config.
+
+    Returns ``(view, token)`` where ``view`` holds only the non-secret target
+    fields (the snapshot form) and ``token`` is the plaintext workspace token
+    the caller immediately encrypts. The server re-validates the request-model
+    rules so a direct service caller cannot smuggle a half-configured target
+    into a frozen preparation.
+    """
+
+    config = dict(config or {})
+    enabled = bool(config.get("enabled"))
+    base_url = (config.get("base_url") or "").strip()
+    workspace_id = (config.get("workspace_id") or "").strip()
+    token = (config.get("token") or "").strip()
+    if not enabled:
+        if base_url or workspace_id or token:
+            raise PreparationInvalid(
+                "自进化上报未启用时 base_url/workspace_id/token 必须留空",
+                field="self_evolution",
+            )
+        return {"enabled": False, "base_url": None, "workspace_id": None}, None
+    if not base_url:
+        raise PreparationInvalid("自进化上报启用时必须提供平台基础 URL", field="self_evolution")
+    parsed = urlparse(base_url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise PreparationInvalid(
+            "自进化平台基础 URL 必须是 http(s) 地址", field="self_evolution"
+        )
+    if len(base_url) > 512:
+        raise PreparationInvalid("自进化平台基础 URL 不能超过 512 字符", field="self_evolution")
+    if not workspace_id:
+        raise PreparationInvalid("自进化上报启用时必须提供工作区 ID", field="self_evolution")
+    if len(workspace_id) > 64 or not SELF_EVOLUTION_WORKSPACE_ID_PATTERN.match(workspace_id):
+        raise PreparationInvalid(
+            "工作区 ID 必须是 1..64 字符的字母数字与 ._- 组合（以字母数字开头）",
+            field="self_evolution",
+        )
+    if not token:
+        raise PreparationInvalid("自进化上报启用时必须提供上报令牌", field="self_evolution")
+    if len(token) > 256 or not SELF_EVOLUTION_TOKEN_PATTERN.match(token):
+        raise PreparationInvalid(
+            "自进化上报令牌必须以 whk_ 开头且仅含字母数字、下划线或连字符",
+            field="self_evolution",
+        )
+    return {"enabled": True, "base_url": base_url, "workspace_id": workspace_id}, token
+
+
+def _encrypt_self_evolution_token(token: str | None) -> str | None:
+    if not token:
+        return None
+    try:
+        ciphertext, _version = get_secret_box().encrypt(token)
+    except SecretBoxError as exc:
+        raise PreparationInvalid(f"自进化上报令牌加密失败：{exc}", field="self_evolution") from exc
+    return ciphertext
+
+
 def build_preparation(
     session: Session,
     *,
@@ -507,6 +581,7 @@ def build_preparation(
     prompt_suffix: str | None = None,
     max_turns: int | None = None,
     agent_timeout_seconds: int | None = None,
+    self_evolution: dict | None = None,
     settings: Settings | None = None,
     now: datetime | None = None,
 ) -> dict:
@@ -516,6 +591,12 @@ def build_preparation(
     now = _now(now)
     tenant_id = str(DEFAULT_TENANT_ID)
     execution = _normalise_execution(execution, settings)
+    # M9 (#263): the reporting target is part of the confirmed launch
+    # configuration. Only the non-secret fields enter the snapshot; the
+    # workspace token is encrypted onto the preparation row and never appears
+    # in ``snapshot_json`` (which the wizard echoes back).
+    self_evolution_view, self_evolution_token = _normalise_self_evolution(self_evolution)
+    self_evolution_token_encrypted = _encrypt_self_evolution_token(self_evolution_token)
     # M8-07: empty/whitespace-only instructions keep today's prompt behaviour.
     suffix = (prompt_suffix or "").strip()
     # M8-31: an omitted cap keeps the platform default of 200 turns.
@@ -615,6 +696,7 @@ def build_preparation(
             "prompt_suffix": suffix,
             "max_turns": turns,
             "agent_timeout_seconds": agent_timeout,
+            "self_evolution": self_evolution_view,
             "cost_estimate": None,
             "summary": None,
         }
@@ -689,6 +771,7 @@ def build_preparation(
         "prompt_suffix": suffix,
         "max_turns": turns,
         "agent_timeout_seconds": agent_timeout,
+        "self_evolution": self_evolution_view,
         "warnings": warnings,
         "cost_estimate": cost_estimate,
     }
@@ -704,6 +787,7 @@ def build_preparation(
         "prompt_suffix": suffix,
         "max_turns": turns,
         "agent_timeout_seconds": agent_timeout,
+        "self_evolution": self_evolution_view,
         "resolved": snapshot["resolved"],
         "cost_estimate": cost_estimate,
         "warnings": warnings,
@@ -720,6 +804,7 @@ def build_preparation(
         expires_at=expires_at,
         snapshot_json=snapshot,
         snapshot_digest=digest,
+        self_evolution_token_encrypted=self_evolution_token_encrypted,
     )
     session.add(preparation)
     session.commit()
@@ -743,6 +828,7 @@ def build_preparation(
         "prompt_suffix": suffix,
         "max_turns": turns,
         "agent_timeout_seconds": agent_timeout,
+        "self_evolution": self_evolution_view,
         "cost_estimate": cost_estimate,
         "summary": snapshot["summary"],
     }
@@ -839,6 +925,7 @@ def consume_preparation(
 
     resolved = snapshot.get("resolved") or {}
     asset_snapshot = snapshot.get("asset_snapshot") or None
+    self_evolution = _self_evolution_view(snapshot.get("self_evolution"))
     run, created = evaluation_service.create_synthetic_evaluation(
         session,
         name=name or f"评测 · {dataset.get('name') or '数据集'} · {dataset.get('version') or ''}".strip(),
@@ -864,6 +951,10 @@ def consume_preparation(
         prompt_suffix=snapshot.get("prompt_suffix") or "",
         max_turns=snapshot.get("max_turns"),
         agent_timeout_seconds=snapshot.get("agent_timeout_seconds"),
+        self_evolution_enabled=self_evolution["enabled"],
+        self_evolution_base_url=self_evolution["base_url"],
+        self_evolution_workspace_id=self_evolution["workspace_id"],
+        self_evolution_token_encrypted=preparation.self_evolution_token_encrypted,
         consistency_json={
             "preparation_id": preparation.id,
             "snapshot_digest": preparation.snapshot_digest,

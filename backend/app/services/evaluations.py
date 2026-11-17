@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -46,6 +47,8 @@ from ..money import money_str
 from ..runner_contracts import ContractInvalid, validate_payload
 from .dataset_images import effective_sources, source_records
 from .runner_labels import DEFAULT_RUNS_ON, pool_runner_labels
+
+logger = logging.getLogger(__name__)
 
 SHARD_DISPATCH_TOPIC = "eval.shard.dispatch"
 MANIFEST_PATH_TEMPLATE = "/runner/v1/shards/{shard_id}/manifest"
@@ -156,6 +159,10 @@ def create_synthetic_evaluation(
     prompt_suffix: str | None = None,
     max_turns: int | None = None,
     agent_timeout_seconds: int | None = None,
+    self_evolution_enabled: bool = False,
+    self_evolution_base_url: str | None = None,
+    self_evolution_workspace_id: str | None = None,
+    self_evolution_token_encrypted: str | None = None,
     settings: Settings | None = None,
     now: datetime | None = None,
 ) -> tuple[EvalRun, bool]:
@@ -334,6 +341,10 @@ def create_synthetic_evaluation(
         max_attempts=attempts,
         max_turns=turns,
         agent_timeout_seconds=agent_timeout,
+        self_evolution_enabled=bool(self_evolution_enabled),
+        self_evolution_base_url=(self_evolution_base_url or None),
+        self_evolution_workspace_id=(self_evolution_workspace_id or None),
+        self_evolution_token_encrypted=self_evolution_token_encrypted,
     )
     session.add(run)
     session.flush()
@@ -871,6 +882,11 @@ def evaluation_summary(
             run.agent_timeout_seconds or DEFAULT_AGENT_TIMEOUT_SECONDS
         ),
         "prompt_suffix": run.prompt_suffix or "",
+        # M9 (#263): self-evolution reporting target echo. The workspace token
+        # is deliberately absent — responses never carry even a masked form.
+        "self_evolution_enabled": bool(run.self_evolution_enabled),
+        "self_evolution_base_url": run.self_evolution_base_url,
+        "self_evolution_workspace_id": run.self_evolution_workspace_id,
         "asset_snapshot_id": run.asset_snapshot_id,
         "asset_resolved_commit": (run.asset_snapshot_json or {}).get("resolved_commit"),
         "asset_count": (run.asset_snapshot_json or {}).get("asset_count"),
@@ -1292,6 +1308,26 @@ def refresh_run_progress(session: Session, run: EvalRun, *, now: datetime | None
         if run.started_at is None:
             run.started_at = now
         run.finished_at = now
+        # M9 (#263): freeze self-evolution bad-case reports in the same
+        # transaction as the terminal status. Reporting is post-completion
+        # work: a failure must never roll back or delay the terminal write
+        # (same begin_nested + swallow pattern as trace ingestion enqueue).
+        try:
+            from .self_evolution import enqueue_self_evolution_reports
+
+            with session.begin_nested():
+                enqueue_self_evolution_reports(session, run, now=now)
+        except Exception:  # noqa: BLE001 - reporting must not fail the run
+            logger.exception("enqueue self-evolution reports failed for run %s", run.id)
+            try:
+                append_run_event(
+                    session,
+                    run,
+                    "eval.self_evolution.failed",
+                    {"reason": "enqueue_error"},
+                )
+            except Exception:  # noqa: BLE001 - event write is best effort
+                logger.exception("self-evolution failure event failed for run %s", run.id)
         return run
 
     if run.status == "queued" and run.running_count > 0:

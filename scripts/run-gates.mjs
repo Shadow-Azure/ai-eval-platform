@@ -3,6 +3,7 @@
 // combinations. CI runs doc-sync so a green pipeline cannot silently omit docs.
 // Usage: node scripts/run-gates.mjs --mode doc-quick|doc-sync
 
+import { pathToFileURL } from "node:url";
 import { execFileSync } from "node:child_process";
 import { readdirSync } from "node:fs";
 
@@ -62,7 +63,7 @@ export const MODES = {
   ],
 };
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const args = process.argv.slice(2);
   const modeIndex = args.indexOf("--mode");
   const mode = modeIndex >= 0 ? args[modeIndex + 1] : "doc-quick";

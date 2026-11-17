@@ -5,6 +5,7 @@
 // milestone 同理。PR_NUMBER 环境变量存在时追加：PR 关联了 milestone 与
 // project。需要 gh 已认证（CI 用 GITHUB_TOKEN）。规则 home：.agents/flow/README.md。
 
+import { pathToFileURL } from "node:url";
 import { execFileSync } from "node:child_process";
 import { loadFlowTree } from "./flow-lib.mjs";
 
@@ -110,4 +111,4 @@ async function main() {
   console.log("verify-flow-online: ok");
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) await main();
+if (import.meta.url === pathToFileURL(process.argv[1]).href) await main();

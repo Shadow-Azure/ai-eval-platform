@@ -88,11 +88,15 @@ resource_pool_id, resource_pool_snapshot_json,
 requested_concurrency, effective_concurrency, shard_size,
 model_budget_usd, budget_spent_usd, budget_version, pause_reason,
 case_timeout_seconds, max_attempts, max_turns, agent_timeout_seconds,
+self_evolution_enabled, self_evolution_base_url, self_evolution_workspace_id,
+self_evolution_token_encrypted,
 metric_schema_json, task_manifest_digest, scoring_image_digest,
 total_cases, queued_count, running_count, succeeded_count, failed_count,
 resolved_count, unresolved_count, trace_pending_count,
 idempotency_key, created_by, created_at, started_at, finished_at, version
 ```
+
+`self_evolution_token_encrypted` 是 Fernet 密文（明文不落库、不入快照、任何 API 响应不回显）；`eval_preparation` 侧同名列在 consume 时拷贝到 eval_run。
 
 聚合计数可以由事件增量维护并定期重算校正；页面权威结果以事务内重算或一致性快照为准，不能依赖前端累加。
 
@@ -135,6 +139,19 @@ UNIQUE(eval_case_run_id, attempt_no, sequence)
 
 `eval_event` 是页面历史与 SSE 回放来源，payload 只放可展示且脱敏的摘要。调度 outbox 可复用同一机制或独立表，但 dispatch payload 与 UI 事件权限不同，不能直接把内部 outbox 全量暴露给前端。
 
+### 6.5 `self_evolution_report`
+
+```text
+id, tenant_id, eval_run_id, eval_case_run_id, bad_case_id,
+status, attempts, next_attempt_at, last_error, last_status_code,
+reported_at, payload_json, created_at, updated_at
+CHECK(status IN ('pending','succeeded','failed'))
+UNIQUE(tenant_id, bad_case_id)
+INDEX(status, next_attempt_at)
+```
+
+自进化上报 outbox（M9）：终态事务内每个 bad case 冻结一行，`payload_json` 是最终上报报文，Worker 按 `next_attempt_at` 阶梯重试；删除 eval_run 级联删除。
+
 ## 7. 结果、轨迹与交付
 
 | 表 | 关键字段 | 说明 |
@@ -152,6 +169,7 @@ UNIQUE(eval_case_run_id, attempt_no, sequence)
 ```text
 trace_file:   UNIQUE(eval_case_attempt_id, sha256, parser_version)
 trace_session: UNIQUE(eval_case_attempt_id, runtime_key, native_session_id)
+trace_session: INDEX(native_session_id)
 trace_span:   UNIQUE(trace_session_id, native_event_id)
 trace_span:   INDEX(trace_session_id, ordinal), INDEX(parent_span_id)
 metric_result: INDEX(eval_run_id, is_final)

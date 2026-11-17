@@ -5,6 +5,7 @@
 // 链接门禁口径一致。扫描面：scripts/*.mjs（*.spec.mjs 除外——夹具全是
 // 合成路径）、src/**/*.ts、src-tauri/src/**/*.rs。全库运行，无参。
 
+import { pathToFileURL } from "node:url";
 import { readdirSync, readFileSync, existsSync } from "node:fs";
 
 const DOC_REF_RE = /(?:\bdocs|\.agents\/notes)\/[\p{L}\p{N}._/-]+\.md/gu;
@@ -57,7 +58,7 @@ export default function verifyDocRefs() {
   return { ok: errors.length === 0, errors };
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const { ok, errors } = verifyDocRefs();
   if (!ok) {
     console.error(`verify-doc-refs: FAIL\n  ${errors.join("\n  ")}`);

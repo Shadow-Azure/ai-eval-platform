@@ -68,6 +68,10 @@ export interface EvaluationSummary {
   max_turns?: number | null;
   /** M8-32: effective Agent wall-clock timeout frozen into the run (seconds). */
   agent_timeout_seconds?: number | null;
+  /** M9 #263: self-evolution bad-case reporting target; the token never echoes. */
+  self_evolution_enabled?: boolean;
+  self_evolution_base_url?: string | null;
+  self_evolution_workspace_id?: string | null;
 }
 
 export interface FrozenAsset {
@@ -338,6 +342,18 @@ export interface PrepareResponse {
   agent_timeout_seconds?: number | null;
 }
 
+/**
+ * M9 #263: optional harness-evolution bad-case reporting target. Field names
+ * match the backend Pydantic model (snake_case, sent verbatim); ``enabled``
+ * requires the other three and a disabled block must leave them empty.
+ */
+export interface SelfEvolutionConfig {
+  enabled: boolean;
+  base_url?: string;
+  workspace_id?: string;
+  token?: string;
+}
+
 export interface PrepareRequest {
   dataset_version_id: string;
   model_config_id: string;
@@ -358,6 +374,8 @@ export interface PrepareRequest {
   max_turns?: number;
   /** M8-32: optional Agent wall-clock override in seconds; omitted keeps the dataset default. */
   agent_timeout_seconds?: number;
+  /** M9 #263: optional bad-case reporting target frozen into the preparation. */
+  self_evolution?: SelfEvolutionConfig;
 }
 
 export interface MetricResult {
@@ -661,6 +679,10 @@ export function parseEvaluationSummary(payload: unknown): EvaluationSummary {
     prompt_suffix: readOptionalString(payload.prompt_suffix),
     max_turns: readOptionalNumber(payload.max_turns),
     agent_timeout_seconds: readOptionalNumber(payload.agent_timeout_seconds),
+    self_evolution_enabled:
+      typeof payload.self_evolution_enabled === "boolean" ? payload.self_evolution_enabled : undefined,
+    self_evolution_base_url: readOptionalString(payload.self_evolution_base_url),
+    self_evolution_workspace_id: readOptionalString(payload.self_evolution_workspace_id),
   };
 }
 

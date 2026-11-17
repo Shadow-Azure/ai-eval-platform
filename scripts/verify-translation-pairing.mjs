@@ -6,6 +6,7 @@
 // 模式：无参=全库检查；`docs/foo.md` 等具名=只查该对；--list=状态报告；
 // --write <pair|--all>=重录确认记录。改任一侧 → 最小修补另一侧 → --write 重录。
 
+import { pathToFileURL } from "node:url";
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
@@ -303,7 +304,7 @@ async function writeRecords(request) {
   console.log(`verify-translation-pairing: 写入 ${written} 条记录；跑检查验证配对一致性。`);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
     const request = parsePairingCliArgs(process.argv.slice(2));
     if (request.mode === "write") {

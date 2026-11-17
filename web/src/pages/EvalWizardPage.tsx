@@ -8,6 +8,7 @@ import {
   InputNumber,
   Segmented,
   Select,
+  Switch,
   Table,
   Tag,
   message,
@@ -64,6 +65,61 @@ const MIN_AGENT_TIMEOUT_MINUTES = 1;
 const MAX_AGENT_TIMEOUT_MINUTES = 1440;
 const PROMPT_SUFFIX_PLACEHOLDER =
   "例如：这是非交互评测。请使用 superpowers 技能完成任务；不要向用户提问，自主决策并继续。";
+/** M9 #263: harness-evolution reporting token format (whk_ + URL-safe chars). */
+const SELF_EVOLUTION_TOKEN_PATTERN = /^whk_[A-Za-z0-9_-]+$/;
+
+/** M9 #263: optional harness-evolution bad-case reporting target. */
+interface SelfEvolutionDraft {
+  enabled: boolean;
+  baseUrl: string;
+  workspaceId: string;
+  token: string;
+}
+
+function defaultSelfEvolution(): SelfEvolutionDraft {
+  return { enabled: false, baseUrl: "", workspaceId: "", token: "" };
+}
+
+function selfEvolutionFromDraft(value: unknown): SelfEvolutionDraft {
+  const base = defaultSelfEvolution();
+  if (typeof value !== "object" || value === null) return base;
+  const it = value as Record<string, unknown>;
+  return {
+    enabled: it.enabled === true,
+    baseUrl: typeof it.baseUrl === "string" ? it.baseUrl : "",
+    workspaceId: typeof it.workspaceId === "string" ? it.workspaceId : "",
+    // The token is a credential: it is never written to browser storage, so a
+    // restored draft starts with an empty token and must be re-entered.
+    token: "",
+  };
+}
+
+/** Enabled requires all three fields, an http(s) base URL and a whk_ token. */
+function selfEvolutionError(config: SelfEvolutionDraft): string | null {
+  if (!config.enabled) return null;
+  if (!config.baseUrl.trim() || !config.workspaceId.trim() || !config.token.trim()) {
+    return "启用自进化上报后，平台地址、工作区 ID 与上报令牌均为必填";
+  }
+  try {
+    const parsed = new URL(config.baseUrl.trim());
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return "自进化平台地址必须是 http(s) 地址";
+    }
+  } catch {
+    return "自进化平台地址必须是 http(s) 地址";
+  }
+  if (!SELF_EVOLUTION_TOKEN_PATTERN.test(config.token.trim())) {
+    return "上报令牌需以 whk_ 开头，仅包含字母、数字、下划线与连字符";
+  }
+  return null;
+}
+
+/** "已启用 · {host} · 工作区 {workspaceId}" for the aside/confirm summaries. */
+function selfEvolutionSummaryText(config: SelfEvolutionDraft): string {
+  if (!config.enabled) return "未启用";
+  const host = config.baseUrl.replace(/^https?:\/\//, "").replace(/\/+$/, "");
+  return `已启用 · ${host || "未填地址"} · 工作区 ${config.workspaceId || "未填"}`;
+}
 
 const STEP_ITEMS: { title: string; meta: string }[] = [
   { title: "数据集与用例", meta: "版本与子集" },
@@ -102,6 +158,7 @@ interface WizardDraft {
   promptSuffix: string;
   maxTurns: string;
   agentTimeout: string;
+  selfEvolution: SelfEvolutionDraft;
 }
 
 function defaultDraft(): WizardDraft {
@@ -130,6 +187,7 @@ function defaultDraft(): WizardDraft {
     promptSuffix: "",
     maxTurns: "",
     agentTimeout: "",
+    selfEvolution: defaultSelfEvolution(),
   };
 }
 
@@ -224,6 +282,7 @@ function readDraft(): WizardDraft | null {
         typeof it.promptSuffix === "string" ? it.promptSuffix.slice(0, MAX_PROMPT_SUFFIX) : "",
       maxTurns: typeof it.maxTurns === "string" ? it.maxTurns : "",
       agentTimeout: typeof it.agentTimeout === "string" ? it.agentTimeout : "",
+      selfEvolution: selfEvolutionFromDraft(it.selfEvolution),
     };
   } catch {
     return null;
@@ -232,7 +291,14 @@ function readDraft(): WizardDraft | null {
 
 function saveDraft(draft: WizardDraft): void {
   try {
-    window.localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
+    // The reporting token is a credential: it never enters browser storage
+    // (same policy as the wizard's no-temporary-key rule); the user must
+    // re-enter it after a refresh.
+    const persistable = {
+      ...draft,
+      selfEvolution: { ...draft.selfEvolution, token: "" },
+    };
+    window.localStorage.setItem(DRAFT_KEY, JSON.stringify(persistable));
   } catch {
     // Storage can be unavailable (private mode); the wizard still works.
   }
@@ -776,10 +842,15 @@ export function EvalWizardPage() {
       message.warning(agentTimeout.error);
       return;
     }
+    if (selfEvolutionInvalid) {
+      message.error(selfEvolutionInvalid);
+      return;
+    }
     setChecking(true);
     setBlockers([]);
     setCreateNotice(null);
     try {
+      const selfEvolution = draft.selfEvolution;
       const result = await prepareEvaluation({
         dataset_version_id: draft.versionId,
         model_config_id: draft.modelConfigId,
@@ -795,6 +866,16 @@ export function EvalWizardPage() {
         ...(agentTimeout.seconds !== null
           ? { agent_timeout_seconds: agentTimeout.seconds }
           : {}),
+        // Enabled sends the full target; disabled must leave the other fields
+        // empty or the backend rejects the half-configured block.
+        self_evolution: selfEvolution.enabled
+          ? {
+              enabled: true,
+              base_url: selfEvolution.baseUrl.trim(),
+              workspace_id: selfEvolution.workspaceId.trim(),
+              token: selfEvolution.token.trim(),
+            }
+          : { enabled: false },
       });
       setPreparation(result);
       if (result.ready) {
@@ -873,6 +954,8 @@ export function EvalWizardPage() {
   const promptSuffix = draft.promptSuffix.trim();
   const maxTurns = parseMaxTurns(draft.maxTurns);
   const agentTimeout = parseAgentTimeout(draft.agentTimeout);
+  const selfEvolutionInvalid = selfEvolutionError(draft.selfEvolution);
+  const selfEvolutionSummary = selfEvolutionSummaryText(draft.selfEvolution);
   const datasetAgentTimeoutSeconds =
     versionDetail.data?.agent_timeout_seconds ?? DEFAULT_AGENT_TIMEOUT_SECONDS;
   const preparedAgentTimeoutSeconds =
@@ -976,6 +1059,10 @@ export function EvalWizardPage() {
                     agentTimeout.seconds !== null ? "本次覆盖" : "数据集默认"
                   }）`}
             </span>
+          </div>
+          <div className="summary-item">
+            <span className="summary-label">自进化上报</span>
+            <span className="summary-value">{selfEvolutionSummary}</span>
           </div>
         </div>
         <div className="summary-cost">
@@ -1783,6 +1870,100 @@ export function EvalWizardPage() {
           </span>
           {agentTimeout.error ? <span className="field-error">{agentTimeout.error}</span> : null}
         </div>
+        <div
+          className="row-between"
+          style={{ marginTop: 18, paddingTop: 14, borderTop: "1px solid var(--line)" }}
+        >
+          <div>
+            <h3 style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "var(--ink)" }}>
+              自进化上报（可选）
+            </h3>
+            <p className="small muted" style={{ margin: "2px 0 0" }}>
+              评测结束后，把未通过的 SWE-bench 用例作为 bad case 上报到 harness-evolution 工作区
+            </p>
+          </div>
+          <Tag style={{ marginInlineEnd: 0 }}>可选</Tag>
+        </div>
+        <div className="field" style={{ marginTop: 12 }}>
+          <div className="row-between">
+            <div>
+              <strong>启用自进化上报</strong>
+              <div className="small muted">
+                运行终态后按最终执行结果上报，失败自动重试，不影响评测主流程
+              </div>
+            </div>
+            <Switch
+              checked={draft.selfEvolution.enabled}
+              onChange={(checked) =>
+                update({ selfEvolution: { ...draft.selfEvolution, enabled: checked } })
+              }
+              aria-label="切换自进化上报"
+            />
+          </div>
+        </div>
+        {draft.selfEvolution.enabled ? (
+          <>
+            <div className="field-row" style={{ marginTop: 12 }}>
+              <div className="field">
+                <label className="required">自进化平台地址</label>
+                <Input
+                  className="mono"
+                  value={draft.selfEvolution.baseUrl}
+                  onChange={(event) =>
+                    update({
+                      selfEvolution: { ...draft.selfEvolution, baseUrl: event.target.value },
+                    })
+                  }
+                  placeholder="https://harness-evolution.example.com"
+                />
+              </div>
+              <div className="field">
+                <label className="required">工作区 ID</label>
+                <Input
+                  className="mono"
+                  value={draft.selfEvolution.workspaceId}
+                  onChange={(event) =>
+                    update({
+                      selfEvolution: { ...draft.selfEvolution, workspaceId: event.target.value },
+                    })
+                  }
+                  placeholder="ws-xxxxxxxx"
+                />
+              </div>
+            </div>
+            <div className="field" style={{ marginTop: 12 }}>
+              <label className="required">上报令牌</label>
+              <Input.Password
+                className="mono"
+                value={draft.selfEvolution.token}
+                onChange={(event) =>
+                  update({ selfEvolution: { ...draft.selfEvolution, token: event.target.value } })
+                }
+                placeholder="whk_..."
+                autoComplete="new-password"
+              />
+              <span className="hint">
+                来自自进化平台工作区的上报凭据；加密保存，提交后不再回显，也不会写入浏览器草稿。
+              </span>
+            </div>
+            {selfEvolutionInvalid ? (
+              <span className="field-error">{selfEvolutionInvalid}</span>
+            ) : null}
+            <div className="banner" style={{ marginTop: 12 }}>
+              <Icon name="pulse" size={15} />
+              <div>
+                <strong>上报内容</strong> · 未通过用例（unresolved / 执行失败）逐条上报，含
+                instance_id、失败测试与错误摘要；每条附带带签名的 session
+                轨迹包下载链接，供自进化平台回链归因。
+              </div>
+            </div>
+          </>
+        ) : (
+          <div className="banner" style={{ marginTop: 12 }}>
+            <Icon name="shield" size={15} />
+            <div>未启用：bad case 不上报，评测行为与现状一致。</div>
+          </div>
+        )}
         <h3 className="wizard-section-title">高级执行策略</h3>
         <div className="policy-grid">
           <div className="field">
@@ -2004,6 +2185,10 @@ export function EvalWizardPage() {
             </span>
           </div>
 
+          <div className="summary-item">
+            <span className="summary-label">自进化上报</span>
+            <span className="summary-value">{selfEvolutionSummary}</span>
+          </div>
           <div className="summary-item">
             <span className="summary-label">评分镜像 digest</span>
             <span className="summary-value mono small">

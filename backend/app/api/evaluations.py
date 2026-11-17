@@ -13,10 +13,11 @@ from collections.abc import Iterator
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Annotated, Literal
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy.orm import Session, sessionmaker
 
 from ..agent_timeout import MAX_AGENT_TIMEOUT_SECONDS, MIN_AGENT_TIMEOUT_SECONDS
@@ -112,6 +113,48 @@ class ExecutionPolicyRequest(BaseModel):
     shard_size: int | None = Field(default=None, ge=1, le=255)
 
 
+class SelfEvolutionConfig(BaseModel):
+    """M9 (#263): optional harness-evolution bad-case reporting target.
+
+    ``enabled`` requires all three fields; disabled rejects any of them so a
+    stale wizard form cannot leave a half-configured target behind. The token
+    is encrypted onto the preparation/run rows and never appears in any
+    response, log or snapshot.
+    """
+
+    enabled: bool = False
+    base_url: str | None = Field(default=None, max_length=512)
+    workspace_id: str | None = Field(
+        default=None, min_length=1, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]+$"
+    )
+    token: str | None = Field(
+        default=None, min_length=5, max_length=256, pattern=r"^whk_[A-Za-z0-9_-]+$"
+    )
+
+    @field_validator("base_url")
+    @classmethod
+    def _validate_base_url(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return value
+        candidate = value.strip()
+        parsed = urlparse(candidate)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname:
+            raise ValueError("self_evolution.base_url 必须是 http(s) 地址")
+        return candidate
+
+    @model_validator(mode="after")
+    def _check_enabled_fields(self) -> SelfEvolutionConfig:
+        fields = (self.base_url, self.workspace_id, self.token)
+        if self.enabled:
+            if any(not (value or "").strip() for value in fields):
+                raise ValueError(
+                    "self_evolution.enabled=true 时 base_url/workspace_id/token 均必填"
+                )
+        elif any((value or "").strip() for value in fields):
+            raise ValueError("self_evolution.enabled=false 时 base_url/workspace_id/token 必须为空")
+        return self
+
+
 class PrepareRequest(BaseModel):
     dataset_version_id: str = Field(min_length=1, max_length=36)
     model_config_id: str = Field(min_length=1, max_length=36)
@@ -141,6 +184,9 @@ class PrepareRequest(BaseModel):
     agent_timeout_seconds: int | None = Field(
         default=None, ge=MIN_AGENT_TIMEOUT_SECONDS, le=MAX_AGENT_TIMEOUT_SECONDS
     )
+    # M9 (#263): optional self-evolution reporting target frozen with the
+    # snapshot; the workspace token is stored encrypted, never echoed.
+    self_evolution: SelfEvolutionConfig | None = None
 
 
 class CreateEvaluationRequest(BaseModel):
@@ -251,6 +297,9 @@ def prepare_evaluation(
         prompt_suffix=payload.prompt_suffix,
         max_turns=payload.max_turns,
         agent_timeout_seconds=payload.agent_timeout_seconds,
+        self_evolution=(
+            payload.self_evolution.model_dump() if payload.self_evolution is not None else None
+        ),
     )
     return {"status": "ok", **result}
 

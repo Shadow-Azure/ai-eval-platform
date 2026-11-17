@@ -2,6 +2,7 @@
 // Gate: docs 索引完整性。docs/README.md 的地图表是唯一索引：
 // 每个 docs/**/*.md（postmortem 事故件除外）必须登记，登记的必须存在。
 
+import { pathToFileURL } from "node:url";
 import { readdir, readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
@@ -54,7 +55,7 @@ export default async function verifyDocIndex() {
   return { ok: errors.length === 0, errors };
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const result = await verifyDocIndex();
   if (!result.ok) {
     console.error(`verify-doc-index: FAIL\n  ${result.errors.join("\n  ")}`);

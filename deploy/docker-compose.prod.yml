@@ -102,6 +102,13 @@ services:
       DATASET_IMPORT_MAX_BYTES: ${DATASET_IMPORT_MAX_BYTES:-1073741824}
       DATASET_IMPORT_TIMEOUT_SECONDS: ${DATASET_IMPORT_TIMEOUT_SECONDS:-1800}
       DATASET_IMPORT_MEMORY_LIMIT_MB: ${DATASET_IMPORT_MEMORY_LIMIT_MB:-2048}
+      # M9 self-evolution reporting (#263): the api verifies envelope
+      # signatures and freezes bad-case payloads (terminal transitions happen
+      # in callbacks), so it needs the signing key and the public base URL
+      # embedded in sessionUrlTemplate. Both come from GitHub Secrets; empty
+      # disables sessionSource but keeps plain bad-case reporting working.
+      SELF_EVO_SESSION_SIGNING_KEY: ${SELF_EVO_SESSION_SIGNING_KEY:-}
+      SELF_EVO_PUBLIC_BASE_URL: ${SELF_EVO_PUBLIC_BASE_URL:-}
     volumes:
       # Shared with the worker so stale-import reaping can delete the staged
       # source file; both services must see the same path.
@@ -167,6 +174,11 @@ services:
       # same GitHub dispatch credential as the API.
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
       GITHUB_REPO: ${GITHUB_REPO:-Shadow-Azure/ai-eval-platform}
+      # M9 (#263): the reconciler can also write a run's terminal state, so
+      # the worker freezes the same signed sessionUrlTemplate payloads; it
+      # likewise needs the key to keep both paths identical.
+      SELF_EVO_SESSION_SIGNING_KEY: ${SELF_EVO_SESSION_SIGNING_KEY:-}
+      SELF_EVO_PUBLIC_BASE_URL: ${SELF_EVO_PUBLIC_BASE_URL:-}
     volumes:
       - dataset_imports:/tmp/eval-dataset-imports
     depends_on:
