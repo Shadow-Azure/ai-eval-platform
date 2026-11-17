@@ -321,6 +321,92 @@ def test_session_id_falls_back_to_attempt_uuid(session: Session) -> None:
     assert reports[0].payload_json["sessionId"] == attempt.id
 
 
+def test_backfill_rebuilds_succeeded_reports_with_session_source(
+    session: Session, configure_settings
+) -> None:
+    configure_settings(SELF_EVO_SESSION_SIGNING_KEY="", SELF_EVO_PUBLIC_BASE_URL="")
+    run = _seed_enabled_run(session, case_keys=["case-bad", "case-no-trace"])
+    cases = _cases_by_key(session, run)
+    bad_attempt = _finish_case(
+        session,
+        cases["case-bad"],
+        execution_status="failed",
+        result_status="unresolved",
+        error_summary="runner_failed: exit 1",
+    )
+    _finish_case(
+        session,
+        cases["case-no-trace"],
+        execution_status="failed",
+        result_status="unresolved",
+    )
+    native_id = _seed_trace(session, bad_attempt, cases["case-bad"])
+    run.status = "running"
+    evaluation_service.refresh_run_progress(session, run, now=NOW)
+    session.commit()
+
+    reports = _reports_for(session, run)
+    assert len(reports) == 2
+    by_case = {report.eval_case_run_id: report for report in reports}
+    for report in reports:
+        assert "sessionSource" not in report.payload_json
+        report.status = "succeeded"
+        report.reported_at = NOW
+        report.last_status_code = 201
+    session.commit()
+
+    # Without configuration, the original succeeded rows stay untouched.
+    result = swe.backfill_missing_session_sources(session, run)
+    assert result == {
+        "scanned": 2,
+        "updated": 0,
+        "skipped_existing": 0,
+        "skipped_no_trace": 1,
+        "skipped_not_configured": 1,
+    }
+    assert by_case[cases["case-bad"].id].status == "succeeded"
+
+    configure_settings(
+        SELF_EVO_SESSION_SIGNING_KEY=SIGNING_KEY,
+        SELF_EVO_PUBLIC_BASE_URL=PUBLIC_BASE,
+    )
+    dry = swe.backfill_missing_session_sources(session, run, dry_run=True)
+    assert dry["updated"] == 1
+    assert by_case[cases["case-bad"].id].status == "succeeded"
+
+    result = swe.backfill_missing_session_sources(
+        session, run, now=NOW + timedelta(minutes=5)
+    )
+    assert result["updated"] == 1
+    report = by_case[cases["case-bad"].id]
+    assert report.status == "pending"
+    assert report.attempts == 0
+    assert report.last_status_code is None
+    assert report.reported_at is None
+    assert report.payload_json["sessionId"] == native_id
+    source = report.payload_json["sessionSource"]
+    assert source["runtime"] == "claude-code"
+    assert f"{PUBLIC_BASE}/api/v1/self-evolution/sessions/" in source["sessionUrlTemplate"]
+    assert source["sessionUrlTemplate"].count("{sessionId}") == 1
+    assert f"run={run.id}" in source["sessionUrlTemplate"]
+
+    # The no-trace row cannot produce an envelope and stays untouched.
+    no_trace = by_case[cases["case-no-trace"].id]
+    assert no_trace.status == "succeeded"
+    assert "sessionSource" not in no_trace.payload_json
+
+    events = list(
+        session.scalars(
+            select(EvalEvent).where(
+                EvalEvent.eval_run_id == run.id,
+                EvalEvent.event_type == "eval.self_evolution.backfilled",
+            )
+        )
+    )
+    assert len(events) == 1
+    assert events[0].payload_json["count"] == 1
+
+
 # ---------------------------------------------------------------------------
 # Worker pass
 # ---------------------------------------------------------------------------

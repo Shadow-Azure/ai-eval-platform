@@ -93,7 +93,7 @@ Runner 归档会话、元数据与诊断，失败保留；清单记录路径、d
 
 ## 自进化上报
 
-发起评测可配置上报目标（harness-evolution 工作区 URL、ID 与 `whk_` 令牌，Fernet 密文存储、响应不回显）。终态 run 把非 resolved 且执行过的用例冻结为 outbox 行，Worker 按阶梯退避上报到目标工作区，凭据/预算/契约错误终态失败；claude-code 另附短时 HMAC 签名的会话包端点，按原生会话 id 返回子会话与 NDJSON 轨迹，超限 413。契约细节见设计 04 §8。
+发起评测可配置上报目标（harness-evolution 工作区 URL、ID 与 `whk_` 令牌，Fernet 密文存储、响应不回显）。终态 run 把非 resolved 且执行过的用例冻结为 outbox 行，Worker 按阶梯退避上报到目标工作区，凭据/预算/契约错误终态失败；claude-code 另附短时 HMAC 签名的会话包端点，按原生会话 id 返回子会话与 NDJSON 轨迹，超限 413；没有解析出原生主会话时回退 attempt id 且不带 `sessionSource`，配置缺失只降级为不带会话链接。契约细节见设计 04 §8。
 
 ## 扩展位置
 

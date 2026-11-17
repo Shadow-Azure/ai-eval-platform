@@ -372,6 +372,114 @@ def enqueue_self_evolution_reports(
     return created
 
 
+def backfill_missing_session_sources(
+    session: Session,
+    run: EvalRun,
+    *,
+    now: datetime | None = None,
+    settings: Settings | None = None,
+    dry_run: bool = False,
+) -> dict[str, int]:
+    """Rebuild succeeded reports that were frozen before sessionSource existed.
+
+    Configuration changes cannot repair a frozen payload: the terminal enqueue
+    skips an existing ``(tenant, badCaseId)`` and the worker never recomputes
+    it. This one-off pass rebuilds payloads for reports that are already
+    succeeded, still have a native main session, and have no sessionSource.
+    Reset rows are pending again so the normal worker retry path re-POSTs the
+    same badCaseId (HE answers 200 and overwrites the upstream fields).
+
+    Reports without a native session stay untouched: they cannot produce a
+    valid envelope, and #272 handles their reporting rule. The pass is
+    idempotent: rows that already carry sessionSource or are not succeeded are
+    counted and skipped.
+    """
+
+    now = _now(now)
+    settings = settings or get_settings()
+    counts = {
+        "scanned": 0,
+        "updated": 0,
+        "skipped_existing": 0,
+        "skipped_no_trace": 0,
+        "skipped_not_configured": 0,
+    }
+    if not run.self_evolution_enabled:
+        return counts
+
+    reports = list(
+        session.scalars(
+            select(SelfEvolutionReport)
+            .where(
+                SelfEvolutionReport.eval_run_id == run.id,
+                SelfEvolutionReport.status == "succeeded",
+            )
+            .order_by(SelfEvolutionReport.created_at, SelfEvolutionReport.id)
+        )
+    )
+    counts["scanned"] = len(reports)
+    for report in reports:
+        payload = report.payload_json or {}
+        if payload.get("sessionSource"):
+            counts["skipped_existing"] += 1
+            continue
+
+        case = session.get(EvalCaseRun, report.eval_case_run_id)
+        if case is None:
+            counts["skipped_no_trace"] += 1
+            continue
+        attempts = list(
+            session.scalars(
+                select(EvalCaseAttempt)
+                .where(EvalCaseAttempt.eval_case_run_id == case.id)
+                .order_by(EvalCaseAttempt.attempt_no)
+            )
+        )
+        if not attempts:
+            counts["skipped_no_trace"] += 1
+            continue
+        final_attempt = attempts[-1]
+        if _main_session_id(session, final_attempt.id) is None:
+            counts["skipped_no_trace"] += 1
+            continue
+        if (
+            run.runtime_key != "claude-code"
+            or not settings.self_evolution_session_signing_key
+            or not settings.self_evolution_public_base_url
+        ):
+            counts["skipped_not_configured"] += 1
+            continue
+
+        if dry_run:
+            counts["updated"] += 1
+            continue
+        report.payload_json = build_bad_case_payload(
+            session,
+            run=run,
+            case=case,
+            final_attempt=final_attempt,
+            now=now,
+            settings=settings,
+        )
+        report.status = "pending"
+        report.attempts = 0
+        report.next_attempt_at = now
+        report.last_status_code = None
+        report.last_error = None
+        report.reported_at = None
+        counts["updated"] += 1
+
+    if not dry_run and counts["updated"]:
+        append_run_event(
+            session,
+            run,
+            "eval.self_evolution.backfilled",
+            {"count": counts["updated"]},
+        )
+        session.commit()
+    return counts
+
+
 # ---------------------------------------------------------------------------
 # Worker reporting pass
 # ---------------------------------------------------------------------------
@@ -523,6 +631,7 @@ __all__ = [
     "RETRY_LADDER_SECONDS",
     "SESSION_TTL_SECONDS",
     "SOURCE",
+    "backfill_missing_session_sources",
     "bad_case_identifier",
     "build_bad_case_payload",
     "build_session_url_template",

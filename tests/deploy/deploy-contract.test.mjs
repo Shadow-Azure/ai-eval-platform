@@ -143,6 +143,22 @@ test("production runner callback entry stays VPC-only and keeps loopback", () =>
   );
 });
 
+test("self-evolution public base URL falls back to ECS_HOST", () => {
+  const workflow = read(".github/workflows/deploy.yml");
+  assert.ok(
+    workflow.includes('self_evo_public_base_url="${SELF_EVO_PUBLIC_BASE_URL:-}"'),
+    "explicit SELF_EVO_PUBLIC_BASE_URL should win",
+  );
+  assert.ok(
+    workflow.includes('self_evo_public_base_url="http://${ECS_HOST}:8080"'),
+    "public base URL should fall back to the existing ECS_HOST",
+  );
+  assert.ok(
+    workflow.includes('printf \'SELF_EVO_PUBLIC_BASE_URL=%s\\n\' "$self_evo_public_base_url"'),
+    "the derived value must be written to the managed env",
+  );
+});
+
 test("deploy pipeline caches the runner tarball and leaves the URL to the api proxy", () => {
   const workflow = read(".github/workflows/deploy.yml");
   assert.ok(workflow.includes("runner-cache:"), "missing runner-cache job");

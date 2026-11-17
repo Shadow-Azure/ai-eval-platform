@@ -36,7 +36,7 @@ harness-evolution（自进化平台）已合入 per-report session source 机制
 ## 目标
 
 - 发起评测向导新增"自进化上报（可选）"配置：自进化平台基础 URL、工作区 ID、上报令牌（whk_ 前缀）；令牌按凭据掩码处理，回显不落明文。
-- 评测运行终态后，把最终 SWE-bench 执行结果中非 `resolved` 的用例（`unresolved` / `execution_failed`，不含 `not_scored`）作为 bad case 逐条上报到目标工作区；字段按 harness-evolution `BadCaseIngest` 契约映射，`badCaseId` 确定性生成保证重放幂等（重复上报 200 覆盖，不占配额）。
+- 评测运行终态后，把最终 SWE-bench 执行结果中非 `resolved` 的用例（`unresolved` / `execution_failed` / 执行过的 `not_scored`）作为 bad case 逐条上报到目标工作区；字段按 harness-evolution `BadCaseIngest` 契约映射，`badCaseId` 确定性生成保证重放幂等（重复上报 200 覆盖，不占配额）。
 - 每条上报携带 per-report `sessionSource`：`runtime` 取评测 agent 运行时键，`sessionUrlTemplate` 指向本平台的 session envelope 下载端点并自带短时签名。
 - 平台新增 session 轨迹包下载端点：按 sessionId 返回 envelope JSON（sessionId 回显、runtime、一层 childSessionIds、NDJSON trajectory），签名校验失败稳定 401；单会话 64 MiB / 单行 1 MiB / 100 万行上限对齐 harness-evolution 拉取侧。
 - 上报失败可观测、可重试（阶梯退避），不阻塞评测主流程；409 配额耗尽视为终态失败并告警。

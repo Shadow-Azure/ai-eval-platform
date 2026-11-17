@@ -22,8 +22,9 @@ from collections.abc import Sequence
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from .config import get_settings
 from .db import SessionLocal
-from .models import Credential, Membership, ModelConfig, User, utcnow
+from .models import Credential, EvalRun, Membership, ModelConfig, User, utcnow
 from .secrets import SecretBoxError, get_secret_box, mask_secret
 from .seed import ensure_default_scope
 from .services import identity
@@ -243,6 +244,40 @@ def cmd_dataset_image(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_backfill_self_evolution(args: argparse.Namespace) -> int:
+    """Rebuild sessionSource for succeeded reports frozen before config existed."""
+
+    from .services import self_evolution as self_evolution_service
+
+    settings = get_settings()
+    if (
+        not settings.self_evolution_session_signing_key
+        or not settings.self_evolution_public_base_url
+    ):
+        print(
+            "error: 需要先配置 SELF_EVO_SESSION_SIGNING_KEY 与 "
+            "SELF_EVO_PUBLIC_BASE_URL，才能重建 sessionSource。",
+            file=sys.stderr,
+        )
+        return 2
+    with SessionLocal() as session:
+        run = session.get(EvalRun, args.run_id)
+        if run is None:
+            print(f"error: evaluation not found: {args.run_id}", file=sys.stderr)
+            return 1
+        result = self_evolution_service.backfill_missing_session_sources(
+            session, run, settings=settings, dry_run=args.dry_run
+        )
+    for key, value in result.items():
+        print(f"{key}={value}")
+    if result["updated"] and not args.dry_run:
+        print(
+            "note: worker will re-POST the pending rows; reset the matching "
+            "HE bad_case_root_sync rows so root sync uses the report source."
+        )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m app.manage", description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -280,6 +315,14 @@ def build_parser() -> argparse.ArgumentParser:
     dataset_image_parser.add_argument("--method", choices=("put", "get", "head"), default="get")
     dataset_image_parser.add_argument("--ttl", type=int, default=0)
     dataset_image_parser.set_defaults(func=cmd_dataset_image)
+
+    backfill_parser = subparsers.add_parser(
+        "backfill-self-evolution",
+        help="rebuild sessionSource for succeeded self-evolution reports",
+    )
+    backfill_parser.add_argument("--run-id", required=True)
+    backfill_parser.add_argument("--dry-run", action="store_true")
+    backfill_parser.set_defaults(func=cmd_backfill_self_evolution)
     return parser
 
 
