@@ -34,6 +34,11 @@ function truncated(value, limit = 400) {
   return text.length > limit ? text.slice(-limit) : text;
 }
 
+function scrubUrl(value, url) {
+  const text = truncated(value);
+  return url ? text.split(url).join("<tarball-url>") : text;
+}
+
 function recordResult(traceDir, result) {
   if (!traceDir) return;
   try {
@@ -115,7 +120,7 @@ export function loadImageTarball(tarball, options = {}) {
     if (download?.error || download?.status !== 0) {
       return finish(
         "download",
-        truncated(download?.stderr || download?.error?.message || "curl 下载失败"),
+        scrubUrl(download?.stderr || download?.error?.message || "curl 下载失败", tarball.url),
       );
     }
 
@@ -128,7 +133,7 @@ export function loadImageTarball(tarball, options = {}) {
     if (load?.error || load?.status !== 0) {
       return finish(
         "load",
-        truncated(load?.stderr || load?.error?.message || "docker load 失败"),
+        scrubUrl(load?.stderr || load?.error?.message || "docker load 失败", tarball.url),
       );
     }
 
@@ -141,7 +146,7 @@ export function loadImageTarball(tarball, options = {}) {
     if (inspect?.error || inspect?.status !== 0) {
       return finish(
         "verify",
-        truncated(inspect?.stderr || inspect?.error?.message || "docker image inspect 失败"),
+        scrubUrl(inspect?.stderr || inspect?.error?.message || "docker image inspect 失败", tarball.url),
       );
     }
 
@@ -149,7 +154,7 @@ export function loadImageTarball(tarball, options = {}) {
     result.image = tarball.image;
     return finish("loaded");
   } catch (error) {
-    return finish(result.stage, truncated(error?.message || error));
+    return finish(result.stage, scrubUrl(error?.message || error, tarball.url));
   } finally {
     try {
       rmSync(dir, { recursive: true, force: true });

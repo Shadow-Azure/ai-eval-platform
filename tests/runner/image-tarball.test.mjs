@@ -96,3 +96,15 @@ test("invalid or missing URL is rejected before any command", () => {
   assert.equal(result.stage, "invalid");
   assert.equal(calls.length, 0);
 });
+
+test("signed URL never reaches the diagnostics", () => {
+  const dir = traceDir();
+  const { spawn } = fakeSpawn([
+    { status: 1 },
+    { status: 22, stderr: `curl: (22) failed ${TARBALL.url}` },
+  ]);
+  const result = loadImageTarball(TARBALL, { traceDir: dir, spawn });
+  assert.equal(result.ok, false);
+  assert.doesNotMatch(result.error, /X-Amz-Signature|secret/);
+  assert.doesNotMatch(readFileSync(join(dir, "image-tarball.json"), "utf8"), /X-Amz-Signature|secret/);
+});
