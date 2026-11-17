@@ -8,6 +8,7 @@
 // in-progress；若本 PR 把 backlog issue 推进为 ready/in-progress/done，
 // 则视为开工激活；diff 触及的文件须落在所挂 issue 的 scope 并集内。无豁免通道。
 
+import { pathToFileURL } from "node:url";
 import { execFileSync } from "node:child_process";
 import {
   collectRefs,
@@ -120,7 +121,7 @@ export async function verifyFlowDiff(base) {
   return { ok: errors.length === 0, errors, skipped: undefined };
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const args = process.argv.slice(2);
   const diffIdx = args.indexOf("--diff");
   if (diffIdx >= 0) {

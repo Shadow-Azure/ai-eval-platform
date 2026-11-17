@@ -3,6 +3,7 @@
 // 其余按空白分词——中英混排下两侧权重一致；生成区是机器写的，不计数。
 // 处置顺序：搬层 → 压缩 → 提预算（PR 里说明理由）。预算是护栏不是瘦身目标。
 
+import { pathToFileURL } from "node:url";
 import { readFile, readdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
@@ -72,7 +73,7 @@ export default async function verifyDocBudgets() {
   return { ok: errors.length === 0, errors };
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const result = await verifyDocBudgets();
   if (!result.ok) {
     console.error(`verify-doc-budgets: FAIL\n  ${result.errors.join("\n  ")}`);

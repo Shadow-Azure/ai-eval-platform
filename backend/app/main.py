@@ -22,6 +22,7 @@ from .api.resources import router as resources_router
 from .api.results import router as results_router
 from .api.runners import router as runners_router
 from .api.runtimes import router as runtimes_router
+from .api.self_evolution import router as self_evolution_router
 from .api.traces import router as traces_router
 from .api.webhooks import router as webhooks_router
 from .config import get_settings
@@ -62,6 +63,10 @@ def create_app() -> FastAPI:
     # M8-34: GitHub workflow_job deliveries authenticate themselves with an
     # HMAC signature, so this router has no console session dependency.
     app.include_router(webhooks_router)
+    # M9 (#263): the self-evolution session envelope authenticates itself with
+    # the short-lived per-report HMAC in the query string, so it has no console
+    # session dependency either.
+    app.include_router(self_evolution_router)
     # Console APIs require an authenticated session. The runner plane router is
     # included without this dependency because it authenticates its own
     # short-lived tokens and heartbeat credentials.

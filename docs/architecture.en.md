@@ -89,6 +89,10 @@ Runner archives sessions, metadata and diagnostics, retaining failures; manifest
 
 `/datasets/import` imports a dataset through a three-step wizard: choose an adapter and upload a JSON/JSONL source file (≤1 GB, drag-and-drop), with the version label and data commit submitted alongside the file. The control plane stages the file in a temporary directory, then a bounded subprocess with a wall-clock timeout and address-space limit streams, validates and persists a report (record count, field completeness, per-item errors, duplicate case keys); only after explicit confirmation does one transaction create the immutable version and its cases, so a failed or cancelled import leaves no partial version. The staged file is deleted after commit, validation failure or cancellation, and the worker marks imports whose heartbeat expired as failed instead of leaving the wizard waiting.
 
+## Self-evolution reporting
+
+An evaluation launch can optionally configure a reporting target (harness-evolution workspace URL, id and a `whk_` token stored as Fernet ciphertext; no response echoes the plaintext). A terminal run freezes every non-resolved case that actually executed into outbox rows with deterministic `badCaseId` values, and the worker reports them with ladder backoff, turning credential, budget and contract errors into terminal failures. The claude-code runtime additionally carries a short-lived HMAC-signed session envelope endpoint that resolves a native session id into one-level childSessionIds plus the NDJSON trajectory; limit overshoot answers 413 without truncation. Contract details live in design 04 §8.
+
 ## Extension points
 
 - After the product runtime lands, add its components, data flows, and external dependencies here.

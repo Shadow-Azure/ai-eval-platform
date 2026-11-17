@@ -239,6 +239,23 @@ class Settings(BaseSettings):
     default_execution_image_digest: str | None = None
     default_scoring_image_digest: str | None = None
 
+    # M9 self-evolution reporting (#263). The signing key authorizes the
+    # session-envelope endpoint consumed by harness-evolution (short-lived
+    # per-report HMAC); the public base URL is where that platform reaches
+    # this deployment. Both are optional: without them bad cases are still
+    # reported, just without the sessionSource trajectory link. Long-lived
+    # values are injected from GitHub Secrets like SECRET_BOX_KEY.
+    self_evolution_session_signing_key: str | None = Field(
+        default=None, validation_alias="SELF_EVO_SESSION_SIGNING_KEY"
+    )
+    self_evolution_public_base_url: str | None = Field(
+        default=None, validation_alias="SELF_EVO_PUBLIC_BASE_URL"
+    )
+    # Worker reporting knobs: one pass claims at most this many pending rows.
+    self_evolution_batch_size: int = Field(
+        default=50, validation_alias="SELF_EVO_BATCH_SIZE"
+    )
+
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173,http://localhost:8080"
 
     @field_validator("runner_egress_proxy")

@@ -1,12 +1,13 @@
-"""Worker loop for M2-01/M2-04/M2-05/M4-02/M4-03.
+"""Worker loop for M2-01/M2-04/M2-05/M4-02/M4-03/M9.
 
 Each poll runs the shard-dispatch outbox (repository_dispatch with retry and
 reconciliation, M2-05), the execution-lifecycle reconciler (five timeouts,
 cancellation finalization and lost-callback backfill, M4-02), the spot
-capacity controller (M4-03) and the runner offline sweep (M2-04) so stale
-fixed runners flip to offline, timed-out or cancelled attempts reach a
-diagnosable terminal state and queued shards reach GitHub even when nobody
-queries the API.
+capacity controller (M4-03), the runner offline sweep (M2-04) and the
+self-evolution bad-case reporting pass (M9 #263) so stale fixed runners flip
+to offline, timed-out or cancelled attempts reach a diagnosable terminal
+state, queued shards reach GitHub even when nobody queries the API, and
+terminal-run bad cases reach the configured harness-evolution workspace.
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ from ..services import (
     lifecycle,
     reaper,
     reconciler,
+    self_evolution,
     trace_ingestion,
 )
 from ..services.dataset_imports import reap_stale_imports
@@ -86,6 +88,12 @@ def capacity_once(session: Session, *, now=None) -> dict[str, int]:
             flush=True,
         )
     return counts
+
+
+def self_evolution_once(session: Session, *, now=None) -> dict[str, int]:
+    """One self-evolution bad-case reporting pass (M9 #263)."""
+
+    return self_evolution.process_pending_self_evolution_reports(session, now=now)
 
 
 def _handle_signal(_signum: int, _frame: FrameType | None) -> None:
@@ -210,6 +218,18 @@ def main() -> int:
                 capacity_once(session)
         except Exception as exc:  # pragma: no cover - retried on the next loop
             print(f"worker: capacity control failed: {exc}", flush=True)
+        try:
+            with SessionLocal() as session:
+                reported = self_evolution_once(session)
+            if reported["succeeded"] or reported["failed"] or reported["retried"]:
+                print(
+                    "worker: self evolution "
+                    f"succeeded={reported['succeeded']} failed={reported['failed']} "
+                    f"retried={reported['retried']}",
+                    flush=True,
+                )
+        except Exception as exc:  # pragma: no cover - retried on the next loop
+            print(f"worker: self evolution reporting failed: {exc}", flush=True)
         try:
             with SessionLocal() as session:
                 swept = sweep_once(session)

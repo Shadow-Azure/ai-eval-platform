@@ -9,6 +9,7 @@
 // docs/**/*.md + .agents/notes/**/*.md（中英两侧都查）；archived/ 冻结快照
 // 不查——内容已 sha256 封存，改它须解封。
 
+import { pathToFileURL } from "node:url";
 import { readdir, readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
@@ -131,7 +132,7 @@ export default async function verifyMdWrap() {
   return { ok: errors.length === 0, errors };
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const result = await verifyMdWrap();
   if (!result.ok) {
     console.error(`verify-md-wrap: FAIL\n  ${result.errors.join("\n  ")}`);

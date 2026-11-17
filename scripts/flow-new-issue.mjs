@@ -5,6 +5,7 @@
 //     --title 中文标题 --title-en "English title" --scope "src/**,docs/**"
 // 生成后补正文（背景/目标/验收，双侧最小修补），流转 ready 前须 flow:sync 回填编号。
 
+import { pathToFileURL } from "node:url";
 import { mkdir, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
@@ -89,7 +90,7 @@ ${fence}
   return paths;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const args = process.argv.slice(2).filter((a) => a !== "--");
   const read = (flag) => {
     const i = args.indexOf(flag);

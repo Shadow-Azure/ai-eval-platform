@@ -7,6 +7,7 @@
 // ③ 翻译提示词的模板围栏里占位符集合精确：已知占位符各恰好一次，
 //    未知占位符即红。全库运行，无参。
 
+import { pathToFileURL } from "node:url";
 import { readFile } from "node:fs/promises";
 import { existsSync, readdirSync } from "node:fs";
 import { FENCE_OPEN_RE, REGION_BEGIN, REGION_END } from "./translation-pairing-lib.mjs";
@@ -139,7 +140,7 @@ export default async function verifyTerminology() {
   return { ok: errors.length === 0, errors };
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const { ok, errors } = await verifyTerminology();
   if (!ok) {
     console.error(`verify-terminology: FAIL\n  ${errors.join("\n  ")}`);

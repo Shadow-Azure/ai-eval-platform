@@ -183,6 +183,11 @@ jobs:
       DISPATCH_TOKEN: ${{ secrets.FLOW_TOKEN }}
       # M8-34: GitHub workflow_job webhook secret; empty disables the webhook.
       GITHUB_WEBHOOK_SECRET: ${{ secrets.EVAL_GITHUB_WEBHOOK_SECRET }}
+      # M9 (#263): self-evolution session-envelope signing key and the public
+      # base URL embedded in sessionUrlTemplate. Both are optional; empty
+      # keeps plain bad-case reporting but omits the trajectory link.
+      SELF_EVO_SESSION_SIGNING_KEY: ${{ secrets.SELF_EVO_SESSION_SIGNING_KEY }}
+      SELF_EVO_PUBLIC_BASE_URL: ${{ secrets.SELF_EVO_PUBLIC_BASE_URL }}
       SECRET_BOX_KEY: ${{ secrets.SECRET_BOX_KEY }}
       POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
       AUTH_SESSION_SECRET: ${{ secrets.AUTH_SESSION_SECRET }}
@@ -299,6 +304,8 @@ jobs:
             printf 'S3_ADDRESSING_STYLE=virtual\n'
             printf 'GITHUB_TOKEN=%s\n' "$DISPATCH_TOKEN"
             printf 'GITHUB_WEBHOOK_SECRET=%s\n' "${GITHUB_WEBHOOK_SECRET:-}"
+            printf 'SELF_EVO_SESSION_SIGNING_KEY=%s\n' "${SELF_EVO_SESSION_SIGNING_KEY:-}"
+            printf 'SELF_EVO_PUBLIC_BASE_URL=%s\n' "${SELF_EVO_PUBLIC_BASE_URL:-}"
             printf 'DATABASE_STORAGE_LIMIT_BYTES=%s\n' "$DATABASE_STORAGE_LIMIT_BYTES"
             printf 'DATASET_IMAGE_REGISTRIES=%s\n' "$DATASET_IMAGE_REGISTRIES"
             printf 'SECRET_BOX_KEY=%s\n' "$SECRET_BOX_KEY"

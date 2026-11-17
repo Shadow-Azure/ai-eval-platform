@@ -62,11 +62,19 @@
   "asset_paths": ["skills/brainstorming", "skills/test-driven-development"],
   "model": {"mode": "existing", "model_config_id": "mdl_01..."},
   "resource_pool_id": "pool_linux_spot",
-  "execution": {"concurrency": 8, "case_timeout_seconds": 3600, "max_attempts": 2}
+  "execution": {"concurrency": 8, "case_timeout_seconds": 3600, "max_attempts": 2},
+  "self_evolution": {
+    "enabled": true,
+    "base_url": "https://harness-evolution.example.com",
+    "workspace_id": "ws-prod-01",
+    "token": "whk_..."
+  }
 }
 ```
 
 Prepare 在服务端重新计算权限和容量，解析 commit，冻结资产与任务清单，并返回短期 `preparation_id`、完整摘要和警告。Prepare 不启动云实例，不创建正式 eval_run。
+
+`self_evolution` 是可选的自进化上报目标（M9，issue #263）：`enabled=false`（默认）时三个字段必须留空；`enabled=true` 时 `base_url` 必须是 http(s) 地址（≤512 字符）、`workspace_id` 为 1..64 字符的 `^[A-Za-z0-9][A-Za-z0-9._-]+$`、`token` 必须匹配 `^whk_[A-Za-z0-9_-]+$`（≤256 字符），违反任意一条返回 422。令牌按凭据处理：prepare 只把 `base_url/workspace_id/enabled` 冻结进快照，令牌以 Fernet 密文随 preparation 与 eval_run 存储，任何 API 响应、日志或快照都不出现明文或掩码。
 
 ```json
 {
@@ -181,3 +189,13 @@ Runner 的 OpenAI 兼容 `base_url` 指向平台，`Authorization` 使用 case-s
 - 限制最大上下文、输出、请求速率和累计预算；
 - 将模型用量关联到 case_run/attempt，而不是由 Runner 自报作为唯一依据；
 - 供应商错误归一化为 `provider_unavailable/rate_limited/authentication_failed/budget_exceeded`，保留脱敏 request ID。
+
+## 8. 自进化上报与会话包下载
+
+M9（issue #263）：评测 run 终态时把非 `resolved` 且真正执行过（存在 `started_at` 非空的 attempt）的用例作为 bad case 上报到 Prepare 冻结的 harness-evolution 工作区。
+
+上报走数据库 outbox：终态事务内为每个 bad case 冻结一行 `self_evolution_report`，`payload_json` 是最终的 `BadCaseIngest` 报文（camelCase，`extra=forbid`）。`badCaseId` 确定性生成为 `swe-` + `sha1(tenant_id:eval_run_id:case_key)` 前 20 位 hex，同一 run 重复触发靠 `UNIQUE(tenant_id, bad_case_id)` 幂等；上游同工作区重复 id 返回 200 覆盖、不占配额。Worker 以 15s 超时 POST `{base_url}/api/workspaces/{workspace_id}/bad-cases`（`Authorization: Bearer whk_...`）：2xx 记 `succeeded`；401/403（凭据）、409（配额/归属冲突）、422（契约）为终态 `failed`；429/5xx/网络错误按 1min、5min、15min、1h… 阶梯退避，累计 8 次仍失败转 `failed`。
+
+`runtime_key=claude-code` 且平台配置了签名密钥与公网基地址时，报文附带 `sessionSource`：`runtime="claude-code"`，`sessionUrlTemplate` 指向本平台的会话包端点并自带 7 天有效的 HMAC-SHA256 短时签名（对 `GET\n/api/v1/self-evolution/sessions/\n{run_id}\n{exp}` 即路径前缀 + 所属评测 run id + 过期时间计算，不绑定具体会话 id——拉取方 BFS 会把根与每个子会话 id 逐一代入 `{sessionId}` 占位符，同一签名对同一次评测 run 内全部命中；签名把授权范围收敛到单次评测，一条泄漏 URL 不能跨 run 拉取其他会话；占位符恰好出现一次）。没有解析出主会话轨迹的用例回退 `sessionId=attempt id` 且不携带 `sessionSource`。
+
+会话包端点 `GET /api/v1/self-evolution/sessions/{session_id}?run=&exp=&sig=` 无需 Bearer，签名即授权：签名对请求携带的 `run` 值验证，通过后端点沿 `trace_session → eval_case_attempt → eval_case_run` 校验会话确实属于该评测 run，不一致或 `run` 缺失/格式非法统一 401（稳定 code `self_evolution_signature_invalid` / `self_evolution_signature_expired`，不暴露会话存在性）；会话不存在或运行时非 claude-code 返回 404（存在性校验在签名验证之后）。响应 envelope 为 `schemaVersion=1`、`sessionId` 回显、`runtime`、`runtimeVersion`（取 parser 版本）、`agentKind=main|subagent`、`parentSessionId`、一层 `childSessionIds`（原生会话 id）、`agentMeta`（仅携带 harness-evolution 封闭词表内的键，如 Claude 的 `name`）、`trajectory={format:"ndjson", lineCount, content}` 与 `updatedAt`。轨迹原文从对象存储读取，超过 64MiB 总量、1MiB 单行或 100 万行返回 413 稳定 code，绝不静默截断。

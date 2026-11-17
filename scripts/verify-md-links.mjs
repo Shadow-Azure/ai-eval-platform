@@ -7,6 +7,7 @@
 // 外链（http/https 等）不在范围：本库无站点投影，外链不做机械检查（引入投影时收编）。
 // archived/ 冻结快照不查——其中的链接是历史事实，改它须解封。
 
+import { pathToFileURL } from "node:url";
 import { readdir, readFile } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
@@ -70,7 +71,7 @@ export default async function verifyMdLinks() {
   return { ok: errors.length === 0, errors };
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const result = await verifyMdLinks();
   if (!result.ok) {
     console.error(`verify-md-links: FAIL\n  ${result.errors.join("\n  ")}`);

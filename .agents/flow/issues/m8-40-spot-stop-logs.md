@@ -6,7 +6,7 @@
 kind: issue
 milestone: m8
 priority: P2
-status: in-progress
+status: done
 scope:
   - .agents/flow/issues/m8-40-spot-stop-logs.*
   - .agents/flow/issues/m8-41-model-token-ttl.*

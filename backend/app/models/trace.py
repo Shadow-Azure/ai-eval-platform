@@ -148,6 +148,10 @@ class TraceSession(Base, TimestampMixin):
             name="fk_trace_session_parent_tenant",
         ),
         Index("ix_trace_session_attempt_ordinal", "eval_case_attempt_id", "ordinal"),
+        # M9 (#263): the signed session-envelope endpoint resolves a native
+        # session id across all attempts; without this index every fetch would
+        # scan the attempt-local unique key.
+        Index("ix_trace_session_native_session_id", "native_session_id"),
         CheckConstraint(_in_clause("status", TRACE_SESSION_STATUSES), name="status"),
     )
 

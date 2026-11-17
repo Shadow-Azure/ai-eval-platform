@@ -5,6 +5,7 @@ from decimal import Decimal
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKeyConstraint,
@@ -138,6 +139,15 @@ class EvalRun(Base, TimestampMixin):
     agent_timeout_seconds: Mapped[int] = mapped_column(
         Integer, nullable=False, default=1800, server_default="1800"
     )
+    # M9 (#263): optional self-evolution reporting target. ``enabled`` gates the
+    # terminal bad-case enqueue; the token is Fernet ciphertext that only the
+    # worker decrypts when POSTing, so plaintext never leaves the secret box.
+    self_evolution_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    self_evolution_base_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    self_evolution_workspace_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    self_evolution_token_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     # M4-02 cancellation/reconciliation: the dispatched GitHub workflow run and
     # the client cancellation request are tracked on the run (A2 consumes both).
     github_run_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -361,6 +371,10 @@ class EvalPreparation(Base, TimestampMixin):
     snapshot_json: Mapped[dict] = mapped_column(json_type(), default=dict, nullable=False)
     snapshot_digest: Mapped[str] = mapped_column(String(80), nullable=False)
     consumed_eval_run_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    # M9 (#263): the self-evolution reporting token rides along as Fernet
+    # ciphertext — never inside ``snapshot_json``, which is echoed back to the
+    # wizard. ``consume_preparation`` copies it onto the created eval run.
+    self_evolution_token_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     __table_args__ = (
         UniqueConstraint("tenant_id", "id", name="uq_eval_preparation_tenant_id_id"),

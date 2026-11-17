@@ -74,6 +74,8 @@ EXPECTED_TABLES = {
     "trace_file",
     "trace_session",
     "trace_span",
+    # M9 自进化 bad case 上报 outbox
+    "self_evolution_report",
 }
 
 
@@ -273,6 +275,81 @@ def test_agent_timeout_columns_roundtrip(database_url: str) -> None:
                 column["name"] for column in inspect(engine).get_columns(table)
             }
             assert "agent_timeout_seconds" not in columns
+    finally:
+        engine.dispose()
+
+    run_alembic(database_url, "upgrade", "head")
+
+
+def test_self_evolution_columns_roundtrip(database_url: str) -> None:
+    """0028 adds the reporting target, the outbox table and the session index."""
+
+    run_alembic(database_url, "upgrade", "0028_self_evolution")
+    engine = create_engine(database_url, future=True)
+    try:
+        run_columns = {
+            column["name"]: column for column in inspect(engine).get_columns("eval_run")
+        }
+        assert "self_evolution_enabled" in run_columns
+        assert run_columns["self_evolution_enabled"]["nullable"] is False
+        assert {
+            "self_evolution_base_url",
+            "self_evolution_workspace_id",
+            "self_evolution_token_encrypted",
+        } <= set(run_columns)
+        preparation_columns = {
+            column["name"]
+            for column in inspect(engine).get_columns("eval_preparation")
+        }
+        assert "self_evolution_token_encrypted" in preparation_columns
+
+        report_columns = {
+            column["name"] for column in inspect(engine).get_columns("self_evolution_report")
+        }
+        assert {
+            "id",
+            "tenant_id",
+            "eval_run_id",
+            "eval_case_run_id",
+            "bad_case_id",
+            "status",
+            "attempts",
+            "next_attempt_at",
+            "last_error",
+            "last_status_code",
+            "reported_at",
+            "payload_json",
+        } <= report_columns
+        report_indexes = {
+            index["name"] for index in inspect(engine).get_indexes("self_evolution_report")
+        }
+        assert "ix_self_evolution_report_status_next" in report_indexes
+
+        session_indexes = {
+            index["name"] for index in inspect(engine).get_indexes("trace_session")
+        }
+        assert "ix_trace_session_native_session_id" in session_indexes
+    finally:
+        engine.dispose()
+
+    run_alembic(database_url, "downgrade", "0027_agent_timeout")
+    engine = create_engine(database_url, future=True)
+    try:
+        tables = set(inspect(engine).get_table_names())
+        assert "self_evolution_report" not in tables
+        run_columns = {
+            column["name"] for column in inspect(engine).get_columns("eval_run")
+        }
+        assert not {
+            "self_evolution_enabled",
+            "self_evolution_base_url",
+            "self_evolution_workspace_id",
+            "self_evolution_token_encrypted",
+        } & run_columns
+        session_indexes = {
+            index["name"] for index in inspect(engine).get_indexes("trace_session")
+        }
+        assert "ix_trace_session_native_session_id" not in session_indexes
     finally:
         engine.dispose()
 

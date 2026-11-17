@@ -590,6 +590,7 @@ const ui = {
     promptSuffix: "",
     maxTurns: "",
     agentTimeout: "30",
+    selfEvolution: { enabled: false, baseUrl: "", workspaceId: "", token: "" },
   },
   traceSpan: "span-root",
   traceFilter: "all",
@@ -1858,6 +1859,7 @@ function evalSummaryAside() {
         <div class="summary-item"><span class="summary-label">附加指令</span><span class="summary-value">${ui.newEval.promptSuffix ? `已配置 · ${ui.newEval.promptSuffix.length} 字符` : "未设置"}</span></div>
         <div class="summary-item"><span class="summary-label">最大轮次</span><span class="summary-value">${ui.newEval.maxTurns ? `${esc(ui.newEval.maxTurns)} 轮` : "默认 200 轮"}</span></div>
         <div class="summary-item"><span class="summary-label">Agent 超时</span><span class="summary-value">${ui.newEval.agentTimeout ? `${esc(ui.newEval.agentTimeout)} 分钟` : `数据集默认 ${esc(ui.datasetAgentTimeout)} 分钟`}</span></div>
+        <div class="summary-item"><span class="summary-label">自进化上报</span><span class="summary-value">${selfEvolutionSummary()}</span></div>
       </div>
       <div style="padding:0 19px 19px">
         <div class="review-box">
@@ -1868,6 +1870,13 @@ function evalSummaryAside() {
       </div>
     </aside>
   `;
+}
+
+function selfEvolutionSummary() {
+  const config = ui.newEval.selfEvolution;
+  if (!config.enabled) return "未启用";
+  const host = config.baseUrl ? config.baseUrl.replace(/^https?:\/\//, "").replace(/\/$/, "") : "未填地址";
+  return `已启用<br /><span class="muted">${esc(host)} · 工作区 ${esc(config.workspaceId || "未填")}</span>`;
 }
 
 function newEvalPage() {
@@ -2073,6 +2082,33 @@ function newEvalPage() {
         <input class="input" id="agent-timeout" type="number" min="1" max="1440" step="1" value="${esc(ui.newEval.agentTimeout)}" placeholder="默认来自数据集" />
         <span class="hint">默认来自数据集配置（示例 30 分钟）；本次可覆盖。超时会终止该用例的 Agent，并标记失败。</span>
       </div>
+      <div class="card-header" style="padding:20px 0 10px;border:0"><div><h3 class="card-title">自进化上报（可选）</h3><p class="card-subtitle">评测结束后，把未通过的 SWE-bench 用例作为 bad case 上报到 harness-evolution 工作区</p></div><span class="tag tag-neutral">可选</span></div>
+      <div class="switch-row">
+        <div><strong>启用自进化上报</strong><div class="small muted">运行终态后按最终执行结果上报，失败自动重试，不影响评测主流程</div></div>
+        <button class="switch ${ui.newEval.selfEvolution.enabled ? "on" : ""}" data-action="toggle-self-evolution" aria-label="切换自进化上报"></button>
+      </div>
+      ${
+        ui.newEval.selfEvolution.enabled
+          ? `
+        <div class="field-row" style="margin-top:12px">
+          <div class="field">
+            <label class="required">自进化平台地址</label>
+            <input class="input mono" id="self-evolution-base-url" value="${esc(ui.newEval.selfEvolution.baseUrl)}" placeholder="https://harness-evolution.example.com" />
+          </div>
+          <div class="field">
+            <label class="required">工作区 ID</label>
+            <input class="input mono" id="self-evolution-workspace" value="${esc(ui.newEval.selfEvolution.workspaceId)}" placeholder="ws-xxxxxxxx" />
+          </div>
+        </div>
+        <div class="field" style="margin-top:12px">
+          <label class="required">上报令牌</label>
+          <input class="input mono" type="password" id="self-evolution-token" value="${esc(ui.newEval.selfEvolution.token)}" placeholder="whk_..." />
+          <span class="hint">来自自进化平台工作区的上报凭据；加密保存，提交后不再回显。</span>
+        </div>
+        <div class="banner" style="margin-top:12px">${icon("share", 15)}<div><strong>上报内容</strong> · 未通过用例（unresolved / 执行失败）逐条上报，含 instance_id、失败测试与错误摘要；每条附带带签名的 session 轨迹包下载链接，供自进化平台回链归因。</div></div>
+      `
+          : `<div class="banner" style="margin-top:12px">${icon("shield", 15)}<div>未启用：bad case 不上报，评测行为与现状一致。</div></div>`
+      }
     `;
   } else {
     const selectedAssetSource = assetSourceById(ui.newEval.assetSource);
@@ -2091,6 +2127,7 @@ function newEvalPage() {
         <div class="summary-item"><span class="summary-label">附加指令</span><span class="summary-value" style="white-space:pre-wrap">${ui.newEval.promptSuffix ? esc(ui.newEval.promptSuffix) : "未设置"}</span></div>
         <div class="summary-item"><span class="summary-label">最大轮次</span><span class="summary-value">${ui.newEval.maxTurns ? `${esc(ui.newEval.maxTurns)} 轮` : "默认 200 轮"}</span></div>
         <div class="summary-item"><span class="summary-label">Agent 超时</span><span class="summary-value">${ui.newEval.agentTimeout ? `${esc(ui.newEval.agentTimeout)} 分钟` : `数据集默认 ${esc(ui.datasetAgentTimeout)} 分钟`}</span></div>
+        <div class="summary-item"><span class="summary-label">自进化上报</span><span class="summary-value">${selfEvolutionSummary()}</span></div>
       </div>
       <div class="banner warning" style="margin-top:15px">${icon("alert", 15)}<div><strong>这会占用资源池并产生模型费用。</strong> 预计 ¥126–158，实际费用以 token 与机时为准。启动后仍可取消排队和执行中的用例。</div></div>
       <div class="field" style="margin-top:16px"><label>通知</label><select class="select"><option>完成后站内通知</option><option>完成后站内通知 + Webhook</option><option>不通知</option></select></div>
@@ -3939,10 +3976,22 @@ function handleAction(action, target) {
     render();
     return;
   }
+  if (action === "toggle-self-evolution") {
+    ui.newEval.selfEvolution.enabled = !ui.newEval.selfEvolution.enabled;
+    render();
+    return;
+  }
   if (action === "eval-next") {
     if (ui.newEvalStep === 2 && ui.newEval.assetRef !== ui.newEval.assetVerifiedRef) {
       toast("请先读取并确认当前 Agent 版本下的资产", true);
       return;
+    }
+    if (ui.newEvalStep === 3 && ui.newEval.selfEvolution.enabled) {
+      const config = ui.newEval.selfEvolution;
+      if (!config.baseUrl.trim() || !config.workspaceId.trim() || !config.token.trim()) {
+        toast("启用自进化上报后，平台地址、工作区 ID 与上报令牌均为必填", true);
+        return;
+      }
     }
     ui.newEvalStep = Math.min(4, ui.newEvalStep + 1);
     render();
@@ -4226,6 +4275,19 @@ document.addEventListener("input", (event) => {
   }
   if (event.target.id === "prompt-suffix") {
     ui.newEval.promptSuffix = event.target.value;
+    return;
+  }
+  if (event.target.id === "self-evolution-base-url") {
+    ui.newEval.selfEvolution.baseUrl = event.target.value;
+    return;
+  }
+  if (event.target.id === "self-evolution-workspace") {
+    ui.newEval.selfEvolution.workspaceId = event.target.value;
+    return;
+  }
+  if (event.target.id === "self-evolution-token") {
+    ui.newEval.selfEvolution.token = event.target.value;
+    return;
   }
   if (event.target.id === "asset-ref-input") {
     ui.newEval.assetRef = event.target.value;

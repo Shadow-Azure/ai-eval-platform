@@ -1,6 +1,19 @@
-ï»¿
+
 # å¯¹æ¯”æŠ¥å‘Šä¸æˆªå›¾ç­‰æœ¬åœ°äº§å‡ºä¸å…¥ä»“
 reports/
 
 .venv/
 .pytest_cache/
+
+__pycache__/
+*.pyc
+*.egg-info/
+
+# pytest ±¾µØ»ùÄ¿Â¼Óë pip ¹¹½¨ÁÙÊ±Ä¿Â¼£¨python ÔÚÉ³ÏäÄÚ»ØÍËµ½²Ö¿â¸ùÊ±²úÉú£©
+pytest-of-zhang/
+pip-build-env-*/
+pip-unpack-*/
+pip-modern-metadata-*/
+pip-ephem-wheel-cache-*/
+.tmp-t/
+.baseline-wt/

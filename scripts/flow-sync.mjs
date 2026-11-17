@@ -6,6 +6,7 @@
 // （done ↔ closed，其余 ↔ open）。不删除远端对象。需要 gh 已登录；CI 在线
 // lane（verify-flow-online）只校验，写操作全部走这里。
 
+import { pathToFileURL } from "node:url";
 import { readFile, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -159,4 +160,4 @@ async function main() {
   );
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) await main();
+if (import.meta.url === pathToFileURL(process.argv[1]).href) await main();

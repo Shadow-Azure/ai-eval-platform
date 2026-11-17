@@ -62,6 +62,7 @@ from .scoring import (
     ScoreArtifact,
     TestCaseResult,
 )
+from .self_evolution import SELF_EVOLUTION_REPORT_STATUSES, SelfEvolutionReport
 from .trace import (
     TRACE_FILE_STATUSES,
     TRACE_SESSION_STATUSES,
@@ -123,6 +124,8 @@ __all__ = [
     "ScoreArtifact",
     "TestCaseResult",
     "MetricResult",
+    "SelfEvolutionReport",
+    "SELF_EVOLUTION_REPORT_STATUSES",
     "TEST_OUTCOMES",
     "TEST_GROUPS",
     "AGGREGATOR_WHITELIST",
