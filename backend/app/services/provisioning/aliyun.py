@@ -25,6 +25,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -40,6 +41,7 @@ from ...models import (
     Connection,
     Credential,
     EvalCaseAttempt,
+    EvalCaseRun,
     ProvisionedInstance,
     ResourcePool,
     Runner,
@@ -63,6 +65,8 @@ ALIYUN_PROVIDER = "aliyun"
 API_VERSION = "2014-05-26"
 PROVIDER_NAME = "Aliyun ECS"
 DEFAULT_ZONE_ID = None
+
+logger = logging.getLogger(__name__)
 
 AliyunTransport = Callable[..., tuple[int, str]]
 
@@ -940,6 +944,37 @@ class AliyunEcsProvisioner:
                 )
             if runner is not None:
                 instance.runner_id = runner.id
+        stop_context: dict[str, Any] = {
+            "reason": reason,
+            "detail": detail,
+            "provider_state": (
+                detail if detail in ("Stopped", "Stopping") else cost.get("last_state")
+            ),
+            "instance_type": cost.get("instance_type"),
+            "zone_id": cost.get("zone_id"),
+            "price_cny": cost.get("price_cny"),
+            "spot_duration_hours": cost.get("spot_duration_hours"),
+            "runner_name": cost.get("runner_name"),
+            "runner_id": runner.id if runner is not None else None,
+            "runner_status": runner.status if runner is not None else None,
+            "runner_last_heartbeat_at": (
+                _iso(runner.last_heartbeat_at) if runner is not None else None
+            ),
+            "runner_busy_case_attempt_id": (
+                runner.busy_case_attempt_id if runner is not None else None
+            ),
+            "attempt_id": None,
+            "attempt_no": None,
+            "attempt_status_before": None,
+            "attempt_error_code_before": None,
+            "attempt_updated_at": None,
+            "case_execution_status_before": None,
+            "case_result_status_before": None,
+            "terminal_callback_seen": False,
+            # Intentionally unknown: the later stop-origin fix decides from
+            # this context whether provider_stopped was a real reclaim.
+            "stop_origin": "unknown",
+        }
         if runner is not None:
             # M8-37: settle a live attempt before the runner disappears so
             # the case can immediately request a new spot instance instead
@@ -948,8 +983,8 @@ class AliyunEcsProvisioner:
             # offline, so do not gate this on the runner status.
             from .. import case_attempts
 
-            active_case = session.scalar(
-                select(EvalCaseAttempt.eval_case_run_id)
+            active_attempt = session.scalar(
+                select(EvalCaseAttempt)
                 .where(
                     EvalCaseAttempt.runner_id == runner.id,
                     EvalCaseAttempt.status.in_(
@@ -959,8 +994,30 @@ class AliyunEcsProvisioner:
                 .order_by(EvalCaseAttempt.started_at.desc())
                 .limit(1)
             )
-            if active_case is None and runner.busy_case_attempt_id:
-                active_case = runner.busy_case_attempt_id
+            if active_attempt is None and runner.busy_case_attempt_id:
+                active_attempt = session.get(
+                    EvalCaseAttempt, runner.busy_case_attempt_id
+                )
+            active_case = active_attempt.eval_case_run_id if active_attempt else None
+            if active_attempt is not None:
+                case_run = session.get(EvalCaseRun, active_attempt.eval_case_run_id)
+                stop_context.update(
+                    {
+                        "attempt_id": active_attempt.id,
+                        "attempt_no": active_attempt.attempt_no,
+                        "attempt_status_before": active_attempt.status,
+                        "attempt_error_code_before": active_attempt.error_code,
+                        "attempt_updated_at": _iso(active_attempt.updated_at),
+                        "case_execution_status_before": (
+                            case_run.execution_status if case_run is not None else None
+                        ),
+                        "case_result_status_before": (
+                            case_run.result_status if case_run is not None else None
+                        ),
+                        "terminal_callback_seen": active_attempt.status
+                        in ("succeeded", "failed"),
+                    }
+                )
             if active_case:
                 case_attempts.handle_spot_interruption(
                     session, case_run_id=active_case, now=now
@@ -968,6 +1025,12 @@ class AliyunEcsProvisioner:
             runner.status = "offline"
             runner.deregistered_at = runner.deregistered_at or now
             session.flush()
+        cost["stop_context"] = stop_context
+        instance.cost_json = cost
+        logger.info(
+            "spot.stop_context %s",
+            json.dumps(stop_context, ensure_ascii=False, sort_keys=True),
+        )
         self._record(
             session,
             pool,
@@ -978,6 +1041,7 @@ class AliyunEcsProvisioner:
                 "reason": reason,
                 "detail": detail,
                 "runner_name": cost.get("runner_name"),
+                "stop_context": stop_context,
             },
             dedupe_key=f"{pool.id}:{event_type}:{instance.id}",
         )

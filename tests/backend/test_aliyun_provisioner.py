@@ -907,3 +907,17 @@ def test_sync_reclaims_spot_interruption_before_instance_link(
         event.event_type == "case.spot_interrupted"
         for event in session.scalars(select(EvalEvent))
     )
+
+    stop_context = instance.cost_json["stop_context"]
+    assert stop_context["provider_state"] == "Stopped"
+    assert stop_context["attempt_status_before"] == "running"
+    assert stop_context["terminal_callback_seen"] is False
+    assert stop_context["runner_name"] == runner.provider_runner_id
+    assert stop_context["stop_origin"] == "unknown"
+    reclaim_event = next(
+        event
+        for event in session.scalars(select(ResourceEvent))
+        if event.event_type == capacity_control.EVENT_INSTANCE_INTERRUPTED
+        and event.payload_json.get("provider_instance_id") == "i-before-link"
+    )
+    assert reclaim_event.payload_json["stop_context"]["attempt_status_before"] == "running"
