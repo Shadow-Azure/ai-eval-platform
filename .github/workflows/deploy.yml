@@ -265,6 +265,12 @@ jobs:
           if [ -z "$callback_base_url" ] && [ -n "$API_BIND_ADDRESS" ]; then
             callback_base_url="http://${API_BIND_ADDRESS}:8000"
           fi
+          # M9: HE must reach this deployment's public ingress. Derive it from
+          # the existing ECS_HOST unless an explicit URL/DNS name overrides it.
+          self_evo_public_base_url="${SELF_EVO_PUBLIC_BASE_URL:-}"
+          if [ -z "$self_evo_public_base_url" ] && [ -n "$ECS_HOST" ]; then
+            self_evo_public_base_url="http://${ECS_HOST}:8080"
+          fi
           # M8-14: derive the GitHub egress proxy from the VPC bind address
           # when no explicit override is set, so the runner reaches it over
           # the same private network as the callback.
@@ -305,7 +311,7 @@ jobs:
             printf 'GITHUB_TOKEN=%s\n' "$DISPATCH_TOKEN"
             printf 'GITHUB_WEBHOOK_SECRET=%s\n' "${GITHUB_WEBHOOK_SECRET:-}"
             printf 'SELF_EVO_SESSION_SIGNING_KEY=%s\n' "${SELF_EVO_SESSION_SIGNING_KEY:-}"
-            printf 'SELF_EVO_PUBLIC_BASE_URL=%s\n' "${SELF_EVO_PUBLIC_BASE_URL:-}"
+            printf 'SELF_EVO_PUBLIC_BASE_URL=%s\n' "$self_evo_public_base_url"
             printf 'DATABASE_STORAGE_LIMIT_BYTES=%s\n' "$DATABASE_STORAGE_LIMIT_BYTES"
             printf 'DATASET_IMAGE_REGISTRIES=%s\n' "$DATASET_IMAGE_REGISTRIES"
             printf 'SECRET_BOX_KEY=%s\n' "$SECRET_BOX_KEY"
