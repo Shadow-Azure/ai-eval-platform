@@ -33,6 +33,16 @@ npm run record:i18n -- docs/README.md
 
 真实阿里云冒烟需要 `ALIYUN_ACCESS_KEY_ID`、`ALIYUN_ACCESS_KEY_SECRET`、`RUNNER_ADMIN_TOKEN`（仓库管理员 PAT，`repo` scope）与 `SPOT_SMOKE_CONFIRM=1`。给 PR 加 `run-spot-smoke` label 触发 `spot-smoke` workflow；它创建一台竞价实例、执行 `runner-smoke` 作业后释放实例，证据上传为 artifact。常规 CI 不创建云资源。
 
+## 数据集镜像 tar 发布
+
+竞争态 Spot Runner 冷启动时优先加载任务下发的 OSS 预签名镜像 tar，公网镜像源只作回退。发布在固定主机（compose 栈已运行且本地已有该镜像）执行；脚本会 `docker save`、gzip 压缩，用 `python -m app.manage dataset-image` 取得同一 key 的预签名 PUT URL 上传，再用预签名 HEAD 校验。
+
+```sh
+bash scripts/publish-dataset-image.sh swebench/sweb.eval.x86_64.astropy_1776_astropy-12907:latest
+```
+
+对象 key 默认为 `dataset-images/<镜像引用 sha256>.tar.gz`；阿里云 OSS 的内网 endpoint 从 `s3_endpoint` 自动派生，特殊部署可用 `S3_INTERNAL_ENDPOINT` 覆盖。OSS 保持私有，实例只拿短时 URL；未发布的镜像自动回退公开源。按实际镜像数量配置生命周期与容量监控，全量 SWE-bench 镜像会占 1TB 级存储。
+
 ## 修改文档
 
 1. 先在中文 base 修正事实，再按结构镜像最小修补英文侧。

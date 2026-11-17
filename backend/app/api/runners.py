@@ -28,7 +28,7 @@ from ..model_gateway.tokens import GatewayClaims, issue_gateway_token
 from ..models import Dataset, DatasetVersion, EvalCaseAttempt, EvalCaseRun, EvalRun, ModelConfig, Outbox
 from ..runner_contracts import ContractInvalid, validate_payload
 from ..services import agent_assets as asset_service
-from ..services import case_attempts
+from ..services import case_attempts, dataset_image_tarballs
 from ..services import runners as runner_service
 from ..services.case_attempts import CaseCallbackError
 from ..services.evaluations import DEFAULT_MAX_TURNS, SHARD_DISPATCH_TOPIC
@@ -988,6 +988,28 @@ def shard_tasks(
             effective_task_secret(settings),
             ttl_seconds=_case_token_ttl(run),
         )
+    def _case_task(case: EvalCaseRun) -> dict:
+        # M8-25: SWE-bench needs one environment image per instance; the
+        # version-level image remains the fallback. M8 (#273): the same
+        # resolved image drives the OSS tarball descriptor so the runner can
+        # load it before trying the public registry chain.
+        image = (case.task_json or {}).get("environment_image") or (
+            dataset_version.environment_image if dataset_version else None
+        )
+        return {
+            "case_run_id": case.id,
+            "case_key": case.case_key,
+            "prompt": (case.task_json or {}).get("problem_statement", ""),
+            # M8-07: the suffix frozen on the run is appended by the runner.
+            "prompt_suffix": run.prompt_suffix or "",
+            "repo": (case.task_json or {}).get("repo"),
+            "base_commit": (case.task_json or {}).get("base_commit"),
+            "environment_image": image,
+            "image_tarball": dataset_image_tarballs.task_image_tarball(settings, image),
+            "test_patch": (case.task_json or {}).get("test_patch"),
+            "expected_metrics": (case.task_json or {}).get("expected_metrics", {}),
+        }
+
     return {
         "ok": True,
         "eval_run_id": run.id,
@@ -1020,22 +1042,5 @@ def shard_tasks(
         # token is only issued when the proxy is configured.
         "egress_proxy": egress_proxy,
         "egress_token": egress_token,
-        "cases": [
-            {
-                "case_run_id": case.id,
-                "case_key": case.case_key,
-                "prompt": (case.task_json or {}).get("problem_statement", ""),
-                # M8-07: the suffix frozen on the run is appended by the runner.
-                "prompt_suffix": run.prompt_suffix or "",
-                "repo": (case.task_json or {}).get("repo"),
-                "base_commit": (case.task_json or {}).get("base_commit"),
-                # M8-25: SWE-bench needs one environment image per instance;
-                # the version-level image remains the fallback.
-                "environment_image": (case.task_json or {}).get("environment_image")
-                or (dataset_version.environment_image if dataset_version else None),
-                "test_patch": (case.task_json or {}).get("test_patch"),
-                "expected_metrics": (case.task_json or {}).get("expected_metrics", {}),
-            }
-            for case in shard_cases
-        ],
+        "cases": [_case_task(case) for case in shard_cases],
     }

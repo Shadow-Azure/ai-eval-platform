@@ -33,6 +33,16 @@ npm run record:i18n -- docs/README.md
 
 The real Aliyun smoke needs `ALIYUN_ACCESS_KEY_ID`, `ALIYUN_ACCESS_KEY_SECRET`, `RUNNER_ADMIN_TOKEN` (repository-admin PAT with `repo` scope), and `SPOT_SMOKE_CONFIRM=1`. Add the `run-spot-smoke` label to a PR to trigger the `spot-smoke` workflow; it creates one spot instance, runs the `runner-smoke` job, releases the instance, and uploads evidence as an artifact. Regular CI never creates cloud resources.
 
+## Dataset image tarball publishing
+
+A cold spot runner prefers the OSS-presigned image tarball delivered in the task and uses public mirrors only as a fallback. Publish from the fixed host (the compose stack is running and the image is already local); the script runs `docker save`, compresses with gzip, obtains a presigned PUT URL for the same key through `python -m app.manage dataset-image`, uploads, and verifies with a presigned HEAD.
+
+```sh
+bash scripts/publish-dataset-image.sh swebench/sweb.eval.x86_64.astropy_1776_astropy-12907:latest
+```
+
+The object key defaults to `dataset-images/<sha256 of the image reference>.tar.gz`; the Aliyun OSS internal endpoint is derived from `s3_endpoint`, and `S3_INTERNAL_ENDPOINT` overrides it for special deployments. OSS stays private and instances only receive short-lived URLs; unpublished images fall back to public sources automatically. Configure lifecycle and capacity monitoring for the actual image count, because the full SWE-bench image set reaches 1TB-scale storage.
+
 ## Editing documentation
 
 1. Correct facts on the Chinese base first, then make the minimal structurally mirrored update to the English side.

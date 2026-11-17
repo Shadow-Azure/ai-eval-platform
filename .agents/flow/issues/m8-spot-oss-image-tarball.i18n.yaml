@@ -1,0 +1,5 @@
+# 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
+# git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
+#   pnpm run record:i18n -- .agents/flow/issues/m8-spot-oss-image-tarball.md
+m8-spot-oss-image-tarball.md: 71d5576230e4b95546a42ba9eb8b4a084a28310f
+m8-spot-oss-image-tarball.en.md: 1a51fc59283f759b801a830f1b1f0960fd0a9baa

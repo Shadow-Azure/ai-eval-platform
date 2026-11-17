@@ -79,6 +79,7 @@ PERMANENT_FAILURE_CODES = frozenset(
         "credential_unavailable",
         "commit_missing",
         "asset_invalid",
+        "image_unavailable",
         "validation_error",
         "callback_permanent",
         "dispatch_failed",
