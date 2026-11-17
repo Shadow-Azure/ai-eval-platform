@@ -227,12 +227,15 @@ def test_terminal_run_enqueues_only_executed_bad_cases(
     template = session_source["sessionUrlTemplate"]
     assert template.startswith(f"{PUBLIC_BASE}/api/v1/self-evolution/sessions/")
     assert template.count("{sessionId}") == 1
-    # The endpoint prefix + exp verify against the same HMAC: HE substitutes
-    # the root and every child session id into the template, so the grant is
-    # not bound to one concrete id.
+    # The endpoint prefix + run scope + exp verify against the same HMAC: HE
+    # substitutes the root and every child session id into the template, so
+    # the grant is not bound to one concrete id — only to this eval run.
+    assert f"run={run.id}" in template
     exp = int(template.split("exp=")[1].split("&")[0])
     sig = template.split("sig=")[1]
-    assert swe.session_signature_matches(SIGNING_KEY, exp, sig)
+    assert swe.session_signature_matches(SIGNING_KEY, run.id, exp, sig)
+    other_run_id = "0f0e0d0c-0b0a-0908-0706-050403020100"
+    assert not swe.session_signature_matches(SIGNING_KEY, other_run_id, exp, sig)
     assert exp == int((NOW + timedelta(seconds=swe.SESSION_TTL_SECONDS)).timestamp())
 
     events = list(

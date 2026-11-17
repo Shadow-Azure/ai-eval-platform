@@ -4,7 +4,7 @@
 evolution trajectory pull: one JSON envelope with the runtime identity, a
 one-level childSessionIds list and the session's normalized NDJSON
 trajectory. There is no Bearer credential — the short-lived per-report
-HMAC in the query string (``exp``/``sig``) is the authorization, so a leaked
+HMAC in the query string (``run``/``exp``/``sig``) is the authorization, so a leaked
 URL stops working when it expires.
 
 Limits mirror the HE pull side (64 MiB total, 1 MiB per line, 1M lines) and
@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 
 from ..config import Settings, get_settings
 from ..db import get_session
-from ..models import TraceFile, TraceSession
+from ..models import EvalCaseAttempt, EvalCaseRun, TraceFile, TraceSession
 from ..services import self_evolution as self_evolution_service
 from ..services.evaluations import iso_utc
 from ..services.object_store import (
@@ -52,7 +52,12 @@ def _now(value: datetime | None) -> datetime:
 
 
 def _verify_signature(
-    session_id: str, exp: str | None, sig: str | None, settings: Settings, now: datetime
+    session_id: str,
+    run_id: str | None,
+    exp: str | None,
+    sig: str | None,
+    settings: Settings,
+    now: datetime,
 ) -> HTTPException | None:
     key = settings.self_evolution_session_signing_key
     if not key:
@@ -70,7 +75,9 @@ def _verify_signature(
     if (
         exp_value is None
         or sig is None
+        or run_id is None
         or not SESSION_ID_PATTERN.match(session_id)
+        or not SESSION_ID_PATTERN.match(run_id)
         or exp_value < 0
     ):
         return _error(
@@ -84,7 +91,36 @@ def _verify_signature(
             "self_evolution_signature_expired",
             "会话下载签名已过期",
         )
-    if not self_evolution_service.session_signature_matches(key, exp_value, sig):
+    if not self_evolution_service.session_signature_matches(key, run_id, exp_value, sig):
+        return _error(
+            401,
+            "self_evolution_signature_invalid",
+            "会话下载签名无效",
+        )
+    return None
+
+
+def _verify_run_scope(
+    session: Session, trace_session: TraceSession, run_id: str
+) -> HTTPException | None:
+    """The grant is scoped to one eval run: session must belong to that run.
+
+    A mismatch — including unlinked sessions with no attempt ownership —
+    answers with the same stable invalid-signature 401 instead of a distinct
+    error, so the endpoint leaks nothing about other runs' sessions.
+    """
+
+    if not trace_session.eval_case_attempt_id:
+        return _error(
+            401,
+            "self_evolution_signature_invalid",
+            "会话下载签名无效",
+        )
+    attempt = session.get(EvalCaseAttempt, trace_session.eval_case_attempt_id)
+    case_run = (
+        session.get(EvalCaseRun, attempt.eval_case_run_id) if attempt is not None else None
+    )
+    if case_run is None or case_run.eval_run_id != run_id:
         return _error(
             401,
             "self_evolution_signature_invalid",
@@ -166,13 +202,14 @@ def _load_trajectory(
 @router.get("/api/v1/self-evolution/sessions/{session_id}")
 def get_session_envelope(
     session_id: str,
+    run: Annotated[str | None, Query(max_length=64)] = None,
     exp: Annotated[str | None, Query(max_length=32)] = None,
     sig: Annotated[str | None, Query(max_length=128)] = None,
     session: Session = Depends(get_session),
     settings: Settings = Depends(get_settings),
 ) -> dict:
     now = _now(None)
-    failure = _verify_signature(session_id, exp, sig, settings, now)
+    failure = _verify_signature(session_id, run, exp, sig, settings, now)
     if failure is not None:
         raise failure
 
@@ -184,6 +221,10 @@ def get_session_envelope(
     )
     if trace_session is None:
         raise _error(404, "self_evolution_session_not_found", "会话不存在")
+
+    failure = _verify_run_scope(session, trace_session, run)
+    if failure is not None:
+        raise failure
 
     if (
         trace_session.runtime_key not in SUPPORTED_RUNTIMES

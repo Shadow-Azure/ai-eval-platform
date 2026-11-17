@@ -8,6 +8,7 @@ milestone: m9
 priority: P0
 status: in-progress
 scope:
+  - .gitignore
   - .github/**
   - backend/app/**
   - backend/migrations/**

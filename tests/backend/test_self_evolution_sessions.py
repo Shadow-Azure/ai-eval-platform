@@ -35,13 +35,16 @@ CHILD_NDJSON = (
 )
 
 
-def _signed(session_id: str, *, exp: int | None = None, key: str = SIGNING_KEY) -> dict:
+def _signed(
+    run_id: str, session_id: str, *, exp: int | None = None, key: str = SIGNING_KEY
+) -> dict:
     exp_value = exp if exp is not None else int(
         (datetime.now(UTC) + timedelta(seconds=60)).timestamp()
     )
     return {
+        "run": run_id,
         "exp": str(exp_value),
-        "sig": swe.session_signature(key, exp_value),
+        "sig": swe.session_signature(key, run_id, exp_value),
     }
 
 
@@ -129,7 +132,7 @@ def trace_env(session: Session, client: TestClient, configure_settings):
         store.add_bytes(f"traces/{MAIN_SESSION}.jsonl", NDJSON)
         store.add_bytes(f"traces/{CHILD_SESSION}.jsonl", CHILD_NDJSON)
         session.commit()
-        yield {"session": session, "store": store}
+        yield {"session": session, "store": store, "run_id": run.id}
 
 
 def _error_code(response) -> str:
@@ -138,7 +141,8 @@ def _error_code(response) -> str:
 
 def test_valid_signature_returns_envelope(trace_env, client: TestClient) -> None:
     response = client.get(
-        f"/api/v1/self-evolution/sessions/{MAIN_SESSION}", params=_signed(MAIN_SESSION)
+        f"/api/v1/self-evolution/sessions/{MAIN_SESSION}",
+        params=_signed(trace_env["run_id"], MAIN_SESSION),
     )
     assert response.status_code == 200, response.text
     body = response.json()
@@ -158,7 +162,8 @@ def test_valid_signature_returns_envelope(trace_env, client: TestClient) -> None
 
 def test_child_session_envelope_reports_parent(trace_env, client: TestClient) -> None:
     response = client.get(
-        f"/api/v1/self-evolution/sessions/{CHILD_SESSION}", params=_signed(CHILD_SESSION)
+        f"/api/v1/self-evolution/sessions/{CHILD_SESSION}",
+        params=_signed(trace_env["run_id"], CHILD_SESSION),
     )
     assert response.status_code == 200, response.text
     body = response.json()
@@ -171,7 +176,7 @@ def test_child_session_envelope_reports_parent(trace_env, client: TestClient) ->
 
 
 def test_wrong_signature_is_rejected(trace_env, client: TestClient) -> None:
-    params = _signed(MAIN_SESSION)
+    params = _signed(trace_env["run_id"], MAIN_SESSION)
     params["sig"] = "0" * 64
     response = client.get(
         f"/api/v1/self-evolution/sessions/{MAIN_SESSION}", params=params
@@ -179,21 +184,32 @@ def test_wrong_signature_is_rejected(trace_env, client: TestClient) -> None:
     assert response.status_code == 401
     assert _error_code(response) == "self_evolution_signature_invalid"
 
-    # The grant is prefix-scoped on purpose: harness-evolution substitutes
+    # The grant is prefix+run-scoped on purpose: harness-evolution substitutes
     # child session ids into the same template during BFS traversal, so a
-    # signature issued alongside a child id must verify on the root too.
-    cross = _signed(CHILD_SESSION)
+    # signature issued alongside a child id must verify on the root too —
+    # but only within the same eval run.
+    cross = _signed(trace_env["run_id"], CHILD_SESSION)
     response = client.get(
         f"/api/v1/self-evolution/sessions/{MAIN_SESSION}", params=cross
     )
     assert response.status_code == 200
+
+    # A signature (or template) from another eval run must not open this run's
+    # sessions: the endpoint answers with the same stable 401 code.
+    other_run_id = "0f0e0d0c-0b0a-0908-0706-050403020100"
+    response = client.get(
+        f"/api/v1/self-evolution/sessions/{MAIN_SESSION}",
+        params=_signed(other_run_id, MAIN_SESSION),
+    )
+    assert response.status_code == 401
+    assert _error_code(response) == "self_evolution_signature_invalid"
 
 
 def test_expired_signature_is_rejected(trace_env, client: TestClient) -> None:
     expired = int((datetime.now(UTC) - timedelta(seconds=10)).timestamp())
     response = client.get(
         f"/api/v1/self-evolution/sessions/{MAIN_SESSION}",
-        params=_signed(MAIN_SESSION, exp=expired),
+        params=_signed(trace_env["run_id"], MAIN_SESSION, exp=expired),
     )
     assert response.status_code == 401
     assert _error_code(response) == "self_evolution_signature_expired"
@@ -201,16 +217,24 @@ def test_expired_signature_is_rejected(trace_env, client: TestClient) -> None:
 
 def test_malformed_query_and_session_id_are_rejected(trace_env, client: TestClient) -> None:
     base = f"/api/v1/self-evolution/sessions/{MAIN_SESSION}"
-    response = client.get(base, params={"exp": "abc", "sig": "x"})
+    response = client.get(base, params={"run": trace_env["run_id"], "exp": "abc", "sig": "x"})
     assert response.status_code == 401
     assert _error_code(response) == "self_evolution_signature_invalid"
 
     response = client.get(base)
     assert response.status_code == 401
 
+    # run is required: a signed grant without the run scope is invalid.
+    signed = _signed(trace_env["run_id"], MAIN_SESSION)
+    signed.pop("run")
+    response = client.get(base, params=signed)
+    assert response.status_code == 401
+    assert _error_code(response) == "self_evolution_signature_invalid"
+
     bad_id = "has spaces and/slashes"
     response = client.get(
-        f"/api/v1/self-evolution/sessions/{bad_id}", params=_signed(bad_id)
+        f"/api/v1/self-evolution/sessions/{bad_id}",
+        params=_signed(trace_env["run_id"], bad_id),
     )
     assert response.status_code in (401, 404)
 
@@ -218,7 +242,8 @@ def test_malformed_query_and_session_id_are_rejected(trace_env, client: TestClie
 def test_unknown_session_is_404(trace_env, client: TestClient) -> None:
     missing = "00000000-0000-0000-0000-000000000000"
     response = client.get(
-        f"/api/v1/self-evolution/sessions/{missing}", params=_signed(missing)
+        f"/api/v1/self-evolution/sessions/{missing}",
+        params=_signed(trace_env["run_id"], missing),
     )
     assert response.status_code == 404
     assert _error_code(response) == "self_evolution_session_not_found"
@@ -259,7 +284,8 @@ def test_unsupported_runtime_is_404(trace_env, session: Session, client: TestCli
     )
     session.commit()
     response = client.get(
-        f"/api/v1/self-evolution/sessions/{generic}", params=_signed(generic)
+        f"/api/v1/self-evolution/sessions/{generic}",
+        params=_signed(trace_env["run_id"], generic),
     )
     assert response.status_code == 404
     assert _error_code(response) == "self_evolution_runtime_unsupported"
@@ -272,7 +298,8 @@ def test_oversized_line_is_rejected_without_truncation(
     payload = big_line + b"\n" + b'{"ok":true}' + b"\n"
     trace_env["store"].add_bytes(f"traces/{MAIN_SESSION}.jsonl", payload)
     response = client.get(
-        f"/api/v1/self-evolution/sessions/{MAIN_SESSION}", params=_signed(MAIN_SESSION)
+        f"/api/v1/self-evolution/sessions/{MAIN_SESSION}",
+        params=_signed(trace_env["run_id"], MAIN_SESSION),
     )
     assert response.status_code == 413
     assert _error_code(response) == "self_evolution_trajectory_line_too_long"
@@ -285,7 +312,8 @@ def test_total_and_line_count_limits_are_enforced(
     monkeypatch.setattr(self_evolution_api, "MAX_TOTAL_BYTES", 4)
     trace_env["store"].add_bytes(f"traces/{MAIN_SESSION}.jsonl", b"a" * 10)
     response = client.get(
-        f"/api/v1/self-evolution/sessions/{MAIN_SESSION}", params=_signed(MAIN_SESSION)
+        f"/api/v1/self-evolution/sessions/{MAIN_SESSION}",
+        params=_signed(trace_env["run_id"], MAIN_SESSION),
     )
     assert response.status_code == 413
     assert _error_code(response) == "self_evolution_trajectory_too_large"
@@ -297,7 +325,8 @@ def test_total_and_line_count_limits_are_enforced(
         f"traces/{MAIN_SESSION}.jsonl", b'{"a":1}\n{"b":2}\n{"c":3}\n'
     )
     response = client.get(
-        f"/api/v1/self-evolution/sessions/{MAIN_SESSION}", params=_signed(MAIN_SESSION)
+        f"/api/v1/self-evolution/sessions/{MAIN_SESSION}",
+        params=_signed(trace_env["run_id"], MAIN_SESSION),
     )
     assert response.status_code == 413
     assert _error_code(response) == "self_evolution_trajectory_too_many_lines"
@@ -306,7 +335,8 @@ def test_total_and_line_count_limits_are_enforced(
 def test_missing_signing_key_fails_closed(trace_env, client: TestClient, configure_settings) -> None:
     configure_settings(SELF_EVO_SESSION_SIGNING_KEY="")
     response = client.get(
-        f"/api/v1/self-evolution/sessions/{MAIN_SESSION}", params=_signed(MAIN_SESSION)
+        f"/api/v1/self-evolution/sessions/{MAIN_SESSION}",
+        params=_signed(trace_env["run_id"], MAIN_SESSION),
     )
     assert response.status_code == 503
     assert _error_code(response) == "self_evolution_not_configured"

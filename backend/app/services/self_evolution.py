@@ -53,13 +53,14 @@ TEST_NAME_LIMIT = 20
 SESSION_ID_PATTERN_LIMIT = 36  # HE sessionId contract: 1..36 chars
 
 # Short-lived session-envelope grant embedded in sessionUrlTemplate. The HMAC
-# binds the endpoint path PREFIX (not the concrete session id): harness-
-# evolution substitutes every traversal session id — the reported root plus
-# each child — into the same template, so a per-session signature would break
-# the BFS pull after the first hop.
+# binds the endpoint path PREFIX (not the concrete session id) plus the
+# reporting eval run id: harness-evolution substitutes every traversal session
+# id — the reported root plus each child — into the same template, so a
+# per-session signature would break the BFS pull after the first hop, while
+# the run scope keeps a leaked URL from reaching sessions of other runs.
 SESSION_ENVELOPE_PATH_PREFIX = "/api/v1/self-evolution/sessions/"
 SESSION_TTL_SECONDS = 7 * 24 * 3600
-SIGNATURE_ALGORITHM = "GET\n{path_prefix}\n{exp}"
+SIGNATURE_ALGORITHM = "GET\n{path_prefix}\n{run_id}\n{exp}"
 
 # Worker retry policy: 1min, 5min, 15min, then 1h forever; eight failed
 # attempts (the initial one included) give up permanently.
@@ -86,34 +87,37 @@ def _as_utc(value: datetime | None) -> datetime | None:
 # ---------------------------------------------------------------------------
 
 
-def session_signature(key: str, exp: int) -> str:
-    """HMAC-SHA256 over ``GET\\n{path_prefix}\\n{exp}`` for one grant window."""
+def session_signature(key: str, run_id: str, exp: int) -> str:
+    """HMAC-SHA256 over ``GET\\n{path_prefix}\\n{run_id}\\n{exp}`` for one grant."""
 
-    message = SIGNATURE_ALGORITHM.format(path_prefix=SESSION_ENVELOPE_PATH_PREFIX, exp=exp)
+    message = SIGNATURE_ALGORITHM.format(
+        path_prefix=SESSION_ENVELOPE_PATH_PREFIX, run_id=run_id, exp=exp
+    )
     return hmac.new(key.encode("utf-8"), message.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
-def session_signature_matches(key: str, exp: int, signature: str) -> bool:
+def session_signature_matches(key: str, run_id: str, exp: int, signature: str) -> bool:
     """Constant-time comparison of a presented signature."""
 
-    return hmac.compare_digest(session_signature(key, exp), signature or "")
+    return hmac.compare_digest(session_signature(key, run_id, exp), signature or "")
 
 
 def build_session_url_template(
-    public_base_url: str, session_id: str, *, exp: int, key: str
+    public_base_url: str, session_id: str, *, run_id: str, exp: int, key: str
 ) -> str:
     """``sessionUrlTemplate`` with the ``{sessionId}`` placeholder exactly once.
 
-    The signature is bound to the endpoint prefix and the expiry, so the
-    reported root session and every child session the pull side substitutes
-    into ``{sessionId}`` verify against the same HMAC.
+    The signature is bound to the endpoint prefix, the reporting run id and
+    the expiry, so the reported root session and every child session the pull
+    side substitutes into ``{sessionId}`` verify against the same HMAC while
+    the grant stays scoped to this single eval run.
     """
 
-    signature = session_signature(key, exp)
+    signature = session_signature(key, run_id, exp)
     return (
         f"{public_base_url.rstrip('/')}"
         f"{SESSION_ENVELOPE_PATH_PREFIX}{{sessionId}}"
-        f"?exp={exp}&sig={signature}"
+        f"?run={run_id}&exp={exp}&sig={signature}"
     )
 
 
@@ -134,7 +138,9 @@ def _maybe_session_source(
     exp = int((now + timedelta(seconds=SESSION_TTL_SECONDS)).timestamp())
     return {
         "runtime": "claude-code",
-        "sessionUrlTemplate": build_session_url_template(base_url, session_id, exp=exp, key=key),
+        "sessionUrlTemplate": build_session_url_template(
+            base_url, session_id, run_id=run.id, exp=exp, key=key
+        ),
     }
 
 
