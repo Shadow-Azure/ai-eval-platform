@@ -8,3 +8,12 @@ reports/
 __pycache__/
 *.pyc
 *.egg-info/
+
+# pytest 本地基目录与 pip 构建临时目录（python 在沙箱内回退到仓库根时产生）
+pytest-of-zhang/
+pip-build-env-*/
+pip-unpack-*/
+pip-modern-metadata-*/
+pip-ephem-wheel-cache-*/
+.tmp-t/
+.baseline-wt/
