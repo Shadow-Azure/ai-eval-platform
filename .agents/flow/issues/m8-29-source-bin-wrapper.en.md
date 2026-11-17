@@ -6,7 +6,7 @@ English | [中文](m8-29-source-bin-wrapper.md)
 kind: issue
 milestone: m8
 priority: P2
-status: in-progress
+status: done
 scope:
   - .agents/flow/issues/m8-29-source-bin-wrapper.*
   - .agents/flow/milestones/m8-bug-fixes.*
