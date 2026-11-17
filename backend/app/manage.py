@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import json
 import sys
 from collections.abc import Sequence
 
@@ -210,6 +211,38 @@ def cmd_upsert_model_config(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_dataset_image(args: argparse.Namespace) -> int:
+    """Presign or verify one OSS dataset image tarball (issue #273)."""
+
+    from .config import get_settings
+    from .services import dataset_image_tarballs as tarballs
+    from .services.object_store import ObjectMissing, ObjectStoreError, object_store_from_settings
+
+    settings = get_settings()
+    store = object_store_from_settings(settings, internal=True)
+    if store is None:
+        print("object store is not configured (S3_ENDPOINT/S3_ACCESS_KEY/S3_SECRET_KEY)", file=sys.stderr)
+        return 2
+    key = tarballs.tarball_key(args.image, prefix=settings.dataset_image_tarball_prefix)
+    ttl = args.ttl or settings.dataset_image_tarball_ttl_seconds
+    if args.method == "put":
+        payload = {"method": "put", "key": key, "url": store.presign_put_url(key, expires=ttl)}
+    elif args.method == "head":
+        try:
+            size = store.head_object(key)
+        except ObjectMissing:
+            print(json.dumps({"method": "head", "key": key, "exists": False}, ensure_ascii=False))
+            return 1
+        except ObjectStoreError as exc:
+            print(f"head failed: {exc}", file=sys.stderr)
+            return 2
+        payload = {"method": "head", "key": key, "exists": True, "size": size}
+    else:
+        payload = {"method": "get", "key": key, "url": store.presign_get_url(key, expires=ttl)}
+    print(json.dumps(payload, ensure_ascii=False))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m app.manage", description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -238,6 +271,15 @@ def build_parser() -> argparse.ArgumentParser:
     model_parser.add_argument("--input-per-1m", type=float, default=None)
     model_parser.add_argument("--output-per-1m", type=float, default=None)
     model_parser.set_defaults(func=cmd_upsert_model_config)
+
+    dataset_image_parser = subparsers.add_parser(
+        "dataset-image",
+        help="presign (put/get) or HEAD one OSS dataset image tarball",
+    )
+    dataset_image_parser.add_argument("--image", required=True)
+    dataset_image_parser.add_argument("--method", choices=("put", "get", "head"), default="get")
+    dataset_image_parser.add_argument("--ttl", type=int, default=0)
+    dataset_image_parser.set_defaults(func=cmd_dataset_image)
     return parser
 
 

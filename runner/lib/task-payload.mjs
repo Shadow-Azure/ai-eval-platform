@@ -24,6 +24,8 @@ export function buildCaseTask(task, taskPayload) {
       taskPayload?.agent_timeout_seconds ?? task.agent_timeout_seconds ?? null,
     // M8-33: ordered public registry sources for runtime image fallback.
     image_sources: taskPayload?.image_sources ?? task.image_sources ?? [],
+    // M8 (#273): optional OSS tarball descriptor tried before the registry chain.
+    image_tarball: task.image_tarball ?? taskPayload?.image_tarball ?? null,
     egress_proxy: taskPayload?.egress_proxy ?? task.egress_proxy ?? null,
     egress_token: taskPayload?.egress_token ?? task.egress_token ?? null,
   };

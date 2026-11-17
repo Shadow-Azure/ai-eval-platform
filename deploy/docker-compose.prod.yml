@@ -44,6 +44,9 @@ services:
       S3_SECRET_KEY: ${S3_SECRET_KEY:-}
       S3_REGION: ${S3_REGION:-us-east-1}
       S3_ADDRESSING_STYLE: ${S3_ADDRESSING_STYLE:-auto}
+      # M8 (#273): optional internal endpoint for runner-facing image tarball
+      # presigns; empty derives -internal from S3_ENDPOINT for Aliyun OSS.
+      S3_INTERNAL_ENDPOINT: ${S3_INTERNAL_ENDPOINT:-}
       # M5-08: the base URL ephemeral spot runners use to fetch the manifest
       # and post callbacks. The API host is in the same VPC; the deploy
       # workflow injects the VPC address, while loopback stays the default for
@@ -155,6 +158,9 @@ services:
       S3_SECRET_KEY: ${S3_SECRET_KEY:-}
       S3_REGION: ${S3_REGION:-us-east-1}
       S3_ADDRESSING_STYLE: ${S3_ADDRESSING_STYLE:-auto}
+      # M8 (#273): optional internal endpoint for runner-facing image tarball
+      # presigns; empty derives -internal from S3_ENDPOINT for Aliyun OSS.
+      S3_INTERNAL_ENDPOINT: ${S3_INTERNAL_ENDPOINT:-}
       # M4-04 capacity controller: decrypt the resource credential and render
       # cloud-init (heartbeat token) / register the ephemeral runner.
       SECRET_BOX_KEY: ${SECRET_BOX_KEY:-}

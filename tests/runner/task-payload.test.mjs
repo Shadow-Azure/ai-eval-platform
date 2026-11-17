@@ -101,3 +101,17 @@ test("case-level environment image overrides the run-wide fallback", () => {
   );
   assert.equal(tasks.get("case-2").environment_image, "swebench/env:latest");
 });
+
+test("per-case image tarball descriptor survives the run-wide merge", () => {
+  const tarball = {
+    url: "https://bucket.oss-cn-hangzhou-internal.aliyuncs.com/dataset-images/x.tar.gz?sig=1",
+    key: "dataset-images/x.tar.gz",
+    image: "swebench/env:latest",
+    format: "tar.gz",
+  };
+  const tasks = buildCaseTasks({
+    ...payload,
+    cases: [{ case_run_id: "case-1", case_key: "a", image_tarball: tarball }],
+  });
+  assert.deepEqual(tasks.get("case-1").image_tarball, tarball);
+});

@@ -20,6 +20,7 @@
         "attempt_mismatch",
         "dispatch_duplicate",
         "upload_failed",
+        "image_unavailable",
         "callback_retryable",
         "callback_permanent",
         "runtime_error"

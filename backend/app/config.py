@@ -28,6 +28,15 @@ class Settings(BaseSettings):
     # Aliyun OSS requires virtual-hosted style (bucket.oss-cn-*.aliyuncs.com);
     # MinIO/local uses path style. auto picks OSS for *.aliyuncs.com.
     s3_addressing_style: str = "auto"
+    # M8 (#273): endpoint used for presigned URLs handed to spot runners. Spot
+    # instances live in the same region as the bucket, so the Aliyun internal
+    # endpoint is free and fast. Empty derives ``-internal`` from s3_endpoint
+    # for Aliyun OSS and otherwise keeps the public endpoint.
+    s3_internal_endpoint: str | None = None
+    # Dataset image tarballs (issue #273): compressed ``docker save`` objects
+    # are published under this prefix and presigned per case when present.
+    dataset_image_tarball_prefix: str = "dataset-images/"
+    dataset_image_tarball_ttl_seconds: int = 3600
 
     default_tenant_slug: str = "default"
     default_workspace_slug: str = "default"

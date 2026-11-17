@@ -24,6 +24,7 @@ import { composePrompt } from "../lib/prompt.mjs";
 import { startHeartbeatSidecar, stopHeartbeatSidecar } from "./heartbeat-agent.mjs";
 import { buildCaseTasks } from "../lib/task-payload.mjs";
 import { imageCandidates, sourceLabel } from "../lib/image-sources.mjs";
+import { loadImageTarball } from "../lib/image-tarball.mjs";
 import {
   collectTraceBundle,
   dedupeTraceObjects,
@@ -443,11 +444,39 @@ async function realCase(
 
     // M8-33: create the trace dir before resolving the image so the attempt
     // chain can be recorded even when every source fails.
-    mkdirSync(join(workdir, "trace"), { recursive: true, mode: 0o777 });
+    const imageTraceDir = join(workdir, "trace");
+    mkdirSync(imageTraceDir, { recursive: true, mode: 0o777 });
+    // M8 (#273): a cold spot runner tries the OSS tarball first. A miss,
+    // timeout, corrupt tar or load failure falls back to the frozen public
+    // registry chain with the same diagnostics directory.
+    let tarballImage = null;
+    if (task.image_tarball?.url) {
+      const loaded = loadImageTarball(task.image_tarball, { traceDir: imageTraceDir });
+      if (loaded.ok) {
+        tarballImage = environmentImage;
+        console.error(
+          JSON.stringify({
+            status: "image_tarball_loaded",
+            key: task.image_tarball.key,
+            elapsed_ms: loaded.elapsed_ms,
+          }),
+        );
+      } else {
+        console.error(
+          JSON.stringify({
+            status: "image_tarball_fallback",
+            key: task.image_tarball.key,
+            stage: loaded.stage,
+            error: loaded.error,
+          }),
+        );
+      }
+    }
     const resolvedEnvironmentImage =
-      Array.isArray(task.image_sources) && task.image_sources.length > 0
-        ? resolveRuntimeImage(environmentImage, task.image_sources, { traceDir: join(workdir, "trace") }).image
-        : environmentImage;
+      tarballImage ||
+      (Array.isArray(task.image_sources) && task.image_sources.length > 0
+        ? resolveRuntimeImage(environmentImage, task.image_sources, { traceDir: imageTraceDir }).image
+        : environmentImage);
 
     // The SWE-bench scoring image already contains the repo checkout at the
     // instance base commit; copy it out instead of cloning from GitHub, which

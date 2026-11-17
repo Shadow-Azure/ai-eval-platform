@@ -38,6 +38,7 @@ CLASSIFICATION_TABLE = {
     "credential_unavailable": "permanent",
     "commit_missing": "permanent",
     "asset_invalid": "permanent",
+    "image_unavailable": "permanent",
     "validation_error": "permanent",
     "callback_permanent": "permanent",
     "dispatch_failed": "permanent",
@@ -203,3 +204,25 @@ def test_failed_event_payload_keeps_the_callback_shape(session: Session) -> None
     retry_queued = events[1]
     assert retry_queued.sequence == body["sequence"] + 1
     assert set(retry_queued.payload_json) == {"new_attempt_no", "shard_id", "dispatch_key"}
+
+
+def test_image_unavailable_failure_is_terminal_and_keeps_its_code(session: Session) -> None:
+    """Issue #273：镜像不可用是确定性失败，不能落成 spot 重试。"""
+
+    run = _make_run(session, key="classify-image", max_attempts=3)
+    case, _ = _case_attempt(session, run)
+
+    result = case_attempts.handle_failed(
+        session,
+        payload=failure_body(case.id, retryable=False, error_code="image_unavailable"),
+    )
+
+    assert result["retry_queued"] is False
+    attempts = _attempts(session, case.id)
+    assert [row.attempt_no for row in attempts] == [1]
+    assert attempts[0].status == "failed"
+    assert attempts[0].error_code == "image_unavailable"
+    assert attempts[0].retry_reason == "permanent"
+    case = session.get(EvalCaseRun, case.id)
+    assert case.execution_status == "failed"
+    assert case.error_code == "image_unavailable"

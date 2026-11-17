@@ -296,13 +296,46 @@ class ObjectStore:
             raise ObjectStoreError(f"HEAD bucket 失败：{exc.reason}") from exc
 
 
-def object_store_from_settings(settings) -> ObjectStore | None:
-    """Build the store from platform settings; None when unconfigured."""
+def internal_aliyun_endpoint(endpoint: str | None) -> str | None:
+    """Derive the Aliyun OSS internal endpoint from a public OSS endpoint.
+
+    Production buckets live in the same region as the spot runners; the
+    ``-internal`` host keeps downloads on the Aliyun backbone (free, fast) and
+    never needs a public egress path. Non-Aliyun endpoints (MinIO/local) return
+    ``None`` so callers can fall back to the configured public endpoint.
+    """
+
+    if not endpoint:
+        return None
+    candidate = endpoint if "://" in endpoint else f"https://{endpoint}"
+    parsed = urlparse(candidate)
+    host = parsed.hostname or ""
+    if not host.endswith(".aliyuncs.com") or "-internal" in host:
+        return None
+    internal_host = host[: -len(".aliyuncs.com")] + "-internal.aliyuncs.com"
+    netloc = f"{internal_host}:{parsed.port}" if parsed.port else internal_host
+    return f"{parsed.scheme}://{netloc}"
+
+
+def object_store_from_settings(settings, *, internal: bool = False) -> ObjectStore | None:
+    """Build the store from platform settings; None when unconfigured.
+
+    ``internal`` prefers the configured internal endpoint (or the derived
+    Aliyun OSS one) for runner-facing presigned URLs; it falls back to the
+    public endpoint when the deployment has no internal host.
+    """
 
     if not (settings.s3_endpoint and settings.s3_access_key and settings.s3_secret_key):
         return None
+    endpoint = settings.s3_endpoint
+    if internal:
+        endpoint = (
+            settings.s3_internal_endpoint
+            or internal_aliyun_endpoint(endpoint)
+            or endpoint
+        )
     return ObjectStore(
-        endpoint=settings.s3_endpoint,
+        endpoint=endpoint,
         bucket=settings.s3_bucket,
         access_key=settings.s3_access_key,
         secret_key=settings.s3_secret_key,
