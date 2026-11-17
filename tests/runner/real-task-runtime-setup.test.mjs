@@ -707,3 +707,43 @@ test("source mode rebuilds .claude from the pinned archive and skips the frozen 
     await ctx.close();
   }
 });
+
+test("model token is refreshed after image pull, just before the agent starts", async () => {
+  const fakeBin = installFakeBin();
+  const logPath = join(fakeBin, "docker.log");
+  let manifestFetches = 0;
+  const tokens = ["model-token-initial", "model-token-refreshed"];
+  const ctx = await createScenario({
+    cases,
+    behavior: {
+      tasks: tasksPayload(),
+      modelToken: () => tokens[Math.min(manifestFetches++, tokens.length - 1)],
+    },
+  });
+  try {
+    const result = await runCase(ctx, fakeBin, logPath);
+    assert.equal(result.code, 0, result.stderr);
+
+    const manifestRequests = ctx.platform.requests.filter((request) => request.path === "/manifest");
+    assert.ok(manifestRequests.length >= 2, "manifest must be fetched again before the agent");
+    assert.ok(
+      stderrEvents(result).some((event) => event.status === "model_token_refreshed"),
+      `missing model_token_refreshed event\n${result.stderr}`,
+    );
+
+    const lines = invocations(logPath);
+    const agent = lines.find((line) => line.includes("claude-code-smoke.mjs"));
+    assert.ok(agent, `agent never started\n${lines.join("\n")}`);
+    assert.ok(
+      agent.includes("CLAUDE_GATEWAY_TOKEN=model-token-refreshed"),
+      `agent did not receive the refreshed token\n${agent}`,
+    );
+    assert.ok(
+      !agent.includes("CLAUDE_GATEWAY_TOKEN=model-token-initial"),
+      "agent must not receive the pre-image-pull token",
+    );
+  } finally {
+    rmSync(fakeBin, { recursive: true, force: true });
+    await ctx.close();
+  }
+});

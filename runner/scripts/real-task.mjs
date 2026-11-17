@@ -518,11 +518,28 @@ async function realCase(
     });
     if (checkout.status !== 0) throw new Error(`checkout 失败：${(checkout.stderr || "").slice(-500)}`);
 
+    // M8-41: the manifest (and its model token) was fetched before the image
+    // pull. Re-fetch it now, after the image is ready and just before the
+    // agent starts, so a slow SWE-bench image cannot consume the token TTL.
+    const refreshedManifest = await fetchManifest(dispatch.manifest_url).catch((error) => {
+      console.error(
+        JSON.stringify({
+          status: "model_token_refresh_failed",
+          message: String(error?.message ?? error).slice(0, 300),
+        }),
+      );
+      return null;
+    });
+    const agentModelToken = refreshedManifest?.modelToken || modelToken;
+    if (refreshedManifest?.modelToken) {
+      console.error(JSON.stringify({ status: "model_token_refreshed" }));
+    }
+
     const env = {
       WORKSPACE: "/testbed",
       RUNTIME_HOME: "/testbed/.runtime-home",
       CLAUDE_GATEWAY_BASE_URL: task.model.anthropic_base_url,
-      CLAUDE_GATEWAY_TOKEN: modelToken,
+      CLAUDE_GATEWAY_TOKEN: agentModelToken,
       CLAUDE_MODEL: task.model.name,
       PROMPT: runtimeAdapter.buildPrompt({
         problem: composePrompt(task.prompt, task.prompt_suffix),
