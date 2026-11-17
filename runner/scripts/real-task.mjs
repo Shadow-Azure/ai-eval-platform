@@ -1232,7 +1232,7 @@ async function main() {
         const message = String(error?.message || error).slice(0, 1000);
         console.log(`case failed before completion (${code}): ${message}`);
         try {
-          await postCallback(`${manifest.callback_base_url}/runner/v1/case-runs/${item.case_run_id}/failed`, requireValid("failure", {
+          const failureResult = await postCallback(`${manifest.callback_base_url}/runner/v1/case-runs/${item.case_run_id}/failed`, requireValid("failure", {
             schema_version: "1.0",
             event_id: `evt_${item.case_run_id}_failed_${dispatch.attempt}`,
             case_run_id: item.case_run_id,
@@ -1243,6 +1243,16 @@ async function main() {
             error_summary: message,
             phase: "executing",
           }), { eventId: `evt_${item.case_run_id}_failed_${dispatch.attempt}`, token });
+          console.error(JSON.stringify({
+            status: "terminal_callback_sent",
+            case_run_id: item.case_run_id,
+            attempt: dispatch.attempt,
+            execution_status: "failed",
+            error_code: code,
+            phase: "executing",
+            callback_status: failureResult.status,
+            callback_attempts: failureResult.attempts,
+          }));
         } catch (callbackError) {
           console.error(`failed callback error: ${callbackError?.message || callbackError}`);
         }
@@ -1436,6 +1446,16 @@ async function main() {
         }), { eventId: `evt_${item.case_run_id}_failed_${dispatch.attempt}`, token });
         fail(`完成回调失败：HTTP ${result.status}`, retryable ? "callback_retryable" : "callback_permanent", 1);
       }
+      console.error(JSON.stringify({
+        status: "terminal_callback_sent",
+        case_run_id: item.case_run_id,
+        attempt: dispatch.attempt,
+        execution_status: caseResult.executionStatus,
+        result_status: caseResult.resultStatus,
+        phase: "completed",
+        callback_status: result.status,
+        callback_attempts: result.attempts,
+      }));
     }
 
     guard.complete(claim.claimPath);
