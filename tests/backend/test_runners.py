@@ -226,7 +226,9 @@ def test_busy_transition_and_single_job_constraint(seeded: Session, client: Test
     assert back_online.status_code == 200
     assert back_online.json()["status"] == "online"
     seeded.expire_all()
-    assert seeded.query(Runner).one().busy_case_attempt_id is None
+    # M8-38: the bootstrap heartbeat is online while the job runs; it must not
+    # erase the binding. Only a terminal callback/offline heartbeat releases it.
+    assert seeded.query(Runner).one().busy_case_attempt_id == "attempt-41"
 
 
 def test_two_runners_can_be_busy_independently(seeded: Session, client: TestClient) -> None:

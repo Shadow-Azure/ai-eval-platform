@@ -178,9 +178,15 @@ def record_runner_heartbeat(
         if bound is not None and bound != current_case_attempt_id:
             raise RunnerBusyConflict(runner, current_case_attempt_id or "")
         runner.busy_case_attempt_id = current_case_attempt_id
-    else:
-        # online (job finished) or explicit offline (graceful shutdown): release.
+    elif status == "offline":
+        # Explicit graceful shutdown is the only runner-level status that
+        # releases the case binding. The bootstrap heartbeat is "online" while
+        # a job is running; clearing the binding there makes provider_stopped
+        # unable to map the instance back to its active attempt (M8-38).
         runner.busy_case_attempt_id = None
+    # status == "online": keep an existing binding. Terminal callbacks call
+    # release_case explicitly; a lost callback must stay visible to the
+    # interruption/reaper path instead of looking idle.
 
     runner.status = status
     runner.last_heartbeat_at = now

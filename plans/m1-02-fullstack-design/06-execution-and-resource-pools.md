@@ -220,3 +220,10 @@ GitHub `workflow_job` webhook 触发 reconcile，30s 轮询兜底；容量公式
 消费 `provider_stopped` 后，平台立即把该实例上的 active attempt 标为 `spot_interrupted`，释放 runner 绑定，
 并重新申请原竞争态 spot 池；同一 case 的 spot 重试独立计数，最多 3 次，第 4 次标 `spot_retry_exhausted`。
 不默认切 fixed/on-demand；可选配置兜底池。这样不再把云侧停止伪装成 300s `heartbeat_timeout`。
+
+
+## Runner 绑定与 spot 中断映射（M8-38）
+
+started 回调使用 `RUNNER_ID || RUNNER_NAME`，确保 `eval_case_attempt.runner_id` 落库；Runner 的 online 心跳保留
+`busy_case_attempt_id`，只有 terminal callback、`release_case` 或 offline 才清空。这样 provider_stopped 时
+`_reclaim` 能通过 attempt.runner_id 或 busy 绑定找到 active case，触发 M8-37 的快速重试。
