@@ -197,6 +197,7 @@ def _runner(
     registered_at: datetime | None = None,
     with_instance: bool = True,
     instance_status: str = "online",
+    busy_case_attempt_id: str | None = None,
 ) -> tuple[Runner, ProvisionedInstance | None]:
     runner = Runner(
         tenant_id=scope["tenant_id"],
@@ -207,6 +208,7 @@ def _runner(
         status=status,
         last_heartbeat_at=heartbeat_at or datetime.now(UTC),
         registered_at=registered_at or datetime.now(UTC),
+        busy_case_attempt_id=busy_case_attempt_id,
     )
     session.add(runner)
     session.flush()
@@ -639,6 +641,35 @@ def test_scale_down_keeps_runners_needed_by_queued_cases(
     assert fake.releases == []
 
 
+def test_scale_down_skips_runners_bound_to_a_case(
+    session: Session, scope: dict[str, str]
+) -> None:
+    """M8-39: online heartbeat must not make a running spot runner look idle."""
+
+    fake = _RecordingProvisioner()
+    pool = _spot_pool_with_connection(session, scope, min_capacity=0, max_capacity=4)
+    runner, instance = _runner(
+        session,
+        scope,
+        pool,
+        name="runner-busy",
+        heartbeat_at=datetime.now(UTC),
+        busy_case_attempt_id="case-running",
+    )
+    assert instance is not None
+
+    state = capacity_control.reconcile_pool(
+        session, pool, settings=get_settings(), now=datetime.now(UTC), provisioner=fake
+    )
+
+    assert state["idle_runners"] == 0
+    assert state["live_runners"] == 1
+    assert state["scaled_down"] == 0
+    assert fake.releases == []
+    assert runner.status == "online"
+    assert runner.busy_case_attempt_id == "case-running"
+
+
 def test_release_failure_keeps_instance_and_continues(
     session: Session, scope: dict[str, str]
 ) -> None:
@@ -860,8 +891,8 @@ def test_resource_event_dedupe_key_is_unique_per_tenant(
 def test_instance_spec_carries_spot_duration() -> None:
     # M8-35: the controller freezes the protection window on the request; the
     # Aliyun RunInstances call must receive it as SpotDuration.
-    from app.services.capacity_control import instance_spec
     from app.models import ResourcePool
+    from app.services.capacity_control import instance_spec
 
     pool = ResourcePool(
         id="pool-duration",

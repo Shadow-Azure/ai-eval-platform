@@ -237,17 +237,21 @@ def _runner_count(
     settings: Settings,
     now: datetime,
     statuses: tuple[str, ...],
+    exclude_busy: bool = False,
 ) -> int:
     stale_before = now - timedelta(seconds=settings.runner_heartbeat_timeout_seconds)
-    statement = (
-        select(func.count())
-        .select_from(Runner)
-        .where(
-            Runner.resource_pool_id == pool.id,
-            Runner.status.in_(statuses),
-            Runner.last_heartbeat_at.is_(None) | (Runner.last_heartbeat_at >= stale_before),
-        )
-    )
+    conditions = [
+        Runner.resource_pool_id == pool.id,
+        Runner.status.in_(statuses),
+        Runner.last_heartbeat_at.is_(None) | (Runner.last_heartbeat_at >= stale_before),
+    ]
+    if exclude_busy:
+        # M8-39: the cloud-init heartbeat reports "online" while a case is
+        # running; the busy binding is the only reliable signal that this
+        # runner is not idle. Counting it as idle made the controller retire a
+        # running single-case spot job.
+        conditions.append(Runner.busy_case_attempt_id.is_(None))
+    statement = select(func.count()).select_from(Runner).where(*conditions)
     return int(session.scalar(statement) or 0)
 
 
@@ -338,6 +342,7 @@ def _build_state(
         settings=settings,
         now=now,
         statuses=(IDLE_RUNNER_STATUS,),
+        exclude_busy=True,
     )
     live = _runner_count(
         session,
@@ -598,6 +603,7 @@ def _idle_runners_for_release(
         .where(
             Runner.resource_pool_id == pool.id,
             Runner.status == IDLE_RUNNER_STATUS,
+            Runner.busy_case_attempt_id.is_(None),
             Runner.last_heartbeat_at.is_(None) | (Runner.last_heartbeat_at >= stale_before),
         )
         .order_by(

@@ -21,6 +21,8 @@ from app.config import Settings, get_settings
 from app.models import (
     Connection,
     Credential,
+    EvalCaseAttempt,
+    EvalEvent,
     ProvisionedInstance,
     ResourceEvent,
     ResourcePool,
@@ -835,3 +837,73 @@ def test_create_sends_no_runner_token_to_an_explicit_mirror(
     # never reaches this script for an external mirror.
     assert "RUNNER_TARBALL_TOKEN=''" in bootstrap
     assert "heartbeat-token" not in bootstrap
+
+
+def test_sync_reclaims_spot_interruption_before_instance_link(
+    session: Session,
+    scope: dict[str, str],
+    clock: datetime,
+    eval_env,
+) -> None:
+    """M8-39: provider_stopped before sync links the Runner must still retry."""
+
+    env = eval_env
+    connection = _connection(session, scope)
+    pool = _pool(session, scope, connection)
+    runner = session.scalar(
+        select(Runner).where(Runner.provider_runner_id == "fixed-linux-eval")
+    )
+    assert runner is not None
+    runner.resource_pool_id = pool.id
+    session.flush()
+
+    case_run_id = env["cases"]["case-a"]
+    attempt = session.scalar(
+        select(EvalCaseAttempt).where(EvalCaseAttempt.eval_case_run_id == case_run_id)
+    )
+    assert attempt is not None
+    attempt.status = "running"
+    attempt.runner_id = runner.id
+
+    instance = ProvisionedInstance(
+        tenant_id=scope["tenant_id"],
+        resource_pool_id=pool.id,
+        provider_instance_id="i-before-link",
+        status="registering",
+        spot_strategy="spot",
+        cost_json={"runner_name": runner.provider_runner_id},
+        created_at=clock - timedelta(minutes=1),
+    )
+    session.add(instance)
+    session.flush()
+    assert instance.runner_id is None
+
+    transport = FakeAliyun()
+    transport.instances["i-before-link"] = {
+        "InstanceId": "i-before-link",
+        "Status": "Stopped",
+    }
+
+    counts = _provisioner(transport=transport).sync(
+        session=session, connection=connection, pool=pool, now=clock
+    )
+
+    assert counts["interrupted"] == 1
+    session.expire_all()
+    attempt = session.get(EvalCaseAttempt, attempt.id)
+    assert attempt is not None
+    assert attempt.status == "failed"
+    assert attempt.error_code == "spot_interrupted"
+    attempts = list(
+        session.scalars(
+            select(EvalCaseAttempt)
+            .where(EvalCaseAttempt.eval_case_run_id == case_run_id)
+            .order_by(EvalCaseAttempt.attempt_no)
+        )
+    )
+    assert [row.attempt_no for row in attempts] == [1, 2]
+    assert instance.runner_id == runner.id
+    assert any(
+        event.event_type == "case.spot_interrupted"
+        for event in session.scalars(select(EvalEvent))
+    )
