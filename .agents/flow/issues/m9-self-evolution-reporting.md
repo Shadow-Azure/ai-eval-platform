@@ -13,6 +13,7 @@ scope:
   - backend/app/**
   - backend/ai_eval_platform.egg-info/**
   - backend/migrations/**
+  - deploy/**
   - scripts/**
   - web/src/**
   - prototype/**
