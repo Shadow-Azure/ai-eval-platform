@@ -6,7 +6,7 @@
 kind: issue
 milestone: m8
 priority: P1
-status: in-progress
+status: done
 scope:
   - .agents/flow/issues/m8-38-runner-binding.*
   - .agents/flow/issues/m8-37-spot-retry-fallback.*

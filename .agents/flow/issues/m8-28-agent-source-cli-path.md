@@ -6,7 +6,7 @@
 kind: issue
 milestone: m8
 priority: P2
-status: in-progress
+status: done
 scope:
   - .agents/flow/issues/m8-28-agent-source-cli-path.*
   - .agents/flow/milestones/m8-bug-fixes.*
