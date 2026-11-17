@@ -17,7 +17,7 @@ import json
 from datetime import UTC, datetime, timedelta
 
 from app.config import get_settings
-from app.models import EvalCaseAttempt, EvalCaseRun, EvalEvent, EvalRun, Outbox
+from app.models import EvalCaseAttempt, EvalCaseRun, EvalEvent, EvalRun, Outbox, Runner
 from app.seed import ensure_default_scope
 from app.services import evaluations, reconciler
 from app.services.short_token import issue_short_token
@@ -80,6 +80,33 @@ def test_started_moves_attempt_and_case_to_running(eval_env, client: TestClient)
     assert again.status_code == 200
     assert again.json()["deduped"] is True
     assert len(attempt_rows(env, case_run_id)) == 1
+
+
+def test_started_binds_runner_from_payload_without_header(
+    eval_env, client: TestClient
+) -> None:
+    """M8-39: the spot runner sends runner_id but no X-Runner-Id header."""
+
+    env = eval_env
+    case_run_id = env["cases"]["case-a"]
+    headers = auth(env)
+    headers.pop("X-Runner-Id", None)
+    response = client.post(
+        case_url(env, case_run_id, "started"),
+        json=started_body(env, case_run_id),
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+
+    env["session"].expire_all()
+    runner = (
+        env["session"]
+        .query(Runner)
+        .filter(Runner.provider_runner_id == "fixed-linux-eval")
+        .one()
+    )
+    assert runner.busy_case_attempt_id == case_run_id
+    assert runner.status == "busy"
 
 
 def test_started_for_unknown_case_is_404(eval_env, client: TestClient) -> None:

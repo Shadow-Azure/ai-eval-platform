@@ -476,21 +476,36 @@ def case_callback(
     _check_token_bindings(token_claims, case_run=ctx.case_run, attempt=ctx.attempt)
 
     runner = None
-    if x_runner_id:
+    runner_ref = x_runner_id
+    if runner_ref is None and action == "started":
+        # M8-39: real-task now always sends RUNNER_NAME in the started payload,
+        # but does not send X-Runner-Id. Bind from the payload so a running
+        # spot runner stops looking idle to the capacity controller.
+        payload_runner_id = payload.get("runner_id")
+        if isinstance(payload_runner_id, str) and payload_runner_id.strip():
+            runner_ref = payload_runner_id.strip()
+    if runner_ref:
         try:
-            runner = runner_service.get_runner_by_provider_id(session, x_runner_id)
+            runner = runner_service.get_runner_by_provider_id(session, runner_ref)
         except runner_service.RunnerNotFound as exc:
-            raise HTTPException(
-                status_code=404,
-                detail=error_detail("runner_not_found", "Runner 不存在"),
-            ) from exc
-        try:
-            if action in CASE_BIND_ACTIONS:
-                runner_service.bind_case(session, runner=runner, case_run_id=case_run_id)
-            else:
-                runner_service.release_case(session, runner=runner)
-        except runner_service.RunnerBusyConflict as exc:
-            raise _runner_conflict(exc) from exc
+            if x_runner_id:
+                raise HTTPException(
+                    status_code=404,
+                    detail=error_detail("runner_not_found", "Runner 不存在"),
+                ) from exc
+            # The payload fallback is best-effort: the heartbeat may not be
+            # visible yet. Let the started callback record what it can instead
+            # of failing the job; the reclaim path can still resolve the
+            # Runner by cost_json.runner_name.
+            runner = None
+        else:
+            try:
+                if action in CASE_BIND_ACTIONS:
+                    runner_service.bind_case(session, runner=runner, case_run_id=case_run_id)
+                else:
+                    runner_service.release_case(session, runner=runner)
+            except runner_service.RunnerBusyConflict as exc:
+                raise _runner_conflict(exc) from exc
 
     handler = {
         "started": case_attempts.handle_started,

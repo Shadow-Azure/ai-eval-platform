@@ -921,36 +921,53 @@ class AliyunEcsProvisioner:
         if detail:
             cost["reclaim_detail"] = detail
         instance.cost_json = cost
-        if instance.runner_id:
-            runner = session.get(Runner, instance.runner_id)
-            if runner is not None:
-                # M8-37: settle a live attempt before the runner disappears so
-                # the case can immediately request a new spot instance instead
-                # of waiting for the 300s heartbeat reaper. A stopped instance
-                # often reaches sync after the runner was already swept
-                # offline, so do not gate this on the runner status.
-                from .. import case_attempts
-
-                active_case = session.scalar(
-                    select(EvalCaseAttempt.eval_case_run_id)
+        # M8-39: a provider stop can arrive before the next sync tick ever
+        # links the instance to its Runner. The attempt already records
+        # ``runner_id`` from the started callback, so falling back to the
+        # instance's ``runner_name`` keeps the fast retry reachable instead of
+        # waiting for the 300s heartbeat reaper.
+        runner = session.get(Runner, instance.runner_id) if instance.runner_id else None
+        if runner is None:
+            runner_name = cost.get("runner_name")
+            if isinstance(runner_name, str) and runner_name:
+                runner = session.scalar(
+                    select(Runner)
                     .where(
-                        EvalCaseAttempt.runner_id == runner.id,
-                        EvalCaseAttempt.status.in_(
-                            case_attempts.SPOT_ACTIVE_ATTEMPT_STATUSES
-                        ),
+                        Runner.resource_pool_id == pool.id,
+                        Runner.provider_runner_id == runner_name,
                     )
-                    .order_by(EvalCaseAttempt.started_at.desc())
                     .limit(1)
                 )
-                if active_case is None and runner.busy_case_attempt_id:
-                    active_case = runner.busy_case_attempt_id
-                if active_case:
-                    case_attempts.handle_spot_interruption(
-                        session, case_run_id=active_case, now=now
-                    )
-                runner.status = "offline"
-                runner.deregistered_at = runner.deregistered_at or now
-                session.flush()
+            if runner is not None:
+                instance.runner_id = runner.id
+        if runner is not None:
+            # M8-37: settle a live attempt before the runner disappears so
+            # the case can immediately request a new spot instance instead
+            # of waiting for the 300s heartbeat reaper. A stopped instance
+            # often reaches sync after the runner was already swept
+            # offline, so do not gate this on the runner status.
+            from .. import case_attempts
+
+            active_case = session.scalar(
+                select(EvalCaseAttempt.eval_case_run_id)
+                .where(
+                    EvalCaseAttempt.runner_id == runner.id,
+                    EvalCaseAttempt.status.in_(
+                        case_attempts.SPOT_ACTIVE_ATTEMPT_STATUSES
+                    ),
+                )
+                .order_by(EvalCaseAttempt.started_at.desc())
+                .limit(1)
+            )
+            if active_case is None and runner.busy_case_attempt_id:
+                active_case = runner.busy_case_attempt_id
+            if active_case:
+                case_attempts.handle_spot_interruption(
+                    session, case_run_id=active_case, now=now
+                )
+            runner.status = "offline"
+            runner.deregistered_at = runner.deregistered_at or now
+            session.flush()
         self._record(
             session,
             pool,
