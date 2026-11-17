@@ -11,7 +11,7 @@ scope:
   - .gitignore
   - .github/**
   - backend/app/**
-  - backend/migrations/**
+\n  - backend/ai_eval_platform.egg-info/**
   - deploy/**
   - scripts/**
   - web/src/**
