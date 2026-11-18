@@ -52,7 +52,7 @@ node runner/scripts/real-task.mjs \
 
 ## 数据集镜像 tar（M8 #273）
 
-冷启动 Runner 在公开镜像源之前先尝试任务下发的 OSS 镜像 tar（`image_tarball`）：`curl` 下载到临时文件、`docker load -i`、`docker image inspect` 校验，任何一步失败都回退 `image_sources`，并写 `trace/image-tarball.json`（只含 key/host，不含签名 URL）。`lib/image-tarball.mjs` 负责这段逻辑，`scripts/real-task.mjs` 在解析镜像时调用。发布在固定主机用 `scripts/publish-dataset-image.sh`，与后端 `python -m app.manage dataset-image` 共用确定性 key。
+冷启动 Runner 在公开镜像源之前先尝试任务下发的 OSS 镜像 tar（`image_tarball`）：`curl` 下载到临时文件、`docker load -i`、`docker image inspect` 校验，任何一步失败都回退 `image_sources`，并写 `trace/image-tarball.json`（只含 key/host，不含签名 URL）。`lib/image-tarball.mjs` 负责这段逻辑，`scripts/real-task.mjs` 在解析镜像时调用。发布在固定主机用 `scripts/publish-dataset-image.sh`，与后端 `python -m app.manage dataset-image` 共用确定性 key。平台在启动前自动补齐缺失的数据集镜像 tar（#290）；Runner 侧的 tar 优先/公开源回退契约不变。
 
 ## 目录
 

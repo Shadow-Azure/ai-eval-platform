@@ -45,9 +45,12 @@ test("backend CI runs pytest against PostgreSQL and an empty-database migration"
 test("deploy script migrates before updating services and records the outcome", () => {
   const script = read("deploy/deploy.sh");
   assert.ok(script.includes("--profile tools run --rm migrate"));
-  assert.ok(script.includes("up -d --remove-orphans"));
+  assert.ok(script.includes("up -d"));
+  // M8 (#290): orphan removal would delete the running image-prep profile
+  // services and any in-progress pull.
+  assert.equal(script.includes("--remove-orphans"), false);
   assert.ok(script.includes("trap on_error ERR"));
-  assert.ok(script.indexOf("--profile tools run --rm migrate") < script.indexOf("up -d --remove-orphans"));
+  assert.ok(script.indexOf("--profile tools run --rm migrate") < script.indexOf("up -d"));
   assert.ok(script.includes("record_deployment succeeded"));
   assert.ok(script.includes("rollback.sh"));
   assert.equal(script.includes("set -x"), false);
@@ -56,9 +59,31 @@ test("deploy script migrates before updating services and records the outcome", 
 test("rollback restores images without a database downgrade", () => {
   const script = read("deploy/rollback.sh");
   assert.ok(script.includes(".state/previous.env"));
-  assert.ok(script.includes("up -d --remove-orphans"));
+  assert.ok(script.includes("up -d"));
+  assert.equal(script.includes("--remove-orphans"), false);
   assert.equal(script.includes("alembic downgrade"), false);
   assert.equal(script.includes("record_deployment rolled_back"), true);
+});
+
+test("image-prep profile survives deploys and is isolated from the app network", () => {
+  const compose = read("deploy/docker-compose.prod.yml");
+  const dindStart = compose.indexOf("\n  image-prep-dind:");
+  const workerStart = compose.indexOf("\n  image-prep:");
+  const webStart = compose.indexOf("\n  web:");
+  assert.ok(dindStart >= 0 && workerStart > dindStart && webStart > workerStart);
+  const dind = compose.slice(dindStart, workerStart);
+  const imagePrep = compose.slice(workerStart, webStart);
+  for (const section of [dind, imagePrep]) {
+    assert.ok(section.includes("restart: unless-stopped"), "image-prep services must restart");
+  }
+  // DinD joins only the dedicated network; the worker joins default + dedicated.
+  assert.ok(dind.includes("networks:"));
+  assert.ok(dind.includes("- image_prep_internal"));
+  assert.equal(dind.includes("- default"), false);
+  assert.ok(imagePrep.includes("- default"));
+  assert.ok(imagePrep.includes("- image_prep_internal"));
+  assert.ok(compose.includes("image_prep_internal:"));
+  assert.ok(imagePrep.includes("DOCKER_HOST: tcp://image-prep-dind:2375"));
 });
 
 test("production compose swaps object storage for OSS and keeps health checks", () => {

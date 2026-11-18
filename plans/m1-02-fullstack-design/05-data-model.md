@@ -54,8 +54,11 @@ tenant ─ workspace ─ project
 | `dataset_case` | id, tenant_id, dataset_version_id, case_key, ordinal, repo, base_commit, problem_statement, reference_patch_key, test_patch_key, expected_metrics_json, extra_json, environment_image | `(dataset_version_id,case_key)` unique；大补丁可放 OSS；`environment_image` 为 M8-25 的 per-case 运行时镜像，版本级 `dataset_version.environment_image` 仅作单镜像回退 |
 | `dataset_import` | id, tenant_id, dataset_id, source_config_json, status, total_count, valid_count, invalid_count, error_report_key, created_by | 一次导入过程 |
 | `dataset_image_sources_setting` | id, tenant_id, sources_json, updated_by, created_at, updated_at | M8-26 每个租户的公开镜像源覆盖；空行/空列表表示使用部署默认 `DATASET_IMAGE_REGISTRIES`；`(tenant_id)` unique |
+| `dataset_image_artifact` | id, tenant_id, image_ref, object_key, status, size_bytes, source, error, attempts, next_attempt_at, local_cleanup, cleanup_error, prepared_at, last_checked_at, created_at, updated_at | M8 #290 每个运行时镜像一行；`(tenant_id,image_ref)` unique；`status ∈ missing/preparing/ready/failed`，`local_cleanup ∈ pending/done/failed`；`next_attempt_at` 兼作租约与失败退避 |
 | `metric_definition` | id, tenant_id, dataset_id, metric_key, version, display_name, description, aggregator_key, formula_text, display_kind, unit, direction, denominator_policy, config_json | `(dataset_id,metric_key,version)` unique |
 | `dataset_version_metric` | tenant_id, dataset_version_id, metric_definition_id | 固化该版本采用的指标集合 |
+
+`dataset_image_artifact` 是镜像 tar 预检/补齐的幂等锚点：`object_key` 与 Runner 下发的 tar 共用同一确定性派生。prepare 做 HEAD 并把未就绪行入队；ensure/create 也会把 missing/failed/租约过期的行置为 `preparing` 并入队，Worker 用 `FOR UPDATE SKIP LOCKED` 领取并写回 `next_attempt_at` 租约，失败行按 `next_attempt_at` 指数退避重试，达到 `dataset_image_prep_max_attempts` 后保持 `failed`，只有显式 retry 才重置 `attempts` 并立即入队。`local_cleanup` 与 `cleanup_error` 记录上传后本地镜像/临时 tar 的清理结果，供扫描清理和前端展示“后台本地残留 0”。
 
 `aggregator_key` 只能引用服务端注册表，例如 `ratio`、`sum`、`mean`、`histogram`；`formula_text` 用于解释，不作为 Python/SQL 执行。需要新计算算法时新增聚合器代码和版本。
 

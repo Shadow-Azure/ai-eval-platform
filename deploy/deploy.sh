@@ -77,7 +77,11 @@ fi
 stage_finish success "Alembic ${MIGRATION_REVISION}"
 
 stage_begin rolling_update
-"${COMPOSE[@]}" up -d --remove-orphans
+# M8 (#290): keep orphan removal off here. The image-prep-dind/image-prep
+# services run under the "image-prep" profile and are not in the default
+# service set, so deleting orphans would remove a long-running worker and any
+# in-progress pull on every ordinary deploy.
+"${COMPOSE[@]}" up -d
 stage_finish success "API/Web 容器替换完成"
 
 # M8-16: the proxy is not part of the API health check, so a squid that fails

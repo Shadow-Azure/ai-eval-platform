@@ -73,6 +73,10 @@ Runner 用它设置 Agent wall-clock 超时；`REAL_TASK_TIMEOUT_MS` 仅保留�
 继续下一个源，全部失败才以 `image_unavailable` 终止。最终使用的源和尝试链写入 trace/诊断，便于定位
 “导入校验成功但运行时拉不到”的问题。公开源不涉及私有 registry 认证。
 
+## 1.7 运行时镜像 tar 预检与自动补齐（#290）
+
+准备阶段按 case `environment_image` → 版本级 `environment_image` → adapter 派生（SWE-bench instance 命名）解析本次用例的镜像并去重，冻结进快照 `image_refs`，逐个 HEAD 由镜像引用确定性派生的 OSS tar；响应返回逐镜像 `image_readiness`，缺失项由 prepare（以及确认页 ensure、create 复查）幂等入队，不阻塞快照创建。`image-prep` profile 内的 Worker 领取 `dataset_image_artifact` 租约后按生效公开源顺序 pull，成功后 tag 到规范引用，`docker save` 以 gzip 级别 1 流式写入临时 tar，presign PUT 上传并用 HEAD 校验大小，然后删除本地镜像与临时 tar 并写回 `local_cleanup`。准备使用独立 Docker-in-Docker（不挂宿主 socket，数据根与工作目录都在数据盘），进入前检查数据盘至少 8GB 可用，同一时刻只处理一个镜像；Runner 侧 tar 优先与公开源回退路径不变。
+
 ## 2. 五文件任务包与 OSS 布局
 
 架构固定任务包为 `task.toml`、`instruction.md`、`environment/Dockerfile`、`tests/test.sh`、`solution/solve.sh`。建议 manifest 另存于版本级索引，记录每个文件 digest、评分镜像 digest、可见性和运行时约束。
