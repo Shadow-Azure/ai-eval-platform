@@ -1,5 +1,5 @@
 # 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
 # git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
 #   pnpm run record:i18n -- .agents/flow/issues/m8-dataset-image-preflight-ensure.md
-m8-dataset-image-preflight-ensure.md: 41584ee7ea6402ae98f865019a51ac903eb2da5a
-m8-dataset-image-preflight-ensure.en.md: 16adde722e05f2da5f2ea8eb0ea6d8001dc5f877
+m8-dataset-image-preflight-ensure.md: 4bf7579ec8639494b650655dad47bec38bbce9bb
+m8-dataset-image-preflight-ensure.en.md: 21e08dfe97ce538d63c41a79d0967e1578c007bc
