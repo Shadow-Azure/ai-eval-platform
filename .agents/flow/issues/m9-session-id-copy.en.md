@@ -5,8 +5,8 @@ English | [中文](m9-session-id-copy.md)
 ```yaml flow
 kind: issue
 milestone: m9
-priority: P2
-status: ready
+priority: P0
+status: done
 scope:
   - web/src/**
   - tests/**
