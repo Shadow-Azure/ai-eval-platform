@@ -937,10 +937,15 @@ def handle_failed(
     if payload.get("trace_manifest") is not None:
         try:
             trace_manifest = normalize_trace_manifest(payload["trace_manifest"])
+            trace_items = trace_objects(trace_manifest)
+            # The uploads callback normally checks ownership before this
+            # terminal callback. Re-check here so a failure callback alone can
+            # never attach another attempt's objects.
+            _verify_trace_object_ownership(ctx, trace_items)
             merged = dict(ctx.attempt.artifact_manifest_json or {})
             merged["trace_manifest"] = trace_manifest
             merged["objects"] = merge_manifest_objects(
-                merged.get("objects"), trace_objects(trace_manifest)
+                merged.get("objects"), trace_items
             )
             ctx.attempt.artifact_manifest_json = merged
         except TraceManifestError as exc:

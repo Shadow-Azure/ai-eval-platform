@@ -172,7 +172,7 @@ def test_job_timeout_follows_the_agent_budget(session: Session) -> None:
     assert long_payload["job_timeout_minutes"] > short_payload["job_timeout_minutes"]
 
 
-def _partial_trace() -> dict:
+def _partial_trace(run: EvalRun, case: EvalCaseRun, attempt: EvalCaseAttempt) -> dict:
     return {
         "manifest_version": "1.0",
         "capture_status": "partial",
@@ -183,7 +183,10 @@ def _partial_trace() -> dict:
             {
                 "artifact_kind": "trace",
                 "logical_path": "claude/stream.jsonl",
-                "object_key": f"evaluations/partial/{'a' * 64}",
+                "object_key": (
+                    f"evaluations/{run.id}/{attempt.shard_id}/attempt{attempt.attempt_no}"
+                    f"/{case.id}/trace/{'a' * 64}"
+                ),
                 "sha256": "a" * 64,
                 "size": 128,
                 "content_type": "application/x-ndjson",
@@ -199,10 +202,10 @@ def test_runner_lost_failure_with_partial_trace_is_terminal_and_ingestible(
     session: Session,
 ) -> None:
     run = _create_run(session, key="timeout-partial", max_attempts=2)
-    case, _ = _case_attempt(session, run)
+    case, attempt = _case_attempt(session, run)
     payload = {
         **failure_body(case.id, error_code="runner_lost", retryable=False),
-        "trace_manifest": _partial_trace(),
+        "trace_manifest": _partial_trace(run, case, attempt),
     }
 
     result = case_attempts.handle_failed(session, payload=payload)
