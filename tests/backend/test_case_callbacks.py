@@ -193,6 +193,50 @@ def test_uploads_and_completion_close_the_case(eval_env, client: TestClient) -> 
     assert case.duration_ms == 1200
 
 
+def test_completed_releases_the_bound_runner(eval_env, client: TestClient) -> None:
+    """#281: a successful completion frees the fixed Runner for the next run."""
+
+    env = eval_env
+    case_run_id = env["cases"]["case-a"]
+    headers = auth(env)
+    # The real Runner terminal callback carries no X-Runner-Id; the binding is
+    # proven by the started callback and must be released by completion itself.
+    headers.pop("X-Runner-Id", None)
+
+    started = client.post(
+        case_url(env, case_run_id, "started"),
+        json=started_body(env, case_run_id),
+        headers=headers,
+    )
+    assert started.status_code == 200, started.text
+    env["session"].expire_all()
+    runner = (
+        env["session"]
+        .query(Runner)
+        .filter(Runner.provider_runner_id == "fixed-linux-eval")
+        .one()
+    )
+    assert runner.busy_case_attempt_id == case_run_id
+    assert runner.status == "busy"
+
+    completed = client.post(
+        case_url(env, case_run_id, "completed"),
+        json=completion_body(env, case_run_id),
+        headers=headers,
+    )
+    assert completed.status_code == 200, completed.text
+
+    env["session"].expire_all()
+    runner = (
+        env["session"]
+        .query(Runner)
+        .filter(Runner.provider_runner_id == "fixed-linux-eval")
+        .one()
+    )
+    assert runner.busy_case_attempt_id is None
+    assert runner.status == "online"
+
+
 def test_duplicate_completion_is_idempotent(eval_env, client: TestClient) -> None:
     env = eval_env
     case_run_id = env["cases"]["case-a"]
