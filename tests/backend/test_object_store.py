@@ -15,6 +15,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 import pytest
+from app.services import object_store as object_store_module
 from app.services.object_store import (
     ObjectMissing,
     ObjectSizeMismatch,
@@ -257,3 +258,29 @@ def test_put_file_missing_local_file_is_a_store_error(endpoint: str, tmp_path) -
     store = make_store(endpoint)
     with pytest.raises(ObjectStoreError):
         store.put_file("objects/missing.tar.gz", tmp_path / "missing.tar.gz", now=now())
+
+
+def test_put_file_presigns_before_opening_the_local_file(
+    endpoint: str, tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A presign failure must not leave a multi-GB file handle open."""
+
+    store = make_store(endpoint)
+    path = tmp_path / "image.tar.gz"
+    path.write_bytes(b"payload")
+    opened: list[str] = []
+    real_open = open
+
+    def tracking_open(*args, **kwargs):
+        opened.append(str(args[0]))
+        return real_open(*args, **kwargs)
+
+    def fail_presign(*_args, **_kwargs):
+        raise ObjectStoreError("presign 失败")
+
+    monkeypatch.setattr(object_store_module, "open", tracking_open, raising=False)
+    monkeypatch.setattr(ObjectStore, "presign_put_url", fail_presign)
+    with pytest.raises(ObjectStoreError, match="presign 失败"):
+        store.put_file("objects/unreachable.tar.gz", path, now=now())
+
+    assert opened == []

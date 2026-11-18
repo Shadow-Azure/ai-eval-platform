@@ -213,22 +213,32 @@ class ObjectStore:
         now = now or datetime.now(UTC)
         try:
             size = os.path.getsize(path)
+        except OSError as exc:
+            raise ObjectStoreError(f"读取本地文件 {path} 失败：{exc}") from exc
+        # Presign before opening the multi-GB file: a signing failure must not
+        # leave an open handle behind. The handle is then owned by the context
+        # manager below, so every error path closes it.
+        url = self.presign_put_url(object_key, expires=900, now=now)
+        try:
             handle = open(path, "rb")
         except OSError as exc:
             raise ObjectStoreError(f"读取本地文件 {path} 失败：{exc}") from exc
-        url = self.presign_put_url(object_key, expires=900, now=now)
-        request = urllib.request.Request(
-            url,
-            data=handle,
-            method="PUT",
-            headers={"Content-Type": content_type, "Content-Length": str(size)},
-        )
         try:
-            with handle, urllib.request.urlopen(request, timeout=timeout) as response:
-                if response.status not in (200, 201):
-                    raise ObjectStoreError(
-                        f"PUT {object_key} 返回 HTTP {response.status}"
-                    )
+            with handle:
+                request = urllib.request.Request(
+                    url,
+                    data=handle,
+                    method="PUT",
+                    headers={
+                        "Content-Type": content_type,
+                        "Content-Length": str(size),
+                    },
+                )
+                with urllib.request.urlopen(request, timeout=timeout) as response:
+                    if response.status not in (200, 201):
+                        raise ObjectStoreError(
+                            f"PUT {object_key} 返回 HTTP {response.status}"
+                        )
         except urllib.error.HTTPError as exc:
             raise ObjectStoreError(f"PUT {object_key} 返回 HTTP {exc.code}") from exc
         except urllib.error.URLError as exc:

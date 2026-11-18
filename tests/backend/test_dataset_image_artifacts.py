@@ -488,6 +488,73 @@ def test_failed_backoff_gates_requeue_and_stops_after_the_attempt_cap(
     assert _artifact(session, IMAGE_A).status == "failed"
 
 
+def test_recheck_keeps_a_maxed_failed_row_terminal(
+    session: Session, configure_settings
+) -> None:
+    with StubObjectStore() as store:
+        settings = _store_settings(store, dataset_image_prep_max_attempts=2)
+        row = artifacts.get_or_create_artifact(session, IMAGE_A, settings)
+        row.status = "failed"
+        row.attempts = 2
+        row.error = "拉取镜像失败：timeout"
+        row.source = "docker.io"
+        row.next_attempt_at = None
+        session.commit()
+
+        result = artifacts.readiness(
+            session, [IMAGE_A], settings, recheck=True, enqueue=True
+        )
+        session.commit()
+
+    # Reaching the attempt cap is terminal: neither a fresh HEAD (the stub has
+    # no object, which used to downgrade failed -> missing) nor enqueue may
+    # revive it or erase the last error/source; only the explicit retry does.
+    row = _artifact(session, IMAGE_A)
+    assert row.status == "failed"
+    assert row.attempts == 2
+    assert row.error == "拉取镜像失败：timeout"
+    assert row.source == "docker.io"
+    assert row.next_attempt_at is None
+    assert row.last_checked_at is None
+    assert result["failed_count"] == 1
+    assert result["preparing_count"] == 0
+    assert result["missing_count"] == 0
+
+
+def test_reap_stale_preparing_fails_only_abandoned_rows(session: Session) -> None:
+    settings = _settings(dataset_image_prep_stale_seconds=60)
+    now = datetime.now(UTC)
+    abandoned = artifacts.get_or_create_artifact(session, IMAGE_A, settings)
+    abandoned.status = "preparing"
+    abandoned.attempts = 0
+    abandoned.next_attempt_at = now - timedelta(seconds=120)
+    abandoned.local_cleanup = "pending"
+    fresh = artifacts.get_or_create_artifact(session, IMAGE_B, settings)
+    fresh.status = "preparing"
+    fresh.next_attempt_at = now + timedelta(seconds=60)
+    fresh.local_cleanup = "pending"
+    session.commit()
+
+    assert artifacts.reap_stale_preparing(session, settings, now=now) == 1
+    session.commit()
+
+    stale_row = _artifact(session, IMAGE_A)
+    assert stale_row.status == "failed"
+    assert stale_row.error == artifacts.STALE_PREPARING_ERROR
+    assert stale_row.next_attempt_at is None
+    # Local cleanup belongs to the worker; the reaper must not fake it.
+    assert stale_row.local_cleanup == "pending"
+    assert stale_row.attempts == 0
+    assert _artifact(session, IMAGE_B).status == "preparing"
+
+    # A row that was never enqueued (next_attempt_at null) is not "stale".
+    fresh = _artifact(session, IMAGE_B)
+    fresh.next_attempt_at = None
+    session.commit()
+    assert artifacts.reap_stale_preparing(session, settings, now=now) == 0
+    assert _artifact(session, IMAGE_B).status == "preparing"
+
+
 def test_readiness_caps_the_image_list_at_200(session: Session) -> None:
     settings = _settings()
     images = [f"registry.example/eval/bulk-{index:03d}:latest" for index in range(201)]
@@ -593,6 +660,59 @@ def test_prepare_freezes_image_refs_and_initial_readiness(
     row = _artifact(session, IMAGE_A)
     assert row.status == "preparing"
     assert row.next_attempt_at is not None
+
+
+def test_prepare_extends_ttl_while_images_are_pending(
+    client: TestClient, session: Session, configure_settings
+) -> None:
+    configure_settings(
+        EVAL_PREPARATION_TTL_SECONDS="120",
+        EVAL_PREPARATION_IMAGE_TTL_SECONDS="7200",
+    )
+    ids = seed_launch(session)
+    _set_first_case_image(session, ids["dataset_version_id"], IMAGE_A)
+    before = datetime.now(UTC)
+
+    response = client.post("/api/v1/evaluations/prepare", json=prepare_body(ids))
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["image_readiness"]["ready"] is False
+
+    expires = datetime.fromisoformat(body["expires_at"].replace("Z", "+00:00"))
+    assert expires >= before + timedelta(seconds=7200 - 5)
+    assert expires <= before + timedelta(seconds=7200 + 5)
+    preparation = session.get(EvalPreparation, body["preparation_id"])
+    assert preparation is not None
+    # ``_iso`` truncates to whole seconds; compare the instant with tolerance.
+    assert abs((_utc(preparation.expires_at) - expires).total_seconds()) < 1
+    assert preparation.snapshot_json["expires_at"] == body["expires_at"]
+
+
+def test_prepare_keeps_the_normal_ttl_when_every_image_is_ready(
+    client: TestClient, session: Session, configure_settings
+) -> None:
+    configure_settings(
+        EVAL_PREPARATION_TTL_SECONDS="120",
+        EVAL_PREPARATION_IMAGE_TTL_SECONDS="7200",
+    )
+    with StubObjectStore() as store:
+        _configure_stub(configure_settings, store)
+        ids = seed_launch(session)
+        _set_first_case_image(session, ids["dataset_version_id"], IMAGE_A)
+        store.add(
+            tarball_key(IMAGE_A, prefix=get_settings().dataset_image_tarball_prefix),
+            1024,
+        )
+        before = datetime.now(UTC)
+
+        response = client.post("/api/v1/evaluations/prepare", json=prepare_body(ids))
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["image_readiness"]["ready"] is True
+
+    expires = datetime.fromisoformat(body["expires_at"].replace("Z", "+00:00"))
+    assert expires >= before + timedelta(seconds=120 - 5)
+    assert expires <= before + timedelta(seconds=120 + 5)
 
 
 def test_blocked_prepare_has_no_image_readiness(client: TestClient, session: Session) -> None:
@@ -738,6 +858,53 @@ def test_artifact_endpoints_report_and_retry(
     assert row.status == "preparing"
     assert row.attempts == 0
     assert row.error is None
+
+
+def test_artifact_endpoints_reap_a_stale_preparing_row(
+    client: TestClient, session: Session
+) -> None:
+    ids = seed_launch(session)
+    _set_first_case_image(session, ids["dataset_version_id"], IMAGE_A)
+    prepared = client.post("/api/v1/evaluations/prepare", json=prepare_body(ids)).json()
+    preparation_id = prepared["preparation_id"]
+
+    row = _artifact(session, IMAGE_A)
+    row.next_attempt_at = datetime.now(UTC) - timedelta(hours=2)
+    session.commit()
+
+    fetched = client.get(
+        "/api/v1/dataset-images/artifacts",
+        params={"preparation_id": preparation_id},
+    )
+    assert fetched.status_code == 200, fetched.text
+    body = fetched.json()
+    assert body["preparing_count"] == 0
+    assert body["failed_count"] == 1
+    assert body["images"][0]["status"] == "failed"
+    assert body["images"][0]["error"] == artifacts.STALE_PREPARING_ERROR
+    assert body["images"][0]["next_attempt_at"] is None
+    # The GET persists the transition, so the next poll shows the same state.
+    assert _artifact(session, IMAGE_A).status == "failed"
+
+    # Ensure runs the same reaper before readiness. A maxed row stays failed
+    # even though ensure would normally enqueue a non-ready image.
+    row = _artifact(session, IMAGE_A)
+    row.status = "preparing"
+    row.attempts = get_settings().dataset_image_prep_max_attempts
+    row.error = None
+    row.next_attempt_at = datetime.now(UTC) - timedelta(hours=2)
+    session.commit()
+
+    ensured = client.post(
+        "/api/v1/dataset-images/artifacts/ensure",
+        json={"preparation_id": preparation_id},
+    )
+    assert ensured.status_code == 200, ensured.text
+    ensured_body = ensured.json()
+    assert ensured_body["failed_count"] == 1
+    assert ensured_body["preparing_count"] == 0
+    assert ensured_body["images"][0]["status"] == "failed"
+    assert ensured_body["images"][0]["error"] == artifacts.STALE_PREPARING_ERROR
 
 
 def test_artifact_retry_is_admin_only(client: TestClient, session: Session) -> None:

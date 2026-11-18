@@ -120,7 +120,11 @@ class Settings(BaseSettings):
     dataset_image_check_enabled: bool = True
     # M8 (#290): a prepare worker claims one image at a time. The lease keeps a
     # crashed claim reclaimable instead of leaving the row stuck in preparing.
-    dataset_image_prepare_lease_seconds: int = 900
+    # It must outlast one full pull+save+upload attempt (1800 + 1800 + 3600s);
+    # a shorter lease lets a second worker steal a row mid-pull. Multi-worker
+    # setups still need lease renewal/owner IDs, so the startup sweep is only
+    # safe for a single worker.
+    dataset_image_prepare_lease_seconds: int = 7200
     # The worker itself runs only when enabled; the compose ``image-prep``
     # profile is the deploy gate so a normal deploy never starts it before the
     # data disk exists. Pull/save happens in a dedicated Docker-in-Docker
@@ -135,6 +139,11 @@ class Settings(BaseSettings):
     dataset_image_prep_poll_seconds: float = 5.0
     dataset_image_prep_heartbeat_path: str = "/tmp/image-prep-heartbeat"
     dataset_image_prep_max_attempts: int = 3
+    # A preparing row whose ``next_attempt_at`` has been due for this long was
+    # enqueued while no worker was claiming rows (profile not started or the
+    # worker crashed before its claim). The API reaper turns it into a visible
+    # failed row instead of an endless "preparing" spinner.
+    dataset_image_prep_stale_seconds: int = 1800
 
     # M2-05 synthetic evaluation loop.
     # Short-term case-token secret (platform signs, runner verifies). When
@@ -237,6 +246,11 @@ class Settings(BaseSettings):
     # whole configuration. The TTL is deliberately short because it freezes an
     # asset commit and the resolved capacity context.
     eval_preparation_ttl_seconds: int = 900
+    # M8 (#290): image preparation is an out-of-band, multi-minute job. While a
+    # frozen snapshot still has images that are not ready, prepare extends the
+    # snapshot TTL to this longer value so the operator can confirm the launch
+    # after the worker finishes instead of losing the snapshot mid-preparation.
+    eval_preparation_image_ttl_seconds: int = 3600
     # Execution policy bounds accepted by prepare/create. The wizard renders
     # these as field errors; the server is the authority (never a fake success).
     eval_min_case_timeout_seconds: int = 60

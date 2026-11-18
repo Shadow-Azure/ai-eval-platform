@@ -63,7 +63,7 @@ docker compose --env-file .env -f deploy/docker-compose.prod.yml --profile image
 docker compose --env-file .env -f deploy/docker-compose.prod.yml --profile image-prep exec image-prep sh -c 'ls -l /work'
 ```
 
-After each upload passes the HEAD check, `docker images` no longer lists that image and `/work` holds no `dataset-image-*.tar.gz`; the startup and 10-minute sweeps remove local images left by an interrupted run and temporary tarballs older than 1 hour. Stop the preparation services with `down` on the same profile and keep the data disk directory.
+After each upload passes the HEAD check, `docker images` no longer lists that image and `/work` holds no `dataset-image-*.tar.gz`; startup cleans local images left by an interrupted run and all temporary tarballs, while the 10-minute sweep only removes temporary tarballs older than 1 hour. Stop the preparation services with `down` on the same profile and keep the data disk directory. Because deploy/rollback no longer pass `--remove-orphans`, removing or renaming a compose service requires manually pruning the old container (for example `docker compose ... rm -f <service>`); the `image-prep` profile is intentionally preserved.
 
 ## Editing documentation
 

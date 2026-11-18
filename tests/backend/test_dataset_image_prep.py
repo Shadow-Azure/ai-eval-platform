@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import subprocess
 import threading
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -653,6 +654,45 @@ def test_heartbeat_thread_keeps_writing_until_stopped(
 
     assert calls and calls[0] == path
     assert not thread.is_alive()
+
+
+def test_disabled_worker_writes_heartbeat_and_idles_until_stopped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``restart: unless-stopped`` must not restart-loop a disabled worker."""
+
+    heartbeat = tmp_path / "image-prep-heartbeat"
+    settings = SimpleNamespace(
+        dataset_image_prep_enabled=False,
+        dataset_image_prep_heartbeat_path=str(heartbeat),
+        dataset_image_prep_poll_seconds=0.01,
+    )
+    monkeypatch.setattr(worker, "get_settings", lambda: settings)
+    # signal.signal() only works on the main thread; the test runs main() in a
+    # helper thread to be able to stop it.
+    monkeypatch.setattr(worker.signal, "signal", lambda *_args: None)
+    monkeypatch.setattr(worker, "_STOP", False)
+    result: dict[str, int] = {}
+
+    thread = threading.Thread(target=lambda: result.update(code=worker.main()))
+    thread.start()
+    try:
+        deadline = time.monotonic() + 2.0
+        while not heartbeat.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert heartbeat.exists(), "disabled worker never wrote a heartbeat"
+        first = float(heartbeat.read_text(encoding="utf-8"))
+        assert first > 0
+        # Keep idling (fresh heartbeat) rather than returning 0 immediately.
+        time.sleep(0.05)
+        assert float(heartbeat.read_text(encoding="utf-8")) >= first
+        assert thread.is_alive()
+    finally:
+        worker._STOP = True
+        thread.join(timeout=2.0)
+
+    assert not thread.is_alive()
+    assert result["code"] == 0
 
 
 # ---------------------------------------------------------------------------

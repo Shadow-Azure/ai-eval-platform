@@ -332,6 +332,11 @@ export interface ImageReadinessImage {
   size_bytes?: number | null;
   source?: string | null;
   error?: string | null;
+  /**
+   * #290: worker-owned next transition. ``null`` means the row is terminal;
+   * a non-null value on a failed row is the automatic retry time.
+   */
+  next_attempt_at?: string | null;
   cleanup_status?: ImageCleanupStatus | null;
   cleanup_error?: string | null;
 }
@@ -1093,6 +1098,7 @@ function parseImageReadinessImage(value: unknown): ImageReadinessImage | null {
     size_bytes: readOptionalNumber(value.size_bytes),
     source: readOptionalString(value.source),
     error: readOptionalString(value.error),
+    next_attempt_at: readOptionalString(value.next_attempt_at),
     cleanup_status: parseImageCleanupStatus(value.cleanup_status),
     cleanup_error: readOptionalString(value.cleanup_error),
   };

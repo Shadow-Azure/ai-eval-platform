@@ -105,16 +105,26 @@ def run_sweep(settings, docker, *, startup: bool = False) -> None:
 
 def main() -> int:
     settings = get_settings()
-    if not settings.dataset_image_prep_enabled:
-        print("image-prep: disabled (DATASET_IMAGE_PREP_ENABLED=false)", flush=True)
-        return 0
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
 
     heartbeat = Path(settings.dataset_image_prep_heartbeat_path)
     heartbeat.parent.mkdir(parents=True, exist_ok=True)
-    docker = DockerCliImagePreparer(settings)
     poll_seconds = max(0.1, float(settings.dataset_image_prep_poll_seconds))
+
+    if not settings.dataset_image_prep_enabled:
+        # Compose uses ``restart: unless-stopped`` and a healthcheck on this
+        # file. Exiting 0 here would restart the container in a loop and never
+        # turn the healthcheck green, so a disabled worker idles and keeps
+        # writing the heartbeat until SIGTERM stops it.
+        print("image-prep: disabled (DATASET_IMAGE_PREP_ENABLED=false)", flush=True)
+        write_heartbeat(heartbeat)
+        while not _STOP:
+            time.sleep(poll_seconds)
+            write_heartbeat(heartbeat)
+        return 0
+
+    docker = DockerCliImagePreparer(settings)
 
     heartbeat_thread, heartbeat_stop = start_heartbeat(heartbeat)
     try:

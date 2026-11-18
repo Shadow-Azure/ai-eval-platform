@@ -753,7 +753,16 @@ def build_preparation(
     config = session.get(ModelConfig, model_config_id)
     # Use the shared id helper so ids match every other domain row.
     preparation_id = new_id()
-    expires_at = now + timedelta(seconds=settings.eval_preparation_ttl_seconds)
+    ttl_seconds = settings.eval_preparation_ttl_seconds
+    # M8 (#290): a snapshot whose images still need an out-of-band worker run
+    # must survive the multi-minute pull/save/upload. Extend it to the image
+    # preparation window; a snapshot whose images are already ready keeps the
+    # normal short TTL.
+    if image_refs and not image_readiness["ready"]:
+        ttl_seconds = max(
+            ttl_seconds, settings.eval_preparation_image_ttl_seconds
+        )
+    expires_at = now + timedelta(seconds=ttl_seconds)
     asset_snapshot = _snapshot_asset(result.asset_snapshot)
     adapter = get_runtime_adapter(runtime_key)
 

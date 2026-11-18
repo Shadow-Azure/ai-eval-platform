@@ -3,7 +3,11 @@
 The launch wizard polls one preparation's per-image tarball state and asks the
 backend to enqueue missing images; administrators can retry failed ones.
 Responses are JSON-safe (no OSS credentials or signed URLs); the worker plane
-owns the Docker/OSS write path.
+owns the Docker/OSS write path. Each image row carries ``next_attempt_at`` so the
+wizard knows whether a visible failure is still inside the worker's automatic
+retry window or terminal. Both read endpoints first reap stale ``preparing``
+rows, so an unstarted ``image-prep`` profile surfaces as a concrete failure
+instead of an endless spinner.
 """
 
 from __future__ import annotations
@@ -94,7 +98,11 @@ def get_dataset_image_artifacts(
     context: identity.AuthContext = Depends(require_session),
 ) -> dict:
     preparation = _load_preparation(session, preparation_id, context)
-    return _readiness(session, preparation, settings)
+    reaped = artifact_service.reap_stale_preparing(session, settings)
+    result = _readiness(session, preparation, settings)
+    if reaped:
+        session.commit()
+    return result
 
 
 @router.post("/api/v1/dataset-images/artifacts/ensure")
@@ -105,6 +113,7 @@ def ensure_dataset_image_artifacts(
     context: identity.AuthContext = Depends(require_session),
 ) -> dict:
     preparation = _load_preparation(session, payload.preparation_id, context)
+    artifact_service.reap_stale_preparing(session, settings)
     result = _readiness(
         session, preparation, settings, recheck=payload.recheck, enqueue=True
     )

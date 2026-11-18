@@ -40,6 +40,11 @@ READINESS_IMAGE_LIMIT = 200
 # preflight bounded so prepare stays responsive on a slow OSS endpoint.
 CHECK_CONCURRENCY = 8
 STATUS_ORDER = {"failed": 0, "preparing": 1, "missing": 2, "ready": 3}
+# Shown when a preparing row outlives the worker's claim/requeue window. The
+# wording names the compose profile so an operator can fix the common cause.
+STALE_PREPARING_ERROR = (
+    "镜像准备服务未运行或已中断；请确认 image-prep profile 已启动"
+)
 
 
 def _now(now: datetime | None = None) -> datetime:
@@ -189,16 +194,23 @@ def _head_artifact(store, row: DatasetImageArtifact) -> tuple[str, int | None, s
         return "failed", None, f"对象存储检查失败：{exc}"
 
 
-def _recheck_blocked(row: DatasetImageArtifact, now: datetime) -> bool:
-    """True while a worker lease or retry backoff owns the row.
+def _recheck_blocked(
+    row: DatasetImageArtifact, now: datetime, max_attempts: int
+) -> bool:
+    """True while a worker lease, retry backoff, or terminal failure owns the row.
 
     A readiness recheck must not steal an active ``preparing`` lease or pull a
     failed row forward before its backoff: those transitions belong to the
     worker (``claim_preparing_artifact`` / ``requeue_due_failed_artifacts``).
+    A failed row at ``max_attempts`` is terminal: HEADing it would downgrade it
+    to ``missing`` and erase the last error, and the following enqueue would
+    start another full pull. Only the explicit retry resets attempts.
     """
 
     if row.status not in ("preparing", "failed"):
         return False
+    if row.status == "failed" and (row.attempts or 0) >= max_attempts:
+        return True
     next_attempt = _as_utc(row.next_attempt_at)
     return next_attempt is not None and next_attempt > now
 
@@ -218,6 +230,49 @@ def _needs_enqueue(row: DatasetImageArtifact, now: datetime, max_attempts: int) 
         return False
     next_attempt = _as_utc(row.next_attempt_at)
     return next_attempt is None or next_attempt <= now
+
+
+def reap_stale_preparing(
+    session: Session,
+    settings: Settings | None = None,
+    now: datetime | None = None,
+) -> int:
+    """Fail ``preparing`` rows that no worker has claimed for too long.
+
+    ``prepare`` enqueues rows with ``next_attempt_at=now`` and the worker moves
+    them forward. If the ``image-prep`` profile is not running (or the worker
+    died before its claim), the row would otherwise stay ``preparing`` forever
+    and the wizard would poll an endless spinner. After
+    ``dataset_image_prep_stale_seconds`` the row becomes ``failed`` with an
+    operator-facing reason; ``local_cleanup`` is untouched because only the
+    worker owns local Docker state. A later job starts again from the normal
+    failed-row path (automatic retry when a worker returns, or the explicit
+    console retry).
+    """
+
+    settings = settings or get_settings()
+    now = _now(now)
+    stale_seconds = max(1, int(settings.dataset_image_prep_stale_seconds))
+    stale_before = now - timedelta(seconds=stale_seconds)
+    result = session.execute(
+        update(DatasetImageArtifact)
+        .where(
+            DatasetImageArtifact.tenant_id == _tenant_id(),
+            DatasetImageArtifact.status == "preparing",
+            DatasetImageArtifact.next_attempt_at.is_not(None),
+            DatasetImageArtifact.next_attempt_at <= stale_before,
+        )
+        .values(
+            status="failed",
+            error=STALE_PREPARING_ERROR,
+            next_attempt_at=None,
+        )
+        # Bulk update: SQLite returns naive datetimes, so never evaluate the
+        # comparison in Python (same reason as the requeue bulk update).
+        .execution_options(synchronize_session=False)
+    )
+    session.flush()
+    return int(result.rowcount or 0)
 
 
 def readiness(
@@ -244,13 +299,16 @@ def readiness(
 
     settings = settings or get_settings()
     now = _now()
+    max_attempts = max(1, int(settings.dataset_image_prep_max_attempts))
     unique = _normalized_images(images)
     rows = [get_or_create_artifact(session, image, settings) for image in unique]
 
     if recheck and rows:
         store = object_store_from_settings(settings)
         if store is not None:
-            checkable = [row for row in rows if not _recheck_blocked(row, now)]
+            checkable = [
+                row for row in rows if not _recheck_blocked(row, now, max_attempts)
+            ]
             if checkable:
                 with ThreadPoolExecutor(
                     max_workers=max(1, min(CHECK_CONCURRENCY, len(checkable)))
@@ -282,7 +340,6 @@ def readiness(
                             row.status = "failed"
 
     if enqueue:
-        max_attempts = max(1, int(settings.dataset_image_prep_max_attempts))
         for row in rows:
             if _needs_enqueue(row, now, max_attempts):
                 row.status = "preparing"
@@ -326,6 +383,10 @@ def readiness(
                 # Extra operational fields: the frontend ignores unknown keys,
                 # the console can surface attempt count and preparation time.
                 "attempts": row.attempts or 0,
+                # Non-null while the worker still owns the row: for a failed
+                # image it is the automatic retry time, so the console keeps
+                # polling instead of treating the first failure as terminal.
+                "next_attempt_at": _iso(row.next_attempt_at),
                 "prepared_at": _iso(row.prepared_at),
                 "cleanup_status": row.local_cleanup,
                 "cleanup_error": row.cleanup_error,

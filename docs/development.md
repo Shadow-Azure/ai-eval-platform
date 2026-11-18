@@ -63,7 +63,7 @@ docker compose --env-file .env -f deploy/docker-compose.prod.yml --profile image
 docker compose --env-file .env -f deploy/docker-compose.prod.yml --profile image-prep exec image-prep sh -c 'ls -l /work'
 ```
 
-每次上传通过 HEAD 校验后，`docker images` 不应再出现该镜像，`/work` 中也不应留下 `dataset-image-*.tar.gz`；进程启动与每 10 分钟扫描会清理上次中断的本地镜像和超过 1 小时的临时 tar。停止准备服务使用同一 profile 的 `down`，不要删除数据盘目录。
+每次上传通过 HEAD 校验后，`docker images` 不应再出现该镜像，`/work` 中也不应留下 `dataset-image-*.tar.gz`；进程启动会清理上次中断的本地镜像和全部临时 tar，之后每 10 分钟扫描只清理超过 1 小时的临时 tar。停止准备服务使用同一 profile 的 `down`，不要删除数据盘目录。由于 deploy/rollback 不再传 `--remove-orphans`，移除或重命名 compose 服务后需要手动清理旧容器（例如 `docker compose ... rm -f <service>`）；`image-prep` profile 会被有意保留。
 
 ## 修改文档
 

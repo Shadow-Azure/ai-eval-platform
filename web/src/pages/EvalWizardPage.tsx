@@ -57,6 +57,7 @@ import { fetchResourcePools } from "../api/resources";
 import { fetchRuntimes } from "../api/runtimes";
 import { ApiError } from "../api/types";
 import { Icon } from "../components/Icon";
+import { shouldPollImageReadiness } from "../utils/imageReadiness";
 import { formatMoney, formatMoneyRange } from "../utils/money";
 import { PageHeading } from "../components/PageHeading";
 import {
@@ -813,15 +814,11 @@ export function EvalWizardPage() {
   const imagePendingCount = imageReadiness
     ? Math.max(0, imageReadiness.total - imageReadiness.ready_count)
     : 0;
-  // Poll only while the backend can still make progress on its own. Failed
-  // rows are terminal (the worker will not auto-requeue an exhausted image), so
-  // polling stops once nothing is preparing or missing; retry/recheck/ensure
-  // restart it through `imagePollNonce`.
-  const imagePollPending = Boolean(
-    imageReadiness &&
-      !imageReadiness.ready &&
-      (imageReadiness.preparing_count > 0 || imageReadiness.missing_count > 0),
-  );
+  // Poll while the backend can still make progress on its own: preparing or
+  // missing rows, plus failed rows whose `next_attempt_at` is set because the
+  // worker will auto-retry them. A terminal failed row (next_attempt_at null)
+  // stops polling; retry/recheck/ensure restart it through `imagePollNonce`.
+  const imagePollPending = shouldPollImageReadiness(imageReadiness);
 
   // Track the preparation whose Step 4 readiness is on screen so late polling
   // or ensure responses from a previous snapshot cannot overwrite it. Leaving
@@ -868,8 +865,8 @@ export function EvalWizardPage() {
   }, [step, preparationId, expired, imageReadiness, beginImagePrepAction, finishImagePrepAction]);
 
   // Poll while the backend still has work it can finish by itself (images
-  // preparing or missing). All-failed is terminal: the worker will not
-  // auto-requeue exhausted rows, so polling stops until the operator acts.
+  // preparing/missing, or failed rows inside the worker's automatic retry
+  // window). A terminal all-failed snapshot stops until the operator acts.
   useEffect(() => {
     if (step !== 3 || !preparationId || expired || !imagePollPending) return;
     let cancelled = false;

@@ -313,7 +313,9 @@ def test_dataset_image_artifact_roundtrip(database_url: str) -> None:
         } <= set(columns)
         assert columns["status"]["nullable"] is False
         assert columns["attempts"]["nullable"] is False
-        assert str(columns["local_cleanup"]["default"]).strip("'") == "pending"
+        # PostgreSQL renders this as "pending'::character varying"; SQLite as
+        # "pending". Match the value inside the dialect-specific wrapper.
+        assert "pending" in str(columns["local_cleanup"]["default"])
         indexes = {
             index["name"]
             for index in inspect(engine).get_indexes("dataset_image_artifact")
