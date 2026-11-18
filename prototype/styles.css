@@ -3987,3 +3987,23 @@ tbody tr.clickable {
   flex: 1;
   min-width: 0;
 }
+
+
+.session-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+}
+
+.session-copy-button {
+  width: 22px;
+  height: 22px;
+  border-color: transparent;
+  background: transparent;
+}
+
+.session-copy-button:hover {
+  border-color: transparent;
+  background: #eef5ff;
+}
