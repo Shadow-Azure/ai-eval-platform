@@ -22,6 +22,7 @@ from ..models import (
 from ..models.trace import TRACE_SESSION_STATUSES
 from .evaluations import iso_utc
 from .trace_redaction import redact_text
+from .trace_sessions import main_session_id as resolve_main_session_id
 
 
 class TraceQueryError(Exception):
@@ -490,6 +491,9 @@ def attempt_trace(
                 redact_text(attempt.error_summary, limit=1000)
                 if attempt.error_summary
                 else None
+            ),
+            "main_session_id": resolve_main_session_id(
+                session, attempt.id, tenant_id=tenant_id
             ),
         },
         "files": [

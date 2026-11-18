@@ -4,6 +4,43 @@ export interface TraceSelection {
   span: string | null;
 }
 
+export const TRACE_SESSION_ID_EMPTY_TITLE =
+  "未解析到主 Agent 会话（该 attempt 没有可用轨迹）";
+
+export interface TraceIdentifierLine {
+  label: "attemptId:" | "sessionId:";
+  value: string;
+  title: string | null;
+  empty: boolean;
+}
+
+export interface TraceIdentifierModel {
+  attempt: TraceIdentifierLine;
+  session: TraceIdentifierLine;
+}
+
+export function traceIdentifiers(
+  attempt: { id: string } | null,
+  mainSessionId: string | null | undefined,
+): TraceIdentifierModel {
+  const attemptId = attempt?.id?.trim() || null;
+  const sessionId = mainSessionId?.trim() || null;
+  return {
+    attempt: {
+      label: "attemptId:",
+      value: attemptId ?? "尚未生成 attempt",
+      title: attemptId,
+      empty: attemptId === null,
+    },
+    session: {
+      label: "sessionId:",
+      value: sessionId ?? "—",
+      title: sessionId ?? TRACE_SESSION_ID_EMPTY_TITLE,
+      empty: sessionId === null,
+    },
+  };
+}
+
 const SPAN_FILTERS = new Set([
   "all",
   "AGENT",

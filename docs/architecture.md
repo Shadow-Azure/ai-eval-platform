@@ -85,7 +85,7 @@ docker compose -f deploy/docker-compose.prod.yml logs --tail=100 proxy
 
 ## 轨迹采集
 
-Runner 归档会话、元数据与诊断，失败保留；清单记录路径、digest、size、版本与平台对象键。回调写 `trace_file(pending)`；Worker 以 owner 租约领取并校验原件，解析后写 `trace_session`/`trace_span`；`native_session_key` 区分共享 `sessionId`，元数据只留原件行。Claude Code 2.1.278 使用显式版本化 parser：主文件 Agent `tool_use.id`、`toolUseResult.agentId` 与子文件 `.meta.json` 的 `toolUseId` 必须一致才建立父子关系，`parentUuid` 只建 span 层级，同 `sessionId` 或时间相邻不建树；消息按 `message.id` 去重，最终用量取消息快照，成本取 `cost-state`，缺失子文件或元数据进入 degraded/unlinked，孤立 span 保留为 root fragment，大内容只存脱敏截断预览与对象引用。坏行降级，单文件失败隔离。幂等键 `(attempt, sha256, parser_version)`：重复不新增，升级单事务换树，失败保留旧树，单文件修复遇新版本也原子重放整 attempt；回收后旧 Worker 不能续租或完成。`trace_status` 按 failed > incomplete > degraded > ready 聚合，旧 attempt 不覆盖最新；发布时锁 case 行并重读 `trace_file`，inflight 不发布终态，由收尾 Worker 写去重 `trace.ingestion.updated`；Worker SQL 过滤后回填缺 `trace_file` 的 attempt。导入不改评分/终态。控制面按 attempt 提供会话树、span 游标分页、节点详情与大内容地址；tenant、project、case run、attempt 与 session/span 逐层校验，切换 attempt 不会复用旧标识。前端轨迹页把 run、case、attempt、session 与 span 保存到 URL，按 API 父子证据呈现 session tree、waterfall 与 inspector，加载更多 span 时保持游标去重；时钟不可比按 ordinal 回退并提示，unlinked、degraded、failed 与 root fragment 都有独立状态，大内容和 raw 只在用户触发后签发短时地址。只读成员看不到完整 thinking 与敏感属性，原始文件和大内容地址仅管理员可签发并写审计。`eval-shard` 的手动 `trace-e2e` 模式在固定 Linux Runner 上使用真实 Claude Code 2.1.278、确定性 Anthropic-compatible 测试网关、隔离 PostgreSQL 和真实 OSS 对象，验证重试 attempt 隔离、重复回调、parser 重放、降级、raw 下载与审计；常规 PR CI 不执行该外部作业。
+Runner 归档会话、元数据与诊断，失败保留；清单记录路径、digest、size、版本与平台对象键。回调写 `trace_file(pending)`；Worker 以 owner 租约领取并校验原件，解析后写 `trace_session`/`trace_span`；`native_session_key` 区分共享 `sessionId`，元数据只留原件行。Claude Code 2.1.278 使用显式版本化 parser：主文件 Agent `tool_use.id`、`toolUseResult.agentId` 与子文件 `.meta.json` 的 `toolUseId` 必须一致才建立父子关系，`parentUuid` 只建 span 层级，同 `sessionId` 或时间相邻不建树；消息按 `message.id` 去重，最终用量取消息快照，成本取 `cost-state`，缺失子文件或元数据进入 degraded/unlinked，孤立 span 保留为 root fragment，大内容只存脱敏截断预览与对象引用。坏行降级，单文件失败隔离。幂等键 `(attempt, sha256, parser_version)`：重复不新增，升级单事务换树，失败保留旧树，单文件修复遇新版本也原子重放整 attempt；回收后旧 Worker 不能续租或完成。`trace_status` 按 failed > incomplete > degraded > ready 聚合，旧 attempt 不覆盖最新；发布时锁 case 行并重读 `trace_file`，inflight 不发布终态，由收尾 Worker 写去重 `trace.ingestion.updated`；Worker SQL 过滤后回填缺 `trace_file` 的 attempt。导入不改评分/终态。控制面按 attempt 提供会话树、span 游标分页、节点详情与大内容地址；tenant、project、case run、attempt 与 session/span 逐层校验，切换 attempt 不会复用旧标识。前端轨迹页把 run、case、attempt、session 与 span 保存到 URL，顶部两行显示 `attemptId:` 与主 Agent 根会话 `sessionId:`（空态 `—`、悬停说明、长值截断），按证据呈现 tree/waterfall/inspector，游标去重；时钟不可比回退 ordinal，unlinked、degraded、failed、root fragment 独立标示，大内容和 raw 仅在用户触发后签发地址。只读成员看不到完整 thinking 与敏感属性，原始文件和大内容地址仅管理员可签发并写审计。`eval-shard` 的手动 `trace-e2e` 模式在固定 Linux Runner 上使用真实 Claude Code 2.1.278、确定性 Anthropic-compatible 测试网关、隔离 PostgreSQL 和真实 OSS 对象，验证重试 attempt 隔离、重复回调、parser 重放、降级、raw 下载与审计；常规 PR CI 不执行该外部作业。
 
 ## 用例明细
 
@@ -97,7 +97,7 @@ Runner 归档会话、元数据与诊断，失败保留；清单记录路径、d
 
 ## 自进化上报
 
-发起评测可配置上报目标（workspace URL、ID 与 `whk_` 令牌，Fernet 密文存储、不回显）。结果不可变后（`succeeded` 非 resolved，或 `failed`/`timeout` 重试耗尽）逐条冻结 outbox，run 终态仍批量兜底，再按阶梯退避上报；凭据/预算/契约错误终态失败。claude-code 另附短时 HMAC 签名会话包，按原生会话 id 返回子会话与 NDJSON 轨迹，超限 413；无原生主会话时回退 attempt id 且不带 `sessionSource`，无轨迹则提前入队跳过，配置缺失只降级为无会话链接。契约细节见设计 04 §8。
+发起评测可配置上报目标（workspace URL、ID 与 `whk_` 令牌，Fernet 密文存储、不回显）。结果不可变后（`succeeded` 非 resolved，或 `failed`/`timeout` 重试耗尽）逐条冻结 outbox，run 终态批量兜底，按阶梯退避上报；凭据/预算/契约错误终态失败。claude-code 另附短时 HMAC 签名会话包，按原生会话 id 返回子会话与 NDJSON 轨迹，超限 413；无原生主会话时回退 attempt id 且不带 `sessionSource`，无轨迹则提前入队跳过，配置缺失只降级为无会话链接。契约细节见设计 04 §8。
 
 ## 扩展位置
 
