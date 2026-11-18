@@ -53,7 +53,7 @@ docker compose --env-file .env -f deploy/docker-compose.prod.yml \
   --profile image-prep up -d image-prep-dind image-prep
 ```
 
-`DATASET_IMAGE_PREP_DATA_DIR` 可覆盖数据盘根目录（默认 `/data/ai-eval-image-prep`）；`DATASET_IMAGE_PREP_PLATFORM` 默认 `linux/amd64`，`DATASET_IMAGE_PREP_MAX_ATTEMPTS` 默认 3。数据盘空间低于门槛时 Worker 不执行 pull，直接把该镜像标记为 `failed` 并给出扩容提示。
+`DATASET_IMAGE_PREP_DATA_DIR` 可覆盖数据盘根目录（默认 `/data/ai-eval-image-prep`）；`IMAGE_PREP_DIND_IMAGE` 可覆盖 DinD 镜像（默认使用 DaoCloud 公共镜像，避免宿主直连 Docker Hub）；`DATASET_IMAGE_PREP_PLATFORM` 默认 `linux/amd64`，`DATASET_IMAGE_PREP_MAX_ATTEMPTS` 默认 3。数据盘空间低于门槛时 Worker 不执行 pull，直接把该镜像标记为 `failed` 并给出扩容提示。
 
 检查状态与残留：
 

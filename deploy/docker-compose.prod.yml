@@ -221,7 +221,10 @@ services:
   # privileged daemon. It is a normal bridge rather than `internal: true`
   # because the DinD daemon itself performs `docker pull` and needs egress.
   image-prep-dind:
-    image: docker:27-dind
+    # Docker Hub is rate-limited/blocked from some hosts; default to a public
+    # mirror that carries the same official image. Override with
+    # IMAGE_PREP_DIND_IMAGE if the deployment uses a different registry mirror.
+    image: ${IMAGE_PREP_DIND_IMAGE:-docker.m.daocloud.io/library/docker:27-dind}
     profiles: ["image-prep"]
     privileged: true
     restart: unless-stopped
