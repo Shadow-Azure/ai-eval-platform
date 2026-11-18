@@ -150,7 +150,7 @@ UNIQUE(tenant_id, bad_case_id)
 INDEX(status, next_attempt_at)
 ```
 
-自进化上报 outbox（M9）：终态事务内每个 bad case 冻结一行，`payload_json` 是最终上报报文，Worker 按 `next_attempt_at` 阶梯重试；删除 eval_run 级联删除。
+自进化上报 outbox（M9）：结果不可变后由 Worker 逐条冻结，run 终态批量入队兜底；每行 `payload_json` 是最终上报报文，Worker 按 `next_attempt_at` 阶梯重试；`(tenant_id, bad_case_id)` 唯一键吸收重复入队，删除 eval_run 级联删除。
 
 ## 7. 结果、轨迹与交付
 

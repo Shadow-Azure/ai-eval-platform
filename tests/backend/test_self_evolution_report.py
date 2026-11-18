@@ -25,6 +25,7 @@ from app.models import (
     TraceSession,
 )
 from app.secrets import get_secret_box
+from app.services import case_attempts
 from app.services import evaluations as evaluation_service
 from app.services import self_evolution as swe
 from sqlalchemy import select
@@ -43,7 +44,9 @@ def aware(value: datetime | None) -> datetime | None:
     return value.replace(tzinfo=UTC) if value.tzinfo is None else value
 
 
-def _seed_enabled_run(session: Session, *, case_keys: list[str]) -> EvalRun:
+def _seed_enabled_run(
+    session: Session, *, case_keys: list[str], max_attempts: int = 2
+) -> EvalRun:
     run, _ = evaluation_service.create_synthetic_evaluation(
         session,
         name="self-evolution-report",
@@ -51,6 +54,7 @@ def _seed_enabled_run(session: Session, *, case_keys: list[str]) -> EvalRun:
         idempotency_key=f"swe-{hashlib.sha1('&'.join(case_keys).encode()).hexdigest()[:12]}",
         created_by="agent",
         runtime_key="claude-code",
+        max_attempts=max_attempts,
         self_evolution_enabled=True,
         self_evolution_base_url="https://he.example.com",
         self_evolution_workspace_id="ws-prod-01",
@@ -137,6 +141,44 @@ def _seed_trace(
     )
     session.flush()
     return native_id
+
+
+def _register_trace_manifest(attempt: EvalCaseAttempt) -> None:
+    """Make the final attempt look like a completion that uploaded one trace."""
+
+    attempt.artifact_manifest_json = {
+        "trace_manifest": {
+            "capture_status": "complete",
+            "objects": [
+                {
+                    "artifact_kind": "trace",
+                    "object_key": f"traces/{attempt.id}.jsonl",
+                    "sha256": "0" * 64,
+                    "size": 12,
+                }
+            ],
+        }
+    }
+
+
+def _seed_settled_case(
+    session: Session,
+    case: EvalCaseRun,
+    *,
+    execution_status: str = "succeeded",
+    result_status: str = "unresolved",
+    trace_status: str = "ready",
+    register_trace: bool = True,
+    native_id: str = "11111111-2222-3333-4444-555555555555",
+) -> EvalCaseAttempt:
+    attempt = _finish_case(
+        session, case, execution_status=execution_status, result_status=result_status
+    )
+    case.trace_status = trace_status
+    if register_trace:
+        _seed_trace(session, attempt, case, native_id=native_id)
+        _register_trace_manifest(attempt)
+    return attempt
 
 
 def test_terminal_run_enqueues_only_executed_bad_cases(
@@ -433,6 +475,191 @@ def test_backfill_rebuilds_succeeded_reports_with_session_source(
     )
     assert len(events) == 1
     assert events[0].payload_json["count"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Settled-case early enqueue (M9 #288)
+# ---------------------------------------------------------------------------
+
+
+def test_settled_case_enqueues_and_posts_before_run_terminal(
+    session: Session, configure_settings
+) -> None:
+    configure_settings(
+        SELF_EVO_SESSION_SIGNING_KEY=SIGNING_KEY,
+        SELF_EVO_PUBLIC_BASE_URL=PUBLIC_BASE,
+    )
+    run = _seed_enabled_run(session, case_keys=["case-early", "case-pending"])
+    case = _cases_by_key(session, run)["case-early"]
+    _seed_settled_case(session, case)
+    box = get_secret_box()
+    run.self_evolution_token_encrypted, _ = box.encrypt("whk_worker_token")
+    run.status = "running"
+    session.commit()
+
+    assert swe.enqueue_settled_case_reports(session, limit=10, now=NOW) == 1
+    reports = _reports_for(session, run)
+    assert len(reports) == 1
+    report = reports[0]
+    assert report.status == "pending"
+    assert report.eval_case_run_id == case.id
+    assert report.payload_json["sessionId"] == "11111111-2222-3333-4444-555555555555"
+    assert report.payload_json["metaData"]["evalRunId"] == run.id
+    assert "sessionSource" in report.payload_json
+
+    # The same worker tick can POST it: no run terminal needed.
+    transport = FakeTransport(lambda request: httpx.Response(201, json={"id": 7}))
+    outcome = swe.process_pending_self_evolution_reports(
+        session, transport=transport, now=NOW
+    )
+    assert outcome["succeeded"] == 1
+    session.refresh(report)
+    assert report.status == "succeeded"
+    assert len(transport.requests) == 1
+
+    events = list(
+        session.scalars(
+            select(EvalEvent).where(
+                EvalEvent.eval_run_id == run.id,
+                EvalEvent.event_type == "eval.self_evolution.enqueued",
+            )
+        )
+    )
+    assert len(events) == 1
+    assert events[0].payload_json["count"] == 1
+
+
+def test_settled_case_waits_for_terminal_trace_status(
+    session: Session, configure_settings
+) -> None:
+    configure_settings(
+        SELF_EVO_SESSION_SIGNING_KEY=SIGNING_KEY,
+        SELF_EVO_PUBLIC_BASE_URL=PUBLIC_BASE,
+    )
+    run = _seed_enabled_run(session, case_keys=["case-trace"])
+    case = _cases_by_key(session, run)["case-trace"]
+    attempt = _seed_settled_case(session, case, trace_status="pending")
+    run.status = "running"
+    session.commit()
+
+    assert swe.enqueue_settled_case_reports(session, now=NOW) == 0
+
+    case.trace_status = "ready"
+    session.commit()
+    assert swe.enqueue_settled_case_reports(session, now=NOW) == 1
+    report = _reports_for(session, run)[0]
+    assert report.payload_json["sessionId"] == "11111111-2222-3333-4444-555555555555"
+    assert report.payload_json["metaData"]["attemptId"] == attempt.id
+    assert "sessionSource" in report.payload_json
+
+
+def test_settled_case_skips_resolved_cancelled_cancelling_and_no_trace(
+    session: Session,
+) -> None:
+    run = _seed_enabled_run(
+        session, case_keys=["case-resolved", "case-cancelled", "case-no-trace"]
+    )
+    cases = _cases_by_key(session, run)
+    _seed_settled_case(
+        session, cases["case-resolved"], execution_status="succeeded", result_status="resolved"
+    )
+    _seed_settled_case(
+        session,
+        cases["case-cancelled"],
+        execution_status="cancelled",
+        result_status="not_scored",
+    )
+    _finish_case(
+        session,
+        cases["case-no-trace"],
+        execution_status="succeeded",
+        result_status="unresolved",
+    )
+    cases["case-no-trace"].trace_status = "ready"  # stale badge, no trace objects
+    run.status = "running"
+    session.commit()
+
+    assert swe.enqueue_settled_case_reports(session, now=NOW) == 0
+    assert cases["case-no-trace"].trace_status == "unlinked"
+    assert _reports_for(session, run) == []
+
+    cancelling = _seed_enabled_run(session, case_keys=["case-run-cancelling"])
+    _seed_settled_case(session, _cases_by_key(session, cancelling)["case-run-cancelling"])
+    cancelling.status = "cancelling"
+    session.commit()
+    assert swe.enqueue_settled_case_reports(session, now=NOW) == 0
+    assert _reports_for(session, cancelling) == []
+
+    finished = _seed_enabled_run(session, case_keys=["case-run-finished"])
+    _seed_settled_case(session, _cases_by_key(session, finished)["case-run-finished"])
+    finished.status = "completed"
+    session.commit()
+    assert swe.enqueue_settled_case_reports(session, now=NOW) == 0
+    assert _reports_for(session, finished) == []
+
+
+def test_failed_case_enqueues_only_after_attempts_exhausted(
+    session: Session,
+) -> None:
+    run = _seed_enabled_run(session, case_keys=["case-retry"], max_attempts=2)
+    case = _cases_by_key(session, run)["case-retry"]
+    attempt = _finish_case(
+        session, case, execution_status="failed", result_status="unresolved"
+    )
+    case.trace_status = "ready"
+    _seed_trace(session, attempt, case)
+    _register_trace_manifest(attempt)
+    run.status = "running"
+    session.commit()
+
+    # One attempt still available: the result can change, so do not freeze it.
+    assert swe.enqueue_settled_case_reports(session, now=NOW) == 0
+
+    outbox = case_attempts.build_retry_dispatch(
+        session,
+        case_attempts.CaseContext(session, case, run, attempt),
+        new_attempt_no=2,
+        settings=get_settings(),
+        now=NOW,
+    )
+    session.add(outbox)
+    session.commit()
+    # Every retry starts with an unparsed trace badge.
+    assert case.trace_status == "pending"
+
+    retry = session.scalar(
+        select(EvalCaseAttempt).where(
+            EvalCaseAttempt.eval_case_run_id == case.id,
+            EvalCaseAttempt.attempt_no == 2,
+        )
+    )
+    assert retry is not None
+    retry.status = "failed"
+    retry.started_at = NOW - timedelta(minutes=5)
+    retry.ended_at = NOW
+    case.execution_status = "failed"
+    case.result_status = "unresolved"
+    session.commit()
+    assert swe.enqueue_settled_case_reports(session, now=NOW) == 0
+
+    # A stale terminal badge from attempt 1 must not survive the final attempt:
+    # the pass corrects it to unlinked instead of reporting a trace-less case.
+    case.trace_status = "ready"
+    session.commit()
+    assert swe.enqueue_settled_case_reports(session, now=NOW) == 0
+    assert case.trace_status == "unlinked"
+    assert _reports_for(session, run) == []
+
+
+def test_settled_case_enqueue_is_idempotent(session: Session) -> None:
+    run = _seed_enabled_run(session, case_keys=["case-idem"])
+    _seed_settled_case(session, _cases_by_key(session, run)["case-idem"])
+    run.status = "running"
+    session.commit()
+
+    assert swe.enqueue_settled_case_reports(session, now=NOW) == 1
+    assert swe.enqueue_settled_case_reports(session, now=NOW) == 0
+    assert len(_reports_for(session, run)) == 1
 
 
 # ---------------------------------------------------------------------------

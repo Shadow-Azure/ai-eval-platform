@@ -24,7 +24,8 @@ import logging
 from datetime import UTC, datetime, timedelta
 
 import httpx
-from sqlalchemy import func, or_, select
+from sqlalchemy import exists, func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..config import Settings, get_settings
@@ -68,6 +69,21 @@ RETRY_LADDER_SECONDS = (60, 300, 900, 3600)
 MAX_REPORT_ATTEMPTS = 8
 REPORT_TIMEOUT_SECONDS = 15.0
 FAILED_TEST_OUTCOMES = ("failed", "error")
+
+# Per-case early enqueue (issue #288): only a final, immutable result may be
+# reported before the run ends. ``succeeded`` cannot be retried at all; a
+# ``failed``/``timeout`` case is final only after its automatic and manual
+# retry budget is exhausted. Terminal runs keep the terminal batch enqueue;
+# cancelling/cancelled runs only stop new enqueues.
+SETTLED_CASE_STATUSES = ("succeeded", "failed", "timeout")
+SETTLED_TRACE_STATUSES = ("ready", "incomplete", "degraded", "failed")
+SETTLED_SKIPPED_RUN_STATUSES = (
+    "completed",
+    "partial",
+    "failed",
+    "cancelling",
+    "cancelled",
+)
 
 
 def _now(now: datetime | None) -> datetime:
@@ -365,6 +381,129 @@ def enqueue_self_evolution_reports(
     return created
 
 
+def enqueue_settled_case_reports(
+    session: Session,
+    *,
+    limit: int | None = None,
+    now: datetime | None = None,
+    settings: Settings | None = None,
+) -> int:
+    """Freeze early reports for cases whose final outcome is already immutable.
+
+    The worker runs this after trace ingestion and before the reporting POST
+    pass, so a long evaluation no longer waits for its last case before its
+    earlier bad cases reach harness-evolution. A case is a candidate only when:
+
+    - its run is still active and has self-evolution reporting enabled (the
+      terminal batch enqueue keeps owning finished/cancelled runs);
+    - execution settled to ``succeeded``, ``failed`` or ``timeout``, the result
+      is not ``resolved`` and at least one attempt ran;
+    - a failed/timed-out case has exhausted ``run.max_attempts``; a succeeded
+      case cannot be retried by the workbench at all;
+    - trace ingestion published a terminal badge and the final attempt still
+      registers ingestible trace objects (the #272 rule);
+    - no report row exists for the case yet.
+
+    Payloads are frozen with the same builder as the terminal enqueue. A
+    savepoint catches the unique ``(tenant_id, bad_case_id)`` race with the
+    terminal batch or another worker, so repeated or concurrent passes stay
+    idempotent. Returns the number of inserted rows and commits.
+    """
+
+    from .trace_ingestion import has_ingestible_trace_objects, set_case_trace_status
+
+    settings = settings or get_settings()
+    now = _now(now)
+    batch = max(1, limit or settings.self_evolution_batch_size)
+    report_exists = exists().where(
+        SelfEvolutionReport.eval_case_run_id == EvalCaseRun.id
+    )
+    candidates = list(
+        session.execute(
+            select(EvalCaseRun, EvalRun)
+            .join(
+                EvalRun,
+                (EvalCaseRun.eval_run_id == EvalRun.id)
+                & (EvalCaseRun.tenant_id == EvalRun.tenant_id),
+            )
+            .where(
+                EvalRun.self_evolution_enabled.is_(True),
+                EvalRun.status.not_in(SETTLED_SKIPPED_RUN_STATUSES),
+                EvalCaseRun.execution_status.in_(SETTLED_CASE_STATUSES),
+                EvalCaseRun.result_status != "resolved",
+                EvalCaseRun.latest_attempt_no > 0,
+                EvalCaseRun.trace_status.in_(SETTLED_TRACE_STATUSES),
+                ~report_exists,
+                or_(
+                    EvalCaseRun.execution_status == "succeeded",
+                    EvalCaseRun.latest_attempt_no >= EvalRun.max_attempts,
+                ),
+            )
+            .order_by(EvalRun.created_at, EvalCaseRun.ordinal, EvalCaseRun.id)
+            .limit(batch)
+        )
+    )
+    created: dict[str, int] = {}
+    runs: dict[str, EvalRun] = {}
+    for case, run in candidates:
+        final_attempt = session.scalar(
+            select(EvalCaseAttempt)
+            .where(
+                EvalCaseAttempt.eval_case_run_id == case.id,
+                EvalCaseAttempt.attempt_no == case.latest_attempt_no,
+            )
+            .order_by(EvalCaseAttempt.attempt_no)
+        )
+        if final_attempt is None:
+            continue
+        if not has_ingestible_trace_objects(final_attempt):
+            # A terminal badge can be left behind by an older attempt: the
+            # retry reset makes this rare, but the final attempt is the one
+            # that must own a trace. Mark it unlinked so the same stale row is
+            # not selected on every pass (#272).
+            set_case_trace_status(
+                session, case_run=case, attempt=final_attempt, status="unlinked"
+            )
+            continue
+        payload = build_bad_case_payload(
+            session,
+            run=run,
+            case=case,
+            final_attempt=final_attempt,
+            now=now,
+            settings=settings,
+        )
+        try:
+            with session.begin_nested():
+                session.add(
+                    SelfEvolutionReport(
+                        tenant_id=run.tenant_id,
+                        eval_run_id=run.id,
+                        eval_case_run_id=case.id,
+                        bad_case_id=payload["badCaseId"],
+                        status="pending",
+                        payload_json=payload,
+                    )
+                )
+                session.flush()
+        except IntegrityError:
+            # The terminal batch (or another worker) won the same badCaseId;
+            # the unique row is the idempotency contract, not an error.
+            continue
+        created[run.id] = created.get(run.id, 0) + 1
+        runs[run.id] = run
+
+    for run_id, count in created.items():
+        append_run_event(
+            session,
+            runs[run_id],
+            "eval.self_evolution.enqueued",
+            {"count": count, "workspace_id": runs[run_id].self_evolution_workspace_id},
+        )
+    session.commit()
+    return sum(created.values())
+
+
 def backfill_missing_session_sources(
     session: Session,
     run: EvalRun,
@@ -629,6 +768,7 @@ __all__ = [
     "build_bad_case_payload",
     "build_session_url_template",
     "enqueue_self_evolution_reports",
+    "enqueue_settled_case_reports",
     "process_pending_self_evolution_reports",
     "session_signature",
     "session_signature_matches",
