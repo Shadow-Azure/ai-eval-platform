@@ -4,10 +4,11 @@ Each poll runs the shard-dispatch outbox (repository_dispatch with retry and
 reconciliation, M2-05), the execution-lifecycle reconciler (five timeouts,
 cancellation finalization and lost-callback backfill, M4-02), the spot
 capacity controller (M4-03), the runner offline sweep (M2-04) and the
-self-evolution bad-case reporting pass (M9 #263) so stale fixed runners flip
-to offline, timed-out or cancelled attempts reach a diagnosable terminal
-state, queued shards reach GitHub even when nobody queries the API, and
-terminal-run bad cases reach the configured harness-evolution workspace.
+self-evolution bad-case reporting pass (M9 #263/#288) so stale fixed runners
+flip to offline, timed-out or cancelled attempts reach a diagnosable terminal
+state, queued shards reach GitHub even when nobody queries the API, and both
+settled-case and terminal-run bad cases reach the configured harness-evolution
+workspace.
 """
 
 from __future__ import annotations
@@ -94,6 +95,17 @@ def self_evolution_once(session: Session, *, now=None) -> dict[str, int]:
     """One self-evolution bad-case reporting pass (M9 #263)."""
 
     return self_evolution.process_pending_self_evolution_reports(session, now=now)
+
+
+def self_evolution_enqueue_once(session: Session, *, now=None) -> int:
+    """One settled-case early enqueue pass (M9 #288)."""
+
+    settings = get_settings()
+    return self_evolution.enqueue_settled_case_reports(
+        session,
+        limit=settings.self_evolution_batch_size,
+        now=now,
+    )
 
 
 def _handle_signal(_signum: int, _frame: FrameType | None) -> None:
@@ -213,6 +225,13 @@ def main() -> int:
                 )
         except Exception as exc:  # pragma: no cover - retried on the next loop
             print(f"worker: trace publish failed: {exc}", flush=True)
+        try:
+            with SessionLocal() as session:
+                enqueued = self_evolution_enqueue_once(session)
+            if enqueued:
+                print(f"worker: self evolution enqueued={enqueued}", flush=True)
+        except Exception as exc:  # pragma: no cover - retried on the next loop
+            print(f"worker: self evolution enqueue failed: {exc}", flush=True)
         try:
             with SessionLocal() as session:
                 capacity_once(session)
