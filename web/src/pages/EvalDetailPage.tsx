@@ -958,6 +958,7 @@ export function EvalDetailPage() {
           onRow={(record) => ({
             onClick: () => openCase(record.id, record.latest_attempt_no),
             onKeyDown: (event) => {
+              if (event.target !== event.currentTarget) return;
               if (event.key === "Enter" || event.key === " ") {
                 event.preventDefault();
                 openCase(record.id, record.latest_attempt_no);
@@ -1199,6 +1200,7 @@ function caseColumns(
               event.stopPropagation();
               onCopySession(value);
             }}
+            onKeyDown={(event) => event.stopPropagation()}
           >
             <Icon name="copy" size={12} />
           </Button>
