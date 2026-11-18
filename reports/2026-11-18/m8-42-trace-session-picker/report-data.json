@@ -1,0 +1,197 @@
+{
+  "title": "m8-42 轨迹页会话下拉与折叠 · 冒烟报告",
+  "eyebrow": "Computer Use / Browser Smoke · M8-42",
+  "summary": "在本地 Vite 控制台用同一份 18-span 合成轨迹验证了默认主 Agent、会话下拉（主 Agent / 子 Agent / 未关联）、子 Agent 切换、关键节点与原始文件折叠，以及修订后的交互原型。6 个桌面场景和原型对照通过；未发现本次改动引入的代码缺陷。移动端应用外壳未适配，本次不纳入验收。",
+  "meta": "2026-11-18 · macOS · Chromium headless 1440×900 (2x DPR) · 浅色主题",
+  "metrics": [
+    { "value": "7", "label": "场景" },
+    { "value": "0", "label": "本次新增缺陷" },
+    { "value": "106", "label": "npm test" },
+    { "value": "8", "label": "文档门禁叶子" }
+  ],
+  "facts": [
+    { "label": "分支", "value": "agent/trace-session-dropdown-f7e31be2fe64" },
+    { "label": "提交", "value": "8949cb3" },
+    { "label": "基线", "value": "main @ 1338f6a" },
+    { "label": "控制台", "value": "Vite dev @ 127.0.0.1:5273" },
+    { "label": "数据", "value": "18-span 合成 trace fixture（1 主 Agent、1 子 Agent、1 未关联会话）" },
+    { "label": "原型", "value": "prototype/trace-viewer-redesign/index.html" }
+  ],
+  "matrix": {
+    "columns": ["#", "场景", "结果", "说明", "证据"],
+    "rows": [
+      {
+        "id": "01",
+        "name": "默认状态：主 Agent、关键节点展开、原始文件折叠",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "会话下拉默认主 Agent；关键节点 5 个节点可见；原始文件只显示摘要与计数，不占左栏。",
+        "evidence": ["02-production-after.png"]
+      },
+      {
+        "id": "02",
+        "name": "会话下拉：主 Agent / 子 Agent / 未关联",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "下拉列出 3 个会话，显示角色、Agent 名称、原生 sessionId、span 数与运行类型；未关联会话用独立徽标。",
+        "evidence": ["03-production-dropdown.png"]
+      },
+      {
+        "id": "03",
+        "name": "切换到子 Agent",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "选择 explore 后，触发器显示子会话原生 sessionId，中间轨迹切到 6 spans / 2 阶段，右侧详情联动；顶部主 Agent sessionId 保持不变。",
+        "evidence": ["04-production-subagent.png"]
+      },
+      {
+        "id": "04",
+        "name": "折叠关键节点、展开原始文件",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "两个标题均可用点击切换；折叠后节点列表隐藏，展开后 3 个原始文件与打包下载出现，标题的 aria-expanded 同步更新。",
+        "evidence": ["05-production-toggles.png"]
+      },
+      {
+        "id": "05",
+        "name": "原型默认态与下拉",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "原型把会话卡片改为顶部下拉，默认主 Agent；下拉宽 300px，可完整展示 3 个会话的 sessionId 与类型。",
+        "evidence": ["06-prototype-before.png", "07-prototype-after-default.png", "08-prototype-after-dropdown.png"]
+      },
+      {
+        "id": "06",
+        "name": "原型折叠切换",
+        "status": { "kind": "pass", "label": "PASS" },
+        "detail": "关键节点默认展开、原始文件默认折叠；点击后两个 section 均按预期切换。",
+        "evidence": ["09-prototype-after-toggles.png"]
+      },
+      {
+        "id": "07",
+        "name": "移动端外壳",
+        "status": { "kind": "manual", "label": "DEFERRED" },
+        "detail": "轨迹页已有 mobile 会话选择器，但应用侧栏在 390px 下未适配，整页无法单独验收；本次未改应用外壳。",
+        "evidence": ["No screenshot: shell outside this ticket's scope."]
+      }
+    ]
+  },
+  "issues": [
+    {
+      "severity": "P3",
+      "title": "390px 下应用外壳仍以桌面侧栏布局渲染",
+      "facts": [
+        { "label": "实际", "value": "390px 视口下左侧导航仍占约 236px，轨迹主内容被横向裁切。" },
+        { "label": "期望", "value": "移动端应有收起导航或抽屉，轨迹主内容占满视口。" },
+        { "label": "根因", "value": "AppShell 没有移动端断点；轨迹页虽已有 mobile 会话选择器，但外层壳未适配。" }
+      ],
+      "state": { "kind": "warn", "label": "Deferred · 应用壳不在 m8-42 范围" }
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "01-production-before.png",
+      "alt": "改动前的轨迹页左栏",
+      "label": "01 · Before",
+      "caption": "关键节点 → 会话树 → 原始文件；原始文件默认展开，会话树在 230px 左栏里被裁切。",
+      "variant": "wide"
+    },
+    {
+      "src": "02-production-after.png",
+      "alt": "改动后的轨迹页默认状态",
+      "label": "02 · After",
+      "caption": "会话下拉在顶部并默认主 Agent；关键节点展开，原始文件折叠。",
+      "variant": "wide"
+    },
+    {
+      "src": "03-production-dropdown.png",
+      "alt": "展开的会话下拉",
+      "label": "03 · Dropdown",
+      "caption": "主 Agent / 子 Agent / 未关联三类会话，均显示原生 sessionId、span 数与类型。",
+      "variant": "wide"
+    },
+    {
+      "src": "04-production-subagent.png",
+      "alt": "选中子 Agent",
+      "label": "04 · Subagent",
+      "caption": "子会话 sessionId 显示在触发器内，中间轨迹与右侧详情切换；顶部主 Agent sessionId 不变。",
+      "variant": "wide"
+    },
+    {
+      "src": "05-production-toggles.png",
+      "alt": "折叠关键节点并展开原始文件",
+      "label": "05 · Toggles",
+      "caption": "两个 section 均可切换；原始文件展开后保留逐文件下载与打包下载。",
+      "variant": "wide"
+    },
+    {
+      "src": "06-prototype-before.png",
+      "alt": "原型改动前",
+      "label": "06 · Proto before",
+      "caption": "会话卡片在左栏，关键节点与原始文件都展开。",
+      "variant": "wide"
+    },
+    {
+      "src": "07-prototype-after-default.png",
+      "alt": "原型改动后默认态",
+      "label": "07 · Proto after",
+      "caption": "会话改为顶部下拉，关键节点默认展开、原始文件默认折叠。",
+      "variant": "wide"
+    },
+    {
+      "src": "08-prototype-after-dropdown.png",
+      "alt": "原型的会话下拉",
+      "label": "08 · Proto dropdown",
+      "caption": "下拉列出主 Agent、子 Agent 与未关联会话，sessionId 完整可见。",
+      "variant": "wide"
+    },
+    {
+      "src": "09-prototype-after-toggles.png",
+      "alt": "原型的折叠切换",
+      "label": "09 · Proto toggles",
+      "caption": "折叠关键节点、展开原始文件后的原型状态。",
+      "variant": "wide"
+    }
+  ],
+  "coverage": {
+    "columns": ["区域", "覆盖", "结论", "建议"],
+    "rows": [
+      {
+        "area": "会话分类",
+        "coverage": "UT",
+        "conclusion": "`traceSessionRole` 覆盖主 Agent、子 Agent、未关联与显式 unlinked。",
+        "recommendation": "保持纯函数测试；不要把它塞回组件。"
+      },
+      {
+        "area": "桌面 UI",
+        "coverage": "Browser smoke",
+        "conclusion": "默认态、下拉、子 Agent 切换、两个折叠 section 均通过。",
+        "recommendation": "后续补 React 组件测试时优先覆盖 session 切换后的 URL 与查询 key。"
+      },
+      {
+        "area": "原型",
+        "coverage": "Static HTML smoke",
+        "conclusion": "下拉与折叠可交互；切换只更新会话标识，不重渲中间轨迹。",
+        "recommendation": "原型保持方向确认用途，完整数据驱动交给生产实现。"
+      },
+      {
+        "area": "移动端",
+        "coverage": "Manual · deferred",
+        "conclusion": "应用外壳未适配 390px，无法单独验收 mobile picker。",
+        "recommendation": "另开应用外壳响应式 issue，不在本 PR 扩范围。"
+      },
+      {
+        "area": "后端",
+        "coverage": "Not touched",
+        "conclusion": "无 API / 数据模型 / 归一化改动。",
+        "recommendation": "保持现状。"
+      }
+    ]
+  },
+  "conclusion": {
+    "kind": "pass",
+    "label": "Ready for human review · 2 external follow-ups",
+    "summary": "本次 UI 改动在桌面端和原型上均按需求工作，未发现新增代码缺陷；已知移动端外壳问题不阻塞本 issue。",
+    "points": [
+      "flow-online 仍红：PR #296 未关联 GitHub Project，机器人账号无 project 权限；请在项目侧栏添加后重跑。",
+      "并发 worker 正在切换 #285 的远端状态；重跑 flow-online 前需等它收敛。",
+      "移动端应用外壳另开 issue，不在 m8-42 范围。"
+    ]
+  },
+  "footer": "截图使用合成 trace fixture；账号信息已脱敏。Generated from browser evidence · Secrets are redacted."
+}

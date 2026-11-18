@@ -13,6 +13,7 @@ scope:
   - tests/**
   - .agents/flow/**
   - plans/**
+  - reports/**
 adr: []
 github:
   number: 294
