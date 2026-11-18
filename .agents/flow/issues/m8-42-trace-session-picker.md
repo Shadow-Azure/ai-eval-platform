@@ -6,7 +6,7 @@
 kind: issue
 milestone: m8
 priority: P2
-status: ready
+status: done
 scope:
   - web/src/**
   - prototype/**
