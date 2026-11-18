@@ -55,6 +55,7 @@ export interface EvalCaseRow {
   result_status: string;
   trace_status: string;
   latest_attempt_no: number;
+  main_session_id: string | null;
   duration_ms: number | null;
   error_code: string | null;
   error_summary: string | null;
@@ -113,6 +114,7 @@ function parseCase(row: unknown): EvalCaseRow {
     result_status: str(item.result_status, "not_scored"),
     trace_status: str(item.trace_status, "pending"),
     latest_attempt_no: num(item.latest_attempt_no, "latest_attempt_no"),
+    main_session_id: optStr(item.main_session_id),
     duration_ms: optNum(item.duration_ms),
     error_code: optStr(item.error_code),
     error_summary: optStr(item.error_summary),

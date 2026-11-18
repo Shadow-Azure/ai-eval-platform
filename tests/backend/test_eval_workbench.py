@@ -7,6 +7,7 @@ actions, including their guard rails.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import UTC, datetime, timedelta
 
@@ -21,12 +22,14 @@ from app.models import (
     Outbox,
     ResourcePool,
     TestCaseResult,
+    TraceFile,
+    TraceSession,
 )
 from app.seed import ensure_default_scope
 from app.services import evaluations
 from dataset_helpers import fixture_records
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import event, select
 from sqlalchemy.orm import Session
 
 
@@ -119,6 +122,46 @@ def _add_test(
     return test
 
 
+def _add_main_session(
+    session: Session,
+    case: EvalCaseRun,
+    native_id: str,
+    *,
+    status: str = "ready",
+    attempt_no: int = 1,
+    ordinal: int = 0,
+) -> TraceSession:
+    attempt = _attempt(session, case, attempt_no)
+    trace_file = TraceFile(
+        tenant_id=attempt.tenant_id,
+        eval_case_attempt_id=attempt.id,
+        eval_case_run_id=case.id,
+        runtime_key="claude-code",
+        parser_version="claude-code-2.1.278-v1",
+        artifact_kind="trace",
+        object_key=f"traces/{attempt.id}-{ordinal}.jsonl",
+        sha256=hashlib.sha256(f"{native_id}:{ordinal}".encode()).hexdigest(),
+        size=12,
+        status="ready",
+    )
+    session.add(trace_file)
+    session.flush()
+    root = TraceSession(
+        tenant_id=attempt.tenant_id,
+        trace_file_id=trace_file.id,
+        eval_case_attempt_id=attempt.id,
+        runtime_key="claude-code",
+        parser_version="claude-code-2.1.278-v1",
+        native_session_id=native_id,
+        native_session_key=native_id,
+        status=status,
+        ordinal=ordinal,
+    )
+    session.add(root)
+    session.commit()
+    return root
+
+
 def _prepare_failed_run(session: Session, *, key: str = "failed-run") -> tuple[EvalRun, list[EvalCaseRun]]:
     run = _create_run(session, idempotency_key=key)
     cases = _cases(session, run)
@@ -183,6 +226,90 @@ def test_cases_filters_counts_and_test_summary(
         "has_more": True,
         "next_offset": 2,
     }
+
+
+def test_cases_expose_latest_main_session_id(
+    seeded: Session, client: TestClient
+) -> None:
+    run, cases = _prepare_failed_run(seeded, key="main-session")
+    _add_main_session(seeded, cases[0], "9f2c1a7e-3b84-4c11-9d0e-5a6b7c8d9e01")
+    _add_main_session(seeded, cases[1], "4d8e2b61-7a09-4f3c-b2d1-8e6f0a9c3b52", status="unlinked")
+
+    body = client.get(f"/api/v1/eval-runs/{run.id}/cases").json()
+    by_key = {item["case_key"]: item for item in body["items"]}
+    assert by_key["case-a"]["main_session_id"] == "9f2c1a7e-3b84-4c11-9d0e-5a6b7c8d9e01"
+    assert by_key["case-b"]["main_session_id"] is None
+    assert by_key["case-c"]["main_session_id"] is None
+
+    detail = client.get(f"/api/v1/eval-case-runs/{cases[0].id}").json()
+    assert detail["case"]["main_session_id"] == "9f2c1a7e-3b84-4c11-9d0e-5a6b7c8d9e01"
+
+
+def test_cases_prefer_the_latest_attempt_session(
+    seeded: Session, client: TestClient
+) -> None:
+    run, cases = _prepare_failed_run(seeded, key="latest-main-session")
+    _add_main_session(seeded, cases[0], "old-attempt-session")
+    response = client.post(f"/api/v1/eval-case-runs/{cases[0].id}/retry")
+    assert response.status_code == 200
+    assert response.json()["case"]["main_session_id"] is None
+    _add_main_session(seeded, cases[0], "new-attempt-session", attempt_no=2)
+
+    body = client.get(f"/api/v1/eval-runs/{run.id}/cases").json()
+    by_key = {item["case_key"]: item for item in body["items"]}
+    assert by_key["case-a"]["main_session_id"] == "new-attempt-session"
+
+
+def test_cases_treat_empty_native_session_id_as_absent(
+    seeded: Session, client: TestClient
+) -> None:
+    run, cases = _prepare_failed_run(seeded, key="empty-root-session")
+    _add_main_session(seeded, cases[0], "", ordinal=0)
+    _add_main_session(seeded, cases[0], "later-valid-root", ordinal=1)
+
+    body = client.get(f"/api/v1/eval-runs/{run.id}/cases").json()
+    by_key = {item["case_key"]: item for item in body["items"]}
+    assert by_key["case-a"]["main_session_id"] is None
+
+
+def test_cases_choose_first_root_session_by_ordinal(
+    seeded: Session, client: TestClient
+) -> None:
+    run, cases = _prepare_failed_run(seeded, key="multi-root-session")
+    _add_main_session(seeded, cases[0], "late-session", ordinal=2)
+    _add_main_session(seeded, cases[0], "early-session", ordinal=1)
+
+    body = client.get(f"/api/v1/eval-runs/{run.id}/cases").json()
+    by_key = {item["case_key"]: item for item in body["items"]}
+    assert by_key["case-a"]["main_session_id"] == "early-session"
+
+
+def test_case_list_fetches_root_sessions_in_one_batch_query(
+    seeded: Session, client: TestClient
+) -> None:
+    run, cases = _prepare_failed_run(seeded, key="batch-session-query")
+    for index, case in enumerate(cases):
+        _add_main_session(seeded, case, f"batch-session-{index}")
+
+    statements: list[str] = []
+
+    def capture(_conn, _cursor, statement, _parameters, _context, _executemany):
+        statements.append(statement)
+
+    engine = seeded.get_bind()
+    event.listen(engine, "before_cursor_execute", capture)
+    try:
+        response = client.get(f"/api/v1/eval-runs/{run.id}/cases")
+    finally:
+        event.remove(engine, "before_cursor_execute", capture)
+
+    assert response.status_code == 200
+    session_queries = [
+        statement
+        for statement in statements
+        if "trace_session" in statement and "parent_session_id" in statement
+    ]
+    assert len(session_queries) == 1
 
 
 def test_cases_reject_invalid_filters(seeded: Session, client: TestClient) -> None:

@@ -103,8 +103,12 @@ def _finish_case(
     return attempt
 
 
-def _seed_trace(session: Session, attempt: EvalCaseAttempt, case: EvalCaseRun) -> str:
-    native_id = "11111111-2222-3333-4444-555555555555"
+def _seed_trace(
+    session: Session,
+    attempt: EvalCaseAttempt,
+    case: EvalCaseRun,
+    native_id: str = "11111111-2222-3333-4444-555555555555",
+) -> str:
     trace_file = TraceFile(
         tenant_id=attempt.tenant_id,
         eval_case_attempt_id=attempt.id,
@@ -319,6 +323,30 @@ def test_session_id_falls_back_to_attempt_uuid(session: Session) -> None:
     reports = _reports_for(session, run)
     assert len(reports) == 1
     assert reports[0].payload_json["sessionId"] == attempt.id
+
+
+def test_long_native_session_id_falls_back_without_session_source(
+    session: Session, configure_settings
+) -> None:
+    configure_settings(
+        SELF_EVO_SESSION_SIGNING_KEY=SIGNING_KEY,
+        SELF_EVO_PUBLIC_BASE_URL=PUBLIC_BASE,
+    )
+    run = _seed_enabled_run(session, case_keys=["case-long-session"])
+    case = _cases_by_key(session, run)["case-long-session"]
+    attempt = _finish_case(
+        session, case, execution_status="failed", result_status="unresolved"
+    )
+    _seed_trace(session, attempt, case, native_id="a" * 40)
+    run.status = "running"
+    evaluation_service.refresh_run_progress(session, run, now=NOW)
+    session.commit()
+
+    reports = _reports_for(session, run)
+    assert len(reports) == 1
+    payload = reports[0].payload_json
+    assert payload["sessionId"] == attempt.id
+    assert "sessionSource" not in payload
 
 
 def test_backfill_rebuilds_succeeded_reports_with_session_source(

@@ -117,7 +117,8 @@ sort=created_at|duration|status, order=asc|desc
   "execution_status": "succeeded",
   "result_status": "resolved",
   "trace_status": "ready",
-  "latest_attempt": 1,
+  "latest_attempt_no": 1,
+  "main_session_id": "91589679-4c11-4a07-8c3e-5d3f19a2b701",
   "duration_ms": 522000,
   "test_summary": {"passed": 118, "failed": 2, "skipped": 1, "error": 0, "f2p_failed": 2, "p2p_failed": 0},
   "metrics": {"resolved": 0, "cost_usd": 0.42},
@@ -125,7 +126,7 @@ sort=created_at|duration|status, order=asc|desc
 }
 ```
 
-测试打点接口按 attempt 返回每条测试的 `suite/name/outcome/duration/group/expected/message/log_ref`。其中 group 可表达 SWE-bench 的 F2P/P2P，outcome 同时保留归一化结果与原生状态；完整 stdout/stderr 和失败堆栈通过受权限控制的 OSS 引用读取。
+测试打点接口按 attempt 返回每条测试的 `suite/name/outcome/duration/group/expected/message/log_ref`。`main_session_id` 是 latest attempt 主 Agent 根会话（`parent_session_id=null`，非 unlinked、ordinal 最小）的原生 session id，与自进化上报同一取数规则；无轨迹或未解析时为 `null`，列表按页批量查询，不逐行查库。上报侧另受 HE `sessionId` 1..36 字符约束，超长回退 attempt id。其中 group 可表达 SWE-bench 的 F2P/P2P，outcome 同时保留归一化结果与原生状态；完整 stdout/stderr 和失败堆栈通过受权限控制的 OSS 引用读取。
 
 结果接口返回 `metric_definition_version`、公式口径、分母、`is_final` 和 `generated_at`。前端不自行猜测解决率分母。
 

@@ -449,6 +449,7 @@ const mock = {
   cases: [
     {
       id: "django__django-11019",
+      session: "9f2c1a7e-3b84-4c11-9d0e-5a6b7c8d9e01",
       repo: "django/django",
       difficulty: "medium",
       status: "resolved",
@@ -459,6 +460,7 @@ const mock = {
     },
     {
       id: "sympy__sympy-20590",
+      session: "4d8e2b61-7a09-4f3c-b2d1-8e6f0a9c3b52",
       repo: "sympy/sympy",
       difficulty: "easy",
       status: "resolved",
@@ -469,6 +471,7 @@ const mock = {
     },
     {
       id: "matplotlib__matplotlib-22871",
+      session: "c1a7e93d-2f58-4b6a-9e01-7d4c8b2a5f13",
       repo: "matplotlib/matplotlib",
       difficulty: "hard",
       status: "failed",
@@ -479,6 +482,7 @@ const mock = {
     },
     {
       id: "astropy__astropy-12907",
+      session: "8a41c6d2-5e93-4b07-9c1f-2d6e8a0b4c35",
       repo: "astropy/astropy",
       difficulty: "medium",
       status: "running",
@@ -489,6 +493,7 @@ const mock = {
     },
     {
       id: "scikit-learn__scikit-learn-25638",
+      session: "5e3b8c14-6d2a-4f09-b7e3-1a9c6d4f8b20",
       repo: "scikit-learn/scikit-learn",
       difficulty: "medium",
       status: "queued",
@@ -499,6 +504,7 @@ const mock = {
     },
     {
       id: "pytest-dev__pytest-11143",
+      session: "6b2d9f41-0c87-4e5a-b3d9-7f1c8e2a6d04",
       repo: "pytest-dev/pytest",
       difficulty: "hard",
       status: "timeout",
@@ -760,6 +766,12 @@ function evalCasesForRun(run) {
     const finished = !["running", "queued"].includes(status);
     return {
       id: index < seedCases.length ? seed.id : `${project}__${project}-${10240 + index}`,
+      session:
+        status === "queued"
+          ? null
+          : index < seedCases.length
+            ? seed.session
+            : mockSessionId(index),
       repo: index < seedCases.length ? seed.repo : repo,
       difficulty: seed.difficulty,
       status,
@@ -768,6 +780,19 @@ function evalCasesForRun(run) {
       tokens: finished || status === "running" ? `${180 + ((index * 29) % 760)}.${index % 10}k` : "—",
     };
   });
+}
+
+function mockSessionId(index) {
+  const hex = (value, width = 8) =>
+    (value >>> 0)
+      .toString(16)
+      .padStart(width, "0")
+      .slice(-width);
+  return `${hex(0x8a41c6d2 + index * 2654435761)}-${hex(0x4b8d + index, 4)}-4f0a-9e21-${hex(0x5a6b7c8d + index * 97, 12)}`;
+}
+
+function shortSessionId(value) {
+  return value.length <= 16 ? value : `${value.slice(0, 8)}…${value.slice(-4)}`;
 }
 
 function paginationWindow(current, total) {
@@ -2262,9 +2287,10 @@ function evalCaseTable(run) {
         <div class="input-with-icon" style="margin-left:auto"><span>${icon("search", 14)}</span><input class="input" id="case-search" value="${esc(ui.caseSearch)}" style="width:230px" placeholder="搜索实例 ID 或仓库" /></div>
       </div>
       ${rows.length ? `<div class="table-wrap"><table class="case-table">
-        <thead><tr><th>实例 ID</th><th>仓库</th><th>难度</th><th>状态</th><th>评分</th><th>耗时</th><th>Token</th><th>轨迹</th></tr></thead>
+        <thead><tr><th>实例 ID</th><th>主 Agent session id</th><th>仓库</th><th>难度</th><th>状态</th><th>评分</th><th>耗时</th><th>Token</th><th>轨迹</th></tr></thead>
         <tbody>${rows.map((item) => `<tr class="clickable" data-route="/trace/${run.id}/${item.id}">
           <td><div class="table-primary mono">${item.id}</div><div class="table-secondary">attempt 1</div></td>
+          <td>${item.session ? `<span class="mono table-session" title="${esc(item.session)}">${shortSessionId(item.session)}</span>` : `<span class="muted">—</span>`}</td>
           <td>${item.repo}</td><td><span class="tag tag-neutral">${item.difficulty}</span></td><td>${statusTag(item.status)}</td>
           <td><strong>${item.score}</strong></td><td>${item.duration}</td><td>${item.tokens}</td>
           <td><span class="row" style="color:var(--primary)">${icon("list", 13)} 查看 ${icon("arrowRight", 12)}</span></td>
