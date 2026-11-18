@@ -22,7 +22,7 @@ def main_session_id(
     """
 
     rows = main_session_ids(session, [attempt_id], tenant_id=tenant_id)
-    return rows.get(attempt_id)
+    return rows.get(attempt_id) or None
 
 
 def main_session_ids(
@@ -45,7 +45,6 @@ def main_session_ids(
         TraceSession.eval_case_attempt_id.in_(ids),
         TraceSession.parent_session_id.is_(None),
         TraceSession.status != "unlinked",
-        TraceSession.native_session_id != "",
     )
     if tenant_id is not None:
         statement = statement.where(TraceSession.tenant_id == tenant_id)

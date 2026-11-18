@@ -7,6 +7,7 @@ actions, including their guard rails.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import UTC, datetime, timedelta
 
@@ -128,6 +129,7 @@ def _add_main_session(
     *,
     status: str = "ready",
     attempt_no: int = 1,
+    ordinal: int = 0,
 ) -> TraceSession:
     attempt = _attempt(session, case, attempt_no)
     trace_file = TraceFile(
@@ -137,8 +139,8 @@ def _add_main_session(
         runtime_key="claude-code",
         parser_version="claude-code-2.1.278-v1",
         artifact_kind="trace",
-        object_key=f"traces/{attempt.id}.jsonl",
-        sha256="0" * 64,
+        object_key=f"traces/{attempt.id}-{ordinal}.jsonl",
+        sha256=hashlib.sha256(f"{native_id}:{ordinal}".encode()).hexdigest(),
         size=12,
         status="ready",
     )
@@ -153,7 +155,7 @@ def _add_main_session(
         native_session_id=native_id,
         native_session_key=native_id,
         status=status,
-        ordinal=0,
+        ordinal=ordinal,
     )
     session.add(root)
     session.commit()
@@ -250,11 +252,35 @@ def test_cases_prefer_the_latest_attempt_session(
     _add_main_session(seeded, cases[0], "old-attempt-session")
     response = client.post(f"/api/v1/eval-case-runs/{cases[0].id}/retry")
     assert response.status_code == 200
+    assert response.json()["case"]["main_session_id"] is None
     _add_main_session(seeded, cases[0], "new-attempt-session", attempt_no=2)
 
     body = client.get(f"/api/v1/eval-runs/{run.id}/cases").json()
     by_key = {item["case_key"]: item for item in body["items"]}
     assert by_key["case-a"]["main_session_id"] == "new-attempt-session"
+
+
+def test_cases_treat_empty_native_session_id_as_absent(
+    seeded: Session, client: TestClient
+) -> None:
+    run, cases = _prepare_failed_run(seeded, key="empty-root-session")
+    _add_main_session(seeded, cases[0], "")
+
+    body = client.get(f"/api/v1/eval-runs/{run.id}/cases").json()
+    by_key = {item["case_key"]: item for item in body["items"]}
+    assert by_key["case-a"]["main_session_id"] is None
+
+
+def test_cases_choose_first_root_session_by_ordinal(
+    seeded: Session, client: TestClient
+) -> None:
+    run, cases = _prepare_failed_run(seeded, key="multi-root-session")
+    _add_main_session(seeded, cases[0], "late-session", ordinal=2)
+    _add_main_session(seeded, cases[0], "early-session", ordinal=1)
+
+    body = client.get(f"/api/v1/eval-runs/{run.id}/cases").json()
+    by_key = {item["case_key"]: item for item in body["items"]}
+    assert by_key["case-a"]["main_session_id"] == "early-session"
 
 
 def test_cases_reject_invalid_filters(seeded: Session, client: TestClient) -> None:

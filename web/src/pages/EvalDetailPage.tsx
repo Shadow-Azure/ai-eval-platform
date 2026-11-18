@@ -1173,7 +1173,13 @@ function caseColumns(
     render: (value: string | null) =>
       value ? (
         <Tooltip title={value}>
-          <span className="mono eval-session-id">{shortSessionId(value)}</span>
+          <span
+            className="mono eval-session-id"
+            tabIndex={0}
+            aria-label={value}
+          >
+            {shortSessionId(value)}
+          </span>
         </Tooltip>
       ) : (
         <span className="muted small">—</span>

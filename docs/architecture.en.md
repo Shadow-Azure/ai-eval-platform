@@ -89,7 +89,7 @@ Runner archives sessions, metadata and diagnostics, retaining failures; manifest
 
 ## Case list
 
-The evaluation detail "cases" table returns the main Agent native session id for the latest attempt (root session with `parent_session_id=null`, the same semantics as failure reporting and the trace page); when no trace was parsed it is empty and the frontend renders `—`. The list is queried in batches per page, and filters, pagination and the trace entry remain unchanged.
+The evaluation detail "cases" table returns the main Agent native session id for the latest attempt (root session with `parent_session_id=null`, using the same rules as failure reporting: not unlinked, lowest ordinal); when no trace was parsed it is empty and the frontend renders `—`. The list is queried in batches per page, and filters, pagination and the trace entry stay unchanged; reporting is capped by HE's 1..36-character `sessionId` contract and falls back to the attempt id when longer.
 
 ## Dataset import
 

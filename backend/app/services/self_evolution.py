@@ -149,6 +149,26 @@ def _maybe_session_source(
 # ---------------------------------------------------------------------------
 
 
+def _report_session_id(session: Session, attempt_id: str) -> str | None:
+    """Native root session id that HE's 1..36-char sessionId contract accepts.
+
+    The case list may display a longer native id, but a report must fall back
+    to the attempt id (without ``sessionSource``) when truncation would make
+    the envelope URL unresolvable upstream.
+    """
+
+    session_id = main_session_id(session, attempt_id)
+    if session_id is None:
+        return None
+    if len(session_id) > SESSION_ID_PATTERN_LIMIT:
+        logger.warning(
+            "native session id longer than %s chars; envelope link omitted",
+            SESSION_ID_PATTERN_LIMIT,
+        )
+        return None
+    return session_id
+
+
 def bad_case_identifier(tenant_id: str, eval_run_id: str, case_key: str) -> str:
     digest = hashlib.sha1(f"{tenant_id}:{eval_run_id}:{case_key}".encode()).hexdigest()
     return f"swe-{digest[:20]}"
@@ -192,7 +212,7 @@ def build_bad_case_payload(
 ) -> dict:
     """Assemble the frozen ``BadCaseIngest`` body for one bad case."""
 
-    session_id = main_session_id(session, final_attempt.id)
+    session_id = _report_session_id(session, final_attempt.id)
     has_native_session = session_id is not None
     if session_id is None:
         # Attempt-id fallback: the envelope endpoint resolves sessions by
@@ -412,7 +432,7 @@ def backfill_missing_session_sources(
             counts["skipped_no_trace"] += 1
             continue
         final_attempt = attempts[-1]
-        if main_session_id(session, final_attempt.id) is None:
+        if _report_session_id(session, final_attempt.id) is None:
             counts["skipped_no_trace"] += 1
             continue
         if (

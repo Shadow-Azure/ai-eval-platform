@@ -198,7 +198,7 @@ def case_row(
         "result_status": case.result_status,
         "trace_status": case.trace_status,
         "latest_attempt_no": case.latest_attempt_no,
-        "main_session_id": main_session_id,
+        "main_session_id": main_session_id or None,
         "duration_ms": case.duration_ms,
         "error_code": case.error_code,
         "error_summary": case.error_summary,
@@ -402,7 +402,9 @@ def get_case(session: Session, case_run_id: str) -> dict[str, Any]:
         "case": case_row(
             case,
             main_session_id=(
-                lookup_main_session_id(session, latest.id)
+                lookup_main_session_id(
+                    session, latest.id, tenant_id=case.tenant_id
+                )
                 if latest is not None
                 else None
             ),
@@ -515,7 +517,9 @@ def retry_case(session: Session, *, case_run_id: str, actor: str, now: datetime 
     return {
         "case": case_row(
             case,
-            main_session_id=lookup_main_session_id(session, attempt.id),
+            main_session_id=lookup_main_session_id(
+                session, attempt.id, tenant_id=case.tenant_id
+            ),
         ),
         "attempt": _attempt_row(session, attempt),
         "retry": retry_state(session, run, case),

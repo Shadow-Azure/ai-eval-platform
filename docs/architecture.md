@@ -89,7 +89,7 @@ Runner 归档会话、元数据与诊断，失败保留；清单记录路径、d
 
 ## 用例明细
 
-评测详情「用例明细」按 latest attempt 返回主 Agent 原生 session id（根会话 `parent_session_id=null`，与失败上报和轨迹页同一语义）；无轨迹或未解析时为空，前端显示 `—`。列表按页批量查询，筛选、分页与轨迹入口保持不变。
+评测详情「用例明细」按 latest attempt 返回主 Agent 原生 session id（根会话 `parent_session_id=null`，与失败上报同一取数规则：非 unlinked、ordinal 最小）；无轨迹或未解析时为空，前端显示 `—`。列表按页批量查询，筛选、分页与轨迹入口不变；上报侧受 HE `sessionId` 1..36 约束，超长回退 attempt id。
 
 ## 数据集导入
 
