@@ -958,7 +958,7 @@ export function EvalDetailPage() {
           onRow={(record) => ({
             onClick: () => openCase(record.id, record.latest_attempt_no),
             onKeyDown: (event) => {
-              if (event.target !== event.currentTarget) return;
+              if ((event.target as HTMLElement).closest("button")) return;
               if (event.key === "Enter" || event.key === " ") {
                 event.preventDefault();
                 openCase(record.id, record.latest_attempt_no);
