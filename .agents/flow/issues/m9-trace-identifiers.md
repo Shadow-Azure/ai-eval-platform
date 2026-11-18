@@ -12,6 +12,7 @@ scope:
   - tests/**
   - web/src/**
   - docs/**
+  - plans/**
   - .agents/flow/**
 adr: []
 github:
