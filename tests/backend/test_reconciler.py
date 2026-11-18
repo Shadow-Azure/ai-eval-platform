@@ -18,9 +18,9 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from app.config import get_settings
-from app.models import EvalCaseAttempt, EvalCaseRun, EvalEvent, EvalRun
+from app.models import EvalCaseAttempt, EvalCaseRun, EvalEvent, EvalRun, Runner
 from app.seed import ensure_default_scope
-from app.services import evaluations, reconciler
+from app.services import evaluations, reconciler, runners
 from object_stub import StubObjectStore
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -363,6 +363,21 @@ def test_completion_backfill_finalizes_uploading_attempt(
         )
         attempts_before = _attempt_count(seeded, run)
 
+        # #281: the backfilled completion must also free the Runner binding.
+        runner = runners.record_runner_heartbeat(
+            seeded,
+            runner_id="fixed-linux-eval",
+            name="fixed-linux-eval",
+            labels=["self-hosted", "linux", "eval"],
+            status="online",
+            current_case_attempt_id=None,
+            now=now,
+        )
+        runner.status = "busy"
+        runner.busy_case_attempt_id = case.id
+        attempt.runner_id = runner.id
+        seeded.commit()
+
         counts = reconciler.reconcile(seeded, settings=get_settings(), now=now)
 
         assert counts["reconciled"] == 1
@@ -370,6 +385,13 @@ def test_completion_backfill_finalizes_uploading_attempt(
         attempt = seeded.get(EvalCaseAttempt, attempt.id)
         case = seeded.get(EvalCaseRun, case.id)
         run = seeded.get(EvalRun, run.id)
+        runner = (
+            seeded.query(Runner)
+            .filter(Runner.provider_runner_id == "fixed-linux-eval")
+            .one()
+        )
+        assert runner.busy_case_attempt_id is None
+        assert runner.status == "online"
         assert attempt.status == "succeeded"
         assert attempt.error_code is None
         assert case.execution_status == "succeeded"
