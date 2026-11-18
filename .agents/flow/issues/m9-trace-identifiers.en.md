@@ -5,8 +5,8 @@ English | [中文](m9-trace-identifiers.md)
 ```yaml flow
 kind: issue
 milestone: m9
-priority: P2
-status: ready
+priority: P0
+status: done
 scope:
   - backend/app/**
   - tests/**
