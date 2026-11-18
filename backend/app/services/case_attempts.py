@@ -727,6 +727,11 @@ def finalize_completion(
             enqueue_attempt(session, attempt, now=now)
     except Exception:  # noqa: BLE001 - ingestion is post-completion work
         logger.exception("enqueue trace ingestion failed for attempt %s", attempt.id)
+    # A terminal attempt frees its Runner on every completion path. The
+    # failure/spot paths release in their settlement helpers; the success path
+    # settles here, and without this the next fixed-pool `started` callback is
+    # rejected with runner_busy_conflict (#281).
+    lifecycle.release_runner_binding(session, attempt)
     session.commit()
 
 
