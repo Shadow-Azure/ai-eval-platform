@@ -880,6 +880,11 @@ def build_retry_dispatch(
     )
     session.add(retry_attempt)
     ctx.case_run.latest_attempt_no = new_attempt_no
+    # M9 (#288): every retry — automatic and manual — starts with a fresh,
+    # unparsed trace. Without this reset a failed retry that uploaded nothing
+    # would keep the previous attempt's terminal badge and could be mistaken
+    # for a trace-ready settled case by the early bad-case enqueue.
+    ctx.case_run.trace_status = "pending"
     return Outbox(
         tenant_id=run.tenant_id,
         topic=evaluations.SHARD_DISPATCH_TOPIC,

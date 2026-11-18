@@ -193,9 +193,9 @@ Runner 的 OpenAI 兼容 `base_url` 指向平台，`Authorization` 使用 case-s
 
 ## 8. 自进化上报与会话包下载
 
-M9（issue #263）：评测 run 终态时把非 `resolved` 且真正执行过（存在 `started_at` 非空的 attempt）的用例作为 bad case 上报到 Prepare 冻结的 harness-evolution 工作区。
+M9（issue #263/#288）：评测 run 运行中，Worker 每轮在 trace 解析发布后把结果已不可变、trace 已到终态且最终 attempt 有可解析轨迹的 bad case 逐条入队；`succeeded` 且非 `resolved` 可立即入队，`failed`/`timeout` 要等重试预算耗尽。run 终态时仍批量入队非 `resolved` 且真正执行过（存在 `started_at` 非空的 attempt）的用例兜底，取消/取消中只阻止新增。
 
-上报走数据库 outbox：终态事务内为每个 bad case 冻结一行 `self_evolution_report`，`payload_json` 是最终的 `BadCaseIngest` 报文（camelCase，`extra=forbid`）。`badCaseId` 确定性生成为 `swe-` + `sha1(tenant_id:eval_run_id:case_key)` 前 20 位 hex，同一 run 重复触发靠 `UNIQUE(tenant_id, bad_case_id)` 幂等；上游同工作区重复 id 返回 200 覆盖、不占配额。Worker 以 15s 超时 POST `{base_url}/api/workspaces/{workspace_id}/bad-cases`（`Authorization: Bearer whk_...`）：2xx 记 `succeeded`；401/403（凭据）、409（配额/归属冲突）、422（契约）为终态 `failed`；429/5xx/网络错误按 1min、5min、15min、1h… 阶梯退避，累计 8 次仍失败转 `failed`。
+上报走数据库 outbox：入队时为每个 bad case 冻结一行 `self_evolution_report`，`payload_json` 是最终的 `BadCaseIngest` 报文（camelCase，`extra=forbid`）。`badCaseId` 确定性生成为 `swe-` + `sha1(tenant_id:eval_run_id:case_key)` 前 20 位 hex，同一 run 重复触发靠 `UNIQUE(tenant_id, bad_case_id)` 幂等；提前入队用 savepoint 吸收与终态批量入队的唯一键竞争。上游同工作区重复 id 返回 200 覆盖、不占配额。Worker 以 15s 超时 POST `{base_url}/api/workspaces/{workspace_id}/bad-cases`（`Authorization: Bearer whk_...`）：2xx 记 `succeeded`；401/403（凭据）、409（配额/归属冲突）、422（契约）为终态 `failed`；429/5xx/网络错误按 1min、5min、15min、1h… 阶梯退避，累计 8 次仍失败转 `failed`。
 
 `runtime_key=claude-code` 且平台配置了签名密钥与公网基地址时，报文附带 `sessionSource`：`runtime="claude-code"`，`sessionUrlTemplate` 指向本平台的会话包端点并自带 7 天有效的 HMAC-SHA256 短时签名（对 `GET\n/api/v1/self-evolution/sessions/\n{run_id}\n{exp}` 即路径前缀 + 所属评测 run id + 过期时间计算，不绑定具体会话 id——拉取方 BFS 会把根与每个子会话 id 逐一代入 `{sessionId}` 占位符，同一签名对同一次评测 run 内全部命中；签名把授权范围收敛到单次评测，一条泄漏 URL 不能跨 run 拉取其他会话；占位符恰好出现一次）。没有解析出主会话轨迹的用例回退 `sessionId=attempt id` 且不携带 `sessionSource`。
 
