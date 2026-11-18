@@ -136,17 +136,15 @@ EvalDetailPage
 TracePage
   ├─ AttemptSelector
   ├─ TraceIngestionBanner
-  ├─ SessionTree
-  ├─ TraceWaterfall
-  │   ├─ SpanTypeFilter
-  │   ├─ TimeAxis
-  │   └─ VirtualizedSpanRows
+  ├─ SessionSelect(main / subagent / unlinked, default main, sessionId)
+  ├─ PhaseNav(collapsible, default expanded)
+  ├─ ConversationView / StepList / Timeline
   ├─ SpanInspector
   │   ├─ SpanSummary
   │   ├─ MessageContent
   │   ├─ AttributeTable
   │   └─ RawRecordDisclosure(permission)
-  └─ RawTraceDownload
+  └─ RawSource(collapsible, default collapsed; controlled download)
 ```
 
 Waterfall 用 CSS/SVG 自研，行虚拟化；不为每个大 span 一次性渲染完整正文。文本默认按纯文本显示，Markdown 若启用必须 sanitize，工具输出中的 HTML/脚本不可执行。

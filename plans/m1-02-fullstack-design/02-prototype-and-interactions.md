@@ -39,7 +39,7 @@
 | 评测详情 | `#/evals/:id` | 实时进度、取消、事件、关键用例 | eval_case_run/eval_event | `/eval-runs/:id/*` |
 | 用例明细 | `#/evals/:id?tab=cases` | 筛选、搜索、分页、重试、跳轨迹 | eval_case_run | `/eval-runs/:id/cases` |
 | 结果分析 | `#/evals/:id?tab=results` | 指标卡、分布、趋势、基线对比 | metric_result | `/eval-runs/:id/results` |
-| 会话轨迹 | `#/trace/:runId/:caseId` | attempt、会话树、span 筛选与详情 | trace_session/trace_span | `/eval-cases/:id/trace` |
+| 会话轨迹 | `#/trace/:runId/:caseId` | attempt、会话下拉、关键节点、span 筛选与详情 | trace_session/trace_span | `/eval-cases/:id/trace` |
 | 交付流水线 | `#/deployment` | 查看阶段、历史和受控回滚 | deployment | `/deployments` |
 
 实际 React 路由去掉 `#`，由 History API 与服务端 fallback 支持深链；原型 hash 仅用于单文件离线演示。
@@ -102,7 +102,7 @@ resolved commit 与资产数量 / 模型与凭据类型 / 资源池与在线容�
 
 ### 3.7 会话轨迹
 
-保留原型三栏：左会话树、中间 waterfall、右 span 属性。补充三条实现约束：
+轨迹页维持三栏骨架，但默认中栏是对话轨迹：左栏是会话下拉 + 关键节点，会话下拉覆盖主 Agent / 子 Agent / 未关联会话并默认主 Agent，关键节点默认展开；原始文件默认折叠。中间保留对话 / 步骤 / 时间线三种视图，时间线沿用 waterfall；右栏是 span 详情。补充三条实现约束：
 
 1. URL 包含 `caseRunId`、`attempt`、`sessionId`、`spanId`，刷新/新窗口恢复同一选中状态。
 2. 会话树与 waterfall 使用同一父子证据；仅按时间相邻不能建立父子关系。

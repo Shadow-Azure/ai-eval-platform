@@ -71,6 +71,21 @@ export interface FlatSessionTree<T extends TraceSessionNode = TraceSessionNode> 
   defaultSessionId: string | null;
 }
 
+export type TraceSessionRole = "main" | "subagent" | "unlinked";
+
+/**
+ * Classifies a session for the trace session picker. A session is only a main
+ * Agent when it is a linked root; orphaned and explicitly unlinked rows keep
+ * their own category so they are never presented as the main Agent.
+ */
+export function traceSessionRole(
+  session: TraceSessionNode,
+  unlinked = false,
+): TraceSessionRole {
+  if (unlinked || session.status === "unlinked") return "unlinked";
+  return session.parent_session_id ? "subagent" : "main";
+}
+
 export interface SpanLike {
   id: string;
   ordinal: number;

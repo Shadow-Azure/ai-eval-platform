@@ -53,6 +53,7 @@ import {
   readTraceSelection,
   spanBelongsToSession,
   traceIdentifiers,
+  traceSessionRole,
   traceStatusForAttempt,
 } from "../features/traces/traceModel";
 import {
@@ -252,66 +253,98 @@ function saveBlob(blob: Blob, filename: string): void {
   window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
-interface SessionListProps {
-  linked: Array<{ session: TraceSession; depth: number }>;
-  unlinked: Array<{ session: TraceSession; depth: number }>;
+interface SessionSelectProps {
+  sessions: TraceSession[];
+  unlinkedIds: Set<string>;
   selectedId: string | null;
   onSelect: (session: TraceSession) => void;
 }
 
-function SessionList({
-  linked,
-  unlinked,
+const SESSION_ROLE_META = {
+  main: { label: "主 Agent" },
+  subagent: { label: "子 Agent" },
+  unlinked: { label: "未关联" },
+} as const;
+
+function SessionSelect({
+  sessions,
+  unlinkedIds,
   selectedId,
   onSelect,
-}: SessionListProps) {
-  const renderItem = (
-    item: { session: TraceSession; depth: number },
-    group: "linked" | "unlinked",
-  ) => (
-    <button
-      key={item.session.id}
-      type="button"
-      className={`trace-tree-item ${selectedId === item.session.id ? "active" : ""} ${
-        item.depth ? `depth-${Math.min(item.depth, 3)}` : ""
-      }`}
-      onClick={() => onSelect(item.session)}
-      aria-current={selectedId === item.session.id ? "true" : undefined}
-      aria-label={`选择会话 ${item.session.agent_name ?? item.session.id}`}
-    >
-      <span
-        className={`trace-session-mark ${group === "unlinked" ? "warn" : ""}`}
-      >
-        {group === "unlinked" ? "U" : "A"}
-      </span>
-      <span className="trace-tree-copy">
-        <span className="truncate">
-          {item.session.agent_name ?? item.session.id.slice(0, 12)}
+}: SessionSelectProps) {
+  const options = sessions.map((item) => {
+    const role = traceSessionRole(item, unlinkedIds.has(item.id));
+    return {
+      value: item.id,
+      label: (
+        <span className="trace-session-select-label">
+          <span className="trace-session-select-head">
+            <span className={`trace-session-role ${role}`}>
+              {SESSION_ROLE_META[role].label}
+            </span>
+            <span className="trace-session-select-name">
+              {item.agent_name ?? item.id.slice(0, 12)}
+            </span>
+          </span>
+          <span
+            className="trace-session-select-id mono"
+            title={item.native_session_id}
+          >
+            {item.native_session_id}
+          </span>
         </span>
-        <span className="trace-tree-meta">
-          {group === "unlinked"
-            ? "未关联会话"
-            : item.session.agent_id
-              ? `agent ${item.session.agent_id.slice(0, 10)}`
-              : item.session.runtime_key}
-        </span>
-      </span>
-      <span className="trace-tree-count">{item.session.span_count}</span>
-    </button>
-  );
+      ),
+    };
+  });
 
   return (
-    <div className="trace-session-tree">
-      {linked.map((item) => renderItem(item, "linked"))}
-      {unlinked.length ? (
-        <>
-          <div className="trace-group-label">
-            <Icon name="alert" size={12} /> 未关联会话
-          </div>
-          {unlinked.map((item) => renderItem(item, "unlinked"))}
-        </>
-      ) : null}
-    </div>
+    <Select
+      className="trace-session-select"
+      value={selectedId ?? undefined}
+      options={options}
+      placeholder="没有可用会话"
+      disabled={sessions.length === 0}
+      onChange={(value) => {
+        const next = sessions.find((item) => item.id === value);
+        if (next) onSelect(next);
+      }}
+      optionRender={(option) => {
+        const item = sessions.find((item) => item.id === option.value);
+        if (!item) return option.label;
+        const role = traceSessionRole(item, unlinkedIds.has(item.id));
+        return (
+          <span className="trace-session-option">
+            <span className="trace-session-option-head">
+              <span className={`trace-session-role ${role}`}>
+                {SESSION_ROLE_META[role].label}
+              </span>
+              <span className="trace-session-option-name">
+                {item.agent_name ?? item.id.slice(0, 12)}
+              </span>
+              <span className="trace-session-option-count">
+                {item.span_count} spans
+              </span>
+            </span>
+            <span className="trace-session-option-meta">
+              <span className="trace-session-option-id mono">
+                {item.native_session_id}
+              </span>
+              <span>
+                {role === "main"
+                  ? "根会话"
+                  : role === "subagent"
+                    ? "子会话"
+                    : "未关联"}{" "}
+                · {item.runtime_key}
+              </span>
+            </span>
+          </span>
+        );
+      }}
+      popupMatchSelectWidth={360}
+      style={{ width: "100%" }}
+      aria-label="选择会话"
+    />
   );
 }
 
@@ -1904,6 +1937,8 @@ export function TracePage() {
   const [errorOnly, setErrorOnly] = useState(false);
   const [expandedPhases, setExpandedPhases] = useState<Set<string>>(new Set());
   const [expandedSteps, setExpandedSteps] = useState<Set<string>>(new Set());
+  const [phasesOpen, setPhasesOpen] = useState(true);
+  const [sourcesOpen, setSourcesOpen] = useState(false);
   const [focusPhaseId, setFocusPhaseId] = useState<string | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [dismissedSelection, setDismissedSelection] = useState(false);
@@ -1967,6 +2002,10 @@ export function TracePage() {
   );
   const allSessions = useMemo(
     () => [...flat.linked, ...flat.unlinked].map((item) => item.session),
+    [flat],
+  );
+  const unlinkedIds = useMemo(
+    () => new Set(flat.unlinked.map((item) => item.session.id)),
     [flat],
   );
   const selectedSession =
@@ -2552,81 +2591,107 @@ export function TracePage() {
         </div>
 
         <div className="trace-mobile-session-picker">
-          <Select
-            value={selectedSessionId ?? undefined}
-            options={allSessions.map((item) => ({
-              value: item.id,
-              label: `${item.agent_name ?? item.id} · ${item.span_count} spans`,
-            }))}
-            onChange={(value) => {
-              const next = allSessions.find((item) => item.id === value);
-              if (next) selectSession(next);
-            }}
-            style={{ width: "100%" }}
-            aria-label="选择会话"
+          <SessionSelect
+            sessions={allSessions}
+            unlinkedIds={unlinkedIds}
+            selectedId={selectedSessionId}
+            onSelect={selectSession}
           />
         </div>
 
         <div className="trace-layout">
           <aside className="trace-tree-pane">
-            <div className="trace-pane-section-head">
-              关键节点
-              <span>{model.phases.length}</span>
+            <div className="trace-session-picker">
+              <div className="trace-pane-section-head">
+                会话
+                <span>{allSessions.length}</span>
+              </div>
+              <SessionSelect
+                sessions={allSessions}
+                unlinkedIds={unlinkedIds}
+                selectedId={selectedSessionId}
+                onSelect={selectSession}
+              />
             </div>
-            <PhaseNav
-              phases={model.phases}
-              activePhaseId={selectedStep?.phaseId ?? null}
-              onSelect={jumpToPhase}
-            />
-            <div className="trace-pane-section-head">
-              会话
-              <span>{allSessions.length}</span>
+            <button
+              type="button"
+              className="trace-pane-section-head trace-pane-section-toggle"
+              aria-expanded={phasesOpen}
+              aria-controls="trace-phase-nav"
+              onClick={() => setPhasesOpen((open) => !open)}
+            >
+              <span className="trace-pane-section-title">
+                关键节点 <span>{model.phases.length}</span>
+              </span>
+              <Icon
+                name="chevronDown"
+                size={12}
+                className={`trace-section-chevron ${phasesOpen ? "open" : ""}`}
+              />
+            </button>
+            <div id="trace-phase-nav" hidden={!phasesOpen}>
+              <PhaseNav
+                phases={model.phases}
+                activePhaseId={selectedStep?.phaseId ?? null}
+                onSelect={jumpToPhase}
+              />
             </div>
-            <SessionList
-              linked={flat.linked}
-              unlinked={flat.unlinked}
-              selectedId={selectedSessionId}
-              onSelect={selectSession}
-            />
             <div className="trace-raw-source">
-              <div className="trace-pane-section-head">原始文件</div>
+              <button
+                type="button"
+                className="trace-pane-section-head trace-pane-section-toggle"
+                aria-expanded={sourcesOpen}
+                aria-controls="trace-raw-files"
+                onClick={() => setSourcesOpen((open) => !open)}
+              >
+                <span className="trace-pane-section-title">
+                  原始文件 <span>{files.length}</span>
+                </span>
+                <Icon
+                  name="chevronDown"
+                  size={12}
+                  className={`trace-section-chevron ${sourcesOpen ? "open" : ""}`}
+                />
+              </button>
               <div className="trace-raw-summary small muted">
                 主 Agent {exportSummary.mainAgentCount} · 子 Agent {exportSummary.subagentCount} · {files.length} 个原始文件
               </div>
-              {files.length ? (
-                files.map((file) => (
-                  <button
-                    key={file.id}
-                    type="button"
-                    className="trace-file-item"
-                    onClick={() => fileDownload.mutate(file.id)}
-                    disabled={fileDownload.isPending}
-                  >
-                    <Icon name="file" size={14} />
-                    <span className="truncate mono">
-                      {file.logical_path ?? file.id}
-                    </span>
-                    {statusTag(file.status)}
-                  </button>
-                ))
-              ) : (
-                <span className="small muted">没有登记的原生文件。</span>
-              )}
-              <Tooltip title={exportTooltip}>
-                <span className="trace-export-action">
-                  <Button
-                    className="trace-export-raw-button"
-                    size="small"
-                    block
-                    icon={<DownloadGlyph size={12} />}
-                    disabled={!canExportArchive || exportPending}
-                    loading={exportPending}
-                    onClick={() => setExportOpen(true)}
-                  >
-                    打包下载
-                  </Button>
-                </span>
-              </Tooltip>
+              <div id="trace-raw-files" hidden={!sourcesOpen}>
+                {files.length ? (
+                  files.map((file) => (
+                    <button
+                      key={file.id}
+                      type="button"
+                      className="trace-file-item"
+                      onClick={() => fileDownload.mutate(file.id)}
+                      disabled={fileDownload.isPending}
+                    >
+                      <Icon name="file" size={14} />
+                      <span className="truncate mono">
+                        {file.logical_path ?? file.id}
+                      </span>
+                      {statusTag(file.status)}
+                    </button>
+                  ))
+                ) : (
+                  <span className="small muted">没有登记的原生文件。</span>
+                )}
+                <Tooltip title={exportTooltip}>
+                  <span className="trace-export-action">
+                    <Button
+                      className="trace-export-raw-button"
+                      size="small"
+                      block
+                      icon={<DownloadGlyph size={12} />}
+                      disabled={!canExportArchive || exportPending}
+                      loading={exportPending}
+                      onClick={() => setExportOpen(true)}
+                    >
+                      打包下载
+                    </Button>
+                  </span>
+                </Tooltip>
+              </div>
             </div>
             <div className="trace-outline-foot">
               <Icon name="list" size={11} />主 Agent 与子 Agent 使用统一父子证据
