@@ -1,0 +1,1607 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Eval Platform · 会话轨迹重设计原型</title>
+    <style>
+      :root {
+        --primary: #1677ff;
+        --primary-dark: #0958d9;
+        --primary-soft: #e6f4ff;
+        --ink: #1f2937;
+        --ink-2: #4b5563;
+        --muted: #8792a2;
+        --line: #e7ecf3;
+        --line-strong: #d9e1ec;
+        --surface: #ffffff;
+        --surface-2: #f7f9fc;
+        --canvas: #f2f5fa;
+        --success: #16a36a;
+        --success-soft: #e9f8f1;
+        --warning: #d48806;
+        --warning-soft: #fff7e6;
+        --danger: #d92d20;
+        --danger-soft: #fff1f0;
+        --violet: #7c3aed;
+        --violet-soft: #f4edff;
+        --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04);
+        --shadow-md: 0 10px 30px rgba(27, 46, 94, 0.08);
+        --sidebar: 236px;
+        --radius: 10px;
+        --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      }
+      * { box-sizing: border-box; }
+      html, body { height: 100%; }
+      body {
+        margin: 0;
+        min-width: 1180px;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at 72% -20%, rgba(22, 119, 255, 0.1), transparent 30%),
+          var(--canvas);
+        font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+          "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+        font-size: 13px;
+        line-height: 1.5;
+        -webkit-font-smoothing: antialiased;
+        overflow: hidden;
+      }
+      button { font: inherit; color: inherit; border: 0; background: none; padding: 0; cursor: pointer; }
+      code, pre, .mono { font-family: var(--mono); }
+      .ic { width: 16px; height: 16px; flex: 0 0 auto; display: inline-block; vertical-align: -3px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+      .ic-sm { width: 13px; height: 13px; }
+      .ic-xs { width: 11px; height: 11px; }
+      .muted { color: var(--muted); }
+      .small { font-size: 11px; }
+      .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+      /* ---------- app shell (mirrors production) ---------- */
+      .sidebar {
+        position: fixed;
+        inset: 0 auto 0 0;
+        z-index: 20;
+        width: var(--sidebar);
+        display: flex;
+        flex-direction: column;
+        padding: 18px 14px 14px;
+        border-right: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.96);
+        backdrop-filter: blur(14px);
+      }
+      .brand { display: flex; align-items: center; gap: 11px; padding: 4px 8px 20px; }
+      .brand-mark {
+        width: 36px; height: 36px; display: grid; place-items: center; border-radius: 10px;
+        color: #fff; background: linear-gradient(145deg, #1677ff, #4f46e5);
+        box-shadow: 0 8px 18px rgba(22, 119, 255, 0.28);
+        font-size: 17px; font-weight: 800; letter-spacing: -1px;
+      }
+      .brand-name { font-size: 15px; font-weight: 750; letter-spacing: 0.2px; }
+      .brand-caption { color: var(--muted); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; }
+      .sidebar-nav { flex: 1; min-height: 0; overflow-y: auto; padding-right: 2px; }
+      .nav-group { margin-bottom: 16px; }
+      .nav-label { padding: 0 11px 6px; color: #9aa4b2; font-size: 10px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; }
+      .nav-item {
+        position: relative; width: 100%; min-height: 37px; display: flex; align-items: center; gap: 10px;
+        margin-bottom: 2px; padding: 7px 11px; border-radius: 8px; color: #5d6778; font-size: 13px;
+        text-align: left; transition: 0.16s ease;
+      }
+      .nav-item:hover { color: var(--ink); background: #f5f8fc; }
+      .nav-item .ic { width: 17px; height: 17px; color: #8b96a6; }
+      .nav-item.active { color: var(--primary); background: var(--primary-soft); font-weight: 650; }
+      .nav-item.active .ic { color: var(--primary); }
+      .nav-item.active::before {
+        content: ""; position: absolute; left: -14px; width: 3px; height: 22px;
+        border-radius: 0 3px 3px 0; background: var(--primary);
+      }
+      .sidebar-footer { margin-top: auto; padding-top: 14px; border-top: 1px solid var(--line); }
+      .tenant-chip { display: flex; align-items: center; gap: 9px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 9px; background: #fbfcfe; }
+      .tenant-avatar { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; color: #fff; background: linear-gradient(145deg, #353c49, #111827); font-size: 11px; font-weight: 700; }
+      .tenant-name { font-size: 12px; font-weight: 650; }
+      .tenant-meta { color: var(--muted); font-size: 10px; }
+
+      .main-shell { min-height: 100vh; margin-left: var(--sidebar); display: flex; flex-direction: column; height: 100vh; }
+      .topbar {
+        flex: 0 0 60px; display: flex; align-items: center; gap: 14px; padding: 0 30px;
+        border-bottom: 1px solid rgba(231, 236, 243, 0.88);
+        background: rgba(242, 245, 250, 0.86); backdrop-filter: blur(16px);
+      }
+      .breadcrumbs { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
+      .breadcrumbs strong { color: var(--ink); font-weight: 650; }
+      .topbar-spacer { flex: 1; }
+      .context-chip, .env-chip { display: flex; align-items: center; gap: 6px; padding: 5px 10px; border: 1px solid var(--line); border-radius: 20px; background: rgba(255,255,255,.82); font-size: 11px; font-weight: 600; color: #4b5563; }
+      .env-chip { border-color: #cce4ff; color: #1768c5; background: rgba(230, 244, 255, 0.82); }
+      .env-chip .dot { width: 6px; height: 6px; border-radius: 50%; background: #16a36a; }
+      .proto-chip { display: flex; align-items: center; gap: 6px; padding: 5px 10px; border: 1px solid #dccdff; border-radius: 20px; color: #6d28d9; background: #f7f2ff; font-size: 11px; font-weight: 700; letter-spacing: .02em; }
+      .icon-btn { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 8px; color: #6b7280; }
+      .icon-btn:hover { background: #eef2f8; }
+      .user-chip { display: flex; align-items: center; gap: 9px; padding-left: 8px; }
+      .avatar { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; color: #fff; background: linear-gradient(145deg, #353c49, #111827); font-size: 11px; font-weight: 700; }
+      .user-name { font-size: 12px; font-weight: 650; line-height: 1.3; }
+      .user-role { color: var(--muted); font-size: 10px; line-height: 1.3; }
+
+      /* ---------- page ---------- */
+      .page { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 16px 28px 16px 30px; }
+      .back-row { flex: 0 0 auto; margin-bottom: 5px; }
+      .back-btn { display: inline-flex; align-items: center; gap: 6px; padding: 3px 6px 3px 3px; border-radius: 6px; color: #64748b; font-size: 12px; }
+      .back-btn:hover { color: var(--primary); background: #eef6ff; }
+      .trace-head { flex: 0 0 auto; display: flex; align-items: flex-start; gap: 18px; }
+      .trace-title-wrap { min-width: 0; flex: 1; }
+      .eyebrow { display: flex; align-items: center; gap: 8px; color: #1677ff; font-size: 10px; font-weight: 750; letter-spacing: 0.13em; text-transform: uppercase; }
+      .eyebrow .sep { width: 3px; height: 3px; border-radius: 50%; background: #a9c9f5; }
+      .eyebrow .dim { color: #94a3b8; font-weight: 650; }
+      .title-line { display: flex; align-items: center; gap: 9px; margin-top: 3px; min-width: 0; }
+      .title-line h1 { margin: 0; font-size: 27px; line-height: 1.2; font-weight: 780; letter-spacing: -0.03em; color: #111827; }
+      .status-pill { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+      .status-pill.resolved { color: #0d7a4f; background: #e7f8ef; border: 1px solid #c4ecd8; }
+      .tag { display: inline-flex; align-items: center; padding: 2px 8px; border: 1px solid var(--line-strong); border-radius: 999px; color: #5b6678; background: #fff; font-size: 10.5px; font-weight: 600; }
+      .tag.violet { color: #6d28d9; border-color: #e2d4ff; background: #faf7ff; }
+      .meta-line { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin-top: 5px; color: #64748b; font-size: 11.5px; }
+      .meta-line .sep { color: #cbd5e1; }
+      .meta-line b { color: #334155; font-weight: 650; }
+      .meta-tests { display: inline-flex; align-items: center; gap: 3px; color: #0d7a4f; font-weight: 650; }
+      .head-actions { display: flex; align-items: center; gap: 8px; padding-top: 13px; flex: 0 0 auto; }
+      .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 32px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 8px; background: #fff; color: #374151; font-size: 12px; font-weight: 600; box-shadow: var(--shadow-sm); }
+      .btn:hover { border-color: #bcd0ea; color: var(--primary); }
+      .btn.primary { border-color: #1677ff; background: #1677ff; color: #fff; box-shadow: 0 4px 10px rgba(22,119,255,.22); }
+      .btn.select { min-width: 158px; justify-content: space-between; padding-right: 9px; }
+      .btn.icon-only { width: 32px; padding: 0; color: #64748b; }
+
+      /* ---------- trajectory overline ---------- */
+      .overview { flex: 0 0 auto; margin-top: 12px; padding: 10px 14px 9px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,.88); box-shadow: var(--shadow-sm); }
+      .ov-head { display: flex; align-items: center; gap: 10px; }
+      .ov-title { font-size: 11.5px; font-weight: 750; letter-spacing: .02em; }
+      .ov-sub { color: #94a3b8; font-size: 10.5px; }
+      .ov-head .spacer { flex: 1; }
+      .legend { display: flex; align-items: center; gap: 10px; }
+      .legend span { display: inline-flex; align-items: center; gap: 4px; color: #94a3b8; font-size: 10px; }
+      .legend i { width: 6px; height: 6px; border-radius: 2px; display: inline-block; }
+      .fingerprint { display: flex; align-items: flex-end; gap: 7px; margin-top: 7px; }
+      .fp-group { display: flex; flex-direction: column; gap: 5px; min-width: 28px; }
+      .fp-ticks { display: flex; align-items: flex-end; gap: 2px; height: 19px; }
+      .fp-ticks i { flex: 1 1 0; min-width: 2px; max-width: 9px; border-radius: 1.5px; opacity: .9; }
+      .fp-ticks i.agent { background: #7c3aed; height: 19px; }
+      .fp-ticks i.llm { background: #3b82f6; height: 19px; }
+      .fp-ticks i.thinking { background: #e3a54a; height: 14px; }
+      .fp-ticks i.tool { background: #1fa980; height: 19px; }
+      .fp-ticks i.message { background: #cbd5e1; height: 8px; }
+      .fp-label { display: flex; align-items: center; justify-content: space-between; gap: 4px; color: #94a3b8; font-size: 9.5px; line-height: 1.2; white-space: nowrap; overflow: hidden; }
+      .fp-label b { color: #64748b; font-weight: 700; }
+      .fp-group.key .fp-label b { color: #b45309; }
+      .fp-group.key .fp-ticks i.tool { background: #f59e0b; }
+      .fp-note { margin-left: auto; padding-left: 12px; color: #9aa4b2; font-size: 9.5px; white-space: nowrap; }
+      .fp-note .ic { color: #b6c0ce; }
+
+      /* ---------- workspace ---------- */
+      .workspace { flex: 1; min-height: 0; display: grid; grid-template-columns: 190px minmax(0, 1fr) 374px; gap: 12px; margin-top: 12px; }
+      .pane { min-height: 0; display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow-sm); overflow: hidden; }
+      .pane-head { display: flex; align-items: center; gap: 6px; padding: 0 2px 7px; color: #9aa4b2; font-size: 9.5px; font-weight: 750; letter-spacing: .1em; text-transform: uppercase; }
+      .pane-head .count { margin-left: auto; color: #b0bac8; font-weight: 600; letter-spacing: 0; }
+      .pane-head .ic { width: 12px; height: 12px; }
+      .pane-scroll { flex: 1; min-height: 0; overflow: hidden; padding: 12px 11px 10px; }
+      .pane.outline { overflow: visible; }
+      .outline .pane-scroll { overflow: visible; }
+
+      /* left outline */
+      .outline .session-card { display: flex; align-items: center; gap: 8px; padding: 9px 9px; border: 1px solid #bcd6ff; border-radius: 9px; background: #f3f9ff; }
+      .agent-avatar { width: 26px; height: 26px; display: grid; place-items: center; border-radius: 7px; color: #fff; background: linear-gradient(145deg, #7c3aed, #5b21b6); font-size: 10px; font-weight: 800; }
+      .sc-title { font-size: 11.5px; font-weight: 700; line-height: 1.3; color: #1e3a8a; }
+      .sc-meta { font-size: 9.5px; color: #6b7f99; line-height: 1.3; }
+      .sc-check { margin-left: auto; color: #16a36a; }
+      .session-picker { position: relative; }
+      .session-select { width: 100%; display: flex; flex-direction: column; gap: 2px; padding: 7px 8px; border: 1px solid #bcd6ff; border-radius: 9px; background: #f3f9ff; text-align: left; }
+      .session-select:hover { border-color: #8fb8f5; }
+      .session-select:focus-visible { outline: 2px solid #1677ff; outline-offset: -2px; }
+      .session-select-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
+      .session-role { display: inline-flex; flex: none; align-items: center; padding: 1px 5px; border-radius: 4px; font-size: 8px; font-weight: 750; line-height: 15px; }
+      .session-role.main { color: #1677ff; background: #e6f4ff; }
+      .session-role.subagent { color: #6d28d9; background: #f4edff; }
+      .session-role.unlinked { color: #b45309; background: #fff7e6; }
+      .session-select-name { min-width: 0; overflow: hidden; color: #1e3a8a; font-size: 11.5px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+      .session-select-chev { flex: none; margin-left: auto; color: #7d93b2; }
+      .session-select-id { color: #6b7f99; font-size: 9px; line-height: 1.35; overflow-wrap: anywhere; white-space: normal; }
+      .session-menu { position: absolute; z-index: 30; top: calc(100% + 6px); left: 0; width: 300px; max-width: 78vw; max-height: 250px; overflow: auto; padding: 5px; border: 1px solid var(--line); border-radius: 9px; background: #fff; box-shadow: 0 10px 28px rgba(15,23,42,.16); }
+      .session-menu[hidden], #phase-list[hidden], #raw-files[hidden] { display: none; }
+      .session-option { width: 100%; display: flex; flex-direction: column; gap: 2px; padding: 7px 8px; border-radius: 7px; text-align: left; }
+      .session-option:hover { background: #f7fafd; }
+      .session-option.active { background: #eaf4ff; }
+      .session-option-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
+      .session-option-name { min-width: 0; overflow: hidden; color: #334155; font-size: 11px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+      .session-option-count { flex: none; margin-left: auto; color: #9aa4b2; font-size: 9px; }
+      .session-option-meta { color: #8b9ab0; font-size: 9px; overflow-wrap: anywhere; }
+      .pane-toggle { width: 100%; border: 0; background: transparent; cursor: pointer; text-align: left; font-family: inherit; }
+      .pane-toggle:hover { color: #64748b; }
+      .pane-toggle:focus-visible { outline: 2px solid #1677ff; outline-offset: -2px; border-radius: 5px; }
+      .pane-chev { flex: none; margin-left: auto; color: #9aa4b2; transition: transform .15s ease; }
+      .pane-chev.open { transform: rotate(180deg); }
+      .raw-summary { padding: 0 2px 7px; color: #9aa4b2; font-size: 9px; line-height: 1.4; }
+      .phase-list { list-style: none; margin: 0; padding: 0; }
+      .phase-item { position: relative; display: flex; align-items: flex-start; gap: 8px; padding: 7px 6px 7px 5px; border-radius: 7px; cursor: pointer; }
+      .phase-item:hover { background: #f7fafd; }
+      .phase-item.active { background: #fffbeb; }
+      .phase-num { width: 20px; height: 20px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 50%; background: #f1f5fb; color: #64748b; font-size: 9px; font-weight: 750; }
+      .phase-item.active .phase-num { color: #fff; background: #f59e0b; }
+      .phase-item.done .phase-num { color: #0d7a4f; background: #e7f8ef; }
+      .phase-name { font-size: 11.5px; font-weight: 650; color: #334155; line-height: 1.35; }
+      .phase-desc { font-size: 9.5px; color: #9aa4b2; line-height: 1.35; }
+      .phase-count { margin-left: auto; padding-top: 2px; color: #a3adbb; font-size: 9.5px; }
+      .outline-divider { height: 1px; margin: 10px 2px; background: var(--line); }
+      .raw-file-btn { width: 100%; display: flex; align-items: center; gap: 6px; padding: 6px 7px; border-radius: 7px; color: #596579; font-size: 10px; text-align: left; }
+      .raw-file-btn:hover { background: #f7fafd; }
+      .raw-file-btn .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .raw-file-btn .ok { margin-left: auto; color: #16a36a; }
+      .outline-foot { margin-top: auto; padding-top: 8px; border-top: 1px solid var(--line); color: #9aa4b2; font-size: 9px; display: flex; align-items: center; gap: 4px; }
+
+      /* conversation */
+      .conv-toolbar { flex: 0 0 auto; height: 45px; display: flex; align-items: center; gap: 8px; padding: 0 12px; border-bottom: 1px solid var(--line); }
+      .view-tabs { display: flex; align-items: center; gap: 2px; padding: 2px; border-radius: 8px; background: #f2f5fa; }
+      .view-tab { display: inline-flex; align-items: center; gap: 5px; height: 27px; padding: 0 10px; border-radius: 6px; color: #64748b; font-size: 11.5px; font-weight: 650; }
+      .view-tab:hover { color: #334155; }
+      .view-tab.active { color: #0f172a; background: #fff; box-shadow: 0 1px 2px rgba(15,23,42,.1); }
+      .view-tab .kbd { display: inline-grid; place-items: center; min-width: 14px; height: 14px; padding: 0 3px; border: 1px solid #dbe3ee; border-radius: 4px; color: #a0aabb; background: #fff; font-size: 8.5px; font-weight: 700; }
+      .conv-tools { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+      .search-box { display: flex; align-items: center; gap: 5px; width: 176px; height: 29px; padding: 0 8px; border: 1px solid var(--line); border-radius: 7px; background: #fbfcfe; color: #a0aabb; }
+      .search-box span { font-size: 10.5px; }
+      .search-box .ic { width: 13px; height: 13px; }
+      .icon-btn.sm { width: 28px; height: 28px; border: 1px solid var(--line); background: #fff; }
+      .conv-filterbar { flex: 0 0 auto; display: flex; align-items: center; gap: 5px; padding: 7px 12px; border-bottom: 1px solid var(--line); background: #fcfdff; }
+      .chip { display: inline-flex; align-items: center; gap: 5px; height: 23px; padding: 0 8px; border: 1px solid transparent; border-radius: 6px; color: #64748b; font-size: 10.5px; font-weight: 600; }
+      .chip b { color: #94a3b8; font-weight: 650; }
+      .chip:hover { background: #f2f7fd; }
+      .chip.active { color: #0958d9; border-color: #cfe4ff; background: #eef6ff; }
+      .chip.active b { color: #1677ff; }
+      .filter-switch { margin-left: auto; display: flex; align-items: center; gap: 6px; color: #64748b; font-size: 10px; white-space: nowrap; }
+      .filter-switch i { width: 24px; height: 14px; border-radius: 999px; background: #dbe3ee; position: relative; }
+      .filter-switch i::after { content: ""; position: absolute; top: 2px; left: 2px; width: 10px; height: 10px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(15,23,42,.25); }
+      .filter-switch.on i { background: #1677ff; }
+      .filter-switch.on i::after { left: 12px; }
+
+      .conv-scroll { flex: 1; min-height: 0; overflow: hidden; padding: 12px 12px 0; }
+      .task-card { position: relative; padding: 7px 10px 6px; margin-bottom: 8px; border: 1px solid #e2e8f1; border-radius: 9px; background: linear-gradient(180deg, #fbfcfe, #f7f9fc); }
+      .task-top { display: flex; align-items: center; gap: 6px; color: #94a3b8; font-size: 9.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+      .task-top .tag { letter-spacing: 0; text-transform: none; }
+      .task-title { margin-top: 2px; color: #1e293b; font-size: 11.5px; font-weight: 650; line-height: 1.4; }
+      .task-title code { font-size: 11px; color: #0f172a; background: #eef2f7; padding: 0 3px; border-radius: 3px; }
+      .task-meta { display: flex; align-items: center; gap: 6px; margin-top: 2px; color: #94a3b8; font-size: 9.5px; }
+      .task-meta .sep { color: #d6dee9; }
+      .task-link { position: absolute; right: 10px; top: 8px; color: #1677ff; font-size: 10px; font-weight: 650; }
+
+      .turn { margin-bottom: 6px; border: 1px solid var(--line); border-radius: 9px; background: #fff; overflow: hidden; transition: border-color .15s ease, box-shadow .15s ease; }
+      .turn:hover { border-color: #cfdcec; }
+      .turn.active { border-color: #b6d3f8; box-shadow: 0 0 0 2px rgba(22,119,255,.06); }
+      .turn-head { display: flex; align-items: center; gap: 9px; padding: 7px 9px; cursor: pointer; }
+      .turn-index { width: 23px; height: 23px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 50%; color: #64748b; background: #f1f5fb; font-size: 9px; font-weight: 750; }
+      .turn.active .turn-index { color: #fff; background: #1677ff; }
+      .turn-main { min-width: 0; flex: 1; }
+      .turn-title { display: flex; align-items: center; gap: 6px; color: #1e293b; font-size: 11.5px; font-weight: 700; line-height: 1.3; }
+      .turn-title .pill { padding: 0 5px; border-radius: 4px; background: #fff7e6; color: #b45309; font-size: 8.5px; font-weight: 750; letter-spacing: .04em; }
+      .turn-title .pill.final { background: #e7f8ef; color: #0d7a4f; }
+      .turn-summary { margin-top: 1px; color: #8b96a6; font-size: 9.8px; line-height: 1.35; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .turn-stats { flex: 0 0 auto; color: #94a3b8; font-size: 9px; white-space: nowrap; }
+      .turn-chev { flex: 0 0 auto; color: #a6b1c1; }
+      .turn-body { padding: 0 9px 8px; border-top: 1px solid #f0f4f9; }
+      .turn:not(.open) .turn-body, .turn:not(.open) .final-body { display: none; }
+      .reasoning { margin-top: 5px; padding: 5px 8px 5px 9px; border-left: 2px solid #dccbff; border-radius: 0 6px 6px 0; background: #faf8ff; }
+      .reasoning-label { display: flex; align-items: center; gap: 4px; color: #8b5cf6; font-size: 9px; font-weight: 750; letter-spacing: .05em; text-transform: uppercase; }
+      .reasoning p { margin: 2px 0 0; color: #4b5563; font-size: 10.2px; line-height: 1.45; }
+      .reasoning code { color: #5b21b6; background: #f1eafe; padding: 0 3px; border-radius: 3px; font-size: 9.8px; }
+      .tool-call { margin-top: 6px; border: 1px solid #e8edf5; border-radius: 7px; background: #fbfcfe; overflow: hidden; }
+      .tool-call.selected { border-color: #bcd6ff; background: #f8fbff; }
+      .tool-main { display: flex; align-items: center; gap: 8px; padding: 5px 7px; }
+      .tool-icon { width: 24px; height: 24px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 6px; color: #0d7a4f; background: #e9f8f1; }
+      .tool-icon.edit { color: #b45309; background: #fff4e0; }
+      .tool-icon .ic { width: 13px; height: 13px; }
+      .tool-copy { min-width: 0; flex: 1; }
+      .tool-title { display: flex; align-items: center; gap: 6px; font-size: 10.5px; font-weight: 650; color: #334155; }
+      .tool-title .tool-name { color: #0d7a4f; }
+      .tool-call.selected .tool-title .tool-name { color: #b45309; }
+      .tool-title code { color: #64748b; font-size: 9.5px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .tool-sub { margin-top: 1px; color: #94a3b8; font-size: 9px; }
+      .tool-status { display: inline-flex; align-items: center; gap: 3px; color: #0d7a4f; font-size: 9px; font-weight: 650; white-space: nowrap; }
+      .tool-dur { color: #a3adbb; font-size: 9px; white-space: nowrap; }
+      .row-link { display: inline-flex; align-items: center; gap: 2px; color: #1677ff; font-size: 9px; font-weight: 650; white-space: nowrap; }
+      .diff-mini { border-top: 1px solid #eef2f7; padding: 4px 7px 4px 38px; background: #fff; }
+      .diff-line { display: flex; gap: 7px; font-family: var(--mono); font-size: 9.4px; line-height: 1.55; white-space: pre; }
+      .diff-line .ln { width: 16px; flex: 0 0 auto; color: #b0bac8; text-align: right; user-select: none; }
+      .diff-line .code { overflow: hidden; text-overflow: ellipsis; }
+      .diff-line.del .code { color: #b42318; background: #fff1f0; }
+      .diff-line.add .code { color: #0d7a4f; background: #eaf8f1; }
+      .diff-line.ctx .code { color: #64748b; }
+
+      .turn-final { border-color: #c9ead9; background: linear-gradient(180deg, #fbfefc, #f5fbf7); }
+      .turn-final .turn-index { color: #fff; background: #16a36a; }
+      .final-body { padding: 0 10px 10px; border-top: 1px solid #e5f4ec; }
+      .final-card { padding: 8px 9px; }
+      .final-head { display: flex; align-items: center; gap: 7px; }
+      .final-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: 999px; color: #0d7a4f; background: #e7f8ef; font-size: 9.5px; font-weight: 750; }
+      .final-tests { margin-left: auto; display: inline-flex; align-items: center; gap: 3px; color: #0d7a4f; font-size: 9px; font-weight: 650; }
+      .final-card p { margin: 5px 0 0; color: #4b5563; font-size: 10.2px; line-height: 1.55; }
+      .final-card code { color: #334155; background: #eaf2ec; padding: 0 3px; border-radius: 3px; font-size: 9.5px; }
+      .final-meta { display: flex; align-items: center; gap: 8px; margin-top: 6px; color: #94a3b8; font-size: 9px; }
+      .final-meta a { color: #1677ff; font-weight: 650; text-decoration: none; }
+
+      /* steps view */
+      .steps-view { display: none; flex: 1; min-height: 0; flex-direction: column; }
+      .conversation[data-view="steps"] .conv-scroll,
+      .conversation[data-view="steps"] .conv-filterbar { display: none; }
+      .conversation[data-view="steps"] .steps-view { display: flex; }
+      .steps-toolbar { flex: 0 0 auto; display: flex; align-items: center; gap: 7px; padding: 8px 12px; border-bottom: 1px solid var(--line); background: #fcfdff; }
+      .steps-title { color: #334155; font-size: 11px; font-weight: 700; }
+      .steps-sub { color: #94a3b8; font-size: 9.5px; }
+      .steps-toolbar .spacer { flex: 1; }
+      .steps-toolbar .hint { color: #a3adbb; font-size: 8.8px; }
+      .steps-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 12px 10px; scrollbar-width: thin; }
+      .step-group { margin-bottom: 7px; }
+      .step-group-head { display: flex; align-items: center; gap: 6px; padding: 2px 2px 4px; color: #94a3b8; font-size: 8.8px; font-weight: 750; letter-spacing: .06em; text-transform: uppercase; }
+      .step-group-head b { color: #64748b; font-weight: 750; }
+      .step-group-head .count { margin-left: auto; color: #b0bac8; font-weight: 600; letter-spacing: 0; text-transform: none; }
+      .step { margin-bottom: 4px; border: 1px solid var(--line); border-radius: 7px; background: #fff; overflow: hidden; }
+      .step:hover { border-color: #cfdcec; }
+      .step-head { display: flex; align-items: center; gap: 7px; padding: 5px 8px; cursor: pointer; }
+      .step-icon { width: 21px; height: 21px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 5px; color: #0d7a4f; background: #e9f8f1; font-family: var(--mono); font-size: 9px; font-weight: 800; }
+      .step-icon.think { color: #8b5cf6; background: #f4edff; }
+      .step-icon.read { color: #0b6fb8; background: #e8f4ff; }
+      .step-icon.edit { color: #b45309; background: #fff4e0; }
+      .step-icon.write { color: #6d28d9; background: #f4edff; }
+      .step-icon.skill { color: #0e7490; background: #e6f7fb; }
+      .step-icon.sub { color: #7c3aed; background: #f4edff; }
+      .step-copy { min-width: 0; flex: 1; }
+      .step-line { display: flex; align-items: center; gap: 5px; font-size: 10.2px; font-weight: 650; color: #334155; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .step-line .tool { color: #0d7a4f; }
+      .step-line code { color: #64748b; font-size: 9.4px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; }
+      .step-sub { margin-top: 0; color: #94a3b8; font-size: 8.7px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .step-status { flex: 0 0 auto; color: #0d7a4f; font-size: 8.5px; font-weight: 650; white-space: nowrap; }
+      .step-dur { flex: 0 0 auto; color: #a3adbb; font-size: 8.5px; white-space: nowrap; }
+      .step-chev { flex: 0 0 auto; color: #a6b1c1; }
+      .step-body { display: none; border-top: 1px solid #f0f4f9; padding: 6px 8px 7px; background: #fcfdff; }
+      .step.open .step-body { display: block; }
+      .step.selected, .child-step.selected, .tool-call.selected {
+        border-color: #1677ff;
+        box-shadow: 0 0 0 2px rgba(22, 119, 255, 0.16);
+        background: #f7fbff;
+      }
+      .step.selected .step-line, .child-step.selected .n { color: #0f172a; }
+      .step-chev.jump { color: #1677ff; font-size: 11px; }
+      .step:not(#step-subagent) .step-body { display: none !important; }
+      .turn-body.compact { padding-top: 6px; }
+      .turn-body.compact .step { margin-bottom: 4px; }
+      .child-step {
+        width: 100%; display: flex; align-items: center; gap: 6px;
+        padding: 5px 7px; border: 1px solid #eef2f7; border-radius: 6px;
+        background: #fff; color: #4b5563; text-align: left; font-size: 9px;
+      }
+      .child-step + .child-step { margin-top: 3px; }
+      .child-step .t { width: 38px; flex: 0 0 auto; color: #94a3b8; font-family: var(--mono); font-size: 8px; }
+      .child-step .n { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .child-step .step-status { margin-left: auto; }
+      .insp-selected-link { display: inline-flex; align-items: center; gap: 4px; margin-top: 5px; padding: 2px 6px; border: 1px solid #cfe4ff; border-radius: 999px; color: #0958d9; background: #eef6ff; font-size: 8.5px; font-weight: 650; }
+      .insp-selected-link i { width: 5px; height: 5px; border-radius: 50%; background: #1677ff; }
+      .step-body .cmd { font-size: 9px; }
+      .step-body .out { max-height: 74px; font-size: 8.8px; }
+      .nested { margin-top: 5px; border: 1px solid #eef2f7; border-radius: 6px; overflow: hidden; }
+      .nrow { display: flex; align-items: center; gap: 5px; padding: 4px 6px; border-bottom: 1px solid #f1f5f9; color: #4b5563; font-size: 8.8px; }
+      .nrow:last-child { border-bottom: 0; }
+      .nrow .t { width: 38px; flex: 0 0 auto; color: #94a3b8; font-family: var(--mono); font-size: 8px; }
+      .nrow .n { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .step-hint { padding: 4px 2px 0; color: #a3adbb; font-size: 8.5px; }
+      .step-group.example { margin-top: 8px; padding-top: 7px; border-top: 1px dashed #dbe3ee; }
+      .step-group.example .step-group-head b { color: #b45309; }
+      .example-tag { padding: 0 4px; border-radius: 3px; background: #fff7e6; color: #b45309; font-size: 8px; font-weight: 700; letter-spacing: 0; text-transform: none; }
+      .step-example-note { color: #b0bac8; font-size: 8.4px; }
+
+      /* timeline view */
+      .timeline-view { display: none; flex: 1; min-height: 0; flex-direction: column; }
+      .conversation[data-view="timeline"] .conv-scroll { display: none; }
+      .conversation[data-view="timeline"] .conv-filterbar { display: none; }
+      .conversation[data-view="timeline"] .timeline-view { display: flex; }
+      .timeline-view .conv-scroll { display: block; overflow: hidden; }
+      .tl-toolbar { flex: 0 0 auto; display: flex; align-items: center; gap: 7px; padding: 8px 12px; border-bottom: 1px solid var(--line); background: #fcfdff; }
+      .tl-title { color: #334155; font-size: 11px; font-weight: 700; }
+      .tl-sub { color: #94a3b8; font-size: 9.5px; }
+      .seg { display: flex; gap: 2px; padding: 2px; border-radius: 6px; background: #f2f5fa; }
+      .seg button { height: 22px; padding: 0 7px; border-radius: 5px; color: #94a3b8; font-size: 9.5px; font-weight: 650; }
+      .seg button.active { color: #0f172a; background: #fff; box-shadow: 0 1px 2px rgba(15,23,42,.08); }
+      .tl-zoom { margin-left: auto; display: flex; align-items: center; gap: 5px; color: #94a3b8; font-size: 9px; }
+      .tl-zoom .kbd { padding: 1px 4px; border: 1px solid #e2e8f1; border-radius: 4px; background: #fff; font-size: 8.5px; color: #94a3b8; }
+
+      .tl-body { flex: 1; min-height: 0; padding: 9px 12px 0; }
+      .tl-ruler-row { display: grid; grid-template-columns: 64px minmax(0, 1fr) 58px; gap: 6px; align-items: center; }
+      .tl-ruler { position: relative; height: 20px; border-bottom: 1px solid #eef2f7; }
+      .tl-ruler span { position: absolute; top: 3px; transform: translateX(-50%); color: #a3adbb; font-size: 8.5px; font-family: var(--mono); }
+      .tl-ruler span:first-child { transform: none; }
+      .tl-row { display: grid; grid-template-columns: 64px minmax(0, 1fr) 58px; gap: 6px; align-items: center; min-height: 58px; border-bottom: 1px solid #f1f5f9; }
+      .tl-row:last-child { border-bottom: 0; }
+      .tl-label { display: flex; flex-direction: column; gap: 1px; }
+      .tl-label b { color: #64748b; font-size: 9px; font-weight: 750; }
+      .tl-label span { color: #334155; font-size: 10px; font-weight: 650; }
+      .tl-track { position: relative; height: 34px; background-image: linear-gradient(90deg, #eef2f7 1px, transparent 1px); background-size: 14.59% 100%; }
+      .tl-bar { position: absolute; top: 6px; height: 21px; min-width: 4px; border-radius: 5px; background: linear-gradient(90deg, #bcd7ff, #8bbcff); box-shadow: inset 0 0 0 1px rgba(22,119,255,.15); }
+      .tl-bar.t3 { background: linear-gradient(90deg, #fde4b0, #f7c35c); box-shadow: inset 0 0 0 1px rgba(180,83,9,.2); }
+      .tl-bar.t5 { background: linear-gradient(90deg, #c7ecd9, #9bd9ba); }
+      .tl-bar em { position: absolute; right: 5px; top: 3px; color: rgba(30,58,138,.7); font-size: 8px; font-style: normal; white-space: nowrap; }
+      .tl-bar.t3 em { color: rgba(146,64,14,.9); }
+      .tl-bar.t5 em { color: rgba(6,95,70,.8); }
+      .tl-dots { position: absolute; left: 0; right: 0; bottom: 3px; height: 8px; }
+      .tl-dots i { position: absolute; width: 3px; height: 3px; border-radius: 50%; transform: translateX(-50%); }
+      .tl-dots i.agent { background: #7c3aed; }
+      .tl-dots i.llm { background: #3b82f6; }
+      .tl-dots i.thinking { background: #e3a54a; }
+      .tl-dots i.tool { background: #1fa980; }
+      .tl-dots i.message { background: #cbd5e1; }
+      .tl-meta { color: #94a3b8; font-size: 8.5px; text-align: right; white-space: nowrap; }
+      .tl-meta b { display: block; color: #64748b; font-size: 9px; font-weight: 650; }
+      .tl-callout { position: absolute; top: 12px; padding: 1px 5px; border: 1px solid #f4d9a6; border-radius: 4px; background: #fffaef; color: #b45309; font-size: 8px; font-weight: 650; white-space: nowrap; }
+      .tl-callout::after { content: ""; position: absolute; left: 7px; bottom: -4px; width: 0; height: 0; border-left: 3px solid transparent; border-right: 3px solid transparent; border-top: 4px solid #f4d9a6; }
+      .tl-summary { margin: 9px 0 0; padding: 8px 9px; border: 1px solid var(--line); border-radius: 8px; background: #fbfcfe; }
+      .tl-sum-head { display: flex; align-items: center; gap: 6px; color: #64748b; font-size: 9.5px; font-weight: 700; }
+      .tl-sum-head span { color: #a3adbb; font-weight: 500; }
+      .tl-stack { display: flex; height: 8px; margin-top: 6px; border-radius: 999px; overflow: hidden; background: #eef2f7; }
+      .tl-stack i { height: 100%; }
+      .tl-stack .s-explore { background: #8bbcff; }
+      .tl-stack .s-fix { background: #f7c35c; }
+      .tl-stack .s-verify { background: #56c596; }
+      .tl-stack .s-gap { background: #dfe6f0; }
+      .tl-sum-legend { display: flex; align-items: center; gap: 12px; margin-top: 5px; color: #94a3b8; font-size: 9px; }
+      .tl-sum-legend b { color: #475569; font-weight: 700; }
+      .tl-sum-legend i { display: inline-block; width: 5px; height: 5px; margin-right: 4px; border-radius: 1px; }
+      .tl-note { display: flex; align-items: flex-start; gap: 5px; margin-top: 7px; color: #94a3b8; font-size: 9px; line-height: 1.45; }
+      .tl-note .ic { margin-top: 1px; width: 11px; height: 11px; color: #b6c0ce; }
+      .tl-insight { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-top: 8px; }
+      .insight-card { padding: 6px 8px; border: 1px solid #eef2f7; border-radius: 7px; background: #fff; }
+      .insight-card .k { display: block; color: #a3adbb; font-size: 8px; font-weight: 650; letter-spacing: .04em; }
+      .insight-card b { display: block; margin-top: 1px; color: #334155; font-size: 10.5px; font-weight: 700; }
+      .insight-card span { display: block; margin-top: 1px; color: #94a3b8; font-size: 8.5px; }
+
+      /* inspector */
+      .inspector { min-width: 0; }
+      .insp-head { flex: 0 0 auto; padding: 11px 13px 9px; border-bottom: 1px solid var(--line); }
+      .insp-kind { display: flex; align-items: center; gap: 5px; color: #b45309; font-size: 9px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
+      .kind-badge { width: 16px; height: 16px; display: grid; place-items: center; border-radius: 4px; color: #fff; background: #f59e0b; font-size: 8px; font-weight: 800; }
+      .insp-title-row { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+      .insp-title-row h3 { margin: 0; color: #0f172a; font-size: 15px; font-weight: 750; letter-spacing: -.01em; }
+      .insp-title-row .close { margin-left: auto; width: 24px; height: 24px; display: grid; place-items: center; border-radius: 6px; color: #94a3b8; }
+      .insp-title-row .close:hover { background: #f2f5fa; }
+      .insp-path { display: block; margin-top: 2px; color: #64748b; font-size: 9.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .insp-meta { display: flex; align-items: center; gap: 8px; margin-top: 6px; color: #94a3b8; font-size: 8.8px; }
+      .insp-meta .sep { color: #d6dee9; }
+      .insp-tabs { flex: 0 0 auto; display: flex; align-items: center; gap: 1px; padding: 0 10px; border-bottom: 1px solid var(--line); }
+      .insp-tab { height: 34px; padding: 0 7px; border-bottom: 2px solid transparent; color: #94a3b8; font-size: 10px; font-weight: 650; }
+      .insp-tab:hover { color: #475569; }
+      .insp-tab.active { color: #1677ff; border-bottom-color: #1677ff; }
+      .insp-body { flex: 1; min-height: 0; overflow: hidden; padding: 11px 13px 0; }
+      .insp-pane { display: none; height: 100%; overflow: auto; }
+      .insp-pane.active { display: block; }
+      .json-box { padding: 7px 8px; border: 1px solid #e8edf5; border-radius: 7px; background: #fbfcfe; font-family: var(--mono); font-size: 9px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; color: #475569; }
+      .json-box .j-key { color: #0f766e; }
+      .json-box .j-str { color: #b45309; }
+      .json-box .j-bool { color: #7c3aed; }
+      .json-box .j-null { color: #94a3b8; }
+      .raw-box { padding: 7px 8px; border: 1px solid #e8edf5; border-radius: 7px; background: #fbfcfe; font-family: var(--mono); font-size: 8.6px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; color: #475569; }
+      .attr-list { border: 1px solid #e8edf5; border-radius: 7px; overflow: hidden; }
+      .attr-row { display: flex; gap: 8px; padding: 5px 8px; border-bottom: 1px solid #f1f5f9; font-size: 9px; }
+      .attr-row:last-child { border-bottom: 0; }
+      .attr-key { width: 120px; flex: 0 0 auto; color: #7c8ba0; font-family: var(--mono); font-size: 8.4px; word-break: break-all; }
+      .attr-val { min-width: 0; color: #334155; font-family: var(--mono); font-size: 8.6px; word-break: break-all; }
+      .detail-note { display: flex; align-items: flex-start; gap: 5px; margin-top: 7px; color: #94a3b8; font-size: 8.8px; line-height: 1.45; }
+      .detail-note .ic { margin-top: 1px; width: 11px; height: 11px; color: #b6c0ce; }
+      .raw-toolbar { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+      .raw-toolbar .tag { font-size: 8.5px; }
+      .raw-toolbar .mini { margin-left: auto; color: #1677ff; font-size: 8.5px; font-weight: 650; }
+      .section-title { display: flex; align-items: center; gap: 6px; margin: 0 0 6px; color: #94a3b8; font-size: 8.8px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
+      .section-title .diffstat { margin-left: auto; letter-spacing: 0; text-transform: none; color: #94a3b8; font-weight: 650; }
+      .diffstat b.add { color: #0d7a4f; }
+      .diffstat b.del { color: #b42318; }
+      .diff-box { border: 1px solid #e8edf5; border-radius: 7px; background: #fff; overflow: hidden; font-family: var(--mono); }
+      .diff-row { display: flex; gap: 7px; padding: 2px 7px 2px 0; font-size: 9.2px; line-height: 1.45; }
+      .diff-row .ln { width: 22px; flex: 0 0 auto; color: #b0bac8; text-align: right; user-select: none; }
+      .diff-row .code { min-width: 0; white-space: pre-wrap; word-break: break-all; }
+      .diff-row.ctx { background: #fbfcfe; color: #64748b; }
+      .diff-row.del { background: #fff4f2; color: #b42318; }
+      .diff-row.add { background: #eefaf3; color: #0d7a4f; }
+      .diff-row .code::before { content: " "; }
+      .result-box { display: flex; align-items: flex-start; gap: 6px; padding: 7px 8px; border: 1px solid #d5efe1; border-radius: 7px; background: #f4fcf8; color: #3f6152; font-size: 9.5px; line-height: 1.45; }
+      .result-box .ic { width: 12px; height: 12px; color: #16a36a; margin-top: 1px; }
+      .fact-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+      .fact { padding: 6px 8px; border: 1px solid #eef2f7; border-radius: 6px; background: #fbfcfe; }
+      .fact .k { color: #a3adbb; font-size: 8px; }
+      .fact .v { margin-top: 1px; color: #334155; font-size: 10px; font-weight: 650; }
+      .fact .v.mono { font-size: 9px; }
+      .link-row { display: flex; align-items: center; gap: 5px; margin-top: 8px; color: #1677ff; font-size: 9.5px; font-weight: 650; }
+      .insp-foot { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; padding: 9px 13px; border-top: 1px solid var(--line); background: #fcfdff; }
+      .insp-foot .btn { height: 27px; font-size: 10px; }
+      .insp-foot .btn:last-child { margin-left: auto; }
+      .inspector.is-empty .insp-head { border-bottom: 0; }
+      .inspector.is-empty .insp-tabs, .inspector.is-empty .insp-body, .inspector.is-empty .insp-foot { display: none; }
+
+      /* small helpers */
+      .dot { display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: #cbd5e1; }
+      .dot.green { background: #16a36a; }
+      .dot.amber { background: #f59e0b; }
+      .dot.violet { background: #7c3aed; }
+      .dot.blue { background: #1677ff; }
+      .status-dot { display: inline-flex; align-items: center; gap: 4px; color: #64748b; font-size: 9px; }
+      .status-dot i { width: 5px; height: 5px; border-radius: 50%; background: #16a36a; }
+    </style>
+  </head>
+  <body>
+    <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+      <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+      <symbol id="i-activity" viewBox="0 0 24 24"><path d="M3 12h4l2.5-7 5 14L17 12h4"/></symbol>
+      <symbol id="i-play" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m10 8.5 5.5 3.5-5.5 3.5z"/></symbol>
+      <symbol id="i-db" viewBox="0 0 24 24"><ellipse cx="12" cy="5.5" rx="7.5" ry="3"/><path d="M4.5 5.5v6c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3v-6"/><path d="M4.5 11.5v6c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3v-6"/></symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+      <symbol id="i-layers" viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5 9-5z"/><path d="m3 13 9 5 9-5"/></symbol>
+      <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="m11 12 8-8M16 7l2 2M14 9l2 2"/></symbol>
+      <symbol id="i-server" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="6" rx="2"/><rect x="3" y="14" width="18" height="6" rx="2"/><path d="M7 7h.01M7 17h.01"/></symbol>
+      <symbol id="i-branch" viewBox="0 0 24 24"><circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="7" r="2"/><path d="M6 7v10M8 7h4a4 4 0 0 1 4 4v0"/></symbol>
+      <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 9a6 6 0 1 1 12 0c0 5 2 6 2 6H4s2-1 2-6"/><path d="M10 20h4"/></symbol>
+      <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.4 2.3c-.6.3-.9.8-.9 1.7"/><path d="M12 17h.01"/></symbol>
+      <symbol id="i-chevron-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+      <symbol id="i-chevron-right" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
+      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></symbol>
+      <symbol id="i-arrow-left" viewBox="0 0 24 24"><path d="M19 12H5M11 6l-6 6 6 6"/></symbol>
+      <symbol id="i-arrow-right" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
+      <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></symbol>
+      <symbol id="i-external" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9"/><path d="M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"/></symbol>
+      <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4.5 4.5L19 7"/></symbol>
+      <symbol id="i-check-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12 2.5 2.5L16 9"/></symbol>
+      <symbol id="i-x" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+      <symbol id="i-terminal" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M12.5 15H17"/></symbol>
+      <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3v4M12 17v4M3 12h4M17 12h4M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M18.4 5.6l-2.8 2.8M8.4 15.6l-2.8 2.8"/></symbol>
+      <symbol id="i-message" viewBox="0 0 24 24"><path d="M20 14a3 3 0 0 1-3 3H8l-5 3V6a3 3 0 0 1 3-3h11a3 3 0 0 1 3 3z"/></symbol>
+      <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+      <symbol id="i-filter" viewBox="0 0 24 24"><path d="M4 5h16l-6 7v6l-4 2v-8z"/></symbol>
+      <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11M8 11l4 4 4-4"/><path d="M4 19h16"/></symbol>
+      <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></symbol>
+      <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></symbol>
+      <symbol id="i-wrench" viewBox="0 0 24 24"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L4 17v3h3l5.3-5.3a4 4 0 0 0 5.4-5.4l-2.8 2.8-2.5-2.5z"/></symbol>
+      <symbol id="i-code" viewBox="0 0 24 24"><path d="m9 8-5 4 5 4M15 8l5 4-5 4"/></symbol>
+      <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></symbol>
+      <symbol id="i-maximize" viewBox="0 0 24 24"><path d="M9 4H4v5M15 4h5v5M9 20H4v-5M15 20h5v-5"/></symbol>
+      <symbol id="i-bot" viewBox="0 0 24 24"><rect x="4" y="7" width="16" height="12" rx="3"/><path d="M12 3v4M9 12h.01M15 12h.01M9.5 16h5"/></symbol>
+    </svg>
+
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">EP</div>
+        <div>
+          <div class="brand-name">Eval Platform</div>
+          <div class="brand-caption">Agent Evaluation</div>
+        </div>
+      </div>
+      <nav class="sidebar-nav">
+        <div class="nav-group">
+          <div class="nav-label">工作台</div>
+          <a class="nav-item" href="#"><svg class="ic"><use href="#i-grid"/></svg>总览</a>
+        </div>
+        <div class="nav-group">
+          <div class="nav-label">运营</div>
+          <a class="nav-item" href="#"><svg class="ic"><use href="#i-activity"/></svg>运行状态</a>
+        </div>
+        <div class="nav-group">
+          <div class="nav-label">评测</div>
+          <a class="nav-item" href="#"><svg class="ic"><use href="#i-play"/></svg>评测任务</a>
+          <a class="nav-item" href="#"><svg class="ic"><use href="#i-db"/></svg>数据集</a>
+          <a class="nav-item" href="#"><svg class="ic"><use href="#i-plus"/></svg>发起评测</a>
+        </div>
+        <div class="nav-group">
+          <div class="nav-label">配置</div>
+          <a class="nav-item" href="#"><svg class="ic"><use href="#i-layers"/></svg>Agent 资产</a>
+          <a class="nav-item" href="#"><svg class="ic"><use href="#i-key"/></svg>模型凭据</a>
+          <a class="nav-item" href="#"><svg class="ic"><use href="#i-server"/></svg>资源池</a>
+        </div>
+        <div class="nav-group">
+          <div class="nav-label">交付</div>
+          <a class="nav-item" href="#"><svg class="ic"><use href="#i-branch"/></svg>交付流水线</a>
+        </div>
+      </nav>
+      <div class="sidebar-footer">
+        <div class="tenant-chip">
+          <div class="tenant-avatar">默</div>
+          <div>
+            <div class="tenant-name">默认租户</div>
+            <div class="tenant-meta">默认组织 · 单租户</div>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <div class="main-shell">
+      <header class="topbar">
+        <div class="breadcrumbs"><span>评测</span><span>/</span><strong>会话轨迹</strong></div>
+        <div class="topbar-spacer"></div>
+        <div class="proto-chip"><svg class="ic ic-xs"><use href="#i-spark"/></svg>设计原型</div>
+        <div class="context-chip"><svg class="ic ic-sm"><use href="#i-layers"/></svg>默认租户<span class="muted">/</span>默认项目</div>
+        <div class="env-chip"><span class="dot"></span>控制面已连接</div>
+        <button class="icon-btn" aria-label="通知"><svg class="ic"><use href="#i-bell"/></svg></button>
+        <button class="icon-btn" aria-label="帮助"><svg class="ic"><use href="#i-help"/></svg></button>
+        <div class="user-chip">
+          <div class="avatar">管</div>
+          <div>
+            <div class="user-name">管理员账号</div>
+            <div class="user-role">平台管理员</div>
+          </div>
+          <svg class="ic ic-sm muted"><use href="#i-chevron-down"/></svg>
+        </div>
+      </header>
+
+      <main class="page">
+        <div class="back-row">
+          <button class="back-btn"><svg class="ic ic-sm"><use href="#i-arrow-left"/></svg>返回评测详情</button>
+        </div>
+
+        <div class="trace-head">
+          <div class="trace-title-wrap">
+            <div class="eyebrow">Session Trace<span class="sep"></span><span class="dim">Attempt 1 · 生产环境</span></div>
+            <div class="title-line">
+              <h1>astropy__astropy-12907</h1>
+              <span class="status-pill resolved"><svg class="ic ic-xs"><use href="#i-check"/></svg>已解决</span>
+              <span class="tag violet">Claude Code</span>
+              <span class="tag">claude-code-2.1.278-v1</span>
+            </div>
+            <div class="meta-line">
+              <span>SWE-bench Verified</span><span class="sep">·</span>
+              <span>MiniMax-M2.7-highspeed</span><span class="sep">·</span>
+              <span><b>1m 35s</b> 总耗时</span><span class="sep">·</span>
+              <span><b>64.6k</b> tokens</span><span class="sep">·</span>
+              <span><b>¥0.26</b></span><span class="sep">·</span>
+              <span><b>76</b> spans</span><span class="sep">·</span>
+              <span class="meta-tests"><svg class="ic ic-xs"><use href="#i-check-circle"/></svg>15 passed</span>
+            </div>
+          </div>
+          <div class="head-actions">
+            <button class="btn select">Attempt 1 · succeeded<svg class="ic ic-sm"><use href="#i-chevron-down"/></svg></button>
+            <button class="btn"><svg class="ic ic-sm"><use href="#i-download"/></svg>导出</button>
+            <button class="btn"><svg class="ic ic-sm"><use href="#i-file"/></svg>原始会话文件</button>
+            <button class="btn icon-only" aria-label="更多"><svg class="ic"><use href="#i-more"/></svg></button>
+          </div>
+        </div>
+
+        <section class="overview">
+          <div class="ov-head">
+            <span class="ov-title">轨迹概览</span>
+            <span class="ov-sub">5 轮 · 76 个 span · 按执行顺序</span>
+            <span class="spacer"></span>
+            <div class="legend">
+              <span><i style="background:#7c3aed"></i>Agent</span>
+              <span><i style="background:#3b82f6"></i>模型</span>
+              <span><i style="background:#e3a54a"></i>思考</span>
+              <span><i style="background:#1fa980"></i>工具</span>
+              <span><i style="background:#cbd5e1"></i>消息</span>
+            </div>
+          </div>
+          <div class="fingerprint" id="fingerprint"></div>
+        </section>
+
+        <section class="workspace">
+          <aside class="pane outline">
+            <div class="pane-scroll" style="display:flex;flex-direction:column">
+              <div class="pane-head">会话<span class="count">3</span></div>
+              <div class="session-picker">
+                <button type="button" class="session-select" id="session-select" aria-haspopup="listbox" aria-expanded="false" aria-controls="session-menu">
+                  <span class="session-select-head">
+                    <span class="session-role main" id="session-role">主 Agent</span>
+                    <span class="session-select-name" id="session-name">Claude Code</span>
+                    <svg class="ic ic-sm session-select-chev"><use href="#i-chevron-down"/></svg>
+                  </span>
+                  <span class="session-select-id mono" id="session-id">17cf386c-2d36-43f2-b599-c091ff5ab653</span>
+                </button>
+                <div class="session-menu" id="session-menu" role="listbox" aria-label="选择会话" hidden>
+                  <button type="button" class="session-option active" data-session="main" role="option" aria-selected="true">
+                    <span class="session-option-head">
+                      <span class="session-role main">主 Agent</span>
+                      <span class="session-option-name">Claude Code</span>
+                      <span class="session-option-count">76 spans</span>
+                    </span>
+                    <span class="session-option-meta mono">17cf386c-2d36-43f2-b599-c091ff5ab653 · 根会话 · claude-code</span>
+                  </button>
+                  <button type="button" class="session-option" data-session="sub" role="option" aria-selected="false">
+                    <span class="session-option-head">
+                      <span class="session-role subagent">子 Agent</span>
+                      <span class="session-option-name">explore</span>
+                      <span class="session-option-count">12 spans</span>
+                    </span>
+                    <span class="session-option-meta mono">8a41c6d2-5e93-4b07-9c1f-2d6e8a0b4c35 · 子会话 · claude-code</span>
+                  </button>
+                  <button type="button" class="session-option" data-session="unlinked" role="option" aria-selected="false">
+                    <span class="session-option-head">
+                      <span class="session-role unlinked">未关联</span>
+                      <span class="session-option-name">reviewer</span>
+                      <span class="session-option-count">3 spans</span>
+                    </span>
+                    <span class="session-option-meta mono">c1a7e93d-2f58-4b6a-9e01-7d4c8b2a5f13 · 未关联 · claude-code</span>
+                  </button>
+                </div>
+              </div>
+
+              <button type="button" class="pane-head pane-toggle" id="phases-toggle" aria-expanded="true" aria-controls="phase-list" style="margin-top:14px">
+                关键节点<span class="count">5</span>
+                <svg class="ic ic-sm pane-chev open"><use href="#i-chevron-down"/></svg>
+              </button>
+              <ol class="phase-list" id="phase-list">
+                <li class="phase-item done" data-target="turn-1">
+                  <span class="phase-num">01</span>
+                  <div><div class="phase-name">理解任务</div><div class="phase-desc">读取问题与约束</div></div>
+                  <span class="phase-count">7</span>
+                </li>
+                <li class="phase-item done" data-target="turn-2">
+                  <span class="phase-num">02</span>
+                  <div><div class="phase-name">定位问题</div><div class="phase-desc">追踪 _cstack 与矩阵</div></div>
+                  <span class="phase-count">21</span>
+                </li>
+                <li class="phase-item active" data-target="turn-3">
+                  <span class="phase-num">03</span>
+                  <div><div class="phase-name">实施修复</div><div class="phase-desc">替换右下角矩阵</div></div>
+                  <span class="phase-count">3</span>
+                </li>
+                <li class="phase-item done" data-target="turn-4">
+                  <span class="phase-num">04</span>
+                  <div><div class="phase-name">回归验证</div><div class="phase-desc">单测与模块回归</div></div>
+                  <span class="phase-count">44</span>
+                </li>
+                <li class="phase-item done" data-target="turn-5">
+                  <span class="phase-num">05</span>
+                  <div><div class="phase-name">总结回答</div><div class="phase-desc">根因与验证结果</div></div>
+                  <span class="phase-count">1</span>
+                </li>
+              </ol>
+
+              <div class="outline-divider"></div>
+              <button type="button" class="pane-head pane-toggle" id="raw-toggle" aria-expanded="false" aria-controls="raw-files">
+                原始文件<span class="count">3</span>
+                <svg class="ic ic-sm pane-chev"><use href="#i-chevron-down"/></svg>
+              </button>
+              <div class="raw-summary">主 Agent 1 · 子 Agent 1 · 3 个原始文件</div>
+              <div id="raw-files" hidden>
+                <button class="raw-file-btn">
+                  <svg class="ic ic-sm"><use href="#i-file"/></svg>
+                  <span class="mono">native/projects/-testbed/17cf…jsonl</span>
+                  <span class="ok"><svg class="ic ic-sm"><use href="#i-check-circle"/></svg></span>
+                </button>
+                <button class="raw-file-btn">
+                  <svg class="ic ic-sm"><use href="#i-file"/></svg>
+                  <span class="mono">native/projects/-testbed/8a41…jsonl</span>
+                  <span class="ok"><svg class="ic ic-sm"><use href="#i-check-circle"/></svg></span>
+                </button>
+                <button class="raw-file-btn">
+                  <svg class="ic ic-sm"><use href="#i-file"/></svg>
+                  <span class="mono">native/projects/-testbed/c1a7…jsonl</span>
+                  <span class="ok"><svg class="ic ic-sm"><use href="#i-check-circle"/></svg></span>
+                </button>
+              </div>
+
+              <div class="outline-foot">
+                <svg class="ic ic-xs"><use href="#i-info"/></svg>
+                主 Agent 与子 Agent 使用统一父子证据
+              </div>
+            </div>
+          </aside>
+
+          <section class="pane conversation" data-view="conversation">
+            <div class="conv-toolbar">
+              <div class="view-tabs">
+                <button class="view-tab active" data-view-btn="conversation">对话轨迹<span class="kbd">T</span></button>
+                <button class="view-tab" data-view-btn="steps">步骤</button>
+                <button class="view-tab" data-view-btn="timeline">时间线</button>
+                <button class="view-tab" data-view-btn="raw">原始</button>
+              </div>
+              <div class="conv-tools">
+                <div class="search-box"><svg class="ic"><use href="#i-search"/></svg><span>搜索消息、工具或输出</span><span class="kbd" style="margin-left:auto;border:1px solid #e2e8f1;border-radius:4px;padding:0 3px;font-size:8px">⌘K</span></div>
+                <button class="icon-btn sm" aria-label="筛选"><svg class="ic ic-sm"><use href="#i-filter"/></svg></button>
+                <button class="icon-btn sm" aria-label="展开"><svg class="ic ic-sm"><use href="#i-maximize"/></svg></button>
+              </div>
+            </div>
+
+            <div class="conv-filterbar">
+              <button class="chip active">全部 <b>76</b></button>
+              <button class="chip">关键步骤 <b>12</b></button>
+              <button class="chip">工具调用 <b>15</b></button>
+              <button class="chip">思考 <b>12</b></button>
+              <button class="chip">错误 <b>0</b></button>
+              <div class="filter-switch on"><i></i><span>自动展开关键步骤</span></div>
+            </div>
+
+            <div class="conv-scroll">
+              <div class="task-card">
+                <div class="task-top"><span>用户任务</span><span class="tag">SWE-bench Verified</span></div>
+                <div class="task-title">Modeling's <code>separability_matrix</code> does not compute separability correctly for nested <code>CompoundModels</code></div>
+                <div class="task-meta"><span class="mono">/testbed</span><span class="sep">·</span><span>生产代码最小改动</span><span class="sep">·</span><span>不修改测试</span></div>
+                <button class="task-link">展开全文</button>
+              </div>
+
+              <article class="turn done" id="turn-1">
+                <div class="turn-head">
+                  <span class="turn-index">01</span>
+                  <div class="turn-main">
+                    <div class="turn-title">理解任务</div>
+                    <div class="turn-summary">读取问题描述与仓库约束，确定从 separable.py 入手</div>
+                  </div>
+                  <span class="turn-stats">1 思考 · 1 工具 · 7 spans</span>
+                  <svg class="ic ic-sm turn-chev"><use href="#i-chevron-right"/></svg>
+                </div>
+                <div class="turn-body">
+                  <div class="reasoning">
+                    <div class="reasoning-label"><svg class="ic ic-xs"><use href="#i-spark"/></svg>思考</div>
+                    <p>Let's look at the separable.py code in astropy.</p>
+                  </div>
+                  <div class="tool-call">
+                    <div class="tool-main">
+                      <span class="tool-icon"><svg class="ic"><use href="#i-terminal"/></svg></span>
+                      <div class="tool-copy">
+                        <div class="tool-title"><span class="tool-name">Bash</span><code>grep -n "compound\|_cstack\|def _separable" separable.py</code></div>
+                        <div class="tool-sub">8 行命中，定位 _cstack 与 _separable 的实现位置</div>
+                      </div>
+                      <span class="tool-status"><svg class="ic ic-xs"><use href="#i-check"/></svg>成功</span>
+                      <span class="tool-dur">0 ms</span>
+                    </div>
+                  </div>
+                </div>
+              </article>
+
+              <article class="turn done" id="turn-2">
+                <div class="turn-head">
+                  <span class="turn-index">02</span>
+                  <div class="turn-main">
+                    <div class="turn-title">定位问题</div>
+                    <div class="turn-summary">追踪 <code>_cstack</code> 与 <code>_separable</code>，复现嵌套 CompoundModel 矩阵被压平</div>
+                  </div>
+                  <span class="turn-stats">4 思考 · 4 工具 · 21 spans</span>
+                  <svg class="ic ic-sm turn-chev"><use href="#i-chevron-right"/></svg>
+                </div>
+                <div class="turn-body">
+                  <div class="reasoning">
+                    <div class="reasoning-label"><svg class="ic ic-xs"><use href="#i-spark"/></svg>思考</div>
+                    <p>Let's understand. <code>m.Pix2Sky_TAN() &amp; cm</code> where <code>cm = Linear1D(10) &amp; Linear1D(5)</code>. The compound matrix looks flattened.</p>
+                  </div>
+                  <div class="tool-call">
+                    <div class="tool-main">
+                      <span class="tool-icon"><svg class="ic"><use href="#i-file"/></svg></span>
+                      <div class="tool-copy">
+                        <div class="tool-title"><span class="tool-name">Read</span><code>astropy/modeling/separable.py</code></div>
+                        <div class="tool-sub">读取 1–120 行，确认 _cstack 的矩阵拼接逻辑</div>
+                      </div>
+                      <span class="tool-status"><svg class="ic ic-xs"><use href="#i-check"/></svg>成功</span>
+                      <span class="tool-dur">0 ms</span>
+                    </div>
+                  </div>
+                  <div class="tool-call">
+                    <div class="tool-main">
+                      <span class="tool-icon"><svg class="ic"><use href="#i-terminal"/></svg></span>
+                      <div class="tool-copy">
+                        <div class="tool-title"><span class="tool-name">Bash</span><code>python -c "from astropy.modeling import models as m; ..."</code></div>
+                        <div class="tool-sub">复现嵌套 CompoundModel 的 separability_matrix 压平</div>
+                      </div>
+                      <span class="tool-status"><svg class="ic ic-xs"><use href="#i-check"/></svg>成功</span>
+                      <span class="tool-dur">0 ms</span>
+                    </div>
+                  </div>
+                </div>
+              </article>
+
+              <article class="turn active open" id="turn-3">
+                <div class="turn-head">
+                  <span class="turn-index">03</span>
+                  <div class="turn-main">
+                    <div class="turn-title"><span class="pill">修复</span>实施修复</div>
+                    <div class="turn-summary">将右下角块从常量 1 改为右操作数矩阵</div>
+                  </div>
+                  <span class="turn-stats">1 工具 · 3 spans</span>
+                  <svg class="ic ic-sm turn-chev"><use href="#i-chevron-down"/></svg>
+                </div>
+                <div class="turn-body compact">
+                  <div class="step selected" data-detail="edit" data-kind="工具调用" data-title="Edit" data-path="astropy/modeling/separable.py" data-meta="轮次 03 · span #28 · 08:42:40.392">
+                    <div class="step-head">
+                      <span class="step-icon edit">±</span>
+                      <div class="step-copy"><div class="step-line"><span class="tool">Edit</span> <code>astropy/modeling/separable.py</code></div><div class="step-sub">替换 _cstack 右下角矩阵 · +1 / −1</div></div>
+                      <span class="step-status">成功</span><span class="step-dur">0 ms</span><span class="step-chev jump">→</span>
+                    </div>
+                  </div>
+                  <div class="step" data-detail="thinking" data-kind="思考" data-title="思考" data-path="_cstack · 矩阵拼接" data-meta="轮次 03 · 推理片段">
+                    <div class="step-head">
+                      <span class="step-icon think">✦</span>
+                      <div class="step-copy"><div class="step-line">思考 <code>为什么右下角不能填 1</code></div><div class="step-sub">右侧可能是嵌套 CompoundModel 的 coord-matrix</div></div>
+                      <span class="step-status">完成</span><span class="step-dur">0 ms</span><span class="step-chev jump">→</span>
+                    </div>
+                  </div>
+                  <div class="step" data-detail="bash" data-kind="工具调用" data-title="Bash" data-path="验证修复前的矩阵" data-meta="轮次 03 · span #30">
+                    <div class="step-head">
+                      <span class="step-icon">$</span>
+                      <div class="step-copy"><div class="step-line"><span class="tool">Bash</span> <code>python -c "... separability_matrix(cm)"</code></div><div class="step-sub">复现嵌套 CompoundModel 矩阵被压平</div></div>
+                      <span class="step-status">成功</span><span class="step-dur">0 ms</span><span class="step-chev jump">→</span>
+                    </div>
+                  </div>
+                  <div class="step-hint">点击步骤，在右侧查看命令、diff 或文件内容；中间不再展开细节。</div>
+                </div>
+              </article>
+
+              <article class="turn done" id="turn-4">
+                <div class="turn-head">
+                  <span class="turn-index">04</span>
+                  <div class="turn-main">
+                    <div class="turn-title">回归验证</div>
+                    <div class="turn-summary">单测与模块回归；确认既有失败与基线一致（15 passed）</div>
+                  </div>
+                  <span class="turn-stats">7 思考 · 9 工具 · 44 spans</span>
+                  <svg class="ic ic-sm turn-chev"><use href="#i-chevron-right"/></svg>
+                </div>
+                <div class="turn-body">
+                  <div class="tool-call">
+                    <div class="tool-main">
+                      <span class="tool-icon"><svg class="ic"><use href="#i-terminal"/></svg></span>
+                      <div class="tool-copy">
+                        <div class="tool-title"><span class="tool-name">Bash</span><code>python -m pytest astropy/modeling/tests/test_separable.py -q</code></div>
+                        <div class="tool-sub">15 passed · 目标单测通过</div>
+                      </div>
+                      <span class="tool-status"><svg class="ic ic-xs"><use href="#i-check"/></svg>成功</span>
+                      <span class="tool-dur">0 ms</span>
+                    </div>
+                  </div>
+                  <div class="tool-call">
+                    <div class="tool-main">
+                      <span class="tool-icon"><svg class="ic"><use href="#i-terminal"/></svg></span>
+                      <div class="tool-copy">
+                        <div class="tool-title"><span class="tool-name">Bash</span><code>python -m pytest astropy/modeling -q | tail -5</code></div>
+                        <div class="tool-sub">模块回归出现既有失败，git stash 对比基线后确认不变</div>
+                      </div>
+                      <span class="tool-status"><svg class="ic ic-xs"><use href="#i-check"/></svg>成功</span>
+                      <span class="tool-dur">0 ms</span>
+                    </div>
+                  </div>
+                  <div class="link-row" style="margin-top:6px"><svg class="ic ic-sm"><use href="#i-list"/></svg>展开全部 18 个工具调用</div>
+                </div>
+              </article>
+
+              <article class="turn turn-final" id="turn-5">
+                <div class="turn-head">
+                  <span class="turn-index" style="background:#16a36a;color:#fff"><svg class="ic ic-xs"><use href="#i-check"/></svg></span>
+                  <div class="turn-main">
+                    <div class="turn-title"><span class="pill final">修复完成</span>总结回答</div>
+                    <div class="turn-summary">修复 <code>_cstack</code> 根因；1 个生产文件，15 passed</div>
+                  </div>
+                  <span class="turn-stats">1 span</span>
+                  <svg class="ic ic-sm turn-chev"><use href="#i-chevron-right"/></svg>
+                </div>
+                <div class="final-body">
+                  <div class="final-card">
+                    <div class="final-head">
+                      <span class="final-badge"><svg class="ic ic-xs"><use href="#i-check"/></svg>修复完成</span>
+                      <span class="final-tests"><svg class="ic ic-xs"><use href="#i-check-circle"/></svg>15 passed</span>
+                    </div>
+                    <p>右操作数为嵌套 CompoundModel 时，<code>_cstack</code> 用常量 1 填充右下角块，丢失内部矩阵；改为写入 <code>right</code> 后，嵌套场景的 separability_matrix 恢复正确。</p>
+                    <div class="final-meta"><a>查看完整回答</a><span>+1 / −1</span><span>1 file</span><span>仅生产代码</span></div>
+                  </div>
+                </div>
+              </article>
+            </div>
+
+            <div class="steps-view">
+              <div class="steps-toolbar">
+                <span class="steps-title">工具步骤</span>
+                <span class="steps-sub">5 轮 · 15 次工具调用 · 全部折叠</span>
+                <span class="spacer"></span>
+                <span class="hint">点击步骤展开：Bash 命令/输出 · Edit diff · Read 路径/内容 · Skill/Subagent 嵌套</span>
+              </div>
+              <div class="steps-scroll">
+                <div class="step-group">
+                  <div class="step-group-head"><b>01 理解任务</b><span class="count">7 spans</span></div>
+                  <div class="step">
+                    <div class="step-head">
+                      <span class="step-icon think">✦</span>
+                      <div class="step-copy"><div class="step-line">思考 <code>separable.py 的结构</code></div><div class="step-sub">定位 compound / _cstack 相关实现</div></div>
+                      <span class="step-status">完成</span><span class="step-dur">0 ms</span><span class="step-chev">⌄</span>
+                    </div>
+                    <div class="step-body"><div class="reasoning" style="margin-top:0"><div class="reasoning-label">思考</div><p>Let's look at the separable.py code in astropy.</p></div></div>
+                  </div>
+                  <div class="step">
+                    <div class="step-head">
+                      <span class="step-icon">$</span>
+                      <div class="step-copy"><div class="step-line"><span class="tool">Bash</span> <code>grep -n "compound\|_cstack\|def _separable" separable.py</code></div><div class="step-sub">8 行命中 · 工作目录 /testbed</div></div>
+                      <span class="step-status">成功</span><span class="step-dur">0 ms</span><span class="step-chev">⌄</span>
+                    </div>
+                    <div class="step-body"><div class="cmd code"><span style="color:#0d7a4f;font-weight:800">$</span> grep -n "compound\|_cstack\|def _separable" separable.py</div><pre class="out code">8:in a compound model by stepping through the transforms
+34:        A (compound) model.
+73:def _separable(transform):
+...</pre></div>
+                  </div>
+                </div>
+
+                <div class="step-group">
+                  <div class="step-group-head"><b>02 定位问题</b><span class="count">21 spans</span></div>
+                  <div class="step">
+                    <div class="step-head">
+                      <span class="step-icon read">☰</span>
+                      <div class="step-copy"><div class="step-line"><span class="tool">Read</span> <code>astropy/modeling/separable.py</code></div><div class="step-sub">120 行 · 显示 1–8 行</div></div>
+                      <span class="step-status">成功</span><span class="step-dur">0 ms</span><span class="step-chev">⌄</span>
+                    </div>
+                    <div class="step-body"><div class="filepath"><span>▤</span> /testbed/astropy/modeling/separable.py</div><div class="readbox"><div class="rrow"><span class="ln">1</span><span class="c"># Licensed under a 3-clause BSD style license</span></div><div class="rrow"><span class="ln">2</span><span class="c">import numpy as np</span></div><div class="rrow"><span class="ln">3</span><span class="c">from .core import Model</span></div></div></div>
+                  </div>
+                  <div class="step">
+                    <div class="step-head">
+                      <span class="step-icon">$</span>
+                      <div class="step-copy"><div class="step-line"><span class="tool">Bash</span> <code>python -c "from astropy.modeling import models as m; ..."</code></div><div class="step-sub">复现嵌套 CompoundModel 矩阵被压平</div></div>
+                      <span class="step-status">成功</span><span class="step-dur">0 ms</span><span class="step-chev">⌄</span>
+                    </div>
+                    <div class="step-body"><pre class="out code">[[ True False]  [False  True]]
+[[ True  True False False]
+ [ True  True False False]
+ [False False  True False]]</pre></div>
+                  </div>
+                  <div class="step">
+                    <div class="step-head">
+                      <span class="step-icon">$</span>
+                      <div class="step-copy"><div class="step-line"><span class="tool">Bash</span> <code>grep -rn "_calculate_separability_matrix" /testbed/astropy/</code></div><div class="step-sub">确认只有基类实现，无子类覆盖</div></div>
+                      <span class="step-status">成功</span><span class="step-dur">0 ms</span><span class="step-chev">⌄</span>
+                    </div>
+                    <div class="step-body"><pre class="out code">core.py:808:    def _calculate_separability_matrix(self):
+...</pre></div>
+                  </div>
+                </div>
+
+                <div class="step-group">
+                  <div class="step-group-head"><b>03 实施修复</b><span class="count">3 spans</span></div>
+                  <div class="step" id="step-edit">
+                    <div class="step-head">
+                      <span class="step-icon edit">±</span>
+                      <div class="step-copy"><div class="step-line"><span class="tool">Edit</span> <code>astropy/modeling/separable.py</code></div><div class="step-sub">替换 _cstack 右下角矩阵赋值 · +1 / −1</div></div>
+                      <span class="step-status">成功</span><span class="step-dur">0 ms</span><span class="step-chev">⌄</span>
+                    </div>
+                    <div class="step-body"><div class="diff-mini" style="padding-left:0;background:transparent"><div class="diff-line del"><span class="ln">244</span><span class="code">cright[-right.shape[0]:, -right.shape[1]:] = 1</span></div><div class="diff-line add"><span class="ln">245</span><span class="code">cright[-right.shape[0]:, -right.shape[1]:] = right</span></div></div></div>
+                  </div>
+                </div>
+
+                <div class="step-group">
+                  <div class="step-group-head"><b>04 回归验证</b><span class="count">44 spans</span></div>
+                  <div class="step">
+                    <div class="step-head">
+                      <span class="step-icon">$</span>
+                      <div class="step-copy"><div class="step-line"><span class="tool">Bash</span> <code>python -m pytest astropy/modeling/tests/test_separable.py -q</code></div><div class="step-sub">目标单测通过</div></div>
+                      <span class="step-status">15 passed</span><span class="step-dur">0 ms</span><span class="step-chev">⌄</span>
+                    </div>
+                    <div class="step-body"><pre class="out code">15 passed in 0.42s</pre></div>
+                  </div>
+                  <div class="step">
+                    <div class="step-head">
+                      <span class="step-icon">$</span>
+                      <div class="step-copy"><div class="step-line"><span class="tool">Bash</span> <code>python -m pytest astropy/modeling -q</code></div><div class="step-sub">模块回归出现既有失败</div></div>
+                      <span class="step-status">既有失败</span><span class="step-dur">0 ms</span><span class="step-chev">⌄</span>
+                    </div>
+                    <div class="step-body"><pre class="out code">ERROR test_utils.py::Test_SpecialOperatorsDict::test__set_value</pre></div>
+                  </div>
+                  <div class="step">
+                    <div class="step-head">
+                      <span class="step-icon">$</span>
+                      <div class="step-copy"><div class="step-line"><span class="tool">Bash</span> <code>git stash &amp;&amp; python -m pytest ...; git stash pop</code></div><div class="step-sub">对比基线，失败数不变</div></div>
+                      <span class="step-status">成功</span><span class="step-dur">0 ms</span><span class="step-chev">⌄</span>
+                    </div>
+                    <div class="step-body"><pre class="out code">Saved working directory and index state WIP...
+same failures as baseline</pre></div>
+                  </div>
+                </div>
+
+                <div class="step-group example">
+                  <div class="step-group-head"><b>设计示例</b><span class="example-tag">示例数据</span><span class="count">Write / Skill / Subagent</span></div>
+                  <div class="step">
+                    <div class="step-head">
+                      <span class="step-icon write">+</span>
+                      <div class="step-copy"><div class="step-line"><span class="tool">Write</span> <code>tests/test_separable.py</code></div><div class="step-sub">新文件 · 18 行 · 测试代码</div></div>
+                      <span class="step-status">成功</span><span class="step-dur">0 ms</span><span class="step-chev">⌄</span>
+                    </div>
+                    <div class="step-body"><div class="diff-mini" style="padding-left:0;background:transparent"><div class="diff-line add"><span class="ln">1</span><span class="code">import numpy as np</span></div><div class="diff-line add"><span class="ln">2</span><span class="code">from astropy.modeling.models import Shift</span></div></div></div>
+                  </div>
+                  <div class="step">
+                    <div class="step-head">
+                      <span class="step-icon skill">✦</span>
+                      <div class="step-copy"><div class="step-line"><span class="tool">Skill</span> <code>code-review</code></div><div class="step-sub">输入 diff + focus → 3 条建议 · 内部 3 步</div></div>
+                      <span class="step-status">完成</span><span class="step-dur">0 ms</span><span class="step-chev">⌄</span>
+                    </div>
+                    <div class="step-body"><div class="nested" style="margin-top:0"><div class="nrow"><span class="t">Read</span><span class="n">读取 diff 与调用方</span><span class="step-status">完成</span></div><div class="nrow"><span class="t">Bash</span><span class="n">pytest ... -q</span><span class="step-status">15 passed</span></div></div></div>
+                  </div>
+                  <div class="step" id="step-subagent">
+                    <div class="step-head">
+                      <span class="step-icon sub">⤵</span>
+                      <div class="step-copy"><div class="step-line"><span class="tool">Subagent</span> <code>explore</code></div><div class="step-sub">子会话 · 12 spans · 4 工具 · claude-haiku-4.5</div></div>
+                      <span class="step-status">完成</span><span class="step-dur">2m 13s</span><span class="step-chev">⌄</span>
+                    </div>
+                    <div class="step-body">
+                      <div class="child-step" data-detail="child-grep" data-kind="子步骤 · Grep" data-title="Grep" data-path="audit hard-coded colors" data-meta="子会话 explore · 2 个匹配文件">
+                        <span class="t">Grep</span><span class="n">audit hard-coded colors</span><span class="step-status">完成</span>
+                      </div>
+                      <div class="child-step" data-detail="child-read" data-kind="子步骤 · Read" data-title="Read" data-path="templates/transcript.html" data-meta="子会话 explore · 14 行">
+                        <span class="t">Read</span><span class="n">templates/transcript.html</span><span class="step-status">完成</span>
+                      </div>
+                      <div class="child-step" data-detail="child-bash" data-kind="子步骤 · Bash" data-title="Bash" data-path="rg &quot;theme&quot; --type py" data-meta="子会话 explore · 退出码 0">
+                        <span class="t">Bash</span><span class="n">rg "theme" --type py</span><span class="step-status">完成</span>
+                      </div>
+                      <div class="link-row" style="margin-top:5px">打开子会话 →　<span style="color:#94a3b8;font-weight:500">返回主轨迹</span></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="timeline-view">
+              <div class="tl-toolbar">
+                <span class="tl-title">轮次时间线</span>
+                <span class="tl-sub">00:42:23 → 00:43:32 · 69s</span>
+                <div class="seg"><button class="active">按轮次</button><button>按 span</button></div>
+                <div class="tl-zoom">适应宽度<span class="kbd">100%</span></div>
+              </div>
+              <div class="tl-body">
+                <div class="tl-ruler-row">
+                  <span></span>
+                  <div class="tl-ruler" id="tl-ruler"></div>
+                  <span></span>
+                </div>
+                <div id="tl-rows"></div>
+                <div class="tl-summary">
+                  <div class="tl-sum-head">时间去向<span>本会话 69s</span></div>
+                  <div class="tl-stack"><i class="s-explore" style="width:22.2%"></i><i class="s-fix" style="width:0.15%"></i><i class="s-verify" style="width:72.3%"></i><i class="s-gap" style="width:5.35%"></i></div>
+                  <div class="tl-sum-legend">
+                    <span><i style="background:#8bbcff"></i>探索与定位 <b>15.2s</b></span>
+                    <span><i style="background:#f7c35c"></i>修复 <b>&lt;0.1s</b></span>
+                    <span><i style="background:#56c596"></i>回归验证 <b>49.5s</b></span>
+                    <span><i style="background:#dfe6f0"></i>轮次间隙 <b>3.7s</b></span>
+                  </div>
+                </div>
+                <div class="tl-note">
+                  <svg class="ic"><use href="#i-info"/></svg>
+                  <span>75 / 76 个 span 的起止时间相同（0 ms），时间线按轮次窗口聚合；span 级耗时仍在右侧详情中展示，避免出现一排不可读的零宽瀑布。</span>
+                </div>
+                <div class="tl-insight">
+                  <div class="insight-card"><span class="k">耗时集中</span><b>回归验证 49.5s</b><span>占会话 72%</span></div>
+                  <div class="insight-card"><span class="k">最短关键步骤</span><b>修复 0.02s</b><span>1 次 Edit</span></div>
+                  <div class="insight-card"><span class="k">基线对比</span><b>git stash 1 次</b><span>确认既有失败不变</span></div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <aside class="pane inspector" id="inspector">
+            <div class="insp-head">
+              <div class="insp-kind" id="insp-kind"><span class="kind-badge">T</span>工具调用</div>
+              <div class="insp-title-row">
+                <h3 id="insp-title">Edit</h3>
+                <button class="close" aria-label="关闭详情"><svg class="ic ic-sm"><use href="#i-x"/></svg></button>
+              </div>
+              <code class="insp-path" id="insp-path">astropy/modeling/separable.py</code>
+              <div class="insp-meta" id="insp-meta"><span>轮次 03</span><span class="sep">·</span><span>span #28</span><span class="sep">·</span><span>08:42:40.392</span></div>
+              <div class="insp-selected-link"><i></i>中间高亮节点</div>
+            </div>
+            <div class="insp-tabs">
+              <button class="insp-tab active" data-insp-tab="overview">概览</button>
+              <button class="insp-tab" data-insp-tab="input">输入</button>
+              <button class="insp-tab" data-insp-tab="output">输出</button>
+              <button class="insp-tab" data-insp-tab="attrs">属性</button>
+              <button class="insp-tab" data-insp-tab="raw">原始</button>
+            </div>
+            <div class="insp-body">
+              <div class="insp-pane active" data-insp-pane="overview" id="insp-overview">
+              <div class="section-title">变更摘要<span class="diffstat"><b class="add">+1</b> <b class="del">−1</b> · 1 个文件</span></div>
+              <div class="diff-box">
+                <div class="diff-row ctx"><span class="ln">243</span><span class="code">cright = np.zeros((noutp, right.shape[1]))</span></div>
+                <div class="diff-row del"><span class="ln">244</span><span class="code">cright[-right.shape[0]:, -right.shape[1]:] = 1</span></div>
+                <div class="diff-row add"><span class="ln">245</span><span class="code">cright[-right.shape[0]:, -right.shape[1]:] = right</span></div>
+              </div>
+
+              <div class="section-title" style="margin-top:11px">工具返回</div>
+              <div class="result-box">
+                <svg class="ic"><use href="#i-check-circle"/></svg>
+                <span>The file /testbed/astropy/modeling/separable.py has been updated successfully.</span>
+              </div>
+
+              <div class="section-title" style="margin-top:11px">执行信息</div>
+              <div class="fact-grid">
+                <div class="fact"><div class="k">操作</div><div class="v">Edit · 字符串替换</div></div>
+                <div class="fact"><div class="k">行号</div><div class="v mono">separable.py:245</div></div>
+                <div class="fact"><div class="k">耗时</div><div class="v">0 ms（时间戳相同）</div></div>
+                <div class="fact"><div class="k">父 span</div><div class="v mono">修复 _cstack</div></div>
+              </div>
+
+              <div class="section-title" style="margin-top:11px">关联证据</div>
+              <div style="display:flex;gap:5px;flex-wrap:wrap">
+                <span class="tag">修复 _cstack</span>
+                <span class="tag" style="color:#0d7a4f;border-color:#c4ecd8;background:#f3fbf7">15 passed</span>
+                <span class="tag">回归 44 spans</span>
+              </div>
+              <div class="link-row"><svg class="ic ic-sm"><use href="#i-external"/></svg>在完整 span 中查看输入与输出</div>
+              </div>
+
+              <div class="insp-pane" data-insp-pane="input">
+                <div class="section-title">工具输入 · Edit<span class="diffstat">JSON · 1.1 KB</span></div>
+                <div class="json-box">{
+  <span class="j-key">"replace_all"</span>: <span class="j-bool">false</span>,
+  <span class="j-key">"file_path"</span>: <span class="j-str">"/testbed/astropy/modeling/separable.py"</span>,
+  <span class="j-key">"old_string"</span>: <span class="j-str">"        cright = np.zeros((noutp, right.shape[1]))\n        cright[-right.shape[0]:, -right.shape[1]:] = 1"</span>,
+  <span class="j-key">"new_string"</span>: <span class="j-str">"        cright = np.zeros((noutp, right.shape[1]))\n        cright[-right.shape[0]:, -right.shape[1]:] = right"</span>
+}</div>
+                <div class="detail-note"><svg class="ic"><use href="#i-info"/></svg><span>输入按原始工具参数保存；长字符串默认折叠，可在完整 span 中查看全部内容。</span></div>
+              </div>
+
+              <div class="insp-pane" data-insp-pane="output">
+                <div class="section-title">工具输出<span class="diffstat">退出码 0 · 137 chars</span></div>
+                <div class="result-box">
+                  <svg class="ic"><use href="#i-check-circle"/></svg>
+                  <span>The file /testbed/astropy/modeling/separable.py has been updated successfully. (file state is current in your context — no need to Read it back)</span>
+                </div>
+                <div class="section-title" style="margin-top:11px">调用结果</div>
+                <div class="fact-grid">
+                  <div class="fact"><div class="k">状态</div><div class="v">成功</div></div>
+                  <div class="fact"><div class="k">退出码</div><div class="v mono">0</div></div>
+                  <div class="fact"><div class="k">变更行</div><div class="v mono">+1 / −1</div></div>
+                  <div class="fact"><div class="k">文件</div><div class="v mono">separable.py</div></div>
+                </div>
+                <div class="detail-note"><svg class="ic"><use href="#i-info"/></svg><span>输出与输入分开保存；失败时在这里显示错误文本与退出码。</span></div>
+              </div>
+
+              <div class="insp-pane" data-insp-pane="attrs">
+                <div class="section-title">语义属性<span class="diffstat">OpenInference / OTel</span></div>
+                <div class="attr-list">
+                  <div class="attr-row"><span class="attr-key">gen_ai.tool.name</span><span class="attr-val">Edit</span></div>
+                  <div class="attr-row"><span class="attr-key">gen_ai.operation.name</span><span class="attr-val">execute_tool</span></div>
+                  <div class="attr-row"><span class="attr-key">openinference.span.kind</span><span class="attr-val">TOOL</span></div>
+                  <div class="attr-row"><span class="attr-key">gen_ai.tool.call.id</span><span class="attr-val">call_01a1cd34eb2b75d99ff6d002</span></div>
+                  <div class="attr-row"><span class="attr-key">trace.parent_uuid</span><span class="attr-val">81b108f0-fade-4b1a-be60-1765608f5081</span></div>
+                  <div class="attr-row"><span class="attr-key">claude.is_sidechain</span><span class="attr-val">false</span></div>
+                </div>
+                <div class="detail-note"><svg class="ic"><use href="#i-info"/></svg><span>属性表保留给需要按语义字段排查的高级用户；默认视图不暴露原始键名。</span></div>
+              </div>
+
+              <div class="insp-pane" data-insp-pane="raw">
+                <div class="raw-toolbar"><span class="tag">span #28</span><span class="tag">JSON</span><span class="mini">复制</span></div>
+                <div class="raw-box">{
+  <span class="j-key">"id"</span>: <span class="j-str">"2d17d1e2-16d8-485c-9c58-0c813945583f"</span>,
+  <span class="j-key">"kind"</span>: <span class="j-str">"TOOL"</span>,
+  <span class="j-key">"name"</span>: <span class="j-str">"Edit"</span>,
+  <span class="j-key">"started_at"</span>: <span class="j-str">"2026-11-12T00:42:40.392Z"</span>,
+  <span class="j-key">"ended_at"</span>: <span class="j-str">"2026-11-12T00:42:40.392Z"</span>,
+  <span class="j-key">"duration_ms"</span>: <span class="j-null">null</span>,
+  <span class="j-key">"parent_span_id"</span>: <span class="j-str">"81b108f0-…"</span>,
+  <span class="j-key">"attributes"</span>: {
+    <span class="j-key">"gen_ai.tool.name"</span>: <span class="j-str">"Edit"</span>,
+    <span class="j-key">"openinference.span.kind"</span>: <span class="j-str">"TOOL"</span>
+  },
+  <span class="j-key">"input"</span>: { <span class="j-null">… 4 keys</span> },
+  <span class="j-key">"output"</span>: <span class="j-str">"The file … updated successfully."</span>
+}</div>
+                <div class="detail-note"><svg class="ic"><use href="#i-info"/></svg><span>长文本按 8 KB 截断；点“打开底层 span”查看完整原文与受控下载。</span></div>
+              </div>
+            </div>
+            <div class="insp-foot">
+              <button class="btn"><svg class="ic ic-sm"><use href="#i-external"/></svg>打开底层 span</button>
+              <button class="btn"><svg class="ic ic-sm"><use href="#i-copy"/></svg>复制 JSON</button>
+            </div>
+          </aside>
+        </section>
+      </main>
+    </div>
+
+    <template id="detail-thinking">
+      <div class="reasoning" style="margin-top:0"><div class="reasoning-label">思考</div><p>Now the fix. In <code>_cstack</code>, replace the <code>= 1</code> with <code>= right</code>. The right operand may already be a coord-matrix from a nested compound, so flattening it to ones discards its internal structure.</p></div>
+    </template>
+    <template id="detail-bash">
+      <div class="section-title">命令</div>
+      <pre class="cmd code">$ python -c "from astropy.modeling import models as m; ... print(separability_matrix(cm))"</pre>
+      <div class="section-title">输出</div>
+      <pre class="out code">[[ True  True False False]
+ [ True  True False False]
+ [False False  True False]]</pre>
+      <div class="fact-grid"><div class="fact"><div class="k">状态</div><div class="v">成功</div></div><div class="fact"><div class="k">退出码</div><div class="v mono">0</div></div></div>
+    </template>
+    <template id="detail-read">
+      <div class="filepath">▤ /testbed/astropy/modeling/separable.py</div>
+      <div class="readbox">
+        <div class="rrow"><span class="ln">236</span><span class="c">def _cstack(left, right):</span></div>
+        <div class="rrow"><span class="ln">237</span><span class="c">    noutp = _compute_n_outputs(left, right)</span></div>
+        <div class="rrow"><span class="ln">238</span><span class="c">    if isinstance(left, Model):</span></div>
+        <div class="rrow"><span class="ln">239</span><span class="c">        cleft = _separable(left)</span></div>
+        <div class="rrow"><span class="ln">240</span><span class="c">    cright = np.zeros((noutp, right.shape[1]))</span></div>
+      </div>
+      <div class="detail-note"><svg class="ic"><use href="#i-info"/></svg><span>显示 1–8 / 120 行；完整内容见工具输出或底层 span。</span></div>
+    </template>
+    <template id="detail-skill">
+      <div class="section-title">技能</div>
+      <div class="kv"><span class="k">名称</span><span class="v">code-review · v2</span><span class="k">输入</span><span class="v">diff + focus: correctness</span><span class="k">输出</span><span class="v">3 findings · 0 blocking</span></div>
+      <div class="detail-note"><svg class="ic"><use href="#i-info"/></svg><span>技能内部步骤在右侧按需展开；中间只保留调用记录。</span></div>
+    </template>
+    <template id="detail-subagent">
+      <div class="section-title">子会话</div>
+      <div class="kv"><span class="k">Agent</span><span class="v">explore · 主 Agent 派生</span><span class="k">模型</span><span class="v">claude-haiku-4.5</span><span class="k">耗时</span><span class="v">2m 13s · 12 spans · 4 工具</span></div>
+      <div class="detail-note"><svg class="ic"><use href="#i-info"/></svg><span>点击中间展开后的子节点，右侧切换为该节点的内容。</span></div>
+    </template>
+    <template id="detail-child-grep">
+      <div class="section-title">Grep · audit hard-coded colors</div>
+      <pre class="out code">templates/transcript.html:12:  color: #1f2937;
+templates/index.html:8:  color: #1f2937;
+templates/archive_search.html:9:  color: #1f2937;</pre>
+      <div class="fact-grid"><div class="fact"><div class="k">状态</div><div class="v">完成</div></div><div class="fact"><div class="k">匹配</div><div class="v">3 个文件</div></div></div>
+    </template>
+    <template id="detail-child-read">
+      <div class="filepath">▤ templates/transcript.html</div>
+      <div class="readbox">
+        <div class="rrow"><span class="ln">9</span><span class="c">&lt;div class="transcript"&gt;</span></div>
+        <div class="rrow"><span class="ln">10</span><span class="c">  &lt;div class="message user"&gt;</span></div>
+        <div class="rrow"><span class="ln">11</span><span class="c">    {{ user_message }}</span></div>
+        <div class="rrow"><span class="ln">12</span><span class="c">  &lt;/div&gt;</span></div>
+      </div>
+      <div class="detail-note"><svg class="ic"><use href="#i-info"/></svg><span>子会话 Read 的路径与内容；中间子节点保持高亮。</span></div>
+    </template>
+    <template id="detail-child-bash">
+      <div class="section-title">命令</div>
+      <pre class="cmd code">$ rg "theme" --type py</pre>
+      <div class="section-title">输出</div>
+      <pre class="out code">claude_code_log/cli.py:210:    @click.option(
+claude_code_log/cli.py:212:        is_flag=True,</pre>
+      <div class="fact-grid"><div class="fact"><div class="k">状态</div><div class="v">完成</div></div><div class="fact"><div class="k">退出码</div><div class="v mono">0</div></div></div>
+    </template>
+
+    <script>
+      const SPANS = [[1,"AGENT",0.0],[1,"MESSAGE",0.047],[1,"LLM",1.742],[1,"THINKING",1.742],[1,"TOOL",2.203],[1,"MESSAGE",2.257],[1,"TOOL",2.257],[2,"LLM",3.381],[2,"TOOL",3.381],[2,"MESSAGE",3.405],[2,"TOOL",3.405],[2,"LLM",9.364],[2,"THINKING",9.364],[2,"TOOL",9.833],[2,"MESSAGE",11.105],[2,"TOOL",11.105],[2,"LLM",11.892],[2,"THINKING",11.892],[2,"TOOL",12.219],[2,"MESSAGE",12.243],[2,"TOOL",12.243],[2,"LLM",13.084],[2,"THINKING",13.084],[2,"TOOL",13.412],[2,"MESSAGE",13.456],[2,"TOOL",13.456],[2,"LLM",16.357],[2,"THINKING",16.357],[3,"TOOL",16.85],[3,"MESSAGE",16.873],[3,"TOOL",16.873],[4,"LLM",18.996],[4,"TOOL",18.996],[4,"MESSAGE",19.621],[4,"TOOL",19.621],[4,"LLM",20.654],[4,"THINKING",20.654],[4,"TOOL",20.893],[4,"MESSAGE",22.627],[4,"TOOL",22.627],[4,"LLM",23.636],[4,"TOOL",23.636],[4,"MESSAGE",39.263],[4,"TOOL",39.263],[4,"LLM",39.925],[4,"THINKING",39.925],[4,"TOOL",40.205],[4,"MESSAGE",54.285],[4,"TOOL",54.285],[4,"LLM",55.736],[4,"THINKING",55.736],[4,"TOOL",56.408],[4,"MESSAGE",56.905],[4,"TOOL",56.905],[4,"LLM",59.41],[4,"THINKING",59.41],[4,"TOOL",59.928],[4,"MESSAGE",60.4],[4,"TOOL",60.4],[4,"LLM",62.615],[4,"THINKING",62.615],[4,"TOOL",63.059],[4,"MESSAGE",63.537],[4,"TOOL",63.537],[4,"LLM",64.663],[4,"THINKING",64.663],[4,"TOOL",65.055],[4,"MESSAGE",65.079],[4,"TOOL",65.079],[4,"LLM",66.095],[4,"THINKING",66.095],[4,"TOOL",66.286],[4,"MESSAGE",66.308],[4,"TOOL",66.308],[4,"LLM",68.522],[5,"MESSAGE",68.522]];
+      const TURNS = [
+        { n: 1, label: "理解", count: 7, start: 0.0, end: 2.257, color: "s-explore" },
+        { n: 2, label: "定位", count: 21, start: 3.381, end: 16.357, color: "s-explore" },
+        { n: 3, label: "修复", count: 3, start: 16.85, end: 16.873, color: "s-fix" },
+        { n: 4, label: "验证", count: 44, start: 18.996, end: 68.522, color: "s-verify" },
+        { n: 5, label: "总结", count: 1, start: 68.522, end: 68.522, color: "s-verify" },
+      ];
+      const TOTAL = 68.522;
+
+      function buildFingerprint() {
+        const wrap = document.getElementById("fingerprint");
+        TURNS.forEach((turn) => {
+          const group = document.createElement("div");
+          group.className = "fp-group" + (turn.n === 3 ? " key" : "");
+          group.style.flexGrow = String(turn.count);
+          const ticks = document.createElement("div");
+          ticks.className = "fp-ticks";
+          SPANS.filter((s) => s[0] === turn.n).forEach((s) => {
+            const tick = document.createElement("i");
+            tick.className = s[1].toLowerCase();
+            ticks.appendChild(tick);
+          });
+          const label = document.createElement("div");
+          label.className = "fp-label";
+          label.innerHTML = "<b>0" + turn.n + " " + turn.label + "</b>";
+          group.title = "0" + turn.n + " " + turn.label + " · " + turn.count + " spans";
+          group.appendChild(ticks);
+          group.appendChild(label);
+          wrap.appendChild(group);
+        });
+        const note = document.createElement("div");
+        note.className = "fp-note";
+        note.innerHTML = '<svg class="ic ic-xs"><use href="#i-info"/></svg> 时长不可比时按顺序呈现';
+        wrap.appendChild(note);
+      }
+
+      function buildTimeline() {
+        const ruler = document.getElementById("tl-ruler");
+        [0, 10, 20, 30, 40, 50, 60, 69].forEach((sec) => {
+          const span = document.createElement("span");
+          span.style.left = (sec / TOTAL) * 100 + "%";
+          span.textContent = sec === 0 ? "00:42:23" : sec + "s";
+          ruler.appendChild(span);
+        });
+        const rows = document.getElementById("tl-rows");
+        TURNS.forEach((turn) => {
+          const row = document.createElement("div");
+          row.className = "tl-row";
+          const left = (turn.start / TOTAL) * 100;
+          const width = Math.max(0.7, ((turn.end - turn.start) / TOTAL) * 100);
+          const dots = SPANS.filter((s) => s[0] === turn.n)
+            .map((s) => '<i class="' + s[1].toLowerCase() + '" style="left:' + ((s[2] / TOTAL) * 100).toFixed(2) + '%"></i>')
+            .join("");
+          const callout = turn.n === 3
+            ? '<span class="tl-callout" style="left:' + Math.min(92, left + 1.2) + '%">Edit · 0.02s</span>'
+            : "";
+          row.innerHTML =
+            '<div class="tl-label"><b>0' + turn.n + '</b><span>' + turn.label + '</span></div>' +
+            '<div class="tl-track">' +
+              '<span class="tl-bar t' + turn.n + '" style="left:' + left.toFixed(2) + '%;width:' + width.toFixed(2) + '%"></span>' +
+              '<div class="tl-dots">' + dots + '</div>' + callout +
+            '</div>' +
+            '<div class="tl-meta"><b>' + turn.count + ' spans</b><span>' + (turn.end - turn.start).toFixed(turn.n === 3 ? 2 : 1) + 's</span></div>';
+          rows.appendChild(row);
+        });
+      }
+
+      document.querySelectorAll("[data-view-btn]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const view = btn.getAttribute("data-view-btn");
+          document.querySelectorAll("[data-view-btn]").forEach((b) => b.classList.toggle("active", b === btn));
+          const conversation = document.querySelector(".conversation");
+          conversation.setAttribute("data-view", ["timeline", "steps"].includes(view) ? view : "conversation");
+        });
+      });
+
+      const DEFAULT_EDIT_HTML = document.getElementById("insp-overview").innerHTML;
+      const DETAIL_BADGE = { edit: "±", bash: "$", read: "☰", thinking: "✦", skill: "✦", subagent: "⤵", "child-grep": "G", "child-read": "☰", "child-bash": "$" };
+
+      function describeStep(step) {
+        if (step.dataset.detail) {
+          return {
+            type: step.dataset.detail,
+            kind: step.dataset.kind || "步骤",
+            title: step.dataset.title || "步骤",
+            path: step.dataset.path || "",
+            meta: step.dataset.meta || "",
+          };
+        }
+        const icon = step.querySelector(".step-icon");
+        const tool = step.querySelector(".step-line .tool")?.textContent?.trim() || "";
+        const code = step.querySelector(".step-line code")?.textContent?.trim() || "";
+        const text = step.querySelector(".step-line")?.textContent?.trim() || "";
+        let type = "bash";
+        if (step.id === "step-subagent" || tool === "Subagent") type = "subagent";
+        else if (step.id === "step-skill" || tool === "Skill") type = "skill";
+        else if (icon?.classList.contains("edit") || tool === "Edit") type = "edit";
+        else if (icon?.classList.contains("read") || tool === "Read") type = "read";
+        else if (icon?.classList.contains("think") || text.startsWith("思考")) type = "thinking";
+        return {
+          type,
+          kind: type === "thinking" ? "思考" : type === "subagent" ? "子 Agent" : "工具调用",
+          title: tool || (type === "thinking" ? "思考" : "步骤"),
+          path: code,
+          meta: type === "subagent" ? "子会话 · 点击展开子节点" : "点击中间步骤查看详情",
+        };
+      }
+
+      function selectNode(node) {
+        document.querySelectorAll(".step.selected, .child-step.selected, .tool-call.selected")
+          .forEach((item) => item.classList.remove("selected"));
+        node.classList.add("selected");
+        const detail = describeStep(node);
+        const badge = DETAIL_BADGE[detail.type] || "•";
+        const kind = document.getElementById("insp-kind");
+        if (kind) kind.innerHTML = '<span class="kind-badge">' + badge + "</span>" + detail.kind;
+        const title = document.getElementById("insp-title");
+        if (title) title.textContent = detail.title;
+        const path = document.getElementById("insp-path");
+        if (path) path.textContent = detail.path;
+        const meta = document.getElementById("insp-meta");
+        if (meta) meta.innerHTML = "<span>" + detail.meta + "</span>";
+        const overview = document.getElementById("insp-overview");
+        if (overview) {
+          const template = detail.type === "edit" ? null : document.getElementById("detail-" + detail.type);
+          if (detail.type === "edit") overview.innerHTML = DEFAULT_EDIT_HTML;
+          else if (template) overview.innerHTML = template.innerHTML;
+          else overview.innerHTML = '<div class="detail-note"><svg class="ic"><use href="#i-info"/></svg><span>该步骤的详情面板为原型占位。</span></div>';
+        }
+        document.querySelectorAll(".insp-tab").forEach((tab) => tab.classList.toggle("active", tab.dataset.inspTab === "overview"));
+        document.querySelectorAll(".insp-pane").forEach((pane) => pane.classList.toggle("active", pane.dataset.inspPane === "overview"));
+      }
+
+      document.querySelectorAll(".step .step-head").forEach((head) => {
+        head.addEventListener("click", (event) => {
+          const step = head.closest(".step");
+          if (step.id === "step-subagent") {
+            step.classList.toggle("open");
+            const chev = step.querySelector(".step-chev");
+            if (chev) chev.textContent = step.classList.contains("open") ? "⌃" : "⌄";
+          }
+          event.stopPropagation();
+          selectNode(step);
+        });
+      });
+
+      document.querySelectorAll(".child-step").forEach((child) => {
+        child.addEventListener("click", (event) => {
+          event.stopPropagation();
+          const parent = child.closest(".step");
+          if (parent) parent.classList.add("open");
+          selectNode(child);
+        });
+      });
+
+      // Initial state: the Edit row in the conversation is the selected node.
+      const initialEdit = document.querySelector("#turn-3 .step[data-detail='edit']");
+      if (initialEdit) initialEdit.classList.add("selected");
+
+      document.querySelectorAll(".turn-head").forEach((head) => {
+        head.addEventListener("click", () => {
+          const turn = head.closest(".turn");
+          turn.classList.toggle("active");
+          turn.classList.toggle("open");
+          const chev = turn.querySelector(".turn-chev use");
+          if (chev) chev.setAttribute("href", turn.classList.contains("open") ? "#i-chevron-down" : "#i-chevron-right");
+        });
+      });
+
+      document.querySelectorAll(".phase-item").forEach((item) => {
+        item.addEventListener("click", () => {
+          const target = document.getElementById(item.getAttribute("data-target"));
+          if (target) target.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        });
+      });
+
+      document.querySelectorAll(".insp-tab").forEach((tab) => {
+        tab.addEventListener("click", () => {
+          const name = tab.getAttribute("data-insp-tab");
+          document.querySelectorAll(".insp-tab").forEach((t) => t.classList.toggle("active", t === tab));
+          document.querySelectorAll(".insp-pane").forEach((p) => p.classList.toggle("active", p.getAttribute("data-insp-pane") === name));
+        });
+      });
+
+      document.querySelectorAll(".chip").forEach((chip) => {
+        chip.addEventListener("click", () => {
+          chip.parentElement.querySelectorAll(".chip").forEach((c) => c.classList.remove("active"));
+          chip.classList.add("active");
+        });
+      });
+
+      const SESSION_DATA = {
+        main: {
+          role: "主 Agent",
+          roleClass: "main",
+          name: "Claude Code",
+          id: "17cf386c-2d36-43f2-b599-c091ff5ab653",
+        },
+        sub: {
+          role: "子 Agent",
+          roleClass: "subagent",
+          name: "explore",
+          id: "8a41c6d2-5e93-4b07-9c1f-2d6e8a0b4c35",
+        },
+        unlinked: {
+          role: "未关联",
+          roleClass: "unlinked",
+          name: "reviewer",
+          id: "c1a7e93d-2f58-4b6a-9e01-7d4c8b2a5f13",
+        },
+      };
+      const sessionSelect = document.getElementById("session-select");
+      const sessionMenu = document.getElementById("session-menu");
+      const closeSessionMenu = () => {
+        sessionMenu.hidden = true;
+        sessionSelect.setAttribute("aria-expanded", "false");
+      };
+      sessionSelect.addEventListener("click", (event) => {
+        event.stopPropagation();
+        const open = sessionMenu.hidden;
+        sessionMenu.hidden = !open;
+        sessionSelect.setAttribute("aria-expanded", String(open));
+      });
+      document.addEventListener("click", (event) => {
+        if (!event.target.closest(".session-picker")) closeSessionMenu();
+      });
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") closeSessionMenu();
+      });
+      document.querySelectorAll(".session-option").forEach((option) => {
+        option.addEventListener("click", (event) => {
+          event.stopPropagation();
+          const data = SESSION_DATA[option.dataset.session];
+          if (!data) return;
+          const role = document.getElementById("session-role");
+          role.className = "session-role " + data.roleClass;
+          role.textContent = data.role;
+          document.getElementById("session-name").textContent = data.name;
+          document.getElementById("session-id").textContent = data.id;
+          document.querySelectorAll(".session-option").forEach((item) => {
+            const active = item === option;
+            item.classList.toggle("active", active);
+            item.setAttribute("aria-selected", String(active));
+          });
+          closeSessionMenu();
+        });
+      });
+
+      function bindPaneToggle(buttonId, contentId) {
+        const button = document.getElementById(buttonId);
+        const content = document.getElementById(contentId);
+        if (!button || !content) return;
+        button.addEventListener("click", () => {
+          const open = content.hidden;
+          content.hidden = !open;
+          button.setAttribute("aria-expanded", String(open));
+          const chev = button.querySelector(".pane-chev");
+          if (chev) chev.classList.toggle("open", open);
+        });
+      }
+      bindPaneToggle("phases-toggle", "phase-list");
+      bindPaneToggle("raw-toggle", "raw-files");
+
+      buildFingerprint();
+      buildTimeline();
+    </script>
+  </body>
+</html>

@@ -33,6 +33,8 @@ node prototype/build-standalone.mjs
 
 右下角“原型评审”可以快速定位验收要求的边界状态。
 
+轨迹页的当前交互设计以 [`trace-viewer-redesign/index.html`](trace-viewer-redesign/index.html) 为准（对话轨迹 + 关键节点 + 会话下拉 + 原始文件折叠）；根目录 `index.html` 保留早期三栏原型，方便对照历史状态。
+
 ## 页面与架构映射
 
 | 页面 | 路由 | 架构实体 / 流程 |
@@ -80,7 +82,7 @@ node prototype/build-standalone.mjs
 - 结果分析的难度条形图按 Easy / Medium / Hard 分组，每根条使用与用例结果分布一致的状态色堆叠；完成趋势按日期和时间区间展示完成量，悬停或聚焦柱子可查看完成、解决、失败与平均耗时。
 - 数据集目录是“适配器驱动”的：分页卡片读取类型名称、任务族、环境形态、版本、用例数、核心指标与接入状态，不把 SWE-bench 字段写进列表布局。
 - 实时进展与最终结果共存：运行中的结果明确标记为快照，避免把部分聚合误认为最终成绩。
-- 轨迹采用“左侧会话树 + 中间 waterfall + 右侧 span 属性”的三栏结构。主 Agent 与子 Agent 通过会话树和父 span 同时表达。
+- 轨迹页以“对话轨迹 + 关键节点 + 会话选择 + 原始文件”为主结构；会话选择放在左栏顶部并用下拉呈现主 Agent / 子 Agent / 未关联会话，关键节点默认展开、原始文件默认折叠。根目录三栏原型保留为早期状态对照，当前设计见 `trace-viewer-redesign/index.html`。
 - Runner 容量始终以“在线数 / 池上限”呈现。一个自托管 Runner 默认只执行一个 job，因此 Mac mini 不会因为挂了多个标签而自动增加并发。
 - 资源连接先于供给模式选择。供给器声明所需连接能力，原型在 GitHub 与阿里云连接之间切换时启用或禁用模式，后端仍需以 `connection_provider_mismatch` 做最终裁决。
 - Agent 资产使用 Git 仓库作为唯一来源，保存可编辑的默认 Ref；发起评测时预填该 Ref，但允许覆盖，并在启动时固定到解析后的 commit 快照。

@@ -9,6 +9,7 @@ priority: P2
 status: ready
 scope:
   - web/src/**
+  - prototype/**
   - tests/**
   - .agents/flow/**
   - plans/**
@@ -30,7 +31,7 @@ github:
 - 下拉默认选中主 Agent 根会话；被选中会话在触发器内显示其原生 sessionId；顶部 attemptId / 主 Agent sessionId 双行标识保持既有语义，不随子会话切换。
 - 「关键节点」改为可折叠，默认展开；折叠后只保留标题与节点数，展开后保持现有跳转与高亮行为。
 - 「原始文件」改为可折叠，默认折叠；折叠时在标题旁显示文件数与主/子 Agent 摘要，展开后保留逐文件受控下载与轨迹包入口。
-- 本次直接更新控制台前端（`web/src` 中的交互原型页面）并附修改前后截图；不改后端 API、trace 数据模型或归一化口径。
+- 本次同时更新 `prototype/trace-viewer-redesign/index.html` 原型与控制台前端（`web/src`），并按原型核对 UI；不改后端 API、trace 数据模型或归一化口径。
 
 ## 修改前后截图
 
@@ -56,9 +57,30 @@ github:
 
 ![After：折叠与展开](https://github.com/Shadow-Azure/ai-eval-platform/releases/download/m8-42-trace-session-picker-evidence-20261118/m8-42-after-trace-toggles.png)
 
+## 原型修改前后
+
+原型文件：`prototype/trace-viewer-redesign/index.html`。同一原型、同一视口 1440×900、浅色主题。
+
+**原型 Before：会话卡片在左栏，关键节点与原始文件都展开。**
+
+![原型 Before](https://github.com/Shadow-Azure/ai-eval-platform/releases/download/m8-42-trace-session-picker-evidence-20261118/m8-42-proto-before.png)
+
+**原型 After：会话改为顶部下拉（默认主 Agent），关键节点默认展开，原始文件默认折叠。**
+
+![原型 After](https://github.com/Shadow-Azure/ai-eval-platform/releases/download/m8-42-trace-session-picker-evidence-20261118/m8-42-proto-after-default.png)
+
+**原型 After：下拉展开，显示主 Agent / 子 Agent / 未关联、sessionId 与 span 数。**
+
+![原型下拉](https://github.com/Shadow-Azure/ai-eval-platform/releases/download/m8-42-trace-session-picker-evidence-20261118/m8-42-proto-after-dropdown.png)
+
+**原型 After：折叠关键节点、展开原始文件。**
+
+![原型折叠](https://github.com/Shadow-Azure/ai-eval-platform/releases/download/m8-42-trace-session-picker-evidence-20261118/m8-42-proto-after-toggles.png)
+
 ## 验收
 
 - 轨迹页左栏顺序为「会话下拉 → 关键节点 → 原始文件」，会话下拉默认主 Agent，切换子 Agent 后中间轨迹与右侧详情联动，触发器显示当前会话的 sessionId。
 - 下拉选项能区分主 Agent、子 Agent 与未关联会话，显示 Agent 名称、sessionId 与 span 数；未关联会话不被误认为主 Agent。
 - 关键节点默认展开，点击标题可折叠/展开；原始文件默认折叠，点击标题可展开；两者均可用键盘操作，带 `aria-expanded`。
 - 现有筛选、搜索、深链、时间线、详情检查器、原始文件下载与轨迹包导出不回归；`web` 类型检查、构建与 `npm test` 通过。
+- 控制台左栏与 `prototype/trace-viewer-redesign` 的会话下拉/折叠交互一致；`plans/m1-02-fullstack-design` §3.7/§5.3 已同步为当前三栏结构。
