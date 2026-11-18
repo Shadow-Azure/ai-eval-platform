@@ -2580,6 +2580,9 @@ function tracePage(runId, caseId) {
     score: "0.0",
     duration: "8m 42s",
   };
+  const noTrace = currentRoute().query.get("noTrace") === "1";
+  const attemptId = "att_01J9K4F8Q6";
+  const mainSessionId = noTrace ? null : "sess_01J9K4F8Q6";
   const spans = [
     { id: "span-root", name: "invoke_agent codex", kind: "AGENT", type: "agent", left: 0, width: 100, duration: "8m 42s" },
     { id: "span-plan", name: "chat deepseek-v4.1-flash · planning", kind: "LLM", type: "llm", left: 2, width: 21, duration: "1m 14s" },
@@ -2637,8 +2640,17 @@ function tracePage(runId, caseId) {
       })}
       <section class="card trace-shell">
         <div class="trace-top">
-          <span class="tag tag-violet">Codex CLI</span><span class="tag tag-primary">deepseek-v4.1-flash</span><span class="tag tag-success">已解决</span>
-          <span class="small muted mono">sess_01J9K4F8Q6</span>
+          <span class="tag tag-violet">Codex CLI</span><span class="tag tag-primary">deepseek-v4.1-flash</span><span class="tag ${noTrace ? "tag-danger" : "tag-success"}">${noTrace ? "失败" : "已解决"}</span>
+          <div class="trace-ident" aria-label="attempt 与主 Agent 会话标识">
+            <div class="trace-ident-line">
+              <span class="trace-ident-label">attemptId:</span>
+              <span class="trace-ident-value mono" title="${attemptId}">${attemptId}</span>
+            </div>
+            <div class="trace-ident-line">
+              <span class="trace-ident-label">sessionId:</span>
+              <span class="trace-ident-value mono ${mainSessionId ? "" : "empty"}" title="${mainSessionId ?? "未解析到主 Agent 会话（该 attempt 没有可用轨迹）"}">${mainSessionId ?? "—"}</span>
+            </div>
+          </div>
           <div class="trace-summary"><span><strong>${caseInfo.duration}</strong> 总耗时</span><span><strong>418.6k</strong> tokens</span><span><strong>¥0.27</strong> 模型成本</span><span><strong>17</strong> spans</span></div>
         </div>
         <div class="trace-layout">

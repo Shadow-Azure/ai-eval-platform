@@ -2941,6 +2941,38 @@ tbody tr.clickable {
   font-size: 10px;
 }
 
+.trace-ident {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  max-width: 330px;
+}
+
+.trace-ident-line {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.trace-ident-label {
+  flex: none;
+  width: 62px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.trace-ident-value {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .trace-summary strong {
   color: var(--ink);
   font-weight: 650;
