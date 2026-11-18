@@ -21,6 +21,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import logging
+import re
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -51,7 +52,14 @@ OBJECT_TYPE = "agent"
 TITLE_MAX_LENGTH = 255
 REASON_MAX_LENGTH = 4000
 TEST_NAME_LIMIT = 20
+REASON_TEST_LIMIT = 8
+PROBLEM_EXCERPT_LIMIT = 600
 SESSION_ID_PATTERN_LIMIT = 36  # HE sessionId contract: 1..36 chars
+EXECUTION_LABELS = {
+    "empty_patch": "未生成有效补丁",
+    "agent_failed": "Agent 执行失败",
+    "scoring_failed": "评分阶段失败",
+}
 
 # Short-lived session-envelope grant embedded in sessionUrlTemplate. The HMAC
 # binds the endpoint path PREFIX (not the concrete session id) plus the
@@ -190,17 +198,194 @@ def bad_case_identifier(tenant_id: str, eval_run_id: str, case_key: str) -> str:
     return f"swe-{digest[:20]}"
 
 
-def _failed_tests(session: Session, attempt_id: str, group: str) -> list[str]:
+def _format_test_id(suite_name: str, test_name: str) -> str:
+    """Render one test as ``file.py::test_name`` when the suite is known."""
+
+    return f"{suite_name}::{test_name}" if suite_name else test_name
+
+
+def _failed_tests(session: Session, attempt_id: str, group: str) -> list[tuple[str, str]]:
     rows = session.execute(
-        select(TestCaseResult.test_name)
+        select(TestCaseResult.suite_name, TestCaseResult.test_name)
         .where(
             TestCaseResult.eval_case_attempt_id == attempt_id,
             TestCaseResult.test_group == group,
             TestCaseResult.outcome.in_(FAILED_TEST_OUTCOMES),
         )
-        .order_by(TestCaseResult.test_name)
-    ).scalars()
-    return list(rows)[:TEST_NAME_LIMIT]
+        .order_by(TestCaseResult.suite_name, TestCaseResult.test_name)
+    ).all()
+    return [(suite_name, test_name) for suite_name, test_name in rows][:TEST_NAME_LIMIT]
+
+
+def _failed_test_count(session: Session, attempt_id: str, group: str) -> int:
+    """Exact failed count, independent of the display limit on names."""
+
+    count = session.scalar(
+        select(func.count())
+        .select_from(TestCaseResult)
+        .where(
+            TestCaseResult.eval_case_attempt_id == attempt_id,
+            TestCaseResult.test_group == group,
+            TestCaseResult.outcome.in_(FAILED_TEST_OUTCOMES),
+        )
+    )
+    return int(count or 0)
+
+
+def _failed_test_files(session: Session, attempt_id: str) -> list[str]:
+    rows = session.scalars(
+        select(TestCaseResult.suite_name)
+        .where(
+            TestCaseResult.eval_case_attempt_id == attempt_id,
+            TestCaseResult.test_group.in_(("F2P", "P2P")),
+            TestCaseResult.outcome.in_(FAILED_TEST_OUTCOMES),
+        )
+        .distinct()
+        .order_by(TestCaseResult.suite_name)
+    )
+    return [suite_name for suite_name in rows if suite_name]
+
+
+def _expected_test_total(task: dict, key: str) -> int:
+    """Number of expected F2P/P2P tests frozen with the task view."""
+
+    metrics = task.get("expected_metrics")
+    values = metrics.get(key) if isinstance(metrics, dict) else None
+    return len(values) if isinstance(values, list) else 0
+
+
+def _problem_excerpt(problem_statement: object, *, limit: int = PROBLEM_EXCERPT_LIMIT) -> str:
+    """First readable problem-statement paragraph for the report headline.
+
+    SWE-bench bodies contain GitHub-template comments, headings and code;
+    strip those, then take the first paragraph long enough to describe the
+    task. Keeping the excerpt to one paragraph avoids turning issue content
+    into unintended block structure when HE renders the Markdown.
+    """
+
+    if not isinstance(problem_statement, str):
+        return ""
+    text = re.sub(r"<!--.*?-->", " ", problem_statement, flags=re.S)
+    paragraphs: list[str] = []
+    current: list[str] = []
+    in_fence = False
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if line.startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence or not line or line.startswith("#"):
+            if current:
+                paragraphs.append(" ".join(current))
+                current = []
+            continue
+        current.append(line)
+    if current:
+        paragraphs.append(" ".join(current))
+
+    excerpt = ""
+    for paragraph in paragraphs:
+        normalized = re.sub(r"\s+", " ", paragraph).strip()
+        if len(normalized) >= 40:
+            excerpt = normalized
+            break
+    if not excerpt:
+        excerpt = re.sub(r"\s+", " ", text).strip()
+    if len(excerpt) > limit:
+        excerpt = excerpt[:limit].rsplit(" ", 1)[0].rstrip(" ,;:，；：") + "…"
+    return excerpt
+
+
+def _execution_label(error_summary: str) -> str:
+    return EXECUTION_LABELS.get(error_summary, error_summary)
+
+
+def _build_reason(
+    *,
+    case_key: str,
+    repo: str | None,
+    base_commit: str | None,
+    result_status: str,
+    error_summary: str | None,
+    problem: str,
+    fail_to_pass: list[tuple[str, str]],
+    pass_to_pass: list[tuple[str, str]],
+    fail_to_pass_count: int,
+    pass_to_pass_count: int,
+    fail_to_pass_total: int,
+    test_files: list[str],
+) -> str:
+    """Compose the Markdown ``reason`` rendered as the HE problem description."""
+
+    subject = f"`{case_key}`"
+    if repo:
+        subject += f"（{repo}"
+        if base_commit:
+            subject += f" @ {base_commit[:8]}"
+        subject += "）"
+    elif base_commit:
+        subject += f"（@ {base_commit[:8]}）"
+
+    sections: list[str] = []
+    if result_status == "not_scored":
+        conclusion = f"**结论**：{subject}执行失败（未进入评分）"
+        if error_summary:
+            conclusion += f"——{_execution_label(error_summary)}"
+        sections.append(conclusion + "。")
+    else:
+        parts: list[str] = []
+        if fail_to_pass_count:
+            if fail_to_pass_total:
+                parts.append(
+                    f"{fail_to_pass_count}/{fail_to_pass_total} 个目标测试（F2P）未通过"
+                )
+            else:
+                parts.append(f"{fail_to_pass_count} 个目标测试（F2P）未通过")
+        elif fail_to_pass_total:
+            parts.append("目标测试（F2P）无失败")
+        if pass_to_pass_count:
+            parts.append(f"{pass_to_pass_count} 个既有测试（P2P）回退")
+        elif fail_to_pass_count:
+            parts.append("未发现既有测试（P2P）回退")
+        conclusion = f"**结论**：{subject}未解决"
+        if parts:
+            conclusion += "——" + "，".join(parts)
+        if error_summary:
+            conclusion += f"；执行信息：{_execution_label(error_summary)}"
+        elif not parts:
+            conclusion += "——未报告失败测试"
+        elif fail_to_pass_count or pass_to_pass_count:
+            conclusion += "；测试已执行，评分阶段未报告错误"
+        sections.append(conclusion + "。")
+
+    if problem:
+        sections.append(f"**题面**（原文摘录）：{problem}")
+
+    for label, group, rows, count, total in (
+        ("失败", "F2P", fail_to_pass, fail_to_pass_count, fail_to_pass_total),
+        ("回退", "P2P", pass_to_pass, pass_to_pass_count, 0),
+    ):
+        if count == 0:
+            continue
+        header = f"**{label}（{group}，{count}"
+        if total:
+            header += f"/{total}"
+        header += "）**"
+        lines = [header]
+        for suite_name, test_name in rows[:REASON_TEST_LIMIT]:
+            lines.append(f"- `{_format_test_id(suite_name, test_name)}`")
+        remaining = count - min(count, REASON_TEST_LIMIT)
+        if remaining > 0:
+            lines.append(f"- 其余 {remaining} 个未展开")
+        sections.append("\n".join(lines))
+
+    if test_files:
+        shown = "、".join(f"`{path}`" for path in test_files[:3])
+        if len(test_files) > 3:
+            shown += f" 等 {len(test_files)} 个文件"
+        sections.append(f"**测试文件**：{shown}")
+    sections.append("**排查**：查看关联会话轨迹与 Agent 补丁。")
+    return "\n\n".join(sections)[:REASON_MAX_LENGTH]
 
 
 def _usage_totals(session: Session, case_run_id: str) -> tuple[int | None, float | None]:
@@ -237,19 +422,28 @@ def build_bad_case_payload(
     object_version = run.runtime_version or (run.asset_snapshot_json or {}).get("resolved_commit")
     title = f"[SWE-bench] {case.case_key} · {case.result_status}"[:TITLE_MAX_LENGTH]
 
+    task = case.task_json or {}
     fail_to_pass = _failed_tests(session, final_attempt.id, "F2P")
     pass_to_pass = _failed_tests(session, final_attempt.id, "P2P")
+    fail_to_pass_count = _failed_test_count(session, final_attempt.id, "F2P")
+    pass_to_pass_count = _failed_test_count(session, final_attempt.id, "P2P")
+    fail_to_pass_total = _expected_test_total(task, "fail_to_pass")
+    test_files = _failed_test_files(session, final_attempt.id)
 
-    reason_parts = [f"result_status={case.result_status}"]
-    if case.result_status == "not_scored":
-        reason_parts.append("执行失败（未进入评分）")
-    if case.error_summary:
-        reason_parts.append(f"error: {case.error_summary}")
-    if fail_to_pass:
-        reason_parts.append(f"F2P 失败: {', '.join(fail_to_pass)}")
-    if pass_to_pass:
-        reason_parts.append(f"P2P 回退: {', '.join(pass_to_pass)}")
-    reason = "\n".join(reason_parts)[:REASON_MAX_LENGTH]
+    reason = _build_reason(
+        case_key=case.case_key,
+        repo=task.get("repo"),
+        base_commit=task.get("base_commit"),
+        result_status=case.result_status,
+        error_summary=case.error_summary,
+        problem=_problem_excerpt(task.get("problem_statement")),
+        fail_to_pass=fail_to_pass,
+        pass_to_pass=pass_to_pass,
+        fail_to_pass_count=fail_to_pass_count,
+        pass_to_pass_count=pass_to_pass_count,
+        fail_to_pass_total=fail_to_pass_total,
+        test_files=test_files,
+    )
 
     meta: dict = {
         "instanceId": case.case_key,
@@ -257,9 +451,25 @@ def build_bad_case_payload(
         "evalCaseRunId": case.id,
         "attemptId": final_attempt.id,
         "resolved": False,
-        "failToPassFailed": fail_to_pass,
-        "passToPassRegressed": pass_to_pass,
+        "failToPassFailed": [
+            _format_test_id(suite_name, test_name) for suite_name, test_name in fail_to_pass
+        ],
+        "passToPassRegressed": [
+            _format_test_id(suite_name, test_name) for suite_name, test_name in pass_to_pass
+        ],
+        "f2pFailedCount": fail_to_pass_count,
+        "p2pRegressedCount": pass_to_pass_count,
     }
+    repo = task.get("repo")
+    if repo:
+        meta["repo"] = repo
+    base_commit = task.get("base_commit")
+    if base_commit:
+        meta["baseCommit"] = base_commit
+    if fail_to_pass_total:
+        meta["f2pTotal"] = fail_to_pass_total
+    if test_files:
+        meta["testFiles"] = test_files
     if case.duration_ms is not None:
         meta["durationMs"] = case.duration_ms
     if run.dataset_version_id:
