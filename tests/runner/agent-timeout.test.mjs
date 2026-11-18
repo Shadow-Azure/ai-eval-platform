@@ -38,3 +38,16 @@ test("manifest Agent timeout is optional and bounded to 60..86400 seconds", () =
   }
   assert.equal(validatePayload("manifest", manifestFixture).ok, true);
 });
+
+test("job cancellation stops the Agent asynchronously and reports a partial trace", () => {
+  // M8-43 (#304): spawnSync blocked signal handling for the whole Agent run.
+  // The async runner lives in runner/lib/agent-exec.mjs and is exercised by
+  // tests/runner/agent-exec.test.mjs; this file pins the integration points.
+  assert.ok(source.includes('import { runAgentExec } from "../lib/agent-exec.mjs";'));
+  assert.ok(source.includes("if (agentOutcome.cancelled)"));
+  assert.ok(source.includes("const reportCancelledCase"));
+  assert.ok(source.includes("buildCancellationFailure"));
+  assert.ok(source.includes('errorCode: caseResult.errorCode || "runner_lost"'));
+  assert.ok(source.includes("traceManifest"));
+  assert.ok(source.includes('import { buildCancellationFailure } from "../lib/cancellation.mjs";'));
+});

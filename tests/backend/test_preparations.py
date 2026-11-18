@@ -197,7 +197,7 @@ def prepare_body(ids: dict, **overrides) -> dict:
         "case_selection": {"mode": "all"},
         "execution": {
             "concurrency": 2,
-            "case_timeout_seconds": 1800,
+            "case_timeout_seconds": 4200,
             "max_attempts": 3,
             "model_budget_cny": 5,
         },
@@ -220,7 +220,7 @@ def test_prepare_freezes_snapshot_with_ttl(client: TestClient, session: Session)
     assert body["estimated_job_count"] == 2
     assert body["snapshot_digest"].startswith("sha256:")
     assert body["expires_at"].endswith("Z")
-    assert body["summary"]["execution"]["case_timeout_seconds"] == 1800
+    assert body["summary"]["execution"]["case_timeout_seconds"] == 4200
     assert body["summary"]["execution"]["max_attempts"] == 3
     assert body["cost_estimate"]["total_cny"]["low"]
 
@@ -512,7 +512,7 @@ def test_create_from_preparation_uses_frozen_subset_and_policy(
     assert run["total_cases"] == 2
     assert run["name"] == "冻结评测"
     stored = session.get(EvalRun, run["id"])
-    assert stored.case_timeout_seconds == 1800
+    assert stored.case_timeout_seconds == 4200
     assert stored.max_attempts == 3
     assert float(stored.model_budget_cny) == 5.0
     assert stored.consistency_json["preparation_id"] == prepared["preparation_id"]
@@ -888,8 +888,35 @@ def test_run_detail_exposes_frozen_preparation_inputs(
     )
     assert created.status_code == 201, created.text
     detail = client.get(f"/api/v1/evaluations/{created.json()['id']}").json()
-    assert detail["case_timeout_seconds"] == 1800
+    assert detail["case_timeout_seconds"] == 4200
     assert detail["max_attempts"] == 3
     assert detail["consistency"]["preparation_id"] == prepared["preparation_id"]
     assert detail["consistency"]["summary"]["execution"]["concurrency"] == 2
     assert detail["consistency"]["summary"]["case_count"] == 2
+
+
+def test_prepare_raises_case_timeout_above_agent_budget_and_warns(
+    client: TestClient, session: Session
+) -> None:
+    """M8-43 (#304): a confirmed snapshot never freezes case <= agent."""
+
+    ids = seed_launch(session, agent_timeout_seconds=3600)
+    response = client.post(
+        "/api/v1/evaluations/prepare",
+        json=prepare_body(ids),
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["ready"] is True
+    assert body["agent_timeout_seconds"] == 3600
+    assert body["execution"]["case_timeout_seconds"] == 4800
+    assert body["summary"]["execution"]["case_timeout_seconds"] == 4800
+    warning = next(
+        item for item in body["warnings"] if item["code"] == "case_timeout_adjusted"
+    )
+    assert warning["field"] == "case_timeout_seconds"
+    assert warning["details"]["requested"] == 4200
+    assert warning["details"]["effective"] == 4800
+
+    preparation = session.get(EvalPreparation, body["preparation_id"])
+    assert preparation.snapshot_json["execution"]["case_timeout_seconds"] == 4800

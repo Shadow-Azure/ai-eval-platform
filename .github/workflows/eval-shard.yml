@@ -26,8 +26,8 @@ name: eval-shard
 # M4-02: the display title embeds the dispatch key, which starts with the
 # evaluation run id, so the platform worker can find the dispatched run and
 # cancel it (a repository_dispatch's run title carries no other eval id).
-# workflow_dispatch falls back to the GitHub run id. dispatch_key is also the
-# only client_payload field this workflow is allowed to interpolate.
+# workflow_dispatch falls back to the GitHub run id. Only dispatch_key and the
+# schema-bounded job_timeout_minutes integer are interpolated from the payload.
 run-name: "eval-shard ${{ github.event.client_payload.dispatch_key || github.run_id }}${{ github.event.inputs.smoke_id && format(' smoke-{0}', github.event.inputs.smoke_id) || '' }}"
 
 on:
@@ -317,7 +317,9 @@ jobs:
     needs: prepare
     if: github.event_name == 'repository_dispatch' && needs.prepare.outputs.cases != '[]'
     runs-on: ${{ fromJson(needs.prepare.outputs.runs_on || '["self-hosted","linux","eval"]') }}
-    timeout-minutes: 60
+    # M8-43 (#304): the platform derives this from the frozen case
+    # budget (job > case > agent). Older dispatches fall back to 60.
+    timeout-minutes: ${{ github.event.client_payload.job_timeout_minutes || 60 }}
     strategy:
       fail-fast: false
       matrix:
