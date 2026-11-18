@@ -8,7 +8,7 @@
   "docs/README.md": 520,
   "docs/architecture.md": 3700,
   "docs/design/eval-platform-architecture.md": 11500,
-  "docs/development.md": 1100,
+  "docs/development.md": 1160,
   "docs/i18n/README.md": 550,
   "docs/i18n/terminology.md": 220,
   "docs/i18n/translation-prompt.md": 300,
@@ -23,5 +23,5 @@
   ".agents/flow/milestones/m7-extension-and-hardening.md": 200,
   ".agents/flow/milestones/m8-bug-fixes.md": 200,
   ".agents/flow/milestones/m9-self-evolution-reporting.md": 200,
-  "// docs/development.md": "M8 #273 adds the dataset image tarball publishing section (550 -> 800); M8 #290 adds the automatic preparation worker operations section (800 -> 1100)."
+  "// docs/development.md": "M8 #273 adds the dataset image tarball publishing section (550 -> 800); M8 #290 adds the automatic preparation worker operations section (800 -> 1100; #290 closeout adds the DinD mirror note (1100 -> 1160))."
 }

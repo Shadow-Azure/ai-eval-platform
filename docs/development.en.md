@@ -53,7 +53,7 @@ docker compose --env-file .env -f deploy/docker-compose.prod.yml \
   --profile image-prep up -d image-prep-dind image-prep
 ```
 
-`DATASET_IMAGE_PREP_DATA_DIR` overrides the data disk root (default `/data/ai-eval-image-prep`); `DATASET_IMAGE_PREP_PLATFORM` defaults to `linux/amd64` and `DATASET_IMAGE_PREP_MAX_ATTEMPTS` to 3. When free space is below the threshold the worker does not pull and marks the image `failed` with an expansion hint.
+`DATASET_IMAGE_PREP_DATA_DIR` overrides the data disk root (default `/data/ai-eval-image-prep`); `IMAGE_PREP_DIND_IMAGE` overrides the DinD image (default is a DaoCloud public mirror so the host does not need direct Docker Hub access); `DATASET_IMAGE_PREP_PLATFORM` defaults to `linux/amd64` and `DATASET_IMAGE_PREP_MAX_ATTEMPTS` to 3. When free space is below the threshold the worker does not pull and marks the image `failed` with an expansion hint.
 
 Check status and residue:
 
