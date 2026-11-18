@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>m8-42 轨迹页会话下拉与折叠 · 冒烟报告</title>
+  <style>
+    :root{
+      color-scheme:light;
+      --bg:#f4f7fb;--card:#fff;--ink:#16202f;--ink2:#55637a;--ink3:#7b869b;
+      --line:#dde4ee;--accent:#2563eb;--accent-wash:#e8efff;--good:#157347;
+      --good-wash:#e7f6ee;--warn:#b45309;--warn-wash:#fff2dd;--bad:#c9282e;
+      --bad-wash:#ffeded;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:radial-gradient(circle at 8% 0,#dbe9ff 0,transparent 32rem),radial-gradient(circle at 92% 4%,#e7f1ff 0,transparent 28rem),var(--bg);color:var(--ink);font:14px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Noto Sans CJK SC",sans-serif}
+    main{max-width:1220px;margin:auto;padding:36px 28px 72px}
+    .hero{padding:30px 34px;border:1px solid #dbe3ee;border-radius:24px;background:rgba(255,255,255,.92);box-shadow:0 18px 44px #17202f12}
+    .eyebrow{margin:0;color:var(--accent);font-size:12px;font-weight:800;letter-spacing:.16em;text-transform:uppercase}
+    h1{margin:10px 0 8px;font-size:clamp(28px,4vw,44px);letter-spacing:-.04em}
+    .summary{margin:0;max-width:850px;color:var(--ink2);font-size:15px}
+    .meta{display:block;margin-top:8px;color:var(--ink3);font-size:12px}
+    .metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-top:26px}
+    .metric{padding:16px 18px;border:1px solid var(--line);border-radius:16px;background:#fafbfd}
+    .metric b{display:block;font-size:30px;letter-spacing:-.04em}
+    .metric span{display:block;margin-top:2px;color:var(--ink3);font-size:12px}
+    section{margin-top:28px}
+    .head{display:flex;align-items:baseline;justify-content:space-between;gap:16px;margin:0 4px 14px}
+    h2{margin:0;font-size:21px;letter-spacing:-.03em}
+    .head small{color:var(--ink3);white-space:nowrap}
+    .card{padding:22px;border:1px solid var(--line);border-radius:20px;background:var(--card);box-shadow:0 5px 22px #17202f08}
+    .facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin:0}
+    .fact{padding:13px 16px;border:1px solid #eceff5;border-radius:12px;background:#fafbfd}
+    .fact dt{color:var(--ink3);font-size:11px;font-weight:700}
+    .fact dd{margin:3px 0 0;overflow-wrap:anywhere}
+    code{font-family:var(--mono);font-size:.9em;color:#29456d;overflow-wrap:anywhere}
+    .status{display:inline-flex;padding:3px 8px;border-radius:999px;font-size:11px;font-weight:800;white-space:nowrap;background:#eef1f6;color:var(--ink2)}
+    .status.pass,.status.fixed{background:var(--good-wash);color:var(--good)}
+    .status.warn,.status.manual{background:var(--warn-wash);color:var(--warn)}
+    .status.fail{background:var(--bad-wash);color:var(--bad)}
+    .tableWrap{overflow:auto;border:1px solid var(--line);border-radius:18px;background:var(--card);box-shadow:0 5px 22px #17202f08}
+    table{width:100%;min-width:920px;border-collapse:collapse}
+    th,td{padding:12px 15px;border-bottom:1px solid #edf0f5;text-align:left;vertical-align:top}
+    th{position:sticky;top:0;background:#fafbfe;color:var(--ink2);font-size:12px}
+    tr:last-child td{border-bottom:0}
+    tr:hover{background:#fcfdff}
+    .num{color:var(--ink3);font-family:var(--mono);font-size:12px}
+    .evidence{color:var(--ink3);font-size:12px}
+    .issues{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px}
+    .issueCard{padding:18px 21px;border:1px solid #ffcece;border-left:5px solid var(--bad);border-radius:16px;background:#fffbfb}
+    .issueCard h3{margin:0;color:#b91c1c;font-size:16px}
+    .issueCard p{margin:8px 0;color:var(--ink2)}
+    .issueCard dt{color:var(--ink3);font-size:11px;font-weight:700}
+    .issueCard dd{margin:2px 0 0;color:var(--ink2)}
+    .tag{float:right;padding:3px 8px;border-radius:999px;background:#fee4e4;color:#9a1b21;font-size:11px;font-weight:800}
+    .fixed{display:inline-flex;gap:5px;align-items:center;margin-top:11px;padding:6px 10px;border-radius:999px;background:var(--good-wash);color:var(--good);font-size:12px;font-weight:800}
+    .shots{display:grid;grid-template-columns:repeat(auto-fit,minmax(430px,1fr));gap:16px}
+    figure{margin:0;overflow:hidden;border:1px solid var(--line);border-radius:18px;background:#fff;box-shadow:0 6px 22px #17202f08}
+    figure.wide{grid-column:1/-1}
+    img{display:block;width:100%;max-height:500px;object-fit:contain;background:#eef2f7}
+    figcaption{display:flex;gap:9px;align-items:flex-start;padding:11px 14px;border-top:1px solid #edf0f5;background:#fafbfd;color:var(--ink2);font-size:12.5px}
+    figcaption b{flex:none;color:var(--ink)}
+    .issue-shot{border-color:#ffcece}
+    .conclusion{border:1px solid #c8e5d2;border-radius:20px;background:linear-gradient(135deg,#f2fbf6,white 54%)}
+    .conclusion.warn{border-color:#f1d9a4;background:linear-gradient(135deg,#fff8e8,white 54%)}
+    .conclusion.fail{border-color:#ffc9c9;background:linear-gradient(135deg,#fff5f5,white 54%)}
+    .conclusion ul{margin:12px 0 0;padding-left:20px;color:#344155}
+    .conclusion li+li{margin-top:7px}
+    .empty{padding:20px;text-align:center;color:var(--ink3);background:#fafbfd;border:1px dashed var(--line);border-radius:12px}
+    .foot{margin-top:24px;color:var(--ink3);font-size:12px;text-align:center}
+    @media(max-width:860px){main{padding:22px 14px 52px}.hero{padding:23px}.shots{grid-template-columns:1fr}.head{align-items:flex-start;flex-direction:column;gap:4px}}
+    @media print{body{background:white}main{max-width:none;padding:0}.card,.issueCard,figure,.tableWrap{box-shadow:none;break-inside:avoid}img{max-height:420px}}
+  </style>
+</head>
+<body>
+<main>
+  <header class="hero">
+    <p class="eyebrow">Computer Use / Browser Smoke · M8-42</p>
+    <h1>m8-42 轨迹页会话下拉与折叠 · 冒烟报告</h1>
+    <p class="summary">在本地 Vite 控制台用同一份 18-span 合成轨迹验证了默认主 Agent、会话下拉（主 Agent / 子 Agent / 未关联）、子 Agent 切换、关键节点与原始文件折叠，以及修订后的交互原型。6 个桌面场景和原型对照通过；未发现本次改动引入的代码缺陷。移动端应用外壳未适配，本次不纳入验收。</p>
+    <span class="meta">2026-11-18 · macOS · Chromium headless 1440×900 (2x DPR) · 浅色主题</span>
+    <div class="metrics"><div class="metric"><b>7</b><span>场景</span></div><div class="metric"><b>0</b><span>本次新增缺陷</span></div><div class="metric"><b>106</b><span>npm test</span></div><div class="metric"><b>8</b><span>文档门禁叶子</span></div></div>
+  </header>
+
+  <section>
+    <div class="head"><h2>Environment and Artifact</h2><small>2026-11-18 · macOS · Chromium headless 1440×900 (2x DPR) · 浅色主题</small></div>
+    <article class="card"><dl class="facts"><div class="fact"><dt>分支</dt><dd>agent/trace-session-dropdown-f7e31be2fe64</dd></div><div class="fact"><dt>提交</dt><dd>8949cb3</dd></div><div class="fact"><dt>基线</dt><dd>main @ 1338f6a</dd></div><div class="fact"><dt>控制台</dt><dd>Vite dev @ 127.0.0.1:5273</dd></div><div class="fact"><dt>数据</dt><dd>18-span 合成 trace fixture（1 主 Agent、1 子 Agent、1 未关联会话）</dd></div><div class="fact"><dt>原型</dt><dd>prototype/trace-viewer-redesign/index.html</dd></div></dl></article>
+  </section>
+
+  <section>
+    <div class="head"><h2>Scenario Matrix</h2><small>6 pass · 1 manual</small></div>
+    <div class="tableWrap"><table><table><thead><tr><th>#</th><th>场景</th><th>结果</th><th>说明</th><th>证据</th></tr></thead><tbody><tr><td class="num">01</td><td>默认状态：主 Agent、关键节点展开、原始文件折叠</td><td><span class="status pass">PASS</span></td><td>会话下拉默认主 Agent；关键节点 5 个节点可见；原始文件只显示摘要与计数，不占左栏。</td><td class="evidence">02-production-after.png</td></tr><tr><td class="num">02</td><td>会话下拉：主 Agent / 子 Agent / 未关联</td><td><span class="status pass">PASS</span></td><td>下拉列出 3 个会话，显示角色、Agent 名称、原生 sessionId、span 数与运行类型；未关联会话用独立徽标。</td><td class="evidence">03-production-dropdown.png</td></tr><tr><td class="num">03</td><td>切换到子 Agent</td><td><span class="status pass">PASS</span></td><td>选择 explore 后，触发器显示子会话原生 sessionId，中间轨迹切到 6 spans / 2 阶段，右侧详情联动；顶部主 Agent sessionId 保持不变。</td><td class="evidence">04-production-subagent.png</td></tr><tr><td class="num">04</td><td>折叠关键节点、展开原始文件</td><td><span class="status pass">PASS</span></td><td>两个标题均可用点击切换；折叠后节点列表隐藏，展开后 3 个原始文件与打包下载出现，标题的 aria-expanded 同步更新。</td><td class="evidence">05-production-toggles.png</td></tr><tr><td class="num">05</td><td>原型默认态与下拉</td><td><span class="status pass">PASS</span></td><td>原型把会话卡片改为顶部下拉，默认主 Agent；下拉宽 300px，可完整展示 3 个会话的 sessionId 与类型。</td><td class="evidence">06-prototype-before.png<br>07-prototype-after-default.png<br>08-prototype-after-dropdown.png</td></tr><tr><td class="num">06</td><td>原型折叠切换</td><td><span class="status pass">PASS</span></td><td>关键节点默认展开、原始文件默认折叠；点击后两个 section 均按预期切换。</td><td class="evidence">09-prototype-after-toggles.png</td></tr><tr><td class="num">07</td><td>移动端外壳</td><td><span class="status manual">DEFERRED</span></td><td>轨迹页已有 mobile 会话选择器，但应用侧栏在 390px 下未适配，整页无法单独验收；本次未改应用外壳。</td><td class="evidence">No screenshot: shell outside this ticket&#39;s scope.</td></tr></tbody></table></table></div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Issues and Observations</h2><small>P3 390px 下应用外壳仍以桌面侧栏布局渲染</small></div>
+    <div class="issues"><article class="issueCard"><span class="tag">P3</span><h3>390px 下应用外壳仍以桌面侧栏布局渲染</h3><dl><div><dt>实际</dt><dd>390px 视口下左侧导航仍占约 236px，轨迹主内容被横向裁切。</dd></div><div><dt>期望</dt><dd>移动端应有收起导航或抽屉，轨迹主内容占满视口。</dd></div><div><dt>根因</dt><dd>AppShell 没有移动端断点；轨迹页虽已有 mobile 会话选择器，但外层壳未适配。</dd></div></dl><div class="fixed">Deferred · 应用壳不在 m8-42 范围</div></article></div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Evidence</h2><small>9 screenshots</small></div>
+    <div class="shots"><figure class="wide"><img loading="lazy" src="01-production-before.png" alt="改动前的轨迹页左栏"><figcaption><b>01 · Before</b><span>关键节点 → 会话树 → 原始文件；原始文件默认展开，会话树在 230px 左栏里被裁切。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="02-production-after.png" alt="改动后的轨迹页默认状态"><figcaption><b>02 · After</b><span>会话下拉在顶部并默认主 Agent；关键节点展开，原始文件折叠。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="03-production-dropdown.png" alt="展开的会话下拉"><figcaption><b>03 · Dropdown</b><span>主 Agent / 子 Agent / 未关联三类会话，均显示原生 sessionId、span 数与类型。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="04-production-subagent.png" alt="选中子 Agent"><figcaption><b>04 · Subagent</b><span>子会话 sessionId 显示在触发器内，中间轨迹与右侧详情切换；顶部主 Agent sessionId 不变。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="05-production-toggles.png" alt="折叠关键节点并展开原始文件"><figcaption><b>05 · Toggles</b><span>两个 section 均可切换；原始文件展开后保留逐文件下载与打包下载。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="06-prototype-before.png" alt="原型改动前"><figcaption><b>06 · Proto before</b><span>会话卡片在左栏，关键节点与原始文件都展开。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="07-prototype-after-default.png" alt="原型改动后默认态"><figcaption><b>07 · Proto after</b><span>会话改为顶部下拉，关键节点默认展开、原始文件默认折叠。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="08-prototype-after-dropdown.png" alt="原型的会话下拉"><figcaption><b>08 · Proto dropdown</b><span>下拉列出主 Agent、子 Agent 与未关联会话，sessionId 完整可见。</span></figcaption></figure><figure class="wide"><img loading="lazy" src="09-prototype-after-toggles.png" alt="原型的折叠切换"><figcaption><b>09 · Proto toggles</b><span>折叠关键节点、展开原始文件后的原型状态。</span></figcaption></figure></div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Automated Coverage Assessment</h2><small>5 areas reviewed</small></div>
+    <div class="tableWrap"><table><table><thead><tr><th>区域</th><th>覆盖</th><th>结论</th><th>建议</th></tr></thead><tbody><tr><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td></tr></tbody></table></table></div>
+  </section>
+
+  <section>
+    <div class="head"><h2>Conclusion</h2><small>Ready for human review</small></div>
+    <article class="card conclusion pass"><p><strong>本次 UI 改动在桌面端和原型上均按需求工作，未发现新增代码缺陷；PR CI 8/8 全绿。</strong></p><ul><li>PR CI 8/8 全绿（含 flow-online）。</li><li>移动端应用外壳另开 issue，不在 m8-42 范围。</li></ul></article>
+  </section>
+
+  <p class="foot">截图使用合成 trace fixture；账号信息已脱敏。Generated from browser evidence · Secrets are redacted.</p>
+</main>
+</body>
+</html>

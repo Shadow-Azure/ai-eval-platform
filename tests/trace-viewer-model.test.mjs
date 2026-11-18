@@ -12,6 +12,7 @@ import {
   requestIsCurrent,
   spanBelongsToSession,
   traceIdentifiers,
+  traceSessionRole,
   traceStatusForAttempt,
   TRACE_SESSION_ID_EMPTY_TITLE,
 } from "../web/src/features/traces/traceModel.ts";
@@ -77,6 +78,17 @@ test("flattening exposes linked sessions and an explicit unlinked group", () => 
     ["orphan"],
   );
   assert.equal(flat.defaultSessionId, "root");
+});
+
+test("session roles distinguish the main Agent, subagents and unlinked rows", () => {
+  const [root, orphan] = sessions;
+  assert.equal(traceSessionRole(root), "main");
+  assert.equal(traceSessionRole(root.children[0]), "subagent");
+  assert.equal(traceSessionRole(orphan), "unlinked");
+  assert.equal(
+    traceSessionRole({ ...root, parent_session_id: "missing", status: "ready" }, true),
+    "unlinked",
+  );
 });
 
 test("merging span pages deduplicates by id and preserves server order", () => {
