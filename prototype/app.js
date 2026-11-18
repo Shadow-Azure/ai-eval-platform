@@ -534,6 +534,74 @@ const DEFAULT_IMAGE_SOURCES = [
   { id: "ghcr", name: "GHCR", registry: "ghcr.io", prefix: "acme", enabled: false, builtin: false },
 ];
 
+// 原型示例：本次评测涉及的 6 个 SWE-bench 用例镜像。真实实现会按选中
+// 用例解析并去重镜像，逐个检查 OSS tar 是否存在，再决定是否入队补齐。
+const IMAGE_PREP_IMAGES = [
+  {
+    key: "astropy__astropy-12907",
+    image: "swebench/sweb.eval.x86_64.astropy_1776_astropy-12907:latest",
+    status: "ready",
+    size: "1.12 GB",
+    digest: "4f9c…a12e",
+    source: "Docker Hub",
+    cleanup: "已清理",
+  },
+  {
+    key: "astropy__astropy-13033",
+    image: "swebench/sweb.eval.x86_64.astropy_1776_astropy-13033:latest",
+    status: "ready",
+    size: "1.08 GB",
+    digest: "8a21…c904",
+    source: "1Panel 镜像加速",
+    cleanup: "已清理",
+  },
+  {
+    key: "astropy__astropy-13236",
+    image: "swebench/sweb.eval.x86_64.astropy_1776_astropy-13236:latest",
+    status: "ready",
+    size: "1.15 GB",
+    digest: "b7d0…3e18",
+    source: "Docker Hub",
+    cleanup: "已清理",
+  },
+  {
+    key: "astropy__astropy-13398",
+    image: "swebench/sweb.eval.x86_64.astropy_1776_astropy-13398:latest",
+    status: "preparing",
+    size: "—",
+    digest: "1c6e…9f42",
+    source: "1Panel 镜像加速 · 拉取中",
+    cleanup: "上传后清理",
+  },
+  {
+    key: "astropy__astropy-13453",
+    image: "swebench/sweb.eval.x86_64.astropy_1776_astropy-13453:latest",
+    status: "preparing",
+    size: "—",
+    digest: "d92a…7b05",
+    source: "Docker Hub · 拉取中",
+    cleanup: "上传后清理",
+  },
+  {
+    key: "astropy__astropy-13579",
+    image: "swebench/sweb.eval.x86_64.astropy_1776_astropy-13579:latest",
+    status: "failed",
+    size: "—",
+    digest: "e3b8…5c71",
+    source: "4 个公开源均超时",
+    cleanup: "已清理（等待重试）",
+    error: "Docker Hub / 1Panel / DaoCloud / GHCR 均超时；未写入 OSS。",
+  },
+];
+
+function imagePrepSeed() {
+  return {
+    images: IMAGE_PREP_IMAGES.map((image) => ({ ...image })),
+    timer: null,
+    checkedAt: "14:28",
+  };
+}
+
 const ui = {
   sidebarCollapsed: sidebarPreference(),
   modelFilter: "",
@@ -598,6 +666,7 @@ const ui = {
     agentTimeout: "30",
     selfEvolution: { enabled: false, baseUrl: "", workspaceId: "", token: "" },
   },
+  imagePrep: imagePrepSeed(),
   traceSpan: "span-root",
   traceFilter: "all",
   caseFilter: "all",
@@ -1904,6 +1973,171 @@ function selfEvolutionSummary() {
   return `已启用<br /><span class="muted">${esc(host)} · 工作区 ${esc(config.workspaceId || "未填")}</span>`;
 }
 
+function imagePrepShortKey(key) {
+  return String(key || "").split("__").pop();
+}
+
+function imagePrepSummary() {
+  const images = ui.imagePrep.images;
+  const ready = images.filter((image) => image.status === "ready").length;
+  const preparing = images.filter((image) => image.status === "preparing").length;
+  const failed = images.filter((image) => image.status === "failed").length;
+  return {
+    images,
+    ready,
+    preparing,
+    failed,
+    total: images.length,
+    allReady: ready === images.length,
+  };
+}
+
+function imagePrepStatusTag(status) {
+  if (status === "ready") return '<span class="tag tag-success">已就绪</span>';
+  if (status === "preparing") return '<span class="tag tag-primary"><span class="status-dot pulse"></span>准备中</span>';
+  return '<span class="tag tag-danger">失败</span>';
+}
+
+function evalImagePrepCard() {
+  const summary = imagePrepSummary();
+  const percent = Math.round((summary.ready / summary.total) * 100);
+  const failedKeys = summary.images
+    .filter((image) => image.status === "failed")
+    .map((image) => imagePrepShortKey(image.key))
+    .join("、");
+  const cleanupSummary = summary.allReady
+    ? "后台本地：0 个镜像 / 0 个临时 tar（上传后已清理）"
+    : summary.preparing
+      ? `后台本地：${summary.preparing} 个镜像处理中（上传后自动清理）`
+      : "后台本地：0 个镜像 / 0 个临时 tar（失败后已清理）";
+  const tone = summary.allReady ? "success" : summary.failed ? "danger" : "warning";
+  return `
+    <div class="review-box image-prep-box" style="margin-top:16px">
+      <div class="row-between">
+        <div>
+          <div class="row" style="gap:8px;flex-wrap:wrap">
+            <strong>运行时镜像准备</strong>
+            <span class="tag ${summary.allReady ? "tag-success" : summary.failed ? "tag-danger" : "tag-warning"}">${summary.ready}/${summary.total} 就绪</span>
+            ${summary.failed ? `<span class="tag tag-danger">${summary.failed} 失败</span>` : ""}
+          </div>
+          <div class="small muted" style="margin-top:5px">开评前自动检查用例镜像的 OSS tar；缺失时由后台部署服务补齐，全部就绪后才允许启动。</div>
+        </div>
+        <button class="btn btn-sm" data-action="image-prep-detail">查看准备详情</button>
+      </div>
+      <div class="progress ${summary.allReady ? "success" : summary.failed ? "warning" : ""}" style="margin-top:14px"><span style="width:${percent}%"></span></div>
+      <div class="image-prep-stats">
+        <span><span class="status-dot" style="color:var(--success)"></span>就绪 ${summary.ready}</span>
+        <span><span class="status-dot" style="color:var(--primary)"></span>准备中 ${summary.preparing}</span>
+        <span><span class="status-dot" style="color:var(--danger)"></span>失败 ${summary.failed}</span>
+        <span class="muted">${cleanupSummary}</span>
+      </div>
+      <div class="image-prep-chips">
+        ${summary.images
+          .map(
+            (image) => `<span class="image-prep-chip ${image.status}" title="${esc(image.image)}"><span class="status-dot"></span><span class="mono">${esc(imagePrepShortKey(image.key))}</span></span>`,
+          )
+          .join("")}
+      </div>
+      <div class="banner ${tone}" style="margin-top:12px">
+        ${icon(summary.allReady ? "check" : "alert", 15)}
+        <div>${summary.allReady
+          ? `<strong>${summary.total}/${summary.total} 个镜像 tar 已就绪。</strong> Runner 会优先从内网 OSS 拉取；每个镜像上传并 HEAD 校验通过后，后台部署服务已删除本地镜像与临时 tar。`
+          : `<strong>${summary.ready}/${summary.total} 就绪，启动已暂停。</strong> 后台部署服务按公开源顺序执行 pull → save → upload → HEAD；每完成一个镜像就删除本地镜像与临时 tar，避免占满部署机磁盘。${summary.failed ? ` ${summary.failed} 个镜像失败：${failedKeys}。` : ""}`}</div>
+      </div>
+      <div class="image-prep-actions">
+        ${!summary.allReady ? `<button class="btn btn-sm btn-primary" data-action="image-prep-retry">${icon("refresh", 13)} ${summary.failed ? "重试失败镜像" : "继续准备"}</button>` : ""}
+        <button class="btn btn-sm" data-action="image-prep-recheck">${icon("search", 13)} 重新检查</button>
+        <span class="small muted" style="margin-left:auto">镜像串行准备 · 上传后自动清理</span>
+      </div>
+    </div>
+  `;
+}
+
+function openImagePrepDetail() {
+  const summary = imagePrepSummary();
+  drawer({
+    title: "运行时镜像准备",
+    subtitle: `${summary.ready}/${summary.total} 就绪 · 由后台部署服务串行处理`,
+    body: `
+      <div class="banner ${summary.allReady ? "success" : summary.failed ? "warning" : ""}">
+        ${icon(summary.allReady ? "check" : "alert", 15)}
+        <div>${summary.allReady
+          ? "全部镜像 tar 已写入 OSS；每个镜像上传并通过 HEAD 校验后，本地镜像与临时 tar 已删除。"
+          : `还有 ${summary.total - summary.ready} 个镜像未就绪。准备任务在上传完成后会立即清理本地镜像与临时 tar；失败重试前也会先清理。`}</div>
+      </div>
+      <div class="image-prep-detail-list">
+        ${summary.images
+          .map(
+            (image) => `
+              <div class="image-prep-detail-row">
+                <div class="row-between"><span class="mono small">${esc(image.key)}</span>${imagePrepStatusTag(image.status)}</div>
+                <div class="mono small muted image-prep-detail-image">${esc(image.image)}</div>
+                <div class="image-prep-detail-meta">
+                  <span>OSS tar <b>${image.status === "failed" ? "未写入" : `dataset-images/${esc(image.digest)}.tar.gz`}</b></span>
+                  <span>大小 <b>${esc(image.size)}</b></span>
+                  <span>来源 <b>${esc(image.source)}</b></span>
+                </div>
+                <div class="row-between small" style="margin-top:8px"><span class="muted">后台本地清理</span><span class="tag ${image.cleanup === "已清理" ? "tag-success" : image.cleanup.startsWith("已清理") ? "tag-neutral" : "tag-warning"}">${esc(image.cleanup)}</span></div>
+                ${image.error ? `<div class="small image-prep-error">${esc(image.error)}</div>` : ""}
+              </div>`,
+          )
+          .join("")}
+      </div>
+      <div class="review-box" style="margin-top:14px">
+        <strong>清理策略</strong>
+        <div class="small muted" style="margin-top:6px;line-height:1.7">每个镜像完成上传并通过 HEAD 校验后，后台立即删除本地 docker 镜像与临时 tar；失败或重试前也先清理。准备任务串行执行，部署机同时只保留一个正在处理的镜像，启动时还会扫描并清理上次遗留的镜像与临时文件。</div>
+      </div>
+      <div class="small muted" style="margin-top:12px">最近检查：${esc(ui.imagePrep.checkedAt)} · 全部通过后才允许启动评测。</div>
+    `,
+    footer: `${summary.failed ? `<button class="btn btn-primary" data-action="image-prep-retry">${icon("refresh", 13)} 重试失败镜像</button>` : ""}<button class="btn" data-action="close-modal">关闭</button>`,
+  });
+}
+
+function startImagePrep() {
+  const state = ui.imagePrep;
+  const failed = state.images.filter((image) => image.status === "failed");
+  const preparing = state.images.filter((image) => image.status === "preparing");
+  if (!failed.length && !preparing.length) {
+    toast("没有待处理的镜像");
+    return;
+  }
+  for (const image of failed) {
+    image.status = "preparing";
+    image.source = "重试中";
+    image.cleanup = "上传后清理";
+    image.error = "";
+  }
+  const now = new Date();
+  state.checkedAt = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+  render({ preserveScroll: true });
+  if (state.timer) clearInterval(state.timer);
+  state.timer = setInterval(() => {
+    const next = state.images.find((image) => image.status === "preparing");
+    if (!next) {
+      clearInterval(state.timer);
+      state.timer = null;
+      return;
+    }
+    next.status = "ready";
+    next.size = "1.10 GB";
+    next.source = next.source.includes("重试") ? "Docker Hub" : next.source.replace(" · 拉取中", "");
+    next.cleanup = "已清理";
+    if (!state.images.some((image) => image.status !== "ready")) {
+      clearInterval(state.timer);
+      state.timer = null;
+      toast("镜像已全部就绪：Runner 将优先使用 OSS tar");
+    }
+    render({ preserveScroll: true });
+  }, 900);
+}
+
+function resetImagePrep() {
+  if (ui.imagePrep.timer) clearInterval(ui.imagePrep.timer);
+  Object.assign(ui.imagePrep, imagePrepSeed());
+  render({ preserveScroll: true });
+  toast("已重新检查 6 个用例镜像的 OSS tar");
+}
+
 function newEvalPage() {
   const step = ui.newEvalStep;
   let content = "";
@@ -2154,10 +2388,12 @@ function newEvalPage() {
         <div class="summary-item"><span class="summary-label">Agent 超时</span><span class="summary-value">${ui.newEval.agentTimeout ? `${esc(ui.newEval.agentTimeout)} 分钟` : `数据集默认 ${esc(ui.datasetAgentTimeout)} 分钟`}</span></div>
         <div class="summary-item"><span class="summary-label">自进化上报</span><span class="summary-value">${selfEvolutionSummary()}</span></div>
       </div>
+      ${evalImagePrepCard()}
       <div class="banner warning" style="margin-top:15px">${icon("alert", 15)}<div><strong>这会占用资源池并产生模型费用。</strong> 预计 ¥126–158，实际费用以 token 与机时为准。启动后仍可取消排队和执行中的用例。</div></div>
       <div class="field" style="margin-top:16px"><label>通知</label><select class="select"><option>完成后站内通知</option><option>完成后站内通知 + Webhook</option><option>不通知</option></select></div>
     `;
   }
+  const imagePrep = imagePrepSummary();
   return shell(
     `<div class="page">
       ${pageHeading({
@@ -2192,7 +2428,9 @@ function newEvalPage() {
               ${
                 step < 4
                   ? `<button class="btn btn-primary" data-action="eval-next">下一步 ${icon("arrowRight", 13)}</button>`
-                  : `<button class="btn btn-primary btn-lg" data-action="start-eval">${icon("play", 14)} 启动评测</button>`
+                  : imagePrep.allReady
+                    ? `<button class="btn btn-primary btn-lg" data-action="start-eval">${icon("play", 14)} 启动评测</button>`
+                    : `<button class="btn btn-primary btn-lg" disabled title="等待 ${imagePrep.total - imagePrep.ready} 个镜像准备完成">${icon("clock", 14)} 等待镜像就绪 (${imagePrep.ready}/${imagePrep.total})</button>`
               }
             </div>
           </div>
@@ -4048,7 +4286,24 @@ function handleAction(action, target) {
     render();
     return;
   }
+  if (action === "image-prep-retry") {
+    closeOverlay();
+    startImagePrep();
+    return;
+  }
+  if (action === "image-prep-recheck") {
+    resetImagePrep();
+    return;
+  }
+  if (action === "image-prep-detail") {
+    openImagePrepDetail();
+    return;
+  }
   if (action === "start-eval") {
+    if (!imagePrepSummary().allReady) {
+      toast("镜像尚未就绪，启动已暂停；请等待后台准备完成或重试失败镜像", true);
+      return;
+    }
     modal({
       title: "启动这次评测？",
       subtitle: "将占用 Linux Spot Pool 并产生模型费用",

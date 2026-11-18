@@ -34,7 +34,9 @@ stage_record build success "" "" "沿用已构建的上一版本镜像"
 stage_record database_migration skipped "" "" "数据库保持向前兼容，不执行 downgrade"
 stage_begin rolling_update
 "${COMPOSE[@]}" pull api web
-"${COMPOSE[@]}" up -d --remove-orphans
+# M8 (#290): keep orphan removal off here too; it would tear down the running
+# "image-prep" profile services and any in-progress image pull during rollback.
+"${COMPOSE[@]}" up -d
 stage_finish success "API/Web 容器替换完成"
 
 stage_begin health_check

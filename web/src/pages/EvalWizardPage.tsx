@@ -11,6 +11,7 @@ import {
   Switch,
   Table,
   Tag,
+  Tooltip,
   message,
 } from "antd";
 import type { TableColumnsType } from "antd";
@@ -40,10 +41,14 @@ import {
 } from "../api/datasets";
 import {
   createEvaluation,
+  ensureImageReadiness,
+  fetchImageReadiness,
   prepareEvaluation,
+  retryImageReadiness,
   type CaseSelection,
   type CaseSelectionMode,
   type ExecutionPolicy,
+  type ImageReadiness,
   type PrepareResponse,
   type PreflightIssue,
 } from "../api/evaluations";
@@ -52,8 +57,14 @@ import { fetchResourcePools } from "../api/resources";
 import { fetchRuntimes } from "../api/runtimes";
 import { ApiError } from "../api/types";
 import { Icon } from "../components/Icon";
+import { shouldPollImageReadiness } from "../utils/imageReadiness";
 import { formatMoney, formatMoneyRange } from "../utils/money";
 import { PageHeading } from "../components/PageHeading";
+import {
+  IMAGE_PREP_POLL_MS,
+  RuntimeImagePrepCard,
+  type ImagePrepAction,
+} from "../components/RuntimeImagePrepCard";
 
 const DRAFT_KEY = "ai-eval-platform:eval-wizard-draft:v1";
 const CASE_PAGE_SIZE = 20;
@@ -237,6 +248,10 @@ function stringOrNull(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value : null;
 }
 
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
 function numberOr(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
@@ -397,6 +412,30 @@ export function EvalWizardPage() {
   const [assetFilter, setAssetFilter] = useState<"all" | AssetType>("all");
   const [nowTick, setNowTick] = useState(() => Date.now());
   const idempotencyRef = useRef<{ preparationId: string; key: string } | null>(null);
+  // #290: runtime image readiness lives on Step 4; polling is owned here so it
+  // can stop when the preparation expires or the operator leaves the step.
+  const [imageReadiness, setImageReadiness] = useState<ImageReadiness | null>(null);
+  const [imagePrepError, setImagePrepError] = useState<string | null>(null);
+  const [imagePrepAction, setImagePrepAction] = useState<ImagePrepAction | null>(null);
+  const [imagePollNonce, setImagePollNonce] = useState(0);
+  const imageEnsureStartedRef = useRef<string | null>(null);
+  const activePreparationRef = useRef<string | null>(null);
+  // #290: every ensure/retry/recheck request owns a token. Only the newest token
+  // may clear `imagePrepAction`, so a late `.finally` from a request whose step
+  // was left behind cannot clear (or leak) a newer action.
+  const imageActionTokenRef = useRef(0);
+
+  const beginImagePrepAction = useCallback((kind: ImagePrepAction) => {
+    const token = imageActionTokenRef.current + 1;
+    imageActionTokenRef.current = token;
+    setImagePrepAction(kind);
+    return token;
+  }, []);
+
+  const finishImagePrepAction = useCallback((token: number) => {
+    if (imageActionTokenRef.current !== token) return;
+    setImagePrepAction(null);
+  }, []);
 
   const update = useCallback(
     (patch: Partial<WizardDraft>, options?: { invalidate?: boolean }) => {
@@ -405,6 +444,13 @@ export function EvalWizardPage() {
         setPreparation(null);
         setBlockers([]);
         setCreateNotice(null);
+        setImageReadiness(null);
+        setImagePrepError(null);
+        setImagePrepAction(null);
+        setImagePollNonce((value) => value + 1);
+        imageEnsureStartedRef.current = null;
+        // Invalidate any request still in flight for the old configuration.
+        imageActionTokenRef.current += 1;
       }
     },
     [],
@@ -636,6 +682,30 @@ export function EvalWizardPage() {
     },
     onError: (error) => {
       const api = error instanceof ApiError ? error : null;
+      if (api && api.code === "image_not_ready") {
+        // #290: readiness can change between the disabled check and the POST.
+        // Surface the backend reason and refresh the card instead of leaving a
+        // generic failure toast with a stale ready state.
+        const notice = api.message || "运行时镜像尚未全部就绪";
+        setImagePrepError(notice);
+        message.error(`镜像尚未就绪：${notice}`);
+        const preparationId = preparation?.preparation_id ?? null;
+        if (preparationId) {
+          void fetchImageReadiness(preparationId)
+            .then((next) => {
+              if (activePreparationRef.current !== preparationId) return;
+              setImageReadiness(next);
+              // Keep the 409 reason visible while images are still missing; a
+              // stale 409 (readiness already recovered) should clear it.
+              if (next.ready) setImagePrepError(null);
+              setImagePollNonce((value) => value + 1);
+            })
+            .catch((refreshError) => {
+              setImagePrepError(errorMessage(refreshError, "刷新镜像就绪状态失败"));
+            });
+        }
+        return;
+      }
       if (api && api.code === "preparation_expired") {
         setPreparation(null);
         setStep(2);
@@ -739,6 +809,128 @@ export function EvalWizardPage() {
   const expired = Boolean(preparation) && remainingSeconds <= 0;
   const summary = preparation?.summary ?? null;
   const costEstimate = preparation?.cost_estimate ?? null;
+  const preparationId = preparation?.preparation_id ?? null;
+  const imageReadinessBlocked = Boolean(imageReadiness && !imageReadiness.ready);
+  const imagePendingCount = imageReadiness
+    ? Math.max(0, imageReadiness.total - imageReadiness.ready_count)
+    : 0;
+  // Poll while the backend can still make progress on its own: preparing or
+  // missing rows, plus failed rows whose `next_attempt_at` is set because the
+  // worker will auto-retry them. A terminal failed row (next_attempt_at null)
+  // stops polling; retry/recheck/ensure restart it through `imagePollNonce`.
+  const imagePollPending = shouldPollImageReadiness(imageReadiness);
+
+  // Track the preparation whose Step 4 readiness is on screen so late polling
+  // or ensure responses from a previous snapshot cannot overwrite it. Leaving
+  // the step (or unmounting) also cancels any in-flight action: bump the token
+  // so its `.finally` cannot touch the next step's action, and clear the
+  // spinner so returning to Step 4 never shows a stuck "ensure".
+  useEffect(() => {
+    activePreparationRef.current = step === 3 && !expired ? preparationId : null;
+    return () => {
+      activePreparationRef.current = null;
+      imageActionTokenRef.current += 1;
+      setImagePrepAction(null);
+    };
+  }, [step, preparationId, expired]);
+
+  // Ask the backend to prepare missing tarballs once per preparation. The ref
+  // guard keeps React StrictMode's double effect invocation from double-posting.
+  useEffect(() => {
+    if (step !== 3 || !preparationId || expired) return;
+    if (!imageReadiness || imageReadiness.ready) return;
+    if (imageEnsureStartedRef.current === preparationId) return;
+    imageEnsureStartedRef.current = preparationId;
+    const token = beginImagePrepAction("ensure");
+    void ensureImageReadiness(preparationId)
+      .then((next) => {
+        if (imageActionTokenRef.current !== token) return;
+        if (activePreparationRef.current !== preparationId) return;
+        setImageReadiness(next);
+        setImagePrepError(null);
+      })
+      .catch((error) => {
+        if (imageActionTokenRef.current !== token) return;
+        if (activePreparationRef.current !== preparationId) return;
+        setImagePrepError(errorMessage(error, "镜像就绪检查失败"));
+      })
+      .finally(() => {
+        finishImagePrepAction(token);
+        // Polling must restart after an ensure attempt even when it failed and
+        // left the card on 缺失; retry/recheck/ensure all bump this nonce.
+        if (activePreparationRef.current === preparationId) {
+          setImagePollNonce((value) => value + 1);
+        }
+      });
+  }, [step, preparationId, expired, imageReadiness, beginImagePrepAction, finishImagePrepAction]);
+
+  // Poll while the backend still has work it can finish by itself (images
+  // preparing/missing, or failed rows inside the worker's automatic retry
+  // window). A terminal all-failed snapshot stops until the operator acts.
+  useEffect(() => {
+    if (step !== 3 || !preparationId || expired || !imagePollPending) return;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const next = await fetchImageReadiness(preparationId);
+        if (cancelled || activePreparationRef.current !== preparationId) return;
+        setImageReadiness(next);
+        setImagePrepError(null);
+      } catch (error) {
+        if (cancelled || activePreparationRef.current !== preparationId) return;
+        setImagePrepError(errorMessage(error, "刷新镜像就绪状态失败"));
+      }
+    };
+    const timer = window.setInterval(() => {
+      void poll();
+    }, IMAGE_PREP_POLL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [step, preparationId, expired, imagePollPending, imagePollNonce]);
+
+  async function runImagePrepAction(kind: ImagePrepAction) {
+    const preparationIdValue = preparation?.preparation_id;
+    if (!preparationIdValue || imagePrepAction) return;
+    const failedImages =
+      imageReadiness?.images
+        .filter((image) => image.status === "failed")
+        .map((image) => image.image) ?? [];
+    const token = beginImagePrepAction(kind);
+    setImagePrepError(null);
+    try {
+      const next =
+        kind === "retry"
+          ? await retryImageReadiness(
+              preparationIdValue,
+              imageReadiness?.truncated || !failedImages.length ? undefined : failedImages,
+            )
+          : kind === "ensure"
+            ? await ensureImageReadiness(preparationIdValue)
+            : await ensureImageReadiness(preparationIdValue, true);
+      if (imageActionTokenRef.current !== token) return;
+      if (activePreparationRef.current !== preparationIdValue) return;
+      setImageReadiness(next);
+      setImagePollNonce((value) => value + 1);
+    } catch (error) {
+      if (imageActionTokenRef.current !== token) return;
+      if (activePreparationRef.current === preparationIdValue) {
+        setImagePrepError(
+          errorMessage(
+            error,
+            kind === "retry"
+              ? "重试失败镜像失败"
+              : kind === "ensure"
+                ? "继续准备失败"
+                : "重新检查失败",
+          ),
+        );
+      }
+    } finally {
+      finishImagePrepAction(token);
+    }
+  }
 
   const assetTableColumns: TableColumnsType<ScannedAsset> = [
     {
@@ -878,6 +1070,13 @@ export function EvalWizardPage() {
           : { enabled: false },
       });
       setPreparation(result);
+      // #290: the prepare response is the initial readiness snapshot; a legacy
+      // response without image_readiness keeps the wizard on its old behavior.
+      setImageReadiness(result.image_readiness ?? null);
+      setImagePrepError(null);
+      setImagePrepAction(null);
+      setImagePollNonce((value) => value + 1);
+      imageEnsureStartedRef.current = null;
       if (result.ready) {
         setStep(3);
       } else {
@@ -2227,6 +2426,16 @@ export function EvalWizardPage() {
             ))}
           </div>
         ) : null}
+        {imageReadiness && imageReadiness.total > 0 ? (
+          <RuntimeImagePrepCard
+            readiness={imageReadiness}
+            error={imagePrepError}
+            busy={imagePrepAction}
+            onEnsure={() => void runImagePrepAction("ensure")}
+            onRetry={() => void runImagePrepAction("retry")}
+            onRecheck={() => void runImagePrepAction("recheck")}
+          />
+        ) : null}
         <div className="banner warning" style={{ marginTop: 14 }}>
           <Icon name="alert" size={15} />
           <div>
@@ -2275,15 +2484,34 @@ export function EvalWizardPage() {
                 </Button>
               ) : null}
               {step === 3 ? (
-                <Button
-                  type="primary"
-                  size="large"
-                  loading={create.isPending}
-                  disabled={!preparation || expired}
-                  onClick={() => create.mutate()}
+                <Tooltip
+                  title={
+                    imageReadinessBlocked
+                      ? `等待 ${imagePendingCount} 个镜像准备完成；失败镜像可重试，全部就绪后才能创建评测`
+                      : undefined
+                  }
                 >
-                  <Icon name="play" size={14} /> 创建评测
-                </Button>
+                  <span className="wizard-create-wrap">
+                    <Button
+                      type="primary"
+                      size="large"
+                      loading={create.isPending}
+                      disabled={!preparation || expired || imageReadinessBlocked}
+                      onClick={() => create.mutate()}
+                    >
+                      {imageReadinessBlocked && imageReadiness ? (
+                        <>
+                          <Icon name="clock" size={14} />{" "}
+                          {`等待镜像就绪 (${imageReadiness.ready_count}/${imageReadiness.total})`}
+                        </>
+                      ) : (
+                        <>
+                          <Icon name="play" size={14} /> 创建评测
+                        </>
+                      )}
+                    </Button>
+                  </span>
+                </Tooltip>
               ) : null}
             </div>
           </div>

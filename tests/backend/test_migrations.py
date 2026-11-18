@@ -76,6 +76,8 @@ EXPECTED_TABLES = {
     "trace_span",
     # M9 自进化 bad case 上报 outbox
     "self_evolution_report",
+    # M8 (#290) 数据集运行时镜像 tar 台账
+    "dataset_image_artifact",
 }
 
 
@@ -275,6 +277,65 @@ def test_agent_timeout_columns_roundtrip(database_url: str) -> None:
                 column["name"] for column in inspect(engine).get_columns(table)
             }
             assert "agent_timeout_seconds" not in columns
+    finally:
+        engine.dispose()
+
+    run_alembic(database_url, "upgrade", "head")
+
+
+def test_dataset_image_artifact_roundtrip(database_url: str) -> None:
+    """0029 adds the per-image tarball ledger and its worker indexes."""
+
+    run_alembic(database_url, "upgrade", "0029_dataset_image_artifacts")
+    engine = create_engine(database_url, future=True)
+    try:
+        columns = {
+            column["name"]: column
+            for column in inspect(engine).get_columns("dataset_image_artifact")
+        }
+        assert {
+            "id",
+            "tenant_id",
+            "image_ref",
+            "object_key",
+            "status",
+            "size_bytes",
+            "source",
+            "error",
+            "attempts",
+            "next_attempt_at",
+            "local_cleanup",
+            "cleanup_error",
+            "prepared_at",
+            "last_checked_at",
+            "created_at",
+            "updated_at",
+        } <= set(columns)
+        assert columns["status"]["nullable"] is False
+        assert columns["attempts"]["nullable"] is False
+        # PostgreSQL renders this as "pending'::character varying"; SQLite as
+        # "pending". Match the value inside the dialect-specific wrapper.
+        assert "pending" in str(columns["local_cleanup"]["default"])
+        indexes = {
+            index["name"]
+            for index in inspect(engine).get_indexes("dataset_image_artifact")
+        }
+        assert "ix_dataset_image_artifact_status_next" in indexes
+        assert "ix_dataset_image_artifact_tenant_id" in indexes
+        uniques = {
+            unique["name"]
+            for unique in inspect(engine).get_unique_constraints(
+                "dataset_image_artifact"
+            )
+        }
+        assert "uq_dataset_image_artifact_tenant_image" in uniques
+    finally:
+        engine.dispose()
+
+    run_alembic(database_url, "downgrade", "0028_self_evolution")
+    engine = create_engine(database_url, future=True)
+    try:
+        assert "dataset_image_artifact" not in set(inspect(engine).get_table_names())
     finally:
         engine.dispose()
 

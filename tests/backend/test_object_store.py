@@ -15,6 +15,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 import pytest
+from app.services import object_store as object_store_module
 from app.services.object_store import (
     ObjectMissing,
     ObjectSizeMismatch,
@@ -22,11 +23,25 @@ from app.services.object_store import (
     ObjectStoreError,
 )
 
+UPLOADS: dict[str, dict] = {}
+
 
 class StubObjectHandler(BaseHTTPRequestHandler):
     """Minimal S3-ish endpoint: objects live under /bucket/key."""
 
     server_version = "StubS3/1"
+
+    def do_PUT(self) -> None:  # noqa: N802
+        parsed = urlparse(self.path)
+        length = int(self.headers.get("Content-Length") or 0)
+        body = self.rfile.read(length)
+        UPLOADS[parsed.path] = {
+            "body": body,
+            "content_length": self.headers.get("Content-Length"),
+        }
+        self.send_response(200)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def do_HEAD(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
@@ -220,3 +235,52 @@ def test_iter_object_raises_for_a_missing_object(endpoint: str) -> None:
     store = make_store(endpoint)
     with pytest.raises(ObjectMissing):
         next(store.iter_object("objects/missing", now=now()))
+
+
+def test_put_file_streams_the_file_with_content_length(endpoint: str, tmp_path) -> None:
+    """The worker uploads multi-GB tarballs; never buffer them in memory."""
+
+    UPLOADS.clear()
+    store = make_store(endpoint)
+    payload = b"dataset-image-tarball" * 4096
+    path = tmp_path / "image.tar.gz"
+    path.write_bytes(payload)
+
+    size = store.put_file("objects/dataset.tar.gz", path, now=now())
+
+    assert size == len(payload)
+    upload = UPLOADS["/eval-artifacts/objects/dataset.tar.gz"]
+    assert upload["body"] == payload
+    assert upload["content_length"] == str(len(payload))
+
+
+def test_put_file_missing_local_file_is_a_store_error(endpoint: str, tmp_path) -> None:
+    store = make_store(endpoint)
+    with pytest.raises(ObjectStoreError):
+        store.put_file("objects/missing.tar.gz", tmp_path / "missing.tar.gz", now=now())
+
+
+def test_put_file_presigns_before_opening_the_local_file(
+    endpoint: str, tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A presign failure must not leave a multi-GB file handle open."""
+
+    store = make_store(endpoint)
+    path = tmp_path / "image.tar.gz"
+    path.write_bytes(b"payload")
+    opened: list[str] = []
+    real_open = open
+
+    def tracking_open(*args, **kwargs):
+        opened.append(str(args[0]))
+        return real_open(*args, **kwargs)
+
+    def fail_presign(*_args, **_kwargs):
+        raise ObjectStoreError("presign 失败")
+
+    monkeypatch.setattr(object_store_module, "open", tracking_open, raising=False)
+    monkeypatch.setattr(ObjectStore, "presign_put_url", fail_presign)
+    with pytest.raises(ObjectStoreError, match="presign 失败"):
+        store.put_file("objects/unreachable.tar.gz", path, now=now())
+
+    assert opened == []

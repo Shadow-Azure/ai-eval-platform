@@ -39,6 +39,7 @@
 | Pools | `POST /resource-pools/:id/test-provisioning` | 有费用提示的供给测试 |
 | Eval | `POST /eval-runs/prepare`、`POST /eval-runs` | 冻结输入与幂等创建 |
 | Eval | `GET /eval-runs`、`GET /eval-runs/:id`、`GET /eval-runs/:id/config` | 列表、详情与快照 |
+| Images | `GET /dataset-images/artifacts?preparation_id=...`、`POST /dataset-images/artifacts/ensure`、`POST /dataset-images/artifacts/retry` | #290 逐镜像 tar 就绪状态、缺失补齐与失败重试 |
 | Cases | `GET /eval-runs/:id/cases`、`GET /eval-case-runs/:id`、`GET /eval-case-runs/:id/tests` | 用例筛选、详情与测试级打点 |
 | Actions | `POST /eval-runs/:id/cancel`、`POST /eval-runs/:id/resume-budget`、`POST /eval-case-runs/:id/retry` | 异步取消、确认增加预算并恢复、新 attempt |
 | Events | `GET /eval-runs/:id/events`、`GET /eval-runs/:id/events/stream` | 历史、游标与 SSE |
@@ -88,6 +89,8 @@ Prepare 在服务端重新计算权限和容量，解析 commit，冻结资产�
 }
 ```
 
+Prepare 同时按 case `environment_image` → 版本级 `environment_image` → adapter 派生（SWE-bench instance 命名）的顺序解析本次用例的镜像并去重，把结果冻结进快照 `image_refs`，对每个由镜像引用确定性派生的 OSS tar 做一次 HEAD，并在响应中返回 `image_readiness`：`ready`、`total`、`ready_count`/`preparing_count`/`failed_count`/`missing_count`/`cleanup_failed_count`、`images[]`（`image`、`status`、`object_key`、`size_bytes`、`source`、`error`、`cleanup_status`、`cleanup_error`）、`truncated` 与 `checked_at`（`images[]` 最多 200 条）。prepare 在返回快照的同时把 missing/failed/租约过期的行幂等置为 `preparing` 入队准备 Worker，不阻塞快照创建；确认页仍可调用 `POST /dataset-images/artifacts/ensure`（可带 `recheck=true` 先重新 HEAD）补齐，`retry` 可只重试 `images[]` 中选中的失败镜像。
+
 ### 3.2 Create
 
 请求头 `Idempotency-Key: <uuid>`，Body 仅含 `preparation_id` 和可选展示名。服务端校验 preparation 未过期、属于同用户/租户、快照未失效，然后在单事务创建 run/cases/outbox。唯一约束建议为 `(tenant_id, actor_user_id, idempotency_key)`。
@@ -96,8 +99,11 @@ Prepare 在服务端重新计算权限和容量，解析 commit，冻结资产�
 
 - `409 preparation_expired`：重新 Prepare，不静默使用新 commit。
 - `409 configuration_changed`：模型/池/资产已变化，回确认页。
+- `409 image_not_ready`：快照冻结的镜像中至少一个 tar 未就绪；`details` 携带未就绪 `images[]`（`image`、`status`、`object_key`、`error` 等）与完整 `image_readiness`。
 - `422 capacity_invalid`：并发或超时超出数据集/池限制。
 - `403 credential_forbidden`：不能引用该凭据。
+
+create 在创建 run 前对 `image_refs` 重新 HEAD，并把 missing/failed/租约过期的镜像入队准备 Worker，先提交入队再返回 409（Worker 据此补齐）；全部 `ready` 才继续创建。没有 `image_refs` 的旧快照跳过该门禁，其余创建前检查顺序不变。
 
 ## 4. 用例查询与结果
 

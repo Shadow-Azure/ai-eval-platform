@@ -58,6 +58,8 @@ M2 把执行与数据集、Agent 解耦：平台经 repository_dispatch 传 eval
 
 冷启动的竞价 Runner 没有本地镜像；除了在任务 payload 中按 `image_sources` 顺序回退公开源，平台还支持把数据集镜像的压缩 `docker save` tar 发布到私有 OSS。对象 key 由镜像引用确定性派生（默认 `dataset-images/<sha256>.tar.gz`），任务接口对每个 case 下发短时 presign 的内网 GET URL（阿里云 OSS 从 `s3_endpoint` 自动派生 `-internal`，`S3_INTERNAL_ENDPOINT` 可覆盖；不把 OSS 凭据下发到实例）。Spot Runner 先下载、`docker load` 并校验镜像，再进入执行；下载 404、超时、tar 损坏或 load 失败时回退 `image_sources` 链路。发布在固定主机执行 `scripts/publish-dataset-image.sh`，与 `python -m app.manage dataset-image` 共用同一 key 派生和 presign 逻辑；OSS 保持私有。
 
+评测预检只记录每个用例镜像的 OSS tar 是否就绪；缺失的 tar 由 compose `image-prep` profile 中的独立准备 Worker 串行补齐。Worker 领取 `dataset_image_artifact` 租约后按已启用公开源的顺序 `docker pull`，成功后把镜像标记为规范引用，`docker save` 以 gzip 级别 1 流式写入数据盘上的临时 tar，再以预签名 PUT 上传并用 HEAD 校验大小；最后删除临时 tar 与本次拉取的本地镜像并写入 `local_cleanup`。准备使用独立 Docker-in-Docker 守护进程，数据根与工作目录都在数据盘且不挂宿主 Docker socket，只清理 `image_ref` 与 `dataset-image-*` 前缀；服务默认不随普通部署启动，数据盘至少 8GB 可用后由运维显式启用。对象 key 与 Runner 下发共用同一确定性派生。Prepare 在快照中冻结唯一镜像引用并返回 `image_readiness`，每个 tar 就绪前 create 返回 `409 image_not_ready`。
+
 ## GitHub 出口代理
 
 评测容器以 `--network host` 运行，GitHub 出口即 runner 宿主出口；生产在平台 ECS 上以 `deploy/docker-compose.prod.yml` 的 `proxy` 服务运行固定版本 Squid（镜像在 `ubuntu/squid` 上补装 python3 供 auth helper 使用），同时监听两个端口：3128 是私网监听，不做认证，只接受 RFC1918 来源（`runner_network`，生产收敛到 runner 所在 VPC/子网 CIDR）；3129 是公网监听，要求 HTTP Basic 认证，凭据为平台签发的短期 egress token（放在用户名位、密码留空），供外部 Mac mini 等非 VPC Runner 使用。两个监听共用同一份 GitHub 域名白名单；默认所有池统一走公网 3129：部署流水线从 `ECS_HOST`（公网地址）派生 `RUNNER_EGRESS_PROXY=http://<公网地址>:3129`，每次评测再附带短期 egress token；3128 作为 VPC 内可选直连，绑定 `RUNNER_EGRESS_PROXY_BIND_ADDRESS`（可设为 `API_BIND_ADDRESS`）。3129 默认绑定 0.0.0.0，可用 `RUNNER_EGRESS_PROXY_PUBLIC_BIND_ADDRESS` 收紧；安全组按端口分别限制来源。
