@@ -52,6 +52,7 @@ import {
   readSpanFilter,
   readTraceSelection,
   spanBelongsToSession,
+  traceIdentifiers,
   traceStatusForAttempt,
 } from "../features/traces/traceModel";
 import {
@@ -2311,6 +2312,7 @@ export function TracePage() {
   }
 
   const trace = attemptQuery.data;
+  const identifiers = traceIdentifiers(attempt, attempt?.main_session_id);
   const files = trace.files;
   const failedFiles = filesByStatus(files, "failed");
   const degradedFiles = filesByStatus(files, "degraded");
@@ -2504,9 +2506,30 @@ export function TracePage() {
             {selectedSession?.parser_version ?? "parser pending"}
           </Tag>
           {statusTag(attemptTraceStatus)}
-          <span className="small muted mono">
-            {attempt?.id ?? "尚未生成 attempt"}
-          </span>
+          <div className="trace-ident" aria-label="attempt 与主 Agent 会话标识">
+            <div className="trace-ident-line">
+              <span className="trace-ident-label">
+                {identifiers.attempt.label}
+              </span>
+              <span
+                className="trace-ident-value mono"
+                title={identifiers.attempt.title ?? undefined}
+              >
+                {identifiers.attempt.value}
+              </span>
+            </div>
+            <div className="trace-ident-line">
+              <span className="trace-ident-label">
+                {identifiers.session.label}
+              </span>
+              <span
+                className={`trace-ident-value mono${identifiers.session.empty ? " empty" : ""}`}
+                title={identifiers.session.title ?? undefined}
+              >
+                {identifiers.session.value}
+              </span>
+            </div>
+          </div>
           <div className="trace-summary" aria-label="轨迹摘要">
             <span>
               <strong>{durationLabel(totalDuration)}</strong> 总耗时

@@ -37,6 +37,7 @@ export interface TraceAttempt {
   ended_at: string | null;
   error_code: string | null;
   error_summary: string | null;
+  main_session_id: string | null;
 }
 
 export interface TraceFile {
@@ -168,6 +169,7 @@ function parseAttempt(value: unknown): TraceAttempt | null {
     ended_at: stringValue(item.ended_at),
     error_code: stringValue(item.error_code),
     error_summary: stringValue(item.error_summary),
+    main_session_id: stringValue(item.main_session_id),
   };
 }
 

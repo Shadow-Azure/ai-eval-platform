@@ -11,7 +11,9 @@ import {
   readTraceSelection,
   requestIsCurrent,
   spanBelongsToSession,
+  traceIdentifiers,
   traceStatusForAttempt,
+  TRACE_SESSION_ID_EMPTY_TITLE,
 } from "../web/src/features/traces/traceModel.ts";
 
 const sessions = [
@@ -171,4 +173,43 @@ test("attempt trace status never inherits an unrelated case status", () => {
     }),
     "degraded",
   );
+});
+
+test("trace header shows attempt and main Agent session as two prefixed lines", () => {
+  const identifiers = traceIdentifiers(
+    { id: "att_01J9K4F8Q6" },
+    "sess_01J9K4F8Q6",
+  );
+
+  assert.deepEqual(identifiers.attempt, {
+    label: "attemptId:",
+    value: "att_01J9K4F8Q6",
+    title: "att_01J9K4F8Q6",
+    empty: false,
+  });
+  assert.deepEqual(identifiers.session, {
+    label: "sessionId:",
+    value: "sess_01J9K4F8Q6",
+    title: "sess_01J9K4F8Q6",
+    empty: false,
+  });
+});
+
+test("trace header keeps attemptId and explains an unresolved main session", () => {
+  const identifiers = traceIdentifiers({ id: "att_01J9K4F8Q6" }, null);
+
+  assert.equal(identifiers.attempt.value, "att_01J9K4F8Q6");
+  assert.equal(identifiers.session.value, "—");
+  assert.equal(identifiers.session.empty, true);
+  assert.equal(identifiers.session.title, TRACE_SESSION_ID_EMPTY_TITLE);
+});
+
+test("trace header never fakes an attempt id or session id", () => {
+  const blank = traceIdentifiers(null, "   ");
+
+  assert.equal(blank.attempt.value, "尚未生成 attempt");
+  assert.equal(blank.attempt.title, null);
+  assert.equal(blank.attempt.empty, true);
+  assert.equal(blank.session.value, "—");
+  assert.equal(blank.session.empty, true);
 });

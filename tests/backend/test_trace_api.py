@@ -247,6 +247,7 @@ def test_attempt_trace_returns_session_tree_without_object_keys(
     body = response.json()
     assert body["case_run_id"] == case.id
     assert body["attempt"]["attempt_no"] == 1
+    assert body["attempt"]["main_session_id"] == "session-root"
     assert body["trace_status"] == "ready"
     assert body["stats"]["session_count"] == 2
     assert body["stats"]["span_count"] == 4
@@ -669,3 +670,21 @@ def test_negative_span_duration_marks_clock_incomparable(
 
     assert response.status_code == 200
     assert response.json()["quality"]["clock_comparable"] is False
+
+def test_attempt_trace_main_session_id_ignores_unlinked_roots(
+    client: TestClient, session: Session, trace_api_env
+) -> None:
+    """The header session id comes from the parsed root Agent session only."""
+
+    root = trace_api_env["seeded"].root
+    root.status = "unlinked"
+    session.commit()
+
+    response = client.get(
+        f"/api/v1/eval-case-runs/{trace_api_env['case'].id}/trace?attempt=1"
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["attempt"]["id"]
+    assert body["attempt"]["main_session_id"] is None
