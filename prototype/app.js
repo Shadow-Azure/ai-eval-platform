@@ -2290,7 +2290,7 @@ function evalCaseTable(run) {
         <thead><tr><th>实例 ID</th><th>主 Agent session id</th><th>仓库</th><th>难度</th><th>状态</th><th>评分</th><th>耗时</th><th>Token</th><th>轨迹</th></tr></thead>
         <tbody>${rows.map((item) => `<tr class="clickable" data-route="/trace/${run.id}/${item.id}">
           <td><div class="table-primary mono">${item.id}</div><div class="table-secondary">attempt 1</div></td>
-          <td>${item.session ? `<span class="mono table-session" title="${esc(item.session)}">${shortSessionId(item.session)}</span>` : `<span class="muted">—</span>`}</td>
+          <td>${item.session ? `<span class="session-cell"><span class="mono table-session" title="${esc(item.session)}">${shortSessionId(item.session)}</span><button type="button" class="icon-button session-copy-button" data-copy-session="${esc(item.session)}" title="复制完整 session id" aria-label="复制完整 session id">${icon("copy", 12)}</button></span>` : `<span class="muted">—</span>`}</td>
           <td>${item.repo}</td><td><span class="tag tag-neutral">${item.difficulty}</span></td><td>${statusTag(item.status)}</td>
           <td><strong>${item.score}</strong></td><td>${item.duration}</td><td>${item.tokens}</td>
           <td><span class="row" style="color:var(--primary)">${icon("list", 13)} 查看 ${icon("arrowRight", 12)}</span></td>
@@ -2900,6 +2900,26 @@ function drawer({ title, subtitle = "", body, footer }) {
       <div class="drawer-footer">${footer}</div>
     </section>
   `);
+}
+
+async function copySession(value) {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
+    } else {
+      const textarea = document.createElement("textarea");
+      textarea.value = value;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      textarea.remove();
+    }
+    toast("已复制 session id");
+  } catch {
+    toast("复制失败，请手动选择", true);
+  }
 }
 
 function toast(message, error = false) {
@@ -4227,6 +4247,13 @@ function handleAction(action, target) {
 document.addEventListener("click", (event) => {
   if (event.target.matches("[data-overlay-close]")) {
     closeOverlay();
+    return;
+  }
+  const copyTarget = event.target.closest("[data-copy-session]");
+  if (copyTarget) {
+    event.preventDefault();
+    event.stopPropagation();
+    copySession(copyTarget.dataset.copySession);
     return;
   }
   const routeTarget = event.target.closest("[data-route]");

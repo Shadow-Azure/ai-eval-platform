@@ -931,3 +931,23 @@
   white-space: nowrap;
   vertical-align: bottom;
 }
+
+.eval-session-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+}
+
+.eval-session-copy {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: var(--muted);
+}
+
+.eval-session-copy:hover {
+  color: var(--primary);
+  background: var(--primary-soft);
+}
