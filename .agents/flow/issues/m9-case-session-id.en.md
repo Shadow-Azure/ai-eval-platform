@@ -14,6 +14,7 @@ scope:
   - prototype/**
   - docs/**
   - plans/**
+  - scripts/**
   - .agents/flow/**
 adr: []
 github:
