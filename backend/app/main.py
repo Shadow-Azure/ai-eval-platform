@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .api.agent_assets import router as agent_assets_router
 from .api.auth import router as auth_router
+from .api.dataset_image_artifacts import router as dataset_image_artifacts_router
 from .api.dataset_image_sources import router as dataset_image_sources_router
 from .api.datasets import router as datasets_router
 from .api.dependencies import require_session
@@ -75,6 +76,10 @@ def create_app() -> FastAPI:
     app.include_router(evaluations_router, dependencies=[Depends(require_session)])
     app.include_router(datasets_router, dependencies=[Depends(require_session)])
     app.include_router(dataset_image_sources_router, dependencies=[Depends(require_session)])
+    # M8 (#290): per-preparation tarball readiness/ensure/retry polling.
+    app.include_router(
+        dataset_image_artifacts_router, dependencies=[Depends(require_session)]
+    )
     app.include_router(agent_assets_router, dependencies=[Depends(require_session)])
     app.include_router(results_router, dependencies=[Depends(require_session)])
     app.include_router(traces_router, dependencies=[Depends(require_session)])

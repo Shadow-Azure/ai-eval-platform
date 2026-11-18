@@ -22,6 +22,8 @@ main：全量测试 + 文档/流程门禁
 
 清理旧镜像是部署成功后的 best-effort 步骤：远端 OCI 仓库按 digest 保留全部版本，本机只保留运行中镜像、`.state/previous.env` 的回滚 digest 与每个仓库最近 N 版（默认 3，上限 10）；删除失败只记录日志，不改变部署成功状态。
 
+`image-prep` profile 不随上述常规部署启动：准备服务要求部署机挂载数据盘（默认 `/data`，`DATASET_IMAGE_PREP_DATA_DIR` 可覆盖），确认可用空间不低于 8GiB 后由运维显式执行 `docker compose --env-file .env -f deploy/docker-compose.prod.yml --profile image-prep up -d image-prep-dind image-prep`。两个服务设置 `restart: unless-stopped`；`image-prep-dind` 是独立 Docker-in-Docker，只加入 `image_prep_internal` 网络、不挂宿主 socket，`image-prep` 同时加入默认网络与该专用网络，因此 `docker image rm -f` 不会误删 fixed Runner 的镜像缓存，web/api/postgres 也访问不到这个特权守护进程；`image-prep` 启动时和每 10 分钟扫描一次，删除上次中断留下的本地镜像与超过 1 小时的 `dataset-image-*.tar.gz`。常规部署与回滚的 `up -d` 不带 `--remove-orphans`，避免把这两个 profile 容器当作 orphan 删除、打断进行中的 pull。
+
 已确认 main 合入后的常规迁移与部署不增加人工审批。应用回滚、破坏性 contract（删列/改约束）和生产资源连接变更高风险操作进入独立审批工作流；审批不阻塞常规持续交付。
 
 GitHub Actions 建议通过 OIDC assume Aliyun RAM Role，减少长期云 AK；部署环境使用 GitHub Environment 保护规则。SSH 私钥若必须使用，仅存 GitHub Environment Secret，限制来源与权限，不进入 Runner 评测工作流。

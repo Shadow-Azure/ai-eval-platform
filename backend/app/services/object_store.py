@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import os
 import urllib.error
 import urllib.request
 from collections.abc import Iterator
@@ -191,6 +192,50 @@ class ObjectStore:
             raise ObjectStoreError(f"PUT {object_key} 返回 HTTP {exc.code}") from exc
         except urllib.error.URLError as exc:
             raise ObjectStoreError(f"PUT {object_key} 失败：{exc.reason}") from exc
+
+    def put_file(
+        self,
+        object_key: str,
+        path: str | os.PathLike[str],
+        *,
+        content_type: str = "application/octet-stream",
+        timeout: float = 1800,
+        now: datetime | None = None,
+    ) -> int:
+        """Stream one local file with a presigned PUT (dataset image tarballs).
+
+        The dataset tarball is multi-GB, so the file handle is handed to
+        ``urllib`` and ``Content-Length`` is set from ``stat`` instead of
+        reading the whole file into memory. Returns the uploaded size so the
+        caller can persist it on the artifact row.
+        """
+
+        now = now or datetime.now(UTC)
+        try:
+            size = os.path.getsize(path)
+            handle = open(path, "rb")
+        except OSError as exc:
+            raise ObjectStoreError(f"读取本地文件 {path} 失败：{exc}") from exc
+        url = self.presign_put_url(object_key, expires=900, now=now)
+        request = urllib.request.Request(
+            url,
+            data=handle,
+            method="PUT",
+            headers={"Content-Type": content_type, "Content-Length": str(size)},
+        )
+        try:
+            with handle, urllib.request.urlopen(request, timeout=timeout) as response:
+                if response.status not in (200, 201):
+                    raise ObjectStoreError(
+                        f"PUT {object_key} 返回 HTTP {response.status}"
+                    )
+        except urllib.error.HTTPError as exc:
+            raise ObjectStoreError(f"PUT {object_key} 返回 HTTP {exc.code}") from exc
+        except urllib.error.URLError as exc:
+            raise ObjectStoreError(f"PUT {object_key} 失败：{exc.reason}") from exc
+        except OSError as exc:
+            raise ObjectStoreError(f"PUT {object_key} 失败：{exc}") from exc
+        return size
 
     def get_bytes(self, object_key: str, *, now: datetime | None = None) -> bytes:
         """Download one object with a presigned GET (scoring ingestion)."""

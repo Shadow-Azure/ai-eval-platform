@@ -43,6 +43,28 @@ bash scripts/publish-dataset-image.sh swebench/sweb.eval.x86_64.astropy_1776_ast
 
 The object key defaults to `dataset-images/<sha256 of the image reference>.tar.gz`; the Aliyun OSS internal endpoint is derived from `s3_endpoint`, and `S3_INTERNAL_ENDPOINT` overrides it for special deployments. OSS stays private and instances only receive short-lived URLs; unpublished images fall back to public sources automatically. Configure lifecycle and capacity monitoring for the actual image count, because the full SWE-bench image set reaches 1TB-scale storage.
 
+## Automatic dataset image preparation worker
+
+A background preparation worker fills missing image tarballs; it uses a dedicated Docker-in-Docker daemon, never mounts the host Docker socket, and is excluded from a normal deploy. Mount the data disk on the deployment host (for example at `/data`), confirm at least `DATASET_IMAGE_PREP_MIN_FREE_BYTES` (8GiB by default) is free, then enable the compose profile explicitly:
+
+```sh
+sudo mkdir -p /data/ai-eval-image-prep/docker /data/ai-eval-image-prep/work
+docker compose --env-file .env -f deploy/docker-compose.prod.yml \
+  --profile image-prep up -d image-prep-dind image-prep
+```
+
+`DATASET_IMAGE_PREP_DATA_DIR` overrides the data disk root (default `/data/ai-eval-image-prep`); `DATASET_IMAGE_PREP_PLATFORM` defaults to `linux/amd64` and `DATASET_IMAGE_PREP_MAX_ATTEMPTS` to 3. When free space is below the threshold the worker does not pull and marks the image `failed` with an expansion hint.
+
+Check status and residue:
+
+```sh
+docker compose --env-file .env -f deploy/docker-compose.prod.yml --profile image-prep ps
+docker compose --env-file .env -f deploy/docker-compose.prod.yml --profile image-prep exec image-prep docker images
+docker compose --env-file .env -f deploy/docker-compose.prod.yml --profile image-prep exec image-prep sh -c 'ls -l /work'
+```
+
+After each upload passes the HEAD check, `docker images` no longer lists that image and `/work` holds no `dataset-image-*.tar.gz`; the startup and 10-minute sweeps remove local images left by an interrupted run and temporary tarballs older than 1 hour. Stop the preparation services with `down` on the same profile and keep the data disk directory.
+
 ## Editing documentation
 
 1. Correct facts on the Chinese base first, then make the minimal structurally mirrored update to the English side.

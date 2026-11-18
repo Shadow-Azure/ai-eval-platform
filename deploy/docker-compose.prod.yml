@@ -201,6 +201,99 @@ services:
       retries: 6
       start_period: 10s
 
+  # M8 (#290): dataset image preflight/ensure. These two services are gated by
+  # the "image-prep" compose profile so a normal deploy never starts them:
+  #   * image-prep-dind is a dedicated Docker-in-Docker daemon. It is never the
+  #     host socket, so `docker image rm -f` cannot delete the fixed runner's
+  #     cached images.
+  #   * image-prep runs the pull -> save|gzip -> upload -> cleanup worker and
+  #     can delete only the image references it prepared.
+  # Prerequisite: a data disk mounted on the host (default /data) with at least
+  # DATASET_IMAGE_PREP_MIN_FREE_BYTES (8GB) free. Both the DinD data root and
+  # the temporary tar work dir live below DATASET_IMAGE_PREP_DATA_DIR; if the
+  # data disk is missing the worker fails the disk threshold and does not pull.
+  # Start with:
+  #   docker compose --env-file .env -f deploy/docker-compose.prod.yml \
+  #     --profile image-prep up -d image-prep-dind image-prep
+  # Neither service publishes a host port; image-prep reaches DinD over the
+  # dedicated `image_prep_internal` network at tcp://image-prep-dind:2375. Only
+  # these two services join that network, so web/api/postgres cannot reach the
+  # privileged daemon. It is a normal bridge rather than `internal: true`
+  # because the DinD daemon itself performs `docker pull` and needs egress.
+  image-prep-dind:
+    image: docker:27-dind
+    profiles: ["image-prep"]
+    privileged: true
+    restart: unless-stopped
+    networks:
+      - image_prep_internal
+    environment:
+      # No TLS on the private compose network; the daemon is not published.
+      DOCKER_TLS_CERTDIR: ""
+      # The healthcheck CLI talks to the same TCP listener the worker uses.
+      DOCKER_HOST: tcp://127.0.0.1:2375
+    command:
+      - "--host=tcp://0.0.0.0:2375"
+      - "--host=unix:///var/run/docker.sock"
+      - "--data-root=/var/lib/docker"
+    volumes:
+      - ${DATASET_IMAGE_PREP_DATA_DIR:-/data/ai-eval-image-prep}/docker:/var/lib/docker
+    healthcheck:
+      test: ["CMD", "docker", "info"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 10s
+
+  image-prep:
+    image: ${API_IMAGE:?API_IMAGE required}
+    profiles: ["image-prep"]
+    command: ["image-prep"]
+    restart: unless-stopped
+    networks:
+      - default
+      - image_prep_internal
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-eval}:${POSTGRES_PASSWORD:?}@postgres:5432/${POSTGRES_DB:-eval}
+      # The worker uploads with the same private OSS credentials as the api.
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_BUCKET: ${S3_BUCKET:-}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_ADDRESSING_STYLE: ${S3_ADDRESSING_STYLE:-auto}
+      S3_INTERNAL_ENDPOINT: ${S3_INTERNAL_ENDPOINT:-}
+      DATASET_IMAGE_REGISTRIES: ${DATASET_IMAGE_REGISTRIES:-docker.io}
+      DATASET_IMAGE_PREP_ENABLED: ${DATASET_IMAGE_PREP_ENABLED:-true}
+      DATASET_IMAGE_PREP_WORK_DIR: /work
+      DATASET_IMAGE_PREP_DOCKER_BIN: docker
+      DATASET_IMAGE_PREP_PLATFORM: ${DATASET_IMAGE_PREP_PLATFORM:-linux/amd64}
+      DATASET_IMAGE_PREP_MIN_FREE_BYTES: ${DATASET_IMAGE_PREP_MIN_FREE_BYTES:-8589934592}
+      DATASET_IMAGE_PREP_POLL_SECONDS: ${DATASET_IMAGE_PREP_POLL_SECONDS:-5}
+      DATASET_IMAGE_PREP_HEARTBEAT_PATH: /tmp/image-prep-heartbeat
+      DATASET_IMAGE_PREP_MAX_ATTEMPTS: ${DATASET_IMAGE_PREP_MAX_ATTEMPTS:-3}
+      # Dedicated DinD daemon only; never the host Docker socket. Do not inject
+      # RUNNER_EGRESS_PROXY here: that proxy allows GitHub only, while Docker
+      # Hub pulls must go direct.
+      DOCKER_HOST: tcp://image-prep-dind:2375
+    volumes:
+      - ${DATASET_IMAGE_PREP_DATA_DIR:-/data/ai-eval-image-prep}/work:/work
+    depends_on:
+      image-prep-dind:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import os, time; p=os.environ.get('DATASET_IMAGE_PREP_HEARTBEAT_PATH','/tmp/image-prep-heartbeat'); assert time.time()-os.path.getmtime(p) < 30"
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 30s
+
   web:
     image: ${WEB_IMAGE:?WEB_IMAGE required}
     ports:
@@ -253,6 +346,16 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+
+networks:
+  # Explicit so image-prep can join the normal app network alongside its
+  # dedicated one. The name stays the implicit <project>_default.
+  default:
+  # M8 (#290): dedicated bridge for the privileged image-prep DinD daemon and
+  # its worker only. The worker still joins `default` for PostgreSQL/OSS and the
+  # DinD reaches Docker Hub through this bridge's NAT.
+  image_prep_internal:
+    driver: bridge
 
 volumes:
   dataset_imports:

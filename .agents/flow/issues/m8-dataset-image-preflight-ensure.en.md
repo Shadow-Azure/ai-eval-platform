@@ -6,7 +6,7 @@ English | [中文](m8-dataset-image-preflight-ensure.md)
 kind: issue
 milestone: m8
 priority: P2
-status: ready
+status: in-progress
 scope:
   - .agents/flow/**
   - backend/**
@@ -51,10 +51,10 @@ github:
 
 ### 2. Preparation worker and cleanup
 
-- Add an independent preparation worker inside the backend deployment service (compose stack) that reuses the API's OSS/S3 settings and public source list; it does not depend on an operator logging in to the fixed host.
+- Add an independent preparation worker inside the backend deployment service (compose stack) that reuses the API's OSS/S3 settings and public source list; use a dedicated Docker-in-Docker daemon (data root and temporary directory on the data disk), never mount the host Docker socket so `docker rmi` cannot delete the fixed runner's cached images; gate the service behind a compose profile and start it after the disk is ready.
 - Lock by `image_ref` and process serially: a HEAD hit goes straight to `ready`; otherwise pull from public sources in order, write a temporary tar via `docker save | gzip`, presign PUT, verify with HEAD and size, then mark `ready`.
 - Cleanup order: HEAD passes → delete the temporary tar → `docker image rm <image>` → record `local_cleanup=done`. Any pull/save/upload/HEAD failure also deletes the temporary tar and any pulled image before exiting. On process start, scan and remove temporary directories and leftover images created by this worker.
-- Disk protection: check free space before preparation (at least 2× the estimated compressed tar), mark `failed` and ask for more capacity when short, and process only one image at a time so concurrent pulls cannot fill the disk.
+- Disk protection: check free space on the data disk before preparation (at least 8GB and no less than the image estimate plus 2× the compressed tar), mark `failed` and ask for more capacity when short, and check the data disk rather than the system disk; process only one image at a time so concurrent pulls cannot fill the disk.
 - Do not delete platform runtime images (api/web/dispatcher and so on); only clean the `image_ref` values involved in this preparation and `dataset-image-*` temporary files.
 
 ### 3. Frontend

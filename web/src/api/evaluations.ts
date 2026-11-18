@@ -320,6 +320,35 @@ export interface PreparationSummary {
   agent_timeout_seconds?: number | null;
 }
 
+/** #290: per-image OSS tar readiness for the images selected by a preparation. */
+export type ImageReadinessStatus = "ready" | "preparing" | "missing" | "failed";
+
+export type ImageCleanupStatus = "pending" | "done" | "failed";
+
+export interface ImageReadinessImage {
+  image: string;
+  status: ImageReadinessStatus;
+  object_key?: string | null;
+  size_bytes?: number | null;
+  source?: string | null;
+  error?: string | null;
+  cleanup_status?: ImageCleanupStatus | null;
+  cleanup_error?: string | null;
+}
+
+export interface ImageReadiness {
+  ready: boolean;
+  total: number;
+  ready_count: number;
+  preparing_count: number;
+  failed_count: number;
+  missing_count: number;
+  cleanup_failed_count: number;
+  truncated: boolean;
+  checked_at: string | null;
+  images: ImageReadinessImage[];
+}
+
 export interface PrepareResponse {
   ready: boolean;
   blockers: PreflightIssue[];
@@ -338,6 +367,8 @@ export interface PrepareResponse {
   execution: ResolvedExecutionPolicy | null;
   cost_estimate: CostEstimate | null;
   summary: PreparationSummary | null;
+  /** #290: per-image readiness from a successful preparation; absent on legacy responses. */
+  image_readiness?: ImageReadiness | null;
   /** M8-32: effective Agent wall-clock timeout (seconds) after applying overrides. */
   agent_timeout_seconds?: number | null;
 }
@@ -1043,6 +1074,59 @@ function parsePreparationSummary(value: unknown): PreparationSummary | null {
   };
 }
 
+function parseImageReadinessStatus(value: unknown): ImageReadinessStatus {
+  return value === "ready" || value === "preparing" || value === "failed" ? value : "missing";
+}
+
+function parseImageCleanupStatus(value: unknown): ImageCleanupStatus | null {
+  return value === "pending" || value === "done" || value === "failed" ? value : null;
+}
+
+function parseImageReadinessImage(value: unknown): ImageReadinessImage | null {
+  if (!isRecord(value)) return null;
+  const image = readString(value.image);
+  if (!image) return null;
+  return {
+    image,
+    status: parseImageReadinessStatus(value.status),
+    object_key: readOptionalString(value.object_key),
+    size_bytes: readOptionalNumber(value.size_bytes),
+    source: readOptionalString(value.source),
+    error: readOptionalString(value.error),
+    cleanup_status: parseImageCleanupStatus(value.cleanup_status),
+    cleanup_error: readOptionalString(value.cleanup_error),
+  };
+}
+
+/** Parse the `image_readiness` block; null keeps legacy responses working. */
+export function parseImageReadiness(payload: unknown): ImageReadiness | null {
+  if (!isRecord(payload)) return null;
+  return {
+    ready: payload.ready === true,
+    total: readCountOrZero(payload.total),
+    ready_count: readCountOrZero(payload.ready_count),
+    preparing_count: readCountOrZero(payload.preparing_count),
+    failed_count: readCountOrZero(payload.failed_count),
+    missing_count: readCountOrZero(payload.missing_count),
+    cleanup_failed_count: readCountOrZero(payload.cleanup_failed_count),
+    truncated: payload.truncated === true,
+    checked_at: readOptionalString(payload.checked_at),
+    images: Array.isArray(payload.images)
+      ? payload.images
+          .map(parseImageReadinessImage)
+          .filter((entry): entry is ImageReadinessImage => entry !== null)
+      : [],
+  };
+}
+
+function requireImageReadiness(payload: unknown): ImageReadiness {
+  const readiness = parseImageReadiness(payload);
+  if (!readiness) {
+    throw new ApiError("控制面返回了无法识别的镜像就绪状态", { code: "invalid_response" });
+  }
+  return readiness;
+}
+
 export function parsePrepare(payload: unknown): PrepareResponse {
   if (!isRecord(payload) || typeof payload.ready !== "boolean") {
     throw new ApiError("控制面返回了无法识别的预检结果", { code: "invalid_response" });
@@ -1067,6 +1151,7 @@ export function parsePrepare(payload: unknown): PrepareResponse {
     execution: parseExecutionPolicy(payload.execution),
     cost_estimate: parseCostEstimate(payload.cost_estimate),
     summary: parsePreparationSummary(payload.summary),
+    image_readiness: parseImageReadiness(payload.image_readiness),
     agent_timeout_seconds: readOptionalNumber(payload.agent_timeout_seconds),
   };
 }
@@ -1074,6 +1159,59 @@ export function parsePrepare(payload: unknown): PrepareResponse {
 export async function prepareEvaluation(body: PrepareRequest): Promise<PrepareResponse> {
   return parsePrepare(
     await request(`/api/v1/evaluations/prepare`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  );
+}
+
+/** #290: current per-image readiness for a preparation (polled on Step 4). */
+export async function fetchImageReadiness(
+  preparationId: string,
+  signal?: AbortSignal,
+): Promise<ImageReadiness> {
+  return requireImageReadiness(
+    await request(
+      `/api/v1/dataset-images/artifacts?preparation_id=${encodeURIComponent(preparationId)}`,
+      { signal },
+    ),
+  );
+}
+
+/**
+ * #290: idempotently ask the backend to prepare missing image tarballs.
+ * `recheck` performs a fresh HEAD before enqueueing so a manual recheck can
+ * flip just-uploaded images to ready without waiting for the worker pass.
+ */
+export async function ensureImageReadiness(
+  preparationId: string,
+  recheck = false,
+): Promise<ImageReadiness> {
+  return requireImageReadiness(
+    await request(`/api/v1/dataset-images/artifacts/ensure`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(
+        recheck
+          ? { preparation_id: preparationId, recheck: true }
+          : { preparation_id: preparationId },
+      ),
+    }),
+  );
+}
+
+/** #290: retry failed (or the explicitly listed) images for a preparation. */
+export async function retryImageReadiness(
+  preparationId: string,
+  images?: string[],
+): Promise<ImageReadiness> {
+  const body: { preparation_id: string; images?: string[] } = {
+    preparation_id: preparationId,
+  };
+  if (images && images.length) body.images = images;
+  return requireImageReadiness(
+    await request(`/api/v1/dataset-images/artifacts/retry`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),

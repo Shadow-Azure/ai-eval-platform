@@ -43,6 +43,28 @@ bash scripts/publish-dataset-image.sh swebench/sweb.eval.x86_64.astropy_1776_ast
 
 对象 key 默认为 `dataset-images/<镜像引用 sha256>.tar.gz`；阿里云 OSS 的内网 endpoint 从 `s3_endpoint` 自动派生，特殊部署可用 `S3_INTERNAL_ENDPOINT` 覆盖。OSS 保持私有，实例只拿短时 URL；未发布的镜像自动回退公开源。按实际镜像数量配置生命周期与容量监控，全量 SWE-bench 镜像会占 1TB 级存储。
 
+## 数据集镜像自动准备 Worker
+
+镜像 tar 缺失由后台准备 Worker 自动补齐；它使用独立 Docker-in-Docker，不挂宿主 Docker socket，且默认不随普通部署启动。先在部署机挂载数据盘（示例为 `/data`），确认可用空间不低于 `DATASET_IMAGE_PREP_MIN_FREE_BYTES`（默认 8GiB），再显式启用 compose profile：
+
+```sh
+sudo mkdir -p /data/ai-eval-image-prep/docker /data/ai-eval-image-prep/work
+docker compose --env-file .env -f deploy/docker-compose.prod.yml \
+  --profile image-prep up -d image-prep-dind image-prep
+```
+
+`DATASET_IMAGE_PREP_DATA_DIR` 可覆盖数据盘根目录（默认 `/data/ai-eval-image-prep`）；`DATASET_IMAGE_PREP_PLATFORM` 默认 `linux/amd64`，`DATASET_IMAGE_PREP_MAX_ATTEMPTS` 默认 3。数据盘空间低于门槛时 Worker 不执行 pull，直接把该镜像标记为 `failed` 并给出扩容提示。
+
+检查状态与残留：
+
+```sh
+docker compose --env-file .env -f deploy/docker-compose.prod.yml --profile image-prep ps
+docker compose --env-file .env -f deploy/docker-compose.prod.yml --profile image-prep exec image-prep docker images
+docker compose --env-file .env -f deploy/docker-compose.prod.yml --profile image-prep exec image-prep sh -c 'ls -l /work'
+```
+
+每次上传通过 HEAD 校验后，`docker images` 不应再出现该镜像，`/work` 中也不应留下 `dataset-image-*.tar.gz`；进程启动与每 10 分钟扫描会清理上次中断的本地镜像和超过 1 小时的临时 tar。停止准备服务使用同一 profile 的 `down`，不要删除数据盘目录。
+
 ## 修改文档
 
 1. 先在中文 base 修正事实，再按结构镜像最小修补英文侧。

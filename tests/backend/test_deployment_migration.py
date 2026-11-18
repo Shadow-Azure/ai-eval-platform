@@ -33,7 +33,7 @@ def test_deployment_table_and_revision(database_url: str) -> None:
         } <= columns
         with Session(engine) as session:
             revision = session.scalar(text("SELECT version_num FROM alembic_version"))
-            assert revision == "0028_self_evolution"
+            assert revision == "0029_dataset_image_artifacts"
     finally:
         engine.dispose()
 

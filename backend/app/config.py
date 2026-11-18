@@ -118,6 +118,23 @@ class Settings(BaseSettings):
     # configuration error and blocks image-bearing datasets. Tests and
     # non-image adapters can explicitly disable the check.
     dataset_image_check_enabled: bool = True
+    # M8 (#290): a prepare worker claims one image at a time. The lease keeps a
+    # crashed claim reclaimable instead of leaving the row stuck in preparing.
+    dataset_image_prepare_lease_seconds: int = 900
+    # The worker itself runs only when enabled; the compose ``image-prep``
+    # profile is the deploy gate so a normal deploy never starts it before the
+    # data disk exists. Pull/save happens in a dedicated Docker-in-Docker
+    # daemon whose data root and this work dir both live on the data disk.
+    dataset_image_prep_enabled: bool = True
+    dataset_image_prep_work_dir: str = "/var/lib/ai-eval-image-prep"
+    dataset_image_prep_docker_bin: str = "docker"
+    dataset_image_prep_platform: str = "linux/amd64"
+    # Refuse to pull unless the data disk has at least this much free space;
+    # one 4.16GB image plus its tar cannot fit on the system disk.
+    dataset_image_prep_min_free_bytes: int = 8 * 1024**3
+    dataset_image_prep_poll_seconds: float = 5.0
+    dataset_image_prep_heartbeat_path: str = "/tmp/image-prep-heartbeat"
+    dataset_image_prep_max_attempts: int = 3
 
     # M2-05 synthetic evaluation loop.
     # Short-term case-token secret (platform signs, runner verifies). When

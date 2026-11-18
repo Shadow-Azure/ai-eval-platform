@@ -348,6 +348,58 @@ def _repository_path(image: str) -> tuple[str, str]:
     return repository, ref
 
 
+def _format_image_ref(repository: str, ref: str) -> str:
+    """Join a repository with a tag or digest (``_split_image`` format)."""
+
+    if not repository:
+        return ""
+    return f"{repository}{ref}" if ref.startswith("@") else f"{repository}:{ref}"
+
+
+def candidate_ref_pairs(
+    image: str,
+    sources: Iterable[RegistrySource],
+) -> list[tuple[RegistrySource, str]]:
+    """Ordered ``(source, pull reference)`` pairs for automatic preparation.
+
+    A Docker Hub source keeps the canonical reference (implicit
+    ``docker.io`` / ``library/`` normalization) so ``docker pull`` never routes
+    through the runner egress proxy or an unrelated mirror. Every other source
+    prefixes its registry and namespace. The image's own registry host is
+    stripped first, matching ``probe_source``; digest references stay pinned.
+    Disabled and duplicate sources are skipped, and an empty source list falls
+    back to the canonical reference so a misconfigured deployment still fails
+    with a clear pull error instead of "no candidates".
+    """
+
+    repository, ref = _repository_path(image)
+    if not repository:
+        return []
+    enabled = [source for source in sources or [] if source.enabled]
+    if not enabled:
+        hub = RegistrySource(name="Docker Hub", registry="registry-1.docker.io")
+        return [(hub, _format_image_ref(repository, ref))]
+    pairs: list[tuple[RegistrySource, str]] = []
+    seen: set[str] = set()
+    for source in enabled:
+        if source.registry in _DOCKER_HUB_HOSTS or source.registry == "registry-1.docker.io":
+            path = f"{source.prefix}/{repository}" if source.prefix else repository
+        else:
+            path = "/".join(part for part in (source.registry, source.prefix, repository) if part)
+        candidate = _format_image_ref(path, ref)
+        if not candidate or candidate in seen:
+            continue
+        seen.add(candidate)
+        pairs.append((source, candidate))
+    return pairs
+
+
+def candidate_refs(image: str, sources: Iterable[RegistrySource]) -> list[str]:
+    """Pull references in source order, used by tests and the prepare worker."""
+
+    return [candidate for _source, candidate in candidate_ref_pairs(image, sources)]
+
+
 def _docker_hub_token(client: httpx.Client, repository: str, timeout: float) -> str | None:
     try:
         response = client.get(

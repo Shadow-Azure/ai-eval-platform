@@ -48,6 +48,7 @@ from ..money import UNIT_PRICE, Money, MoneyError, money_str
 from ..runtimes.claude_code import get_runtime_adapter
 from ..secrets import SecretBoxError, get_secret_box
 from . import capacity
+from . import dataset_image_artifacts as image_artifacts
 from . import evaluations as evaluation_service
 from .preflight import PreflightIssue, check_preparation
 
@@ -114,6 +115,39 @@ class PreparationInvalid(PreparationError):
     def __init__(self, message: str, *, field: str | None = None) -> None:
         self.field = field
         super().__init__(message, details={"fields": {field: "invalid"}} if field else {})
+
+
+class ImageNotReady(PreparationError):
+    """M8 (#290): at least one case image has no OSS tarball yet."""
+
+    status = 409
+    code = "image_not_ready"
+
+    def __init__(self, images: list[dict], readiness: dict) -> None:
+        # ``images`` is filtered from the capped readiness list, so the visible
+        # subset may hide rows. Keep the authoritative counts and a truncation
+        # flag next to it; the console can render "showing N of M" without
+        # re-deriving anything from the capped array.
+        total = int(readiness.get("total") or 0)
+        ready_count = int(readiness.get("ready_count") or 0)
+        pending_count = total - ready_count
+        details = {
+            "images": images,
+            "image_readiness": readiness,
+            "truncated": pending_count > len(images),
+            "total": total,
+            "pending_count": pending_count,
+            "counts": {
+                "ready": ready_count,
+                "preparing": int(readiness.get("preparing_count") or 0),
+                "failed": int(readiness.get("failed_count") or 0),
+                "missing": int(readiness.get("missing_count") or 0),
+            },
+        }
+        super().__init__(
+            "运行时镜像尚未就绪，请等待准备完成或重试失败镜像",
+            details=details,
+        )
 
 
 def _now(now: datetime | None) -> datetime:
@@ -699,10 +733,22 @@ def build_preparation(
             "self_evolution": self_evolution_view,
             "cost_estimate": None,
             "summary": None,
+            "image_readiness": None,
         }
 
     if version is None or dataset is None:  # preflight normally blocks first
         raise PreparationInvalid("数据集版本不可用", field="dataset_version_id")
+    # M8 (#290): freeze the unique runtime image references and HEAD their OSS
+    # tarballs. A missing tarball does NOT block snapshot creation or wait for a
+    # later create: the frozen rows are enqueued now so a fresh prepare starts
+    # the worker immediately. Create re-checks and returns 409 image_not_ready
+    # if the worker has not finished yet.
+    image_refs = image_artifacts.resolve_preparation_images(
+        session, version, case_keys, settings
+    )
+    image_readiness = image_artifacts.readiness(
+        session, image_refs, settings, recheck=True, enqueue=True
+    )
     pool = session.get(ResourcePool, resource_pool_id)
     config = session.get(ModelConfig, model_config_id)
     # Use the shared id helper so ids match every other domain row.
@@ -742,6 +788,7 @@ def build_preparation(
         "case_selection": selection,
         "case_count": len(case_keys),
         "case_keys_digest": _digest(case_keys),
+        "image_refs": image_refs,
         "runtime": {
             "key": runtime_key,
             "version": adapter.runtime_version if adapter is not None else None,
@@ -779,6 +826,7 @@ def build_preparation(
         "dataset": snapshot["dataset"],
         "case_count": len(case_keys),
         "estimated_job_count": len(case_keys),
+        "image_readiness": image_readiness,
         "runtime": snapshot["runtime"],
         "asset_snapshot": asset_snapshot,
         "model": snapshot["model"],
@@ -831,6 +879,7 @@ def build_preparation(
         "self_evolution": self_evolution_view,
         "cost_estimate": cost_estimate,
         "summary": snapshot["summary"],
+        "image_readiness": image_readiness,
     }
 
 
@@ -922,6 +971,20 @@ def consume_preparation(
     )
     if check.blockers:
         raise PreparationBlocked([issue.as_dict() for issue in check.blockers])
+
+    # M8 (#290): the last gate before a run exists. Missing/expired-preparing
+    # artifacts are enqueued for the prepare worker, then the launch is
+    # rejected with the per-image state. The enqueue must survive the 409 so
+    # the worker can actually fill the gaps.
+    image_readiness = image_artifacts.ensure_preparation_images(
+        session, preparation, settings, enqueue=True
+    )
+    if image_readiness is not None and not image_readiness["ready"]:
+        session.commit()
+        pending = [
+            item for item in image_readiness["images"] if item["status"] != "ready"
+        ]
+        raise ImageNotReady(pending, image_readiness)
 
     resolved = snapshot.get("resolved") or {}
     asset_snapshot = snapshot.get("asset_snapshot") or None

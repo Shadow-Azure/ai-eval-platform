@@ -22,11 +22,25 @@ from app.services.object_store import (
     ObjectStoreError,
 )
 
+UPLOADS: dict[str, dict] = {}
+
 
 class StubObjectHandler(BaseHTTPRequestHandler):
     """Minimal S3-ish endpoint: objects live under /bucket/key."""
 
     server_version = "StubS3/1"
+
+    def do_PUT(self) -> None:  # noqa: N802
+        parsed = urlparse(self.path)
+        length = int(self.headers.get("Content-Length") or 0)
+        body = self.rfile.read(length)
+        UPLOADS[parsed.path] = {
+            "body": body,
+            "content_length": self.headers.get("Content-Length"),
+        }
+        self.send_response(200)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def do_HEAD(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
@@ -220,3 +234,26 @@ def test_iter_object_raises_for_a_missing_object(endpoint: str) -> None:
     store = make_store(endpoint)
     with pytest.raises(ObjectMissing):
         next(store.iter_object("objects/missing", now=now()))
+
+
+def test_put_file_streams_the_file_with_content_length(endpoint: str, tmp_path) -> None:
+    """The worker uploads multi-GB tarballs; never buffer them in memory."""
+
+    UPLOADS.clear()
+    store = make_store(endpoint)
+    payload = b"dataset-image-tarball" * 4096
+    path = tmp_path / "image.tar.gz"
+    path.write_bytes(payload)
+
+    size = store.put_file("objects/dataset.tar.gz", path, now=now())
+
+    assert size == len(payload)
+    upload = UPLOADS["/eval-artifacts/objects/dataset.tar.gz"]
+    assert upload["body"] == payload
+    assert upload["content_length"] == str(len(payload))
+
+
+def test_put_file_missing_local_file_is_a_store_error(endpoint: str, tmp_path) -> None:
+    store = make_store(endpoint)
+    with pytest.raises(ObjectStoreError):
+        store.put_file("objects/missing.tar.gz", tmp_path / "missing.tar.gz", now=now())

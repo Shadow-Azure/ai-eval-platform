@@ -45,6 +45,14 @@ DATASET_IMPORT_STATUSES = (
     "duplicate",
     "cancelled",
 )
+# M8 (#290): one row per dataset runtime image reference. ``missing`` means the
+# OSS tarball was not found by the last HEAD check, ``preparing`` means a worker
+# claimed/queued it, ``ready`` means the tarball exists, ``failed`` means the
+# prepare attempt (or a store probe) failed and may be retried.
+DATASET_IMAGE_ARTIFACT_STATUSES = ("missing", "preparing", "ready", "failed")
+# Local docker image/tarball cleanup runs in the same worker pass as the upload;
+# the ledger keeps the outcome observable after the worker exits.
+DATASET_IMAGE_CLEANUP_STATUSES = ("pending", "done", "failed")
 
 
 def _in_clause(column: str, values: tuple[str, ...]) -> str:
@@ -290,4 +298,52 @@ class DatasetImageSourcesSetting(Base, TimestampMixin):
 
     __table_args__ = (
         UniqueConstraint("tenant_id", name="uq_dataset_image_sources_setting_tenant"),
+    )
+
+
+class DatasetImageArtifact(Base, TimestampMixin):
+    """M8 (#290): OSS tarball ledger for one dataset runtime image reference.
+
+    The row is the idempotency/lease anchor for the prepare worker and the
+    readiness source for prepare/create. ``object_key`` is derived from the
+    image reference (design 05 §4); ``local_cleanup`` records whether the
+    worker removed the local docker image and temporary tarball after upload.
+    """
+
+    __tablename__ = "dataset_image_artifact"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    tenant_id: Mapped[str] = tenant_fk()
+    image_ref: Mapped[str] = mapped_column(String(300), nullable=False)
+    object_key: Mapped[str] = mapped_column(String(500), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(24), nullable=False, default="missing", server_default="missing"
+    )
+    size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # Which ordered public source served the pull (e.g. docker.io); never a
+    # credential-bearing URL.
+    source: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    error: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    # Worker lease/backoff: a claimed row is invisible until this timestamp.
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    local_cleanup: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="pending", server_default="pending"
+    )
+    cleanup_error: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    prepared_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "image_ref", name="uq_dataset_image_artifact_tenant_image"
+        ),
+        CheckConstraint(
+            _in_clause("status", DATASET_IMAGE_ARTIFACT_STATUSES), name="status"
+        ),
+        CheckConstraint(
+            _in_clause("local_cleanup", DATASET_IMAGE_CLEANUP_STATUSES),
+            name="local_cleanup",
+        ),
+        Index("ix_dataset_image_artifact_status_next", "status", "next_attempt_at"),
     )

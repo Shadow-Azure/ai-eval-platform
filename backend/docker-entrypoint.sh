@@ -12,6 +12,9 @@ case "$mode" in
   worker)
     exec python -m app.worker.main
     ;;
+  image-prep)
+    exec python -m app.worker.image_prep
+    ;;
   *)
     exec "$@"
     ;;

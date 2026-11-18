@@ -6,7 +6,7 @@
 kind: issue
 milestone: m8
 priority: P2
-status: ready
+status: in-progress
 scope:
   - .agents/flow/**
   - backend/**
@@ -51,10 +51,10 @@ github:
 
 ### 2. 准备 worker 与清理
 
-- 在后台部署服务（compose 栈）内新增独立准备 worker，复用 API 的 OSS/S3 配置和公开源列表；不依赖固定主机人工登录。
+- 在后台部署服务（compose 栈）内新增独立准备 worker，复用 API 的 OSS/S3 配置和公开源列表；使用独立 Docker-in-Docker 守护进程（数据根与临时目录均在数据盘），不挂宿主 Docker socket，避免 `docker rmi` 误删 fixed Runner 的镜像缓存；服务用 compose profile 控制启用，磁盘到位后启动。
 - 按 `image_ref` 加锁并串行处理：HEAD 命中 → 直接 `ready`；否则按公开源顺序 pull，`docker save | gzip` 写临时 tar，presign PUT，HEAD 校验大小后写 `ready`。
 - 清理顺序：HEAD 通过 → 删除临时 tar → `docker image rm <image>` → 记录 `local_cleanup=done`；pull/save/upload/HEAD 任一步失败也删除临时 tar 和已拉取的镜像后再退出。进程启动时扫描并清理本 worker 创建的临时目录与残留镜像。
-- 磁盘保护：准备前检查可用空间（至少 2× 压缩 tar 估算），不足则标记 `failed` 并提示扩容；同一时刻只处理一个镜像，避免并发拉取占满磁盘。
+- 磁盘保护：准备前检查数据盘可用空间（至少 8GB，且不低于镜像估算 + 2× 压缩 tar），不足则标记 `failed` 并提示扩容；检查的是数据盘而非系统盘；同一时刻只处理一个镜像，避免并发拉取占满磁盘。
 - 不删除平台自身运行镜像（api/web/dispatcher 等）；只清理本次准备涉及的 `image_ref` 与 `dataset-image-*` 临时文件。
 
 ### 3. 前端

@@ -516,3 +516,292 @@
     max-width: 100%;
   }
 }
+
+/* ---------------------------------------------------------------------------
+ * #290 runtime image preparation card + detail drawer (prototype: image-prep-*)
+ * ------------------------------------------------------------------------- */
+
+.eval-wizard .wizard-create-wrap {
+  display: inline-flex;
+}
+
+.image-prep-card {
+  margin-top: 16px;
+  background: #fff;
+}
+
+.image-prep-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.image-prep-title-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.image-prep-title-row strong {
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.image-prep-subtitle {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.image-prep-progress {
+  height: 7px;
+  margin-top: 14px;
+  overflow: hidden;
+  border-radius: 20px;
+  background: #edf1f6;
+}
+
+.image-prep-progress > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #1677ff, #4096ff);
+  transition: width 0.4s ease;
+}
+
+.image-prep-progress.success > span {
+  background: linear-gradient(90deg, #16a36a, #52c41a);
+}
+
+.image-prep-progress.warning > span {
+  background: linear-gradient(90deg, #d48806, #faad14);
+}
+
+.image-prep-progress.danger > span {
+  background: linear-gradient(90deg, #d92d20, #ff7875);
+}
+
+.image-prep-stats {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.image-prep-stats > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.image-prep-stats .status-dot.ready {
+  background: var(--success);
+}
+
+.image-prep-stats .status-dot.preparing {
+  background: var(--primary);
+}
+
+.image-prep-stats .status-dot.failed {
+  background: var(--danger);
+}
+
+.image-prep-stats .status-dot.missing {
+  background: var(--warning);
+}
+
+.image-prep-cleanup {
+  margin-left: auto;
+}
+
+.image-prep-stats .image-prep-enqueue-hint {
+  color: var(--primary);
+}
+
+.image-prep-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 11px;
+}
+
+.image-prep-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  background: #fbfdff;
+  font-size: 10px;
+}
+
+.image-prep-chip .status-dot {
+  width: 6px;
+  height: 6px;
+}
+
+.image-prep-chip.ready {
+  color: #0b7b4b;
+  border-color: #b7ead3;
+  background: #effaf5;
+}
+
+.image-prep-chip.preparing {
+  color: #135da9;
+  border-color: #b9dcff;
+  background: #f2f8ff;
+}
+
+.image-prep-chip.preparing .status-dot {
+  animation: image-prep-pulse 1.8s infinite;
+}
+
+.image-prep-chip.failed {
+  color: #a31b13;
+  border-color: #ffc1bd;
+  background: #fff5f4;
+}
+
+.image-prep-chip.missing {
+  color: #865b00;
+  border-color: #f3d38a;
+  background: #fffaeb;
+}
+
+.image-prep-chip.more {
+  border-style: dashed;
+  color: var(--ink-2);
+  background: #fff;
+}
+
+@keyframes image-prep-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(22, 119, 255, 0.35);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(22, 119, 255, 0);
+  }
+}
+
+.image-prep-card > .banner {
+  margin-top: 12px;
+}
+
+.image-prep-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.image-prep-action-hint {
+  margin-left: auto;
+}
+
+.image-prep-error-banner {
+  margin-top: 12px;
+}
+
+.image-prep-detail-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.image-prep-detail-row {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fafcff;
+}
+
+.image-prep-detail-image {
+  margin-top: 5px;
+  overflow-wrap: anywhere;
+}
+
+.image-prep-detail-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 9px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.image-prep-detail-meta b {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.image-prep-detail-cleanup {
+  margin-top: 8px;
+}
+
+.image-prep-detail-error {
+  margin-top: 7px;
+  color: var(--danger);
+  overflow-wrap: anywhere;
+}
+
+.image-prep-drawer-subtitle {
+  margin: 0 0 12px;
+}
+
+.image-prep-drawer .banner {
+  margin-bottom: 2px;
+}
+
+.image-prep-drawer-empty {
+  margin-top: 10px;
+}
+
+.image-prep-policy {
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fafcff;
+}
+
+.image-prep-policy p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.7;
+}
+
+.image-prep-drawer-footnote {
+  margin: 12px 0 0;
+}
+
+.image-prep-drawer-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.image-prep-status-dot {
+  background: var(--primary);
+  animation: image-prep-pulse 1.8s infinite;
+}
+
+@media (max-width: 760px) {
+  .image-prep-head {
+    flex-direction: column;
+  }
+
+  .image-prep-action-hint {
+    margin-left: 0;
+  }
+}
