@@ -100,3 +100,4 @@ The prototype only simulates check/preparation states; it performs no real Docke
 - Public sources can still time out; failures block starting with a retry/switch-source hint instead of silently falling back to the runner's 300-second budget.
 - Cleanup must target only this preparation's images; deleting a platform runtime image would directly break the service. Use an explicit `image_ref` allowlist and temporary-directory prefix, and cover it with tests.
 - The fixed host disk remains limited; this issue starts with serial processing and a disk threshold, leaving an independent builder / streaming upload to a later scale-out issue.
+- Cleanup only prevents accumulation across preparations; it does not cover the 4.16GB peak of a single image. With roughly 2.3GB free on the current deployment host, preparation will fail at the disk threshold. Implementation must add disk capacity, stream the upload, or use an independent builder.
