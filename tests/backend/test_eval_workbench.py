@@ -29,7 +29,7 @@ from app.seed import ensure_default_scope
 from app.services import evaluations
 from dataset_helpers import fixture_records
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import event, select
 from sqlalchemy.orm import Session
 
 
@@ -281,6 +281,34 @@ def test_cases_choose_first_root_session_by_ordinal(
     body = client.get(f"/api/v1/eval-runs/{run.id}/cases").json()
     by_key = {item["case_key"]: item for item in body["items"]}
     assert by_key["case-a"]["main_session_id"] == "early-session"
+
+
+def test_case_list_fetches_root_sessions_in_one_batch_query(
+    seeded: Session, client: TestClient
+) -> None:
+    run, cases = _prepare_failed_run(seeded, key="batch-session-query")
+    for index, case in enumerate(cases):
+        _add_main_session(seeded, case, f"batch-session-{index}")
+
+    statements: list[str] = []
+
+    def capture(_conn, _cursor, statement, _parameters, _context, _executemany):
+        statements.append(statement)
+
+    engine = seeded.get_bind()
+    event.listen(engine, "before_cursor_execute", capture)
+    try:
+        response = client.get(f"/api/v1/eval-runs/{run.id}/cases")
+    finally:
+        event.remove(engine, "before_cursor_execute", capture)
+
+    assert response.status_code == 200
+    session_queries = [
+        statement
+        for statement in statements
+        if "trace_session" in statement and "parent_session_id" in statement
+    ]
+    assert len(session_queries) == 1
 
 
 def test_cases_reject_invalid_filters(seeded: Session, client: TestClient) -> None:
