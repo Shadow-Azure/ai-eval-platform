@@ -1,5 +1,5 @@
 # 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
 # git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
 #   pnpm run record:i18n -- .agents/flow/issues/m9-trace-identifiers.md
-m9-trace-identifiers.md: 13c46d564a9f57a7c68fcaf0d40d5c71a620d9aa
-m9-trace-identifiers.en.md: 8a6110544764360c80120bc5a44f03bfe845f543
+m9-trace-identifiers.md: 69b0cee4b8a91bc793ac943b07d4b60ebc0f7b04
+m9-trace-identifiers.en.md: 52ba08cd00d40c5aab741f969ab0168a5cef65b9
