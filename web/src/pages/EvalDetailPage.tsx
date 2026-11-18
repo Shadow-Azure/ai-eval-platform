@@ -1172,7 +1172,7 @@ function caseColumns(
     width: 170,
     render: (value: string | null) =>
       value ? (
-        <Tooltip title={value}>
+        <Tooltip title={value} trigger={["hover", "focus"]}>
           <span
             className="mono eval-session-id"
             tabIndex={0}

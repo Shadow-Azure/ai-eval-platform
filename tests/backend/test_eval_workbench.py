@@ -264,7 +264,8 @@ def test_cases_treat_empty_native_session_id_as_absent(
     seeded: Session, client: TestClient
 ) -> None:
     run, cases = _prepare_failed_run(seeded, key="empty-root-session")
-    _add_main_session(seeded, cases[0], "")
+    _add_main_session(seeded, cases[0], "", ordinal=0)
+    _add_main_session(seeded, cases[0], "later-valid-root", ordinal=1)
 
     body = client.get(f"/api/v1/eval-runs/{run.id}/cases").json()
     by_key = {item["case_key"]: item for item in body["items"]}
