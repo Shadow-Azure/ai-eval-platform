@@ -1141,6 +1141,10 @@ export function EvalDetailPage() {
   );
 }
 
+function shortSessionId(value: string): string {
+  return value.length <= 16 ? value : `${value.slice(0, 8)}…${value.slice(-4)}`;
+}
+
 function caseColumns(
   runId: string,
   navigate: NavigateFunction,
@@ -1160,6 +1164,20 @@ function caseColumns(
         </div>
       </div>
     ),
+  },
+  {
+    title: "主 Agent session id",
+    dataIndex: "main_session_id",
+    key: "main_session_id",
+    width: 170,
+    render: (value: string | null) =>
+      value ? (
+        <Tooltip title={value}>
+          <span className="mono eval-session-id">{shortSessionId(value)}</span>
+        </Tooltip>
+      ) : (
+        <span className="muted small">—</span>
+      ),
   },
   {
     title: "执行",

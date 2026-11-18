@@ -21,6 +21,8 @@ from app.models import (
     Outbox,
     ResourcePool,
     TestCaseResult,
+    TraceFile,
+    TraceSession,
 )
 from app.seed import ensure_default_scope
 from app.services import evaluations
@@ -119,6 +121,45 @@ def _add_test(
     return test
 
 
+def _add_main_session(
+    session: Session,
+    case: EvalCaseRun,
+    native_id: str,
+    *,
+    status: str = "ready",
+    attempt_no: int = 1,
+) -> TraceSession:
+    attempt = _attempt(session, case, attempt_no)
+    trace_file = TraceFile(
+        tenant_id=attempt.tenant_id,
+        eval_case_attempt_id=attempt.id,
+        eval_case_run_id=case.id,
+        runtime_key="claude-code",
+        parser_version="claude-code-2.1.278-v1",
+        artifact_kind="trace",
+        object_key=f"traces/{attempt.id}.jsonl",
+        sha256="0" * 64,
+        size=12,
+        status="ready",
+    )
+    session.add(trace_file)
+    session.flush()
+    root = TraceSession(
+        tenant_id=attempt.tenant_id,
+        trace_file_id=trace_file.id,
+        eval_case_attempt_id=attempt.id,
+        runtime_key="claude-code",
+        parser_version="claude-code-2.1.278-v1",
+        native_session_id=native_id,
+        native_session_key=native_id,
+        status=status,
+        ordinal=0,
+    )
+    session.add(root)
+    session.commit()
+    return root
+
+
 def _prepare_failed_run(session: Session, *, key: str = "failed-run") -> tuple[EvalRun, list[EvalCaseRun]]:
     run = _create_run(session, idempotency_key=key)
     cases = _cases(session, run)
@@ -183,6 +224,37 @@ def test_cases_filters_counts_and_test_summary(
         "has_more": True,
         "next_offset": 2,
     }
+
+
+def test_cases_expose_latest_main_session_id(
+    seeded: Session, client: TestClient
+) -> None:
+    run, cases = _prepare_failed_run(seeded, key="main-session")
+    _add_main_session(seeded, cases[0], "9f2c1a7e-3b84-4c11-9d0e-5a6b7c8d9e01")
+    _add_main_session(seeded, cases[1], "4d8e2b61-7a09-4f3c-b2d1-8e6f0a9c3b52", status="unlinked")
+
+    body = client.get(f"/api/v1/eval-runs/{run.id}/cases").json()
+    by_key = {item["case_key"]: item for item in body["items"]}
+    assert by_key["case-a"]["main_session_id"] == "9f2c1a7e-3b84-4c11-9d0e-5a6b7c8d9e01"
+    assert by_key["case-b"]["main_session_id"] is None
+    assert by_key["case-c"]["main_session_id"] is None
+
+    detail = client.get(f"/api/v1/eval-case-runs/{cases[0].id}").json()
+    assert detail["case"]["main_session_id"] == "9f2c1a7e-3b84-4c11-9d0e-5a6b7c8d9e01"
+
+
+def test_cases_prefer_the_latest_attempt_session(
+    seeded: Session, client: TestClient
+) -> None:
+    run, cases = _prepare_failed_run(seeded, key="latest-main-session")
+    _add_main_session(seeded, cases[0], "old-attempt-session")
+    response = client.post(f"/api/v1/eval-case-runs/{cases[0].id}/retry")
+    assert response.status_code == 200
+    _add_main_session(seeded, cases[0], "new-attempt-session", attempt_no=2)
+
+    body = client.get(f"/api/v1/eval-runs/{run.id}/cases").json()
+    by_key = {item["case_key"]: item for item in body["items"]}
+    assert by_key["case-a"]["main_session_id"] == "new-attempt-session"
 
 
 def test_cases_reject_invalid_filters(seeded: Session, client: TestClient) -> None:

@@ -33,6 +33,8 @@ from ..models import (
 from ..money import money_str
 from . import datasets as dataset_service
 from . import evaluations
+from .trace_sessions import main_session_id as lookup_main_session_id
+from .trace_sessions import main_session_ids
 
 CASE_LIST_STATUSES = ("all", "resolved", "unresolved", "running", "failed", "queued")
 FAILED_CASE_STATUSES = ("failed", "timeout")
@@ -133,11 +135,11 @@ def empty_test_summary() -> dict[str, int]:
 
 def _summaries_for_latest_attempts(
     session: Session, cases: list[EvalCaseRun]
-) -> dict[str, dict[str, int]]:
-    """One batch query for the page's latest-attempt test summaries."""
+) -> tuple[dict[str, dict[str, int]], dict[str, str]]:
+    """One batch query for the page's latest-attempt summaries and ids."""
 
     if not cases:
-        return {}
+        return {}, {}
     attempts = session.scalars(
         select(EvalCaseAttempt).where(
             EvalCaseAttempt.eval_case_run_id.in_([case.id for case in cases])
@@ -152,7 +154,7 @@ def _summaries_for_latest_attempts(
 
     summaries = {case.id: empty_test_summary() for case in cases}
     if not latest_attempt_id:
-        return summaries
+        return summaries, latest_attempt_id
     rows = session.execute(
         select(
             TestCaseResult.eval_case_attempt_id,
@@ -178,10 +180,15 @@ def _summaries_for_latest_attempts(
         group_key = f"{group.lower()}_{outcome}"
         if group_key in summary:
             summary[group_key] += amount
-    return summaries
+    return summaries, latest_attempt_id
 
 
-def case_row(case: EvalCaseRun, summary: dict[str, int] | None = None) -> dict[str, Any]:
+def case_row(
+    case: EvalCaseRun,
+    summary: dict[str, int] | None = None,
+    *,
+    main_session_id: str | None = None,
+) -> dict[str, Any]:
     return {
         "id": case.id,
         "case_key": case.case_key,
@@ -191,6 +198,7 @@ def case_row(case: EvalCaseRun, summary: dict[str, int] | None = None) -> dict[s
         "result_status": case.result_status,
         "trace_status": case.trace_status,
         "latest_attempt_no": case.latest_attempt_no,
+        "main_session_id": main_session_id,
         "duration_ms": case.duration_ms,
         "error_code": case.error_code,
         "error_summary": case.error_summary,
@@ -273,11 +281,23 @@ def list_cases(
             .limit(safe_limit)
         )
     )
-    summaries = _summaries_for_latest_attempts(session, cases)
+    summaries, latest_attempt_ids = _summaries_for_latest_attempts(session, cases)
+    session_ids = main_session_ids(
+        session,
+        latest_attempt_ids.values(),
+        tenant_id=run.tenant_id,
+    )
     has_more = safe_offset + len(cases) < total
     return {
         "run_id": run.id,
-        "items": [case_row(case, summaries.get(case.id)) for case in cases],
+        "items": [
+            case_row(
+                case,
+                summaries.get(case.id),
+                main_session_id=session_ids.get(latest_attempt_ids.get(case.id, "")),
+            )
+            for case in cases
+        ],
         "total": total,
         "counts": case_counts(session, run.id),
         "page_info": {
@@ -379,7 +399,14 @@ def get_case(session: Session, case_run_id: str) -> dict[str, Any]:
     attempts = _attempt_rows(session, case)
     latest = _latest_attempt(session, case)
     return {
-        "case": case_row(case),
+        "case": case_row(
+            case,
+            main_session_id=(
+                lookup_main_session_id(session, latest.id)
+                if latest is not None
+                else None
+            ),
+        ),
         "run": {
             "id": run.id,
             "name": run.name,
@@ -486,7 +513,10 @@ def retry_case(session: Session, *, case_run_id: str, actor: str, now: datetime 
             code="case_retry_conflict",
         ) from exc
     return {
-        "case": case_row(case),
+        "case": case_row(
+            case,
+            main_session_id=lookup_main_session_id(session, attempt.id),
+        ),
         "attempt": _attempt_row(session, attempt),
         "retry": retry_state(session, run, case),
     }

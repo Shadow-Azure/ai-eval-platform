@@ -37,10 +37,10 @@ from ..models import (
     ModelUsage,
     SelfEvolutionReport,
     TestCaseResult,
-    TraceSession,
 )
 from ..secrets import SecretBoxError, get_secret_box
 from .evaluations import append_run_event, iso_utc
+from .trace_sessions import main_session_id
 
 logger = logging.getLogger(__name__)
 
@@ -154,33 +154,6 @@ def bad_case_identifier(tenant_id: str, eval_run_id: str, case_key: str) -> str:
     return f"swe-{digest[:20]}"
 
 
-def _main_session_id(session: Session, attempt_id: str) -> str | None:
-    """Native id of the attempt's root (main) Claude session, if parsed."""
-
-    row = session.scalar(
-        select(TraceSession)
-        .where(
-            TraceSession.eval_case_attempt_id == attempt_id,
-            TraceSession.parent_session_id.is_(None),
-            TraceSession.status != "unlinked",
-        )
-        .order_by(TraceSession.ordinal, TraceSession.id)
-        .limit(1)
-    )
-    if row is None or not row.native_session_id:
-        return None
-    # The HE sessionId contract caps at 36 chars. A longer native id cannot be
-    # reported faithfully (truncation would 404 the envelope), so treat it as
-    # unusable and fall back to the attempt id without a sessionSource.
-    if len(row.native_session_id) > SESSION_ID_PATTERN_LIMIT:
-        logger.warning(
-            "native session id longer than %s chars; envelope link omitted",
-            SESSION_ID_PATTERN_LIMIT,
-        )
-        return None
-    return row.native_session_id
-
-
 def _failed_tests(session: Session, attempt_id: str, group: str) -> list[str]:
     rows = session.execute(
         select(TestCaseResult.test_name)
@@ -219,7 +192,7 @@ def build_bad_case_payload(
 ) -> dict:
     """Assemble the frozen ``BadCaseIngest`` body for one bad case."""
 
-    session_id = _main_session_id(session, final_attempt.id)
+    session_id = main_session_id(session, final_attempt.id)
     has_native_session = session_id is not None
     if session_id is None:
         # Attempt-id fallback: the envelope endpoint resolves sessions by
@@ -439,7 +412,7 @@ def backfill_missing_session_sources(
             counts["skipped_no_trace"] += 1
             continue
         final_attempt = attempts[-1]
-        if _main_session_id(session, final_attempt.id) is None:
+        if main_session_id(session, final_attempt.id) is None:
             counts["skipped_no_trace"] += 1
             continue
         if (

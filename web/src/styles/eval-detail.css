@@ -922,3 +922,12 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+.eval-session-id {
+  display: inline-block;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
