@@ -6,7 +6,7 @@ English | [中文](m9-trace-identifiers.md)
 kind: issue
 milestone: m9
 priority: P2
-status: done
+status: ready
 scope:
   - backend/app/**
   - tests/**
