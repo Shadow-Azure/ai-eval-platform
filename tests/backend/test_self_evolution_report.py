@@ -107,6 +107,27 @@ def _finish_case(
     return attempt
 
 
+def _add_test_result(
+    session: Session,
+    attempt: EvalCaseAttempt,
+    *,
+    suite_name: str,
+    test_name: str,
+    group: str,
+    outcome: str = "failed",
+) -> None:
+    session.add(
+        TestCaseResult(
+            tenant_id=attempt.tenant_id,
+            eval_case_attempt_id=attempt.id,
+            suite_name=suite_name,
+            test_name=test_name,
+            outcome=outcome,
+            test_group=group,
+        )
+    )
+
+
 def _seed_trace(
     session: Session,
     attempt: EvalCaseAttempt,
@@ -340,6 +361,138 @@ def test_not_scored_with_execution_is_reported_with_reason(session: Session) -> 
     reports = _reports_for(session, run)
     assert len(reports) == 1
     assert "执行失败" in reports[0].payload_json["reason"]
+
+
+def test_reason_renders_markdown_summary_problem_and_test_groups(session: Session) -> None:
+    run = _seed_enabled_run(session, case_keys=["astropy__astropy-13398"])
+    case = _cases_by_key(session, run)["astropy__astropy-13398"]
+    suite = "astropy/coordinates/tests/test_intermediate_transformations.py"
+    fail_to_pass = [
+        "test_cirs_itrs_topo",
+        "test_itrs_straight_overhead",
+        "test_itrs_topo_to_altaz_with_refraction",
+        "test_itrs_topo_to_hadec_with_refraction",
+    ]
+    pass_to_pass = [
+        "test_cirs_to_altaz",
+        "test_gcrs_altaz_bothroutes[testframe0]",
+        "test_gcrs_altaz_bothroutes[testframe1]",
+        "test_gcrs_altaz_bothroutes[testframe2]",
+        "test_gcrs_altaz_bothroutes[testframe3]",
+    ]
+    problem = (
+        "We have experienced recurring issues raised by folks that want to observe "
+        "satellites and such regarding the apparent inaccuracy of the ITRS to AltAz "
+        "transform. This approach stays entirely within the ITRS and merely converts "
+        "between ITRS, AltAz, and HADec coordinates."
+    )
+    case.task_json = {
+        "repo": "astropy/astropy",
+        "base_commit": "6500928dc0e57be8f06d1162eacc3ba5e2eff692",
+        "problem_statement": (
+            "<!-- issue template -->\n"
+            "### Description\n"
+            f"{problem}\n\n"
+            "### Additional context\n"
+            "```python\nprint('ignored')\n```\n"
+        ),
+        "expected_metrics": {
+            "fail_to_pass": fail_to_pass,
+            "pass_to_pass": pass_to_pass,
+        },
+    }
+    attempt = _finish_case(
+        session, case, execution_status="succeeded", result_status="unresolved"
+    )
+    for name in fail_to_pass:
+        _add_test_result(
+            session, attempt, suite_name=suite, test_name=name, group="F2P"
+        )
+    for name in pass_to_pass:
+        _add_test_result(
+            session, attempt, suite_name=suite, test_name=name, group="P2P"
+        )
+
+    run.status = "running"
+    evaluation_service.refresh_run_progress(session, run, now=NOW)
+    session.commit()
+
+    payload = _reports_for(session, run)[0].payload_json
+    reason = payload["reason"]
+    assert reason.startswith("**结论**")
+    assert (
+        "`astropy__astropy-13398`（astropy/astropy @ 6500928d）未解决——"
+        "4/4 个目标测试（F2P）未通过，5 个既有测试（P2P）回退；"
+        "测试已执行，评分阶段未报告错误。"
+    ) in reason
+    assert f"**题面**（原文摘录）：{problem}" in reason
+    assert "print('ignored')" not in reason
+    assert "**失败（F2P，4/4）**" in reason
+    assert f"- `{suite}::test_cirs_itrs_topo`" in reason
+    assert "**回退（P2P，5）**" in reason
+    assert f"- `{suite}::test_gcrs_altaz_bothroutes[testframe3]`" in reason
+    assert f"**测试文件**：`{suite}`" in reason
+    assert "**排查**：查看关联会话轨迹与 Agent 补丁。" in reason
+
+    meta = payload["metaData"]
+    assert meta["repo"] == "astropy/astropy"
+    assert meta["baseCommit"] == "6500928dc0e57be8f06d1162eacc3ba5e2eff692"
+    assert meta["f2pFailedCount"] == 4
+    assert meta["f2pTotal"] == 4
+    assert meta["p2pRegressedCount"] == 5
+    assert meta["testFiles"] == [suite]
+    assert len(meta["failToPassFailed"]) == 4
+    assert meta["failToPassFailed"][0] == f"{suite}::test_cirs_itrs_topo"
+
+
+def test_reason_limits_rendered_tests_but_keeps_exact_counts(session: Session) -> None:
+    run = _seed_enabled_run(session, case_keys=["case-many-tests"])
+    case = _cases_by_key(session, run)["case-many-tests"]
+    suite = "tests/test_many.py"
+    names = [f"test_many_{index:02d}" for index in range(10)]
+    case.task_json = {
+        "problem_statement": "A task description long enough to be useful.",
+        "expected_metrics": {"fail_to_pass": names, "pass_to_pass": []},
+    }
+    attempt = _finish_case(
+        session, case, execution_status="succeeded", result_status="unresolved"
+    )
+    for name in names:
+        _add_test_result(
+            session, attempt, suite_name=suite, test_name=name, group="F2P"
+        )
+
+    run.status = "running"
+    evaluation_service.refresh_run_progress(session, run, now=NOW)
+    session.commit()
+
+    payload = _reports_for(session, run)[0].payload_json
+    reason = payload["reason"]
+    assert "**失败（F2P，10/10）**" in reason
+    assert reason.count(f"- `{suite}::") == 8
+    assert "- 其余 2 个未展开" in reason
+    assert payload["metaData"]["f2pFailedCount"] == 10
+    assert len(payload["metaData"]["failToPassFailed"]) == 10
+
+
+def test_unresolved_empty_patch_reason_reports_the_cause(session: Session) -> None:
+    run = _seed_enabled_run(session, case_keys=["case-empty-patch"])
+    case = _cases_by_key(session, run)["case-empty-patch"]
+    _finish_case(
+        session,
+        case,
+        execution_status="succeeded",
+        result_status="unresolved",
+        error_summary="empty_patch",
+    )
+
+    run.status = "running"
+    evaluation_service.refresh_run_progress(session, run, now=NOW)
+    session.commit()
+
+    reason = _reports_for(session, run)[0].payload_json["reason"]
+    assert "未解决；执行信息：未生成有效补丁" in reason
+    assert "**失败（F2P" not in reason
 
 
 def test_cancelling_run_does_not_enqueue(session: Session) -> None:
