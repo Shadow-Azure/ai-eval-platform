@@ -64,6 +64,7 @@ import { Icon } from "../components/Icon";
 import { PageHeading } from "../components/PageHeading";
 import { QueryError } from "../components/QueryError";
 import { StatusCard } from "../components/StatusCard";
+import { copyText } from "../utils/clipboard";
 import { EVAL_STATUS_META } from "../utils/evalStatus";
 import { formatMoney } from "../utils/money";
 
@@ -468,6 +469,11 @@ function eventSummary(event: EvaluationEvent, caseKeys: Map<string, string>): st
 
 export function EvalDetailPage() {
   const { message } = AntApp.useApp();
+  const copySessionId = (value: string) => {
+    void copyText(value)
+      .then(() => message.success("已复制 session id"))
+      .catch(() => message.error("复制失败，请手动选择"));
+  };
   const { runId = "" } = useParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -930,7 +936,7 @@ export function EvalDetailPage() {
               />
             </>
           }
-          columns={caseColumns(runId, navigate)}
+          columns={caseColumns(runId, navigate, copySessionId)}
           rows={cases.data?.items ?? []}
           rowKey="id"
           total={cases.data?.total ?? 0}
@@ -952,6 +958,7 @@ export function EvalDetailPage() {
           onRow={(record) => ({
             onClick: () => openCase(record.id, record.latest_attempt_no),
             onKeyDown: (event) => {
+              if ((event.target as HTMLElement).closest("button")) return;
               if (event.key === "Enter" || event.key === " ") {
                 event.preventDefault();
                 openCase(record.id, record.latest_attempt_no);
@@ -1148,6 +1155,7 @@ function shortSessionId(value: string): string {
 function caseColumns(
   runId: string,
   navigate: NavigateFunction,
+  onCopySession: (value: string) => void,
 ): TableColumnsType<EvalCaseRow> {
   return [
   {
@@ -1172,15 +1180,31 @@ function caseColumns(
     width: 170,
     render: (value: string | null) =>
       value ? (
-        <Tooltip title={value} trigger={["hover", "focus"]}>
-          <span
-            className="mono eval-session-id"
-            tabIndex={0}
-            aria-label={value}
+        <span className="eval-session-cell">
+          <Tooltip title={value} trigger={["hover", "focus"]}>
+            <span
+              className="mono eval-session-id"
+              tabIndex={0}
+              aria-label={value}
+            >
+              {shortSessionId(value)}
+            </span>
+          </Tooltip>
+          <Button
+            type="text"
+            size="small"
+            className="eval-session-copy"
+            aria-label="复制完整 session id"
+            title="复制完整 session id"
+            onClick={(event) => {
+              event.stopPropagation();
+              onCopySession(value);
+            }}
+            onKeyDown={(event) => event.stopPropagation()}
           >
-            {shortSessionId(value)}
-          </span>
-        </Tooltip>
+            <Icon name="copy" size={12} />
+          </Button>
+        </span>
       ) : (
         <span className="muted small">—</span>
       ),

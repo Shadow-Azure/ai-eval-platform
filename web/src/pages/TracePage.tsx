@@ -37,6 +37,7 @@ import { EmptyState } from "../components/EmptyState";
 import { Icon } from "../components/Icon";
 import { PageHeading } from "../components/PageHeading";
 import { QueryError } from "../components/QueryError";
+import { copyText } from "../utils/clipboard";
 import { formatMoney } from "../utils/money";
 import {
   buildArchiveTree,
@@ -214,12 +215,6 @@ function useNarrowViewport(maxWidth = 1280): boolean {
     return () => media.removeEventListener("change", update);
   }, [maxWidth]);
   return narrow;
-}
-
-function copyText(value: string): Promise<void> {
-  if (navigator.clipboard?.writeText)
-    return navigator.clipboard.writeText(value);
-  return Promise.reject(new Error("当前浏览器不支持剪贴板写入"));
 }
 
 /** Prototype's `download` glyph; not in the shared Icon map yet. */
