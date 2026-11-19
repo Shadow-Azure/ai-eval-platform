@@ -39,7 +39,16 @@ class FakeTransport:
     def __call__(self, url: str, *, method: str, body, headers, timeout: float):
         import json
 
-        self.calls.append({"url": url, "body": json.loads(body.decode())})
+        payload = json.loads(body.decode())
+        self.calls.append({"url": url, "body": payload})
+        # M8-51 (#323): reproduce GitHub's dispatch parameter validation so a
+        # >10-property payload can never slip through the tests unnoticed.
+        if len(payload.get("client_payload") or {}) > 10:
+            return (
+                422,
+                '{"message":"No more than 10 properties are allowed; '
+                f'{len(payload["client_payload"])} were supplied."}}',
+            )
         item = self.responses.pop(0) if self.responses else (204, "")
         if isinstance(item, Exception):
             raise item
@@ -113,14 +122,17 @@ def test_dispatch_pins_the_scripts_bundle_for_image_cache_lookup(
 
     assert len(transport.calls) == 1
     payload = transport.calls[0]["body"]["client_payload"]
-    assert payload["scripts_bundle"] == {
+    # M8-51 (#323): the pin stays in the outbox row; the workflow fetches it
+    # through the `/scripts` metadata endpoint instead of the dispatch payload.
+    assert "scripts_bundle" not in payload
+    assert len(payload) == 10
+    row = outbox_rows(seeded)[0]
+    assert row.payload_json["scripts_bundle"] == {
         "name": name,
         "md5": "0" * 32,
         "sha256": "a" * 64,
         "size": 40960,
     }
-    row = outbox_rows(seeded)[0]
-    assert row.payload_json["scripts_bundle"] == payload["scripts_bundle"]
 
 
 def test_dispatch_omits_an_incomplete_scripts_bundle_pin(
@@ -260,3 +272,133 @@ def test_only_due_rows_are_dispatched(seeded: Session, configure_settings) -> No
     outcome = dispatcher.dispatch_pending_outbox(seeded, transport=FakeTransport([]))
     assert outcome.dispatched == 0
     assert outbox_rows(seeded)[0].status == "pending"
+
+
+# ---------------------------------------------------------------------------
+# M8-51 (#323): transport preflight and 422 classification
+# ---------------------------------------------------------------------------
+
+
+def _mutate_client_payload(session: Session, mutate) -> None:
+    row = outbox_rows(session)[0]
+    client_payload = dict(row.payload_json["client_payload"])
+    mutate(client_payload)
+    row.payload_json = {**row.payload_json, "client_payload": client_payload}
+    session.commit()
+
+
+def test_dispatch_guard_rejects_eleven_properties_without_calling_transport(
+    seeded: Session, configure_settings
+) -> None:
+    configure_settings(GITHUB_TOKEN="gh-token")
+    run = create_run(seeded, key="guard-11")
+    _mutate_client_payload(seeded, lambda payload: payload.update({"extra": "boom"}))
+    transport = FakeTransport([])
+
+    outcome = dispatcher.dispatch_pending_outbox(seeded, transport=transport)
+
+    assert transport.calls == []
+    assert outcome.failed == 1
+    row = outbox_rows(seeded)[0]
+    assert row.status == "failed"
+    assert row.attempts == 1  # terminal: the retry budget is not consumed
+    assert "dispatch_payload_invalid" in row.payload_json["last_error"]
+    assert "11" in row.payload_json["last_error"]
+    assert {a.status for a in seeded.query(EvalCaseAttempt).all()} == {"dispatch_failed"}
+    assert seeded.query(EvalRun).filter(EvalRun.id == run.id).one().status == "failed"
+    events = {
+        e.event_type
+        for e in seeded.query(EvalEvent).filter(EvalEvent.eval_run_id == run.id).all()
+    }
+    assert "eval.dispatch_failed" in events
+
+
+def test_dispatch_guard_rejects_oversized_payload_without_calling_transport(
+    seeded: Session, configure_settings
+) -> None:
+    configure_settings(GITHUB_TOKEN="gh-token")
+    create_run(seeded, key="guard-64k")
+    # Keep the 10 top-level keys and grow one value past the local byte guard.
+    _mutate_client_payload(
+        seeded, lambda payload: payload.update({"manifest_url": "http://x/" + "a" * (61 * 1024)})
+    )
+    transport = FakeTransport([])
+
+    outcome = dispatcher.dispatch_pending_outbox(seeded, transport=transport)
+
+    assert transport.calls == []
+    assert outcome.failed == 1
+    row = outbox_rows(seeded)[0]
+    assert row.status == "failed"
+    assert "dispatch_payload_invalid" in row.payload_json["last_error"]
+    assert "字节" in row.payload_json["last_error"]
+
+
+def test_dispatch_guard_rejects_overlong_event_type(
+    seeded: Session, configure_settings
+) -> None:
+    configure_settings(GITHUB_TOKEN="gh-token", GITHUB_DISPATCH_EVENT_TYPE="e" * 101)
+    create_run(seeded, key="guard-event")
+    transport = FakeTransport([])
+
+    outcome = dispatcher.dispatch_pending_outbox(seeded, transport=transport)
+
+    assert transport.calls == []
+    assert outcome.failed == 1
+    row = outbox_rows(seeded)[0]
+    assert row.status == "failed"
+    assert "dispatch_payload_invalid" in row.payload_json["last_error"]
+    assert "101" in row.payload_json["last_error"]
+
+
+def test_422_parameter_validation_is_terminal(
+    seeded: Session, configure_settings
+) -> None:
+    configure_settings(GITHUB_TOKEN="gh-token", DISPATCH_MAX_ATTEMPTS="5")
+    run = create_run(seeded, key="422-terminal")
+    transport = FakeTransport(
+        [(422, '{"message":"No more than 10 properties are allowed; 11 were supplied."}')]
+    )
+
+    outcome = dispatcher.dispatch_pending_outbox(seeded, transport=transport)
+
+    assert len(transport.calls) == 1
+    assert outcome.retried == 0
+    assert outcome.failed == 1
+    row = outbox_rows(seeded)[0]
+    assert row.status == "failed"
+    assert row.attempts == 1
+    assert "github_dispatch_failed:422" in row.payload_json["last_error"]
+    assert "No more than 10 properties" in row.payload_json["last_error"]
+    assert {a.status for a in seeded.query(EvalCaseAttempt).all()} == {"dispatch_failed"}
+    assert seeded.query(EvalRun).filter(EvalRun.id == run.id).one().status == "failed"
+
+
+def test_422_spammed_endpoint_is_retried(seeded: Session, configure_settings) -> None:
+    configure_settings(GITHUB_TOKEN="gh-token", DISPATCH_MAX_ATTEMPTS="5")
+    create_run(seeded, key="422-spam")
+    transport = FakeTransport([(422, '{"message":"The endpoint has been spammed."}')])
+
+    outcome = dispatcher.dispatch_pending_outbox(seeded, transport=transport)
+
+    assert len(transport.calls) == 1
+    assert outcome.retried == 1
+    row = outbox_rows(seeded)[0]
+    assert row.status == "pending"
+    assert row.attempts == 1
+    assert "spammed" in row.payload_json["last_error"]
+    assert aware(row.available_at) > datetime.now(UTC)
+
+
+def test_429_rate_limit_is_retried(seeded: Session, configure_settings) -> None:
+    configure_settings(GITHUB_TOKEN="gh-token", DISPATCH_MAX_ATTEMPTS="5")
+    create_run(seeded, key="429-retry")
+    transport = FakeTransport([(429, '{"message":"API rate limit exceeded"}')])
+
+    outcome = dispatcher.dispatch_pending_outbox(seeded, transport=transport)
+
+    assert outcome.retried == 1
+    row = outbox_rows(seeded)[0]
+    assert row.status == "pending"
+    assert row.attempts == 1
+

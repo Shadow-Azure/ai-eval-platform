@@ -173,6 +173,10 @@ def validate(schema: dict[str, Any], data: Any, path: str = "$") -> list[str]:
                 errors.extend(validate(items, item, f"{path}[{index}]"))
 
     if _is_plain_object(data):
+        if "minProperties" in schema and len(data) < schema["minProperties"]:
+            errors.append(f"{path}: 至少 {schema['minProperties']} 个属性")
+        if "maxProperties" in schema and len(data) > schema["maxProperties"]:
+            errors.append(f"{path}: 最多 {schema['maxProperties']} 个属性")
         for key in schema.get("required", []):
             if key not in data:
                 errors.append(f"{path}.{key}: 必填字段缺失")

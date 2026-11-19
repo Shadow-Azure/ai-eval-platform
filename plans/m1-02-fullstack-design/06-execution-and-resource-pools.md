@@ -274,13 +274,19 @@ Worker 定期调用 Runner 清理：只删除超过 `eval_runner_offline_retenti
 
 本阶段只改变 Runner 获取它的路径：
 
-1. spot 实例启动时在 `/opt/eval/runner-scripts/` 预置脚本包。镜像可直接烘焙；没有烘焙时 cloud-init 用平台在创建实例时生成的短时私有 OSS 预签名 GET 预取，并用 sha256 校验后落盘。预取是 best-effort，失败不阻塞实例启动。
-2. dispatcher 把本次分片冻结的 `scripts_bundle`（name/md5/sha256/size）写进 repository_dispatch payload；workflow 不需要先访问平台 scripts 端点就能定位镜像缓存。
-3. prepare/execute 的脚本包获取依次尝试镜像缓存、平台 scripts 元数据返回的私有 OSS 直连 `oss_url`、平台 `/runner/v1/scripts/<name>` 代理，最后才回退 `actions/checkout`。镜像缓存与网络下载都校验 sha256/md5；总预算 60 秒。
+1. spot 实例启动时仍可在 `/opt/eval/runner-scripts/` 预置脚本包。镜像可直接烘焙；没有烘焙时 cloud-init 用平台在创建实例时生成的短时私有 OSS 预签名 GET 预取，并用 sha256 校验后落盘。预取是 best-effort，失败不阻塞实例启动；dispatch 载荷不含 pin 时该缓存不作为 workflow 的直达来源。
+2. dispatcher 把本次分片冻结的 `scripts_bundle`（name/md5/sha256/size）写到 outbox 行，不写入 repository_dispatch payload；workflow 通过分片 `/scripts` 元数据端点从 outbox 行取回 pin，`client_payload` 保持 10 个顶层键。
+3. prepare/execute 的脚本包获取使用元数据返回的私有 OSS 直连 `oss_url`、平台 `/runner/v1/scripts/<name>` 代理，最后才回退 `actions/checkout`。网络下载校验 sha256/md5；总预算 60 秒。
 4. 获取失败由 #308 的 `runner_bootstrap_failed` 在 started 前结算，平台按普通重试预算生成下一次 attempt，不等待 queue timeout。
 5. 实例上不写 OSS secret 或平台长期 token；预签名 URL 是短时下载能力，随 cloud-init user-data 一起清理。
 
 发布步骤：OSS 由 deploy 的 `scripts/cache-runner-scripts.py` 上传；镜像缓存用同一脚本的 `--out-dir /opt/eval/runner-scripts` 生成文件与 `manifest.json` 后烘焙进镜像。两处使用同一 md5/sha256，便于互相校验。
+
+## dispatch payload 传输层护栏与字段收敛（M8-51）
+
+`repository_dispatch.client_payload` 最多 10 个顶层属性、序列化后小于 64KB，`event_type` 不超过 100 字符。平台在 POST 前本地校验 10 个顶层键、60KB 字节预算与 100 字符 `event_type`：违反时 outbox 直接 `failed`，写入 `dispatch_payload_invalid`（含具体字段数/字节数），用例转 `dispatch_failed`，不调用 GitHub transport，也不消耗重试预算。`runner-contract/schemas/v1/dispatch.schema.json` 增加 `maxProperties: 10`，Python 与 Node 的 schema 子集同步支持 `maxProperties`/`minProperties`。
+
+422 按响应体分类：参数校验错误（属性数、长度、大小等）是终态；包含 `spammed` 的 422 与 429、5xx、网络错误仍按退避重试。`scripts_bundle` pin 只保留在 outbox 行，dispatch 载荷不再复制，顶层字段回到 10 个；代价是 spot 启动多一次 `/scripts` 元数据请求，正确性、评分与轨迹不变。
 
 ## spot 连续失败回退 fixed/按量（M8-46）
 

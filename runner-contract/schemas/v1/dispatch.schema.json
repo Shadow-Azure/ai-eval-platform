@@ -2,8 +2,9 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://ai-eval-platform.local/runner-contract/v1/dispatch.schema.json",
   "title": "Eval shard dispatch",
-  "description": "repository_dispatch client_payload for one evaluation shard. It carries opaque IDs, a manifest reference, a digest and the runner labels the shard must run on, never cases, prompts, model keys or cloud credentials.",
+  "description": "repository_dispatch client_payload for one evaluation shard. It carries opaque IDs, a manifest reference, a digest and the runner labels the shard must run on, never cases, prompts, model keys or cloud credentials. GitHub allows at most 10 top-level properties and 64KB per dispatch, so scripts bundle metadata stays in the outbox row and is fetched by the workflow through the shard scripts metadata endpoint.",
   "type": "object",
+  "maxProperties": 10,
   "additionalProperties": false,
   "required": [
     "schema_version",
@@ -69,31 +70,6 @@
       "minimum": 1,
       "maximum": 7200,
       "description": "GitHub execute job timeout derived from the frozen case budget. Optional for dispatches created before #304; the workflow falls back to 60 minutes only when absent."
-    },
-    "scripts_bundle": {
-      "type": "object",
-      "description": "Content-addressed runner scripts bundle frozen for this shard. It lets the workflow locate the image cache without calling the platform scripts endpoint; the workflow still verifies md5/sha256 before extracting.",
-      "additionalProperties": false,
-      "required": ["name", "md5", "sha256", "size"],
-      "properties": {
-        "name": {
-          "type": "string",
-          "maxLength": 128,
-          "pattern": "^eval-runner-scripts-[0-9a-f]{32}\\.tar\\.gz$"
-        },
-        "md5": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{32}$"
-        },
-        "sha256": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{64}$"
-        },
-        "size": {
-          "type": "integer",
-          "minimum": 1
-        }
-      }
     }
   }
 }
