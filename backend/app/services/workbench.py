@@ -32,7 +32,7 @@ from ..models import (
 )
 from ..money import money_str
 from . import datasets as dataset_service
-from . import evaluations, lifecycle
+from . import evaluations, lifecycle, spot_fallback
 from .trace_sessions import main_session_id as lookup_main_session_id
 from .trace_sessions import main_session_ids
 
@@ -726,6 +726,7 @@ def config_snapshot(session: Session, run: EvalRun) -> dict[str, Any]:
         },
         "model": model,
         "resource_pool": pool,
+        "spot_fallback": spot_fallback.run_fallback(run),
         "execution": {
             "shard_size": run.shard_size,
             "requested_concurrency": run.requested_concurrency,

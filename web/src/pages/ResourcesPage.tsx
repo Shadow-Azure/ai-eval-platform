@@ -96,6 +96,8 @@ const eventTypeLabels: Record<string, string> = {
   "resource.instance.interrupted": "竞价实例被回收",
   "resource.instance.create_timeout": "实例创建超时",
   "resource.provider.sync_failed": "云厂商同步失败",
+  "resource.spot.fallback": "已回退固定/按量资源",
+  "resource.spot.fallback_suppressed": "spot 回退被成本策略拦截",
 };
 
 const capacityReasonMeta: Record<
@@ -733,6 +735,7 @@ export function ResourcesPage() {
           key={poolModal.pool?.id ?? poolModal.connectionId ?? "new"}
           open
           pool={poolModal.pool}
+          pools={pools}
           connections={connections}
           initialConnectionId={poolModal.connectionId}
           onClose={() => setPoolModal(null)}
@@ -746,6 +749,7 @@ export function ResourcesPage() {
       <PoolDetailDrawer
         open={Boolean(detailPoolId)}
         poolId={detailPoolId}
+        pools={pools}
         connections={connections}
         isAdmin={isAdmin}
         onClose={() => setDetailPoolId(null)}
@@ -1312,6 +1316,10 @@ interface PoolFormValues {
   price_threshold_cny?: string | number;
   instance_type?: string;
   runners_per_instance?: number;
+  fallback_pool_id?: string;
+  fallback_after?: number;
+  fallback_max_price_cny?: string | number;
+  reference_price_cny?: string | number;
   runner_group?: string;
   labels_text?: string;
 }
@@ -1319,6 +1327,7 @@ interface PoolFormValues {
 function PoolModal({
   open,
   pool,
+  pools,
   connections,
   initialConnectionId,
   onClose,
@@ -1326,6 +1335,7 @@ function PoolModal({
 }: {
   open: boolean;
   pool?: ResourcePool;
+  pools: ResourcePool[];
   connections: ResourceConnection[];
   initialConnectionId?: string;
   onClose: () => void;
@@ -1339,6 +1349,9 @@ function PoolModal({
   const compatibility = spotCompatibility(connections, connectionId);
   const spotDisabled = Boolean(compatibility.reason);
   const isEdit = Boolean(pool);
+  const fallbackCandidates = pools.filter(
+    (candidate) => candidate.id !== pool?.id && candidate.provisioning_mode === "fixed",
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -1352,6 +1365,7 @@ function PoolModal({
           !spotCompatibility(connections, initialConnectionId).reason
         ? "spot"
         : "fixed";
+    const config = pool?.instance_config ?? {};
     form.setFieldsValue({
       name: pool?.name ?? "",
       connection_id: pool?.connection_id ?? initialConnectionId ?? undefined,
@@ -1359,8 +1373,17 @@ function PoolModal({
       min_capacity: pool?.min_capacity ?? 0,
       max_capacity: pool?.max_capacity ?? 1,
       price_threshold_cny: pool?.price_threshold_cny ?? "3.6000",
-      instance_type: String(pool?.instance_config?.instance_type ?? "ecs.g7.large"),
-      runners_per_instance: Number(pool?.instance_config?.runners_per_instance ?? 1),
+      instance_type: String(config.instance_type ?? "ecs.g7.large"),
+      runners_per_instance: Number(config.runners_per_instance ?? 1),
+      fallback_pool_id:
+        typeof config.fallback_pool_id === "string" ? config.fallback_pool_id : undefined,
+      fallback_after: Number(config.fallback_after ?? 3),
+      fallback_max_price_cny:
+        config.fallback_max_price_cny != null
+          ? String(config.fallback_max_price_cny)
+          : undefined,
+      reference_price_cny:
+        config.reference_price_cny != null ? String(config.reference_price_cny) : undefined,
       runner_group: pool?.runner_group ?? "",
       labels_text: labelList(pool?.labels ?? {}).join(", "),
     });
@@ -1388,6 +1411,23 @@ function PoolModal({
       if (values.provisioning_mode === "spot") {
         instanceConfig.instance_type = values.instance_type?.trim() || "ecs.g7.large";
         instanceConfig.runners_per_instance = Number(values.runners_per_instance ?? 1);
+        if (values.fallback_pool_id) {
+          instanceConfig.fallback_pool_id = values.fallback_pool_id;
+          instanceConfig.fallback_after = Number(values.fallback_after ?? 3);
+          if (
+            values.fallback_max_price_cny !== undefined &&
+            values.fallback_max_price_cny !== ""
+          ) {
+            instanceConfig.fallback_max_price_cny = String(values.fallback_max_price_cny);
+          }
+        }
+      } else if (
+        values.reference_price_cny !== undefined &&
+        values.reference_price_cny !== ""
+      ) {
+        // Used as the cost basis when this fixed pool is selected as a spot
+        // fallback target and the operator also configured a cost cap.
+        instanceConfig.reference_price_cny = String(values.reference_price_cny);
       }
       const input: PoolWriteInput = {
         name: values.name,
@@ -1580,19 +1620,66 @@ function PoolModal({
           )}
         </div>
         {mode === "spot" ? (
-          <div className="resource-form-row">
-            <Form.Item name="instance_type" label="实例规格">
-              <Input placeholder="ecs.g7.large" maxLength={64} />
-            </Form.Item>
+          <>
+            <div className="resource-form-row">
+              <Form.Item name="instance_type" label="实例规格">
+                <Input placeholder="ecs.g7.large" maxLength={64} />
+              </Form.Item>
+              <Form.Item
+                name="runners_per_instance"
+                label="单实例 Runner 数"
+                extra="GitHub Runner 默认一个 Runner 同时只执行一个 Job。"
+              >
+                <InputNumber min={1} max={64} style={{ width: "100%" }} />
+              </Form.Item>
+            </div>
+            <div className="banner resource-reason">
+              <Icon name="refresh" size={15} />
+              <div>
+                连续 spot 回收或库存/价格阻塞达到阈值后，该池的评测会切到固定的回退资源池，
+                并在评测详情标记「已回退」。不配置时不改变现有重试行为。
+              </div>
+            </div>
+            <div className="resource-form-row">
+              <Form.Item
+                name="fallback_pool_id"
+                label="回退资源池（可选）"
+                extra="仅限已有的固定/按量资源池；回退后新 Job 使用它的 Runner 标签。"
+              >
+                <Select
+                  allowClear
+                  placeholder="不启用 spot 回退"
+                  options={fallbackCandidates.map((candidate) => ({
+                    value: candidate.id,
+                    label: `${candidate.name} · fixed`,
+                  }))}
+                />
+              </Form.Item>
+              <Form.Item
+                name="fallback_after"
+                label="连续失败阈值"
+                extra="连续 provider 回收或容量阻塞次数，达到后回退。"
+              >
+                <InputNumber min={1} max={20} style={{ width: "100%" }} />
+              </Form.Item>
+            </div>
             <Form.Item
-              name="runners_per_instance"
-              label="单实例 Runner 数"
-              extra="GitHub Runner 默认一个 Runner 同时只执行一个 Job。"
+              name="fallback_max_price_cny"
+              label="回退成本上限（CNY/小时，可选）"
+              extra="启用后回退池必须声明参考成本，且其小时成本不得超过该上限。"
             >
-              <InputNumber min={1} max={64} style={{ width: "100%" }} />
+              <InputNumber min={0.0001} step={0.01} style={{ width: "100%" }} />
             </Form.Item>
-          </div>
-        ) : null}
+          </>
+        ) : (
+          <Form.Item
+            name="reference_price_cny"
+            label="参考成本（CNY/小时，可选）"
+            extra="作为 spot 回退成本上限的比较依据；不配置时无法启用成本上限。"
+          >
+            <InputNumber min={0.0001} step={0.01} style={{ width: "100%" }} />
+          </Form.Item>
+        )}
         <Form.Item name="labels_text" label="Runner 标签" extra="用逗号分隔，例如 self-hosted, linux, eval">
           <Input placeholder="self-hosted, linux, eval" />
         </Form.Item>
@@ -1659,6 +1746,12 @@ function eventSummary(event: { event_type: string; payload: Record<string, unkno
   }
   if (typeof payload.price_cny === "string") parts.push(`价格 ${formatUnitPrice(payload.price_cny)}`);
   if (typeof payload.threshold === "string") parts.push(`阈值 ${formatUnitPrice(payload.threshold)}`);
+  if (typeof payload.from_pool_name === "string" && typeof payload.to_pool_name === "string") {
+    parts.push(`${payload.from_pool_name} → ${payload.to_pool_name}`);
+  }
+  if (typeof payload.consecutive_failures === "number" && payload.consecutive_failures > 0) {
+    parts.push(`连续 ${payload.consecutive_failures} 次`);
+  }
   if (parts.length === 0) return "—";
   return parts.join(" · ");
 }
@@ -1666,6 +1759,7 @@ function eventSummary(event: { event_type: string; payload: Record<string, unkno
 function PoolDetailDrawer({
   open,
   poolId,
+  pools,
   connections,
   isAdmin,
   onClose,
@@ -1674,6 +1768,7 @@ function PoolDetailDrawer({
 }: {
   open: boolean;
   poolId: string | null;
+  pools: ResourcePool[];
   connections: ResourceConnection[];
   isAdmin: boolean;
   onClose: () => void;
@@ -1695,6 +1790,10 @@ function PoolDetailDrawer({
   const detail: ResourcePoolDetail | undefined = detailQuery.data;
   const connection = detail ? connectionOf(connections, detail.connection_id) : undefined;
   const state = detail?.capacity_state;
+  const fallbackTargetId = detail?.instance_config?.fallback_pool_id;
+  const fallbackTarget = typeof fallbackTargetId === "string"
+    ? pools.find((candidate) => candidate.id === fallbackTargetId)
+    : undefined;
 
   return (
     <Drawer
@@ -1783,6 +1882,24 @@ function PoolDetailDrawer({
               label="最近检查"
               value={formatDateTime(state.last_checked_at ?? detail.last_checked_at)}
             />
+            {detail.provisioning_mode === "spot" ? (
+              <PoolMeta
+                label="spot 回退"
+                value={
+                  fallbackTarget
+                    ? `${fallbackTarget.name} · 连续 ${String(
+                        detail.instance_config.fallback_after ?? 3,
+                      )} 次${
+                        detail.instance_config.fallback_max_price_cny
+                          ? ` · 上限 ¥${String(
+                              detail.instance_config.fallback_max_price_cny,
+                            )}/h`
+                          : ""
+                      }`
+                    : "未配置"
+                }
+              />
+            ) : null}
             <PoolMeta
               label="下次检查"
               value={formatDateTime(state.next_check_at ?? detail.next_check_at)}

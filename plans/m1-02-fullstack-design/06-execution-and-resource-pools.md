@@ -226,7 +226,7 @@ M8-48 允许 `min_capacity≥1` 的小规模 warm pool：`min_capacity` 按 Runn
 消费 `provider_stopped` 后，平台立即把该实例上的 active attempt 标为 `spot_interrupted`，释放 runner 绑定，
 并重新申请原竞争态 spot 池；同一 case 的 spot 重试最多 3 次且不超过 run 的 `max_attempts`，达 `max_attempts`
 时以 `spot_interrupted` 终态收口，spot 预算耗尽时标 `spot_retry_exhausted`。
-不默认切 fixed/on-demand；可选配置兜底池。这样不再把云侧停止伪装成 300s `heartbeat_timeout`。
+默认不切 fixed/on-demand；可选配置兜底池，由 M8-46 实现。这样不再把云侧停止伪装成 300s `heartbeat_timeout`。
 
 
 ## Runner 绑定与 spot 中断映射（M8-38）
@@ -281,3 +281,20 @@ Worker 定期调用 Runner 清理：只删除超过 `eval_runner_offline_retenti
 5. 实例上不写 OSS secret 或平台长期 token；预签名 URL 是短时下载能力，随 cloud-init user-data 一起清理。
 
 发布步骤：OSS 由 deploy 的 `scripts/cache-runner-scripts.py` 上传；镜像缓存用同一脚本的 `--out-dir /opt/eval/runner-scripts` 生成文件与 `manifest.json` 后烘焙进镜像。两处使用同一 md5/sha256，便于互相校验。
+
+## spot 连续失败回退 fixed/按量（M8-46）
+
+同一 run 连续出现 provider 侧 spot 回收，或容量控制器连续多次因库存不足/价格高于阈值无法扩容时，平台把该 run
+迁到已有的固定/按量资源池。回退不新增云厂商，也不自动创建新池：运维在 spot 池 `instance_config` 中设置
+`fallback_pool_id`、`fallback_after`（连续失败阈值）和可选的 `fallback_max_price_cny`（成本上限）。
+
+- 回退状态写入 `eval_run.resource_pool_snapshot_json.spot_fallback`：来源/目标池、触发原因、连续失败次数、阈值、
+  成本快照与激活时间；同时写 run 级 `eval.spot_fallback` 事件、源/目标池的 `resource.spot.fallback` 资源事件。
+- 回退在重建 retry 之前完成，因此新 attempt 的 `resource_pool_id`、dispatch `runs_on` 与 manifest 都指向兜底池；
+  尚未 dispatch 的 outbox 行会一起改写。已经发送到 GitHub 的旧 spot Job 保持原样，其后续 retry 使用新池。
+- 已回退的 run 不再消耗 spot 重试预算，只受 run 的 `max_attempts` 约束；这避免了回退阈值达到后仍直接记为
+  `spot_retry_exhausted`。一个用例成功完成会重置连续失败计数。
+- 启用 `fallback_max_price_cny` 时，兜底池必须通过 `instance_config.reference_price_cny`（或已有价格）声明小时成本；
+  成本未知或超过上限时不回退，记录 `resource.spot.fallback_suppressed` 与 `suppressed_reason`，继续既有 spot 重试。
+- 评测详情「执行组合」新增“资源回退”行：未触发、已回退（来源 → 目标、连续次数）或被成本策略拦截。资源池详情展示
+  配置的兜底池与阈值，资源事件列表新增回退/拦截事件类型。

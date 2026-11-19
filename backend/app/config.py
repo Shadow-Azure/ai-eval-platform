@@ -1,3 +1,4 @@
+from decimal import Decimal
 from functools import lru_cache
 from urllib.parse import urlparse
 
@@ -239,6 +240,15 @@ class Settings(BaseSettings):
     # Only the registration age is guarded; a runner that just finished a job
     # still scales down immediately.
     eval_spot_runner_min_idle_seconds: int = 120
+    # M8-46 (#311): after N consecutive provider-side spot reclaims, or N
+    # consecutive reconcile ticks where inventory is missing or the spot price
+    # is above the pool threshold, a run moves to the fixed/on-demand pool
+    # configured as ``fallback_pool_id`` on the spot pool. The per-pool values
+    # win; these defaults keep the feature bounded when a pool leaves them
+    # unset. A cost cap compares the fallback pool's declared hourly price and
+    # suppresses the switch when the price is unknown or above the cap.
+    eval_spot_fallback_after: int = 3
+    eval_spot_fallback_max_price_cny: Decimal | None = None
     # M4-02 execution lifecycle timeouts (design 06 §7). Five independent
     # clocks instead of one total timeout: platform queue, agent execution,
     # scoring, upload grace period and heartbeat. The agent execution timeout

@@ -31,7 +31,7 @@ from ..db import get_session
 from ..defaults import DEFAULT_PROJECT_ID
 from ..models import Connection, Credential, ResourceEvent, ResourcePool, Runner
 from ..money import money_str
-from ..services import capacity_control, identity, resource_usage
+from ..services import capacity_control, identity, resource_usage, spot_fallback
 from ..services.provisioning import (
     ProvisionerError,
     get_provisioner,
@@ -139,6 +139,30 @@ def _validation_error(exc: ResourceValidationError) -> HTTPException:
         fields={exc.field: exc.message} if exc.field else None,
         details=exc.details or None,
     )
+
+
+def _validate_pool_fallback(
+    session: Session,
+    *,
+    tenant_id: str,
+    pool_id: str | None,
+    provisioning_mode: str,
+    instance_config: dict[str, Any] | None,
+) -> None:
+    """Validate the optional spot-to-fixed fallback block (M8-46 #311)."""
+
+    try:
+        spot_fallback.validate_fallback_config(
+            session,
+            tenant_id=tenant_id,
+            pool_id=pool_id,
+            provisioning_mode=provisioning_mode,
+            instance_config=instance_config,
+        )
+    except spot_fallback.FallbackConfigError as exc:
+        raise ResourceValidationError(
+            exc.code, str(exc), field=exc.field, details=exc.details
+        ) from exc
 
 
 def _credential_failure(session: Session, tenant_id: str, credential_id: str) -> str | None:
@@ -450,6 +474,13 @@ def create_resource_pool(
             session=session,
             tenant_id=tenant_id,
         )
+        _validate_pool_fallback(
+            session,
+            tenant_id=tenant_id,
+            pool_id=None,
+            provisioning_mode=mode,
+            instance_config=payload.instance_config,
+        )
     except ResourceValidationError as exc:
         raise _validation_error(exc) from exc
 
@@ -539,6 +570,9 @@ def update_resource_pool(
         if "price_threshold_cny" in fields
         else pool.price_threshold_cny
     )
+    instance_config = (
+        fields.get("instance_config", pool.instance_config_json) or {}
+    )
     provider_key = _provider_key(mode, connection)
     try:
         validate_pool_configuration(
@@ -550,6 +584,13 @@ def update_resource_pool(
             provider_key=provider_key,
             session=session,
             tenant_id=tenant_id,
+        )
+        _validate_pool_fallback(
+            session,
+            tenant_id=tenant_id,
+            pool_id=pool.id,
+            provisioning_mode=mode,
+            instance_config=instance_config,
         )
     except ResourceValidationError as exc:
         raise _validation_error(exc) from exc
