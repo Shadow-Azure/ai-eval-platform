@@ -44,6 +44,7 @@ export async function createScenario({
   tokenTtlSeconds = 600,
   expiresInMs = 3_600_000,
   manifestDigest,
+  dispatchVersion = "1.1",
 } = {}) {
   const evalRunId = dispatchOverrides.eval_run_id ?? "eval_test";
   const shardId = dispatchOverrides.shard_id ?? "shard_test";
@@ -58,6 +59,7 @@ export async function createScenario({
     manifestText: () => manifestText,
     expectedToken: token,
     behavior,
+    manifestExpiresAt: () => future(expiresInMs),
   });
   const manifest = {
     schema_version: "1.0",
@@ -73,17 +75,33 @@ export async function createScenario({
     ...manifestOverrides,
   };
   manifestText = `${JSON.stringify(manifest, null, 2)}\n`;
-  const dispatch = {
-    schema_version: "1.0",
+  const coreDispatch = {
     eval_run_id: evalRunId,
     shard_id: shardId,
     attempt,
     dispatch_key: manifest.dispatch_key,
     manifest_url: `${platform.baseUrl}/manifest`,
-    manifest_digest: manifestDigest ?? sha256(manifestText),
-    expires_at: future(expiresInMs),
-    ...dispatchOverrides,
   };
+  // M8-51 (#323) option C: the default fixture is the minimal 1.1 dispatch the
+  // platform now sends (digest/expiry come from the manifest response). Pass
+  // dispatchVersion: "1.0" to exercise the legacy payload.
+  const dispatch =
+    dispatchVersion === "1.1"
+      ? {
+          schema_version: "1.1",
+          ...coreDispatch,
+          runs_on: ["self-hosted", "linux", "eval"],
+          job_timeout_minutes: 70,
+          ...(manifestDigest ? { manifest_digest: manifestDigest } : {}),
+          ...dispatchOverrides,
+        }
+      : {
+          schema_version: "1.0",
+          ...coreDispatch,
+          manifest_digest: manifestDigest ?? sha256(manifestText),
+          expires_at: future(expiresInMs),
+          ...dispatchOverrides,
+        };
   const dir = mkdtempSync(join(tmpdir(), "m401-"));
   const dispatchPath = join(dir, "dispatch.json");
   writeFileSync(dispatchPath, `${JSON.stringify(dispatch, null, 2)}\n`);

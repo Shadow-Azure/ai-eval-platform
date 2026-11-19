@@ -366,7 +366,10 @@ def _retarget_pending_dispatches(
             digest = "sha256:" + hashlib.sha256(manifest_text.encode()).hexdigest()
             payload["manifest_text"] = manifest_text
             payload["manifest_digest"] = digest
-            client_payload["manifest_digest"] = digest
+            # Legacy 1.0 payloads carry the digest; refresh it there too. The
+            # minimal 1.1 payload gets it from the manifest endpoint instead.
+            if "manifest_digest" in client_payload:
+                client_payload["manifest_digest"] = digest
         payload["fallback"] = {
             "from_pool_id": state.get("from_pool_id"),
             "to_pool_id": target.id,

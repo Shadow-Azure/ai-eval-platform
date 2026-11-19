@@ -216,19 +216,27 @@ def _refresh_dispatch_window(
     manifest["deadline"] = deadline.isoformat(timespec="microseconds").replace("+00:00", "Z")
     text = json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True)
     digest = "sha256:" + hashlib.sha256(text.encode()).hexdigest()
-    expires_at = now + timedelta(
-        seconds=max(settings.eval_shard_ttl_seconds, deadline_seconds)
-    )
+    expires_at = (
+        now
+        + timedelta(seconds=max(settings.eval_shard_ttl_seconds, deadline_seconds))
+    ).isoformat(timespec="microseconds").replace("+00:00", "Z")
+    updated_client_payload = {
+        **client_payload,
+        "job_timeout_minutes": job_timeout_minutes(run.case_timeout_seconds),
+    }
+    # Legacy 1.0 rows froze the digest/expiry in the payload; refresh them in
+    # place so an in-flight replay stays consistent. New 1.1 rows deliberately
+    # omit both — the manifest endpoint serves them from the outbox row.
+    if "manifest_digest" in client_payload:
+        updated_client_payload["manifest_digest"] = digest
+    if "expires_at" in client_payload:
+        updated_client_payload["expires_at"] = expires_at
     row.payload_json = {
         **payload,
         "manifest_text": text,
         "manifest_digest": digest,
-        "client_payload": {
-            **client_payload,
-            "manifest_digest": digest,
-            "job_timeout_minutes": job_timeout_minutes(run.case_timeout_seconds),
-            "expires_at": expires_at.isoformat(timespec="microseconds").replace("+00:00", "Z"),
-        },
+        "expires_at": expires_at,
+        "client_payload": updated_client_payload,
     }
 
 

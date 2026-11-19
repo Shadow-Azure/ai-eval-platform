@@ -20,6 +20,10 @@ import {
   validateDispatch,
   validateManifest,
 } from "../lib/contracts.mjs";
+import {
+  dispatchManifestDigest,
+  isExpired,
+} from "../lib/dispatch-descriptor.mjs";
 import { fetchManifest } from "../lib/manifest-source.mjs";
 import { LocalObjectStore } from "../lib/object-store.mjs";
 import { runClaudeCode } from "../lib/runtime-claude-code.mjs";
@@ -141,8 +145,13 @@ async function main() {
   const dispatchCheck = validateDispatch(dispatch);
   if (!dispatchCheck.ok) throw new Error(`dispatch invalid: ${dispatchCheck.errors.join("; ")}`);
 
-  const { bytes: manifestBytes, tokenHeader } = await fetchManifest(dispatch.manifest_url);
-  if (`sha256:${sha256(manifestBytes)}` !== dispatch.manifest_digest) {
+  if (isExpired(dispatch.expires_at)) throw new Error("dispatch 已过期");
+  const manifestResponse = await fetchManifest(dispatch.manifest_url);
+  const { bytes: manifestBytes, tokenHeader } = manifestResponse;
+  if (isExpired(manifestResponse.expiresAt)) throw new Error("dispatch 已过期");
+  const expectedDigest = dispatchManifestDigest(dispatch, manifestResponse);
+  if (!expectedDigest) throw new Error("manifest digest missing");
+  if (`sha256:${sha256(manifestBytes)}` !== expectedDigest) {
     throw new Error("manifest digest mismatch");
   }
   const manifest = JSON.parse(manifestBytes.toString("utf8"));

@@ -148,6 +148,21 @@ def test_create_builds_run_cases_attempts_and_contract_outbox(
         payload = row.payload_json
         client_payload = payload["client_payload"]
         validate_payload("dispatch", client_payload)
+        # M8-51 (#323) option C: the dispatch carries exactly the eight fields
+        # a job needs before it starts; digest/expiry stay in the outbox row.
+        assert client_payload["schema_version"] == "1.1"
+        assert set(client_payload) == {
+            "schema_version",
+            "eval_run_id",
+            "shard_id",
+            "attempt",
+            "dispatch_key",
+            "manifest_url",
+            "runs_on",
+            "job_timeout_minutes",
+        }
+        assert "manifest_digest" not in client_payload
+        assert "expires_at" not in client_payload
         assert client_payload["runs_on"] == ["self-hosted", "linux", "eval"]
         assert client_payload["eval_run_id"] == run.id
         assert client_payload["attempt"] == 1
@@ -162,11 +177,11 @@ def test_create_builds_run_cases_attempts_and_contract_outbox(
         assert all({"name", "registry"} <= set(source) for source in manifest["image_sources"])
         import hashlib
 
-        assert client_payload["manifest_digest"] == (
+        assert payload["manifest_digest"] == (
             "sha256:" + hashlib.sha256(manifest_text.encode()).hexdigest()
         )
+        assert payload["expires_at"] > datetime.now(UTC).isoformat()
         assert client_payload["manifest_url"].startswith("http://127.0.0.1:8000/runner/v1/shards/")
-        assert client_payload["expires_at"] > datetime.now(UTC).isoformat()
 
         shard_cases = manifest["cases"]
         assert len(shard_cases) >= 1

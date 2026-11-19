@@ -9,6 +9,7 @@ The payload shape is pinned to the deployed heartbeat agent
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -1142,6 +1143,37 @@ def test_manifest_case_token_ttl_covers_case_timeout(
     run.case_timeout_seconds = 60
     session.commit()
     assert _token_exp(token()) - int(datetime.now(UTC).timestamp()) >= 300
+
+
+def test_manifest_serves_the_server_descriptor_for_a_minimal_dispatch(
+    eval_env: dict, session: Session, client: TestClient
+) -> None:
+    """M8-51 (#323) option C: digest/expiry come from the manifest response."""
+
+    run = session.get(EvalRun, eval_env["run_id"])
+    assert run is not None
+    outbox = session.scalar(select(Outbox).where(Outbox.aggregate_id == run.id))
+    assert outbox is not None
+    client_payload = outbox.payload_json["client_payload"]
+    assert client_payload["schema_version"] == "1.1"
+    assert "manifest_digest" not in client_payload
+    assert "expires_at" not in client_payload
+
+    response = client.get(
+        f"/runner/v1/shards/{eval_env['shard']}/manifest",
+        params={
+            "eval_run_id": run.id,
+            "attempt": 1,
+            "dispatch_key": outbox.dispatch_key,
+        },
+        headers=auth(eval_env),
+    )
+    assert response.status_code == 200, response.text
+    manifest_text = outbox.payload_json["manifest_text"]
+    expected_digest = "sha256:" + hashlib.sha256(manifest_text.encode()).hexdigest()
+    assert response.headers["X-Manifest-Digest"] == expected_digest
+    assert response.headers["X-Manifest-Digest"] == outbox.payload_json["manifest_digest"]
+    assert response.headers["X-Manifest-Expires-At"] == outbox.payload_json["expires_at"]
 
 
 def test_manifest_model_token_ttl_covers_agent_timeout(

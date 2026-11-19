@@ -1,0 +1,10 @@
+{
+  "schema_version": "1.1",
+  "eval_run_id": "eval_01HZX",
+  "shard_id": "shard_01",
+  "attempt": 1,
+  "dispatch_key": "eval_01HZX:shard_01:1",
+  "manifest_url": "http://127.0.0.1:18080/manifest",
+  "runs_on": ["self-hosted", "linux", "eval"],
+  "job_timeout_minutes": 70
+}

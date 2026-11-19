@@ -122,10 +122,14 @@ def test_dispatch_pins_the_scripts_bundle_for_image_cache_lookup(
 
     assert len(transport.calls) == 1
     payload = transport.calls[0]["body"]["client_payload"]
-    # M8-51 (#323): the pin stays in the outbox row; the workflow fetches it
-    # through the `/scripts` metadata endpoint instead of the dispatch payload.
+    # M8-51 (#323) option C: the pin stays in the outbox row and is fetched
+    # through the `/scripts` metadata endpoint; the dispatch keeps only the
+    # eight pre-start fields.
     assert "scripts_bundle" not in payload
-    assert len(payload) == 10
+    assert payload["schema_version"] == "1.1"
+    assert len(payload) == 8
+    assert "manifest_digest" not in payload
+    assert "expires_at" not in payload
     row = outbox_rows(seeded)[0]
     assert row.payload_json["scripts_bundle"] == {
         "name": name,
@@ -133,6 +137,8 @@ def test_dispatch_pins_the_scripts_bundle_for_image_cache_lookup(
         "sha256": "a" * 64,
         "size": 40960,
     }
+    assert row.payload_json["manifest_digest"].startswith("sha256:")
+    assert row.payload_json["expires_at"]
 
 
 def test_dispatch_omits_an_incomplete_scripts_bundle_pin(
@@ -292,7 +298,12 @@ def test_dispatch_guard_rejects_eleven_properties_without_calling_transport(
 ) -> None:
     configure_settings(GITHUB_TOKEN="gh-token")
     run = create_run(seeded, key="guard-11")
-    _mutate_client_payload(seeded, lambda payload: payload.update({"extra": "boom"}))
+    # The minimal 1.1 payload has 8 keys; three injected keys reach GitHub's
+    # 10-property ceiling.
+    _mutate_client_payload(
+        seeded,
+        lambda payload: payload.update({"extra_a": "boom", "extra_b": "boom", "extra_c": "boom"}),
+    )
     transport = FakeTransport([])
 
     outcome = dispatcher.dispatch_pending_outbox(seeded, transport=transport)
@@ -318,7 +329,7 @@ def test_dispatch_guard_rejects_oversized_payload_without_calling_transport(
 ) -> None:
     configure_settings(GITHUB_TOKEN="gh-token")
     create_run(seeded, key="guard-64k")
-    # Keep the 10 top-level keys and grow one value past the local byte guard.
+    # Keep the 8 top-level keys and grow one value past the local byte guard.
     _mutate_client_payload(
         seeded, lambda payload: payload.update({"manifest_url": "http://x/" + "a" * (61 * 1024)})
     )

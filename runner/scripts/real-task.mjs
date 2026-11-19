@@ -18,6 +18,11 @@ import { postCallback } from "../lib/callback-client.mjs";
 import { buildCancellationFailure } from "../lib/cancellation.mjs";
 import { requireValid, validateDispatch, validateManifest, validateStarted } from "../lib/contracts.mjs";
 import { DispatchGuard } from "../lib/dispatch-guard.mjs";
+import {
+  dispatchExpiresAt,
+  dispatchManifestDigest,
+  isExpired,
+} from "../lib/dispatch-descriptor.mjs";
 import { ContractError } from "../lib/errors.mjs";
 import { fetchManifest, sha256 } from "../lib/manifest-source.mjs";
 import { LocalObjectStore } from "../lib/object-store.mjs";
@@ -1048,13 +1053,21 @@ async function main() {
   const dispatchCheck = validateDispatch(dispatch);
   if (!dispatchCheck.ok) fail(`dispatch 校验失败：${dispatchCheck.errors.join("; ")}`, "manifest_invalid");
 
-  if (Date.parse(dispatch.expires_at) < Date.now()) fail("dispatch 已过期", "token_invalid");
+  if (isExpired(dispatch.expires_at)) fail("dispatch 已过期", "token_invalid");
 
   // Manifest fetch doubles as the token issuance point for the platform mode.
-  const { bytes: manifestBytes, tokenHeader, tasksUrl, modelToken } = await fetchManifest(dispatch.manifest_url).catch((error) =>
+  const manifestResponse = await fetchManifest(dispatch.manifest_url).catch((error) =>
     fail(error.message, "manifest_invalid")
   );
-  if (sha256(manifestBytes) !== dispatch.manifest_digest) {
+  const { bytes: manifestBytes, tokenHeader, tasksUrl, modelToken } = manifestResponse;
+  // M8-51 (#323) option C: a 1.1 dispatch omits digest/expiry; the manifest
+  // response is the server descriptor for both.
+  if (isExpired(dispatchExpiresAt(dispatch, manifestResponse))) {
+    fail("dispatch 已过期", "token_invalid");
+  }
+  const expectedDigest = dispatchManifestDigest(dispatch, manifestResponse);
+  if (!expectedDigest) fail("manifest digest 缺失", "manifest_digest_mismatch");
+  if (sha256(manifestBytes) !== expectedDigest) {
     fail("manifest digest 不匹配", "manifest_digest_mismatch");
   }
 

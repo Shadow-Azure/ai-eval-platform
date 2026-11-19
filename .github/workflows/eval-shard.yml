@@ -8,9 +8,14 @@
 #
 # M2-05: the platform worker POSTs a repository_dispatch whose client_payload
 # satisfies runner-contract/schemas/v1/dispatch.schema.json. The payload is a
-# reference only — opaque IDs plus the manifest URL/digest; cases, prompts and
-# the short-term token are fetched by the runner. Neither `prepare` nor
-# `execute` passes case data or credentials through the workflow env.
+# reference only — opaque IDs, the manifest URL, the scheduler labels and the
+# job timeout; cases, prompts, the manifest digest/expiry and the short-term
+# token are fetched by the runner. Neither `prepare` nor `execute` passes case
+# data or credentials through the workflow env.
+#
+# M8-51 (#323) option C: the dispatch keeps only the eight fields a job needs
+# before it starts; prepare/execute read the digest and expiry from the shard
+# manifest response headers and the scripts bundle pin from /scripts.
 #
 # workflow_dispatch (manual) is a bootstrap: it asks the platform to create a
 # synthetic evaluation, and the platform's dispatch loop triggers the real

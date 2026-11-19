@@ -3,6 +3,11 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { validateDispatch, validateManifest } from "../lib/contracts.mjs";
+import {
+  dispatchExpiresAt,
+  dispatchManifestDigest,
+  isExpired,
+} from "../lib/dispatch-descriptor.mjs";
 import { fetchManifest, sha256 } from "../lib/manifest-source.mjs";
 
 /**
@@ -53,12 +58,22 @@ async function main() {
   const dispatchCheck = validateDispatch(dispatch);
   if (!dispatchCheck.ok) fail(`dispatch 校验失败：${dispatchCheck.errors.join("; ")}`, "manifest_invalid");
 
-  if (Date.parse(dispatch.expires_at) < Date.now()) fail("dispatch 已过期", "token_invalid");
+  if (isExpired(dispatch.expires_at)) fail("dispatch 已过期", "token_invalid");
 
-  const { bytes } = await fetchManifest(dispatch.manifest_url).catch((error) =>
+  const manifestResponse = await fetchManifest(dispatch.manifest_url).catch((error) =>
     fail(error.message, "manifest_invalid")
   );
-  if (sha256(bytes) !== dispatch.manifest_digest) fail("manifest digest 不匹配", "manifest_digest_mismatch");
+  // M8-51 (#323) option C: the 1.1 dispatch omits digest/expiry; the manifest
+  // response is the server descriptor for both.
+  if (isExpired(dispatchExpiresAt(dispatch, manifestResponse))) {
+    fail("dispatch 已过期", "token_invalid");
+  }
+  const expectedDigest = dispatchManifestDigest(dispatch, manifestResponse);
+  if (!expectedDigest) fail("manifest digest 缺失", "manifest_digest_mismatch");
+  if (sha256(manifestResponse.bytes) !== expectedDigest) {
+    fail("manifest digest 不匹配", "manifest_digest_mismatch");
+  }
+  const { bytes } = manifestResponse;
 
   let manifest;
   try {

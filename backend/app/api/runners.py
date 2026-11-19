@@ -9,6 +9,7 @@ Routes consumed by the deployed fixed-runner heartbeat agent:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from datetime import UTC, datetime, timedelta
@@ -704,6 +705,22 @@ def shard_manifest(
             "X-Runner-Model-Anthropic-Base-Url": f"{gateway_base}/model-gateway/anthropic",
         }
     manifest_text = row.payload_json["manifest_text"]
+    # M8-51 (#323) option C: minimal 1.1 dispatches do not carry the digest or
+    # expiry, so the manifest response is the server descriptor the workflow
+    # reads them from. Stored values stay authoritative (the endpoint serves
+    # the exact manifest_text those values were computed from); older rows get
+    # the same headers from the same outbox payload.
+    manifest_digest = row.payload_json.get("manifest_digest")
+    if not manifest_digest:
+        manifest_digest = (
+            "sha256:" + hashlib.sha256(manifest_text.encode()).hexdigest()
+        )
+    expires_at = row.payload_json.get("expires_at") or row.payload_json.get(
+        "client_payload", {}
+    ).get("expires_at")
+    descriptor_headers = {"X-Manifest-Digest": manifest_digest}
+    if expires_at:
+        descriptor_headers["X-Manifest-Expires-At"] = str(expires_at)
     tasks_query = urlencode(
         {"eval_run_id": eval_run_id, "attempt": attempt, "dispatch_key": dispatch_key}
     )
@@ -719,6 +736,7 @@ def shard_manifest(
             "X-Runner-Tasks-Url": tasks_url,
             "Cache-Control": "no-store",
             "X-Shard-Dispatch-Key": dispatch_key,
+            **descriptor_headers,
             **model_headers,
         },
     )

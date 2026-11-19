@@ -544,19 +544,22 @@ def build_case_dispatches(
             f"{settings.runner_callback_base_url.rstrip('/')}"
             f"{MANIFEST_PATH_TEMPLATE.format(shard_id=shard_id)}?{query}"
         )
+        # M8-51 (#323) option C: the dispatch carries only the eight fields a
+        # job must know before it starts. The manifest digest, expiry and the
+        # scripts bundle pin are served by the manifest/`/scripts` endpoints
+        # once the job is running, so future platform fields never grow the
+        # GitHub payload past its 10-property limit.
         client_payload = {
-            "schema_version": "1.0",
+            "schema_version": "1.1",
             "eval_run_id": run.id,
             "shard_id": shard_id,
             "attempt": attempt_no,
             "dispatch_key": dispatch_key,
             "manifest_url": manifest_url,
-            "manifest_digest": manifest_digest,
             "runs_on": runs_on,
             # M8-43 (#304): the execute job reads this instead of a static
             # 60-minute timeout. ceil(case + 10m) > case > agent.
             "job_timeout_minutes": job_timeout_minutes(run.case_timeout_seconds),
-            "expires_at": expires_at.isoformat(timespec="microseconds").replace("+00:00", "Z"),
         }
         try:
             validate_payload("dispatch", client_payload)
@@ -576,6 +579,9 @@ def build_case_dispatches(
                     "client_payload": client_payload,
                     "manifest_text": manifest_text,
                     "manifest_digest": manifest_digest,
+                    "expires_at": expires_at.isoformat(timespec="microseconds").replace(
+                        "+00:00", "Z"
+                    ),
                     "attempt": attempt_no,
                     "shard_id": shard_id,
                 },
