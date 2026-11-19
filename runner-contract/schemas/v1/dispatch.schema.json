@@ -86,12 +86,13 @@
       ]
     },
     {
-      "description": "Version 1.1: minimal dispatch; digest, expiry and the scripts bundle pin come from the server descriptor after the job starts.",
+      "description": "Version 1.1: minimal dispatch; digest, expiry and the scripts bundle pin come from the server descriptor after the job starts. Exactly eight pre-start properties are allowed.",
       "properties": {
         "schema_version": {
           "const": "1.1"
         }
       },
+      "maxProperties": 8,
       "required": [
         "runs_on",
         "job_timeout_minutes"

@@ -44,6 +44,7 @@ export async function createScenario({
   tokenTtlSeconds = 600,
   expiresInMs = 3_600_000,
   manifestDigest,
+  manifestDigestHeader,
   dispatchVersion = "1.1",
 } = {}) {
   const evalRunId = dispatchOverrides.eval_run_id ?? "eval_test";
@@ -60,6 +61,7 @@ export async function createScenario({
     expectedToken: token,
     behavior,
     manifestExpiresAt: () => future(expiresInMs),
+    manifestDigestHeader: manifestDigestHeader ?? null,
   });
   const manifest = {
     schema_version: "1.0",

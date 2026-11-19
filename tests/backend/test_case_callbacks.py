@@ -410,8 +410,27 @@ def test_retryable_failure_creates_exactly_one_new_attempt_and_dispatch(
     retry_rows = env["session"].query(Outbox).all()
     retry = [r for r in retry_rows if r.payload_json.get("attempt") == 2]
     assert len(retry) == 1
-    validate_payload("dispatch", retry[0].payload_json["client_payload"])
-    assert retry[0].payload_json["client_payload"]["shard_id"].startswith(env["shard"])
+    retry_payload = retry[0].payload_json
+    retry_client_payload = retry_payload["client_payload"]
+    validate_payload("dispatch", retry_client_payload)
+    # M8-51 (#323) option C: a retry uses the same minimal 1.1 shape; the
+    # digest/expiry stay on the outbox row for the manifest descriptor.
+    assert retry_client_payload["schema_version"] == "1.1"
+    assert set(retry_client_payload) == {
+        "schema_version",
+        "eval_run_id",
+        "shard_id",
+        "attempt",
+        "dispatch_key",
+        "manifest_url",
+        "runs_on",
+        "job_timeout_minutes",
+    }
+    assert "manifest_digest" not in retry_client_payload
+    assert "expires_at" not in retry_client_payload
+    assert retry_payload["manifest_digest"].startswith("sha256:")
+    assert retry_payload["expires_at"]
+    assert retry_client_payload["shard_id"].startswith(env["shard"])
     import json
 
     retry_manifest = json.loads(retry[0].payload_json["manifest_text"])

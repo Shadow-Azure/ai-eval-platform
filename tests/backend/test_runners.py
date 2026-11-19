@@ -1176,6 +1176,44 @@ def test_manifest_serves_the_server_descriptor_for_a_minimal_dispatch(
     assert response.headers["X-Manifest-Expires-At"] == outbox.payload_json["expires_at"]
 
 
+def test_manifest_serves_the_descriptor_for_a_legacy_dispatch(
+    eval_env: dict, session: Session, client: TestClient
+) -> None:
+    """M8-51 (#323): an in-flight 1.0 row still gets descriptor headers.
+
+    Legacy rows predate the top-level ``expires_at``; the endpoint must fall
+    back to the expiry frozen in their 1.0 client payload so a runner started
+    before the rollout can still verify the manifest.
+    """
+
+    run = session.get(EvalRun, eval_env["run_id"])
+    assert run is not None
+    outbox = session.scalar(select(Outbox).where(Outbox.aggregate_id == run.id))
+    assert outbox is not None
+    payload = dict(outbox.payload_json)
+    client_payload = dict(payload["client_payload"])
+    client_payload["schema_version"] = "1.0"
+    client_payload["manifest_digest"] = payload["manifest_digest"]
+    client_payload["expires_at"] = payload["expires_at"]
+    payload["client_payload"] = client_payload
+    payload.pop("expires_at", None)
+    outbox.payload_json = payload
+    session.commit()
+
+    response = client.get(
+        f"/runner/v1/shards/{eval_env['shard']}/manifest",
+        params={
+            "eval_run_id": run.id,
+            "attempt": 1,
+            "dispatch_key": outbox.dispatch_key,
+        },
+        headers=auth(eval_env),
+    )
+    assert response.status_code == 200, response.text
+    assert response.headers["X-Manifest-Digest"] == payload["manifest_digest"]
+    assert response.headers["X-Manifest-Expires-At"] == client_payload["expires_at"]
+
+
 def test_manifest_model_token_ttl_covers_agent_timeout(
     eval_env: dict, session: Session, client: TestClient
 ) -> None:

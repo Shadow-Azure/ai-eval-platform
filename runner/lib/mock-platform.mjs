@@ -22,10 +22,15 @@ export async function startMockPlatform({
   behavior = {},
   manifestContentType = "application/json",
   manifestExpiresAt = null,
+  manifestDigestHeader = null,
 }) {
   const getManifest = typeof manifestText === "function" ? manifestText : () => manifestText;
   const expiresAtHeader =
     typeof manifestExpiresAt === "function" ? manifestExpiresAt : () => manifestExpiresAt;
+  const digestHeader =
+    typeof manifestDigestHeader === "function"
+      ? manifestDigestHeader
+      : () => manifestDigestHeader;
   const requests = [];
   const objects = new Map();
   const state = {
@@ -63,7 +68,7 @@ export async function startMockPlatform({
       // M8-51 (#323) option C: the real manifest endpoint serves the server
       // descriptor (digest + dispatch expiry) so a minimal 1.1 dispatch can
       // omit both fields.
-      headers["x-manifest-digest"] =
+      headers["x-manifest-digest"] = digestHeader() ??
         `sha256:${createHash("sha256").update(manifest).digest("hex")}`;
       const expiresAt = expiresAtHeader();
       if (expiresAt) headers["x-manifest-expires-at"] = String(expiresAt);

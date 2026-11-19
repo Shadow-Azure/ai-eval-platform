@@ -103,6 +103,10 @@ test("minimal 1.1 dispatch keeps the eight pre-start fields and the legacy shape
   const legacyWithoutDigest = { ...legacy };
   delete legacyWithoutDigest.manifest_digest;
   assert.match(validatePayload("dispatch", legacyWithoutDigest).errors.join("; "), /manifest_digest/);
+  // 1.1 is exactly the eight pre-start fields: a digest/expiry smuggled back
+  // into it is a contract error, not a silently accepted legacy shape.
+  const minimalWithDigest = { ...minimal, manifest_digest: legacy.manifest_digest };
+  assert.match(validatePayload("dispatch", minimalWithDigest).errors.join("; "), /最多 8 个属性/);
 });
 
 test("failure accepts runner cancellation codes and a partial trace manifest", () => {

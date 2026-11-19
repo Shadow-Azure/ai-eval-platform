@@ -7,11 +7,14 @@ Run manually (not collected by pytest):
       --out /tmp/m8-51-evidence.json
 
 The smoke builds a disposable SQLite control plane and drives the real outbox
-dispatcher against a fake GitHub transport. It covers the acceptance timeline:
+dispatcher against a fake GitHub transport. It covers the dispatcher half of
+the acceptance timeline:
 
 1. a complete scripts-bundle configuration dispatches the minimal 1.1
    client_payload (eight pre-start properties), with the pin, digest and
-   expiry in the outbox row and served by the manifest/`/scripts` endpoints;
+   expiry stored on the outbox row; the manifest response headers and the
+   `/scripts` endpoint that expose them are covered by ``test_runners.py`` and
+   ``test_runner_scripts.py``;
 2. an injected eleventh top-level property fails locally with
    ``dispatch_payload_invalid`` and never calls the transport;
 3. a 422 parameter-validation response is terminal (no retry);
