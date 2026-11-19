@@ -49,6 +49,8 @@ def _run_or_404(session: Session, tenant_id: str, run_id: str) -> EvalRun:
 USAGE_METRIC_KEYS = (
     "total_tokens",
     "tokens_per_case",
+    "total_tokens_with_cache",
+    "tokens_with_cache_per_case",
     "total_cost_usd",
     "cost_per_case_usd",
 )
@@ -59,9 +61,16 @@ def _token_metric_items(
 ) -> list[dict[str, object]]:
     cases_with_tokens = int(summary.get("cases_with_tokens") or 0)
     total_tokens = int(summary.get("total_tokens") or 0)
+    total_tokens_with_cache = int(
+        summary.get("total_tokens_with_cache") or total_tokens
+    )
     cost_usd = float(summary.get("cost_usd") or 0)
     total_value = total_tokens if cases_with_tokens else None
+    total_with_cache_value = (
+        total_tokens_with_cache if cases_with_tokens else None
+    )
     average_tokens = summary.get("average_tokens")
+    average_tokens_with_cache = summary.get("average_tokens_with_cache")
     average_cost = summary.get("average_cost_usd")
     common = {
         "metric_version": 1,
@@ -98,6 +107,39 @@ def _token_metric_items(
             "denominator_policy": "cases_with_tokens",
             "value": average_tokens,
             "numerator": total_tokens,
+            "denominator": cases_with_tokens or None,
+        },
+        {
+            **common,
+            "metric_key": "total_tokens_with_cache",
+            "display_name": "总 Token（含缓存）",
+            "description": (
+                "每个用例所有 attempt 的非缓存输入 + cache 输入（read + "
+                "creation）+ 输出；与远端模型用量口径一致。"
+            ),
+            "formula_text": (
+                "total_tokens_with_cache = total_tokens + cache_read_tokens + "
+                "cache_creation_tokens"
+            ),
+            "unit": "tokens",
+            "denominator_policy": None,
+            "value": total_with_cache_value,
+            "numerator": total_tokens_with_cache,
+            "denominator": None,
+        },
+        {
+            **common,
+            "metric_key": "tokens_with_cache_per_case",
+            "display_name": "平均 Token（含缓存）/ 用例",
+            "description": "按有轨迹数据的用例数取平均，cache 输入计入。",
+            "formula_text": (
+                "tokens_with_cache_per_case = total_tokens_with_cache / "
+                "cases_with_tokens"
+            ),
+            "unit": "tokens",
+            "denominator_policy": "cases_with_tokens",
+            "value": average_tokens_with_cache,
+            "numerator": total_tokens_with_cache,
             "denominator": cases_with_tokens or None,
         },
         {

@@ -65,10 +65,11 @@ import { Icon } from "../components/Icon";
 import { PageHeading } from "../components/PageHeading";
 import { QueryError } from "../components/QueryError";
 import { StatusCard } from "../components/StatusCard";
+import { TokenComposition } from "../components/TokenComposition";
 import { copyText } from "../utils/clipboard";
 import { EVAL_STATUS_META } from "../utils/evalStatus";
 import { formatMoney, formatUsd } from "../utils/money";
-import { formatTokenAmount, readTokenNumber } from "../utils/tokens";
+import { formatTokenAmount, formatTokenOrZero, readTokenNumber } from "../utils/tokens";
 
 const TAB_KEYS = ["overview", "cases", "results", "config", "events"] as const;
 type TabKey = (typeof TAB_KEYS)[number];
@@ -321,6 +322,8 @@ const METRIC_CARD_PRIORITY: Record<string, number> = {
   resolved_rate_scored: 1,
   resolved_count: 2,
   execution_failure_rate: 3,
+  total_tokens_with_cache: 4,
+  tokens_with_cache_per_case: 5,
   total_tokens: 4,
   tokens_per_case: 5,
   total_cost_usd: 6,
@@ -649,9 +652,12 @@ export function EvalDetailPage() {
         "结果",
         "轨迹",
         "耗时(ms)",
-        "输入tokens",
+        "非缓存输入tokens",
         "输出tokens",
-        "总tokens",
+        "缓存读取tokens",
+        "缓存创建tokens",
+        "总tokens(不含缓存)",
+        "总tokens(含缓存)",
         "成本USD",
         "错误码",
         "错误摘要",
@@ -659,7 +665,10 @@ export function EvalDetailPage() {
       const rows = all.map((row) => {
         const input = readTokenNumber(row.metrics.input_tokens);
         const output = readTokenNumber(row.metrics.output_tokens);
-        const totalTokens = caseTotalTokens(row);
+        const cacheRead = readTokenNumber(row.metrics.cache_read_tokens);
+        const cacheCreation = readTokenNumber(row.metrics.cache_creation_tokens);
+        const totalTokens = readTokenNumber(row.metrics.total_tokens);
+        const totalWithCache = caseTotalTokens(row);
         return [
           row.case_key,
           row.repo,
@@ -669,7 +678,10 @@ export function EvalDetailPage() {
           row.duration_ms,
           input,
           output,
+          cacheRead,
+          cacheCreation,
           totalTokens,
+          totalWithCache,
           caseCostUsd(row),
           row.error_code,
           row.error_summary,
@@ -1073,7 +1085,7 @@ export function EvalDetailPage() {
                 value={`${sortParam}:${orderParam}`}
                 options={[
                   { value: "ordinal:asc", label: "默认顺序" },
-                  { value: "total_tokens:desc", label: "Token 高→低" },
+                  { value: "total_tokens_with_cache:desc", label: "Token（含缓存）高→低" },
                   { value: "cost_usd:desc", label: "成本 高→低" },
                 ]}
                 onChange={(value) => {
@@ -1302,18 +1314,21 @@ function shortSessionId(value: string): string {
 }
 
 /**
- * Latest-attempt token total from the case row's ``metrics`` block.
+ * User-facing total (#339): non-cache input + cache input + output.
  *
  * The API may omit the whole block (queued/not-yet-ingested cases) or only
- * expose the input/output split; never invent a zero for missing data.
+ * expose the older input/output split; never invent a zero for missing data.
  */
 function caseTotalTokens(record: EvalCaseRow): number | null {
+  const withCache = readTokenNumber(record.metrics.total_tokens_with_cache);
+  if (withCache !== null) return withCache;
   const explicit = readTokenNumber(record.metrics.total_tokens);
-  if (explicit !== null) return explicit;
+  const cacheInput = readTokenNumber(record.metrics.cache_input_tokens) ?? 0;
+  if (explicit !== null) return explicit + cacheInput;
   const input = readTokenNumber(record.metrics.input_tokens);
   const output = readTokenNumber(record.metrics.output_tokens);
   if (input === null && output === null) return null;
-  return (input ?? 0) + (output ?? 0);
+  return (input ?? 0) + (output ?? 0) + cacheInput;
 }
 
 function caseCostUsd(record: EvalCaseRow): number | null {
@@ -1322,21 +1337,32 @@ function caseCostUsd(record: EvalCaseRow): number | null {
 
 function CaseTokenSummary({ summary }: { summary: EvalTokenSummary | null | undefined }) {
   if (!summary) return null;
-  const summed = summary.input_tokens + summary.output_tokens;
-  const total = summary.total_tokens > 0 ? summary.total_tokens : summed > 0 ? summed : null;
+  const total =
+    summary.total_tokens_with_cache > 0
+      ? summary.total_tokens_with_cache
+      : summary.total_tokens > 0
+        ? summary.total_tokens
+        : null;
   return (
     <div className="token-summary-bar" aria-label="用例集 Token 汇总">
       <div className="token-summary-primary">
-        <div className="token-summary-eyebrow">用例集 TOKEN 总消耗</div>
+        <div className="token-summary-eyebrow">用例集 TOKEN 总消耗（含缓存）</div>
         <div className="token-summary-total">{formatTokenAmount(total)}</div>
         <div className="token-summary-split">
-          输入 {formatTokenAmount(summary.input_tokens)} · 输出{" "}
-          {formatTokenAmount(summary.output_tokens)}
+          <span>
+            缓存输入 <strong>{formatTokenAmount(summary.cache_input_tokens)}</strong>
+          </span>
+          <span>
+            非缓存输入 <strong>{formatTokenAmount(summary.input_tokens)}</strong>
+          </span>
+          <span>
+            输出 <strong>{formatTokenAmount(summary.output_tokens)}</strong>
+          </span>
         </div>
       </div>
       <div className="token-summary-stat">
-        <span>平均 / 用例</span>
-        <strong>{formatTokenAmount(summary.average_tokens)}</strong>
+        <span>平均 / 用例（含缓存）</span>
+        <strong>{formatTokenAmount(summary.average_tokens_with_cache)}</strong>
         <small>
           覆盖 {summary.cases_with_tokens} / {summary.case_count} 个用例
         </small>
@@ -1462,24 +1488,29 @@ function caseColumns(
     render: (value: number | null) => formatDuration(value),
   },
   {
-    title: "Token",
+    title: "Token（含缓存）",
     dataIndex: "metrics",
     key: "token_total",
-    width: 90,
+    width: 132,
     render: (_value, record) => {
       const total = caseTotalTokens(record);
       if (total === null) return <span className="muted small">—</span>;
       const input = readTokenNumber(record.metrics.input_tokens);
       const output = readTokenNumber(record.metrics.output_tokens);
+      const cacheInput = readTokenNumber(record.metrics.cache_input_tokens);
       return (
         <Tooltip
           title={
             input !== null || output !== null
-              ? `输入 ${formatTokenAmount(input)} · 输出 ${formatTokenAmount(output)}（所有 attempt）`
+              ? `缓存输入 ${formatTokenAmount(cacheInput)} · 非缓存输入 ${formatTokenAmount(input)} · 输出 ${formatTokenAmount(output)}（所有 attempt）`
               : "所有 attempt trace 聚合"
           }
         >
-          <span className="mono small">{formatTokenAmount(total)}</span>
+          <div className="mono small">{formatTokenAmount(total)}</div>
+          <div className="token-breakdown">
+            缓存 {formatTokenAmount(cacheInput)} · 非缓存{" "}
+            {formatTokenAmount(input)}
+          </div>
         </Tooltip>
       );
     },
@@ -1840,7 +1871,13 @@ function OverviewPanel(props: OverviewPanelProps) {
 }
 
 interface ResultsPanelProps {
-  results: { is_final: boolean; items: MetricResult[] } | undefined;
+  results:
+    | {
+        is_final: boolean;
+        items: MetricResult[];
+        token_summary: EvalTokenSummary | null;
+      }
+    | undefined;
   loading: boolean;
   error: Error | null;
   onRetry: () => void;
@@ -1880,8 +1917,23 @@ function ResultsPanel(props: ResultsPanelProps) {
     return <Card><Skeleton active paragraph={{ rows: 8 }} /></Card>;
   }
   const metrics = results?.items ?? [];
+  const tokenSummary = results?.token_summary ?? null;
+  const hasCacheMetrics = metrics.some(
+    (metric) => metric.metric_key === "total_tokens_with_cache",
+  );
   const known = metrics
     .filter((metric) => isKnownMetricKind(metric.display_kind))
+    // #339: the with-cache total/average replace the non-cache cards so the
+    // page does not show two contradictory averages. Older control planes
+    // that only return the non-cache keys keep their original cards.
+    .filter(
+      (metric) =>
+        !(
+          hasCacheMetrics &&
+          (metric.metric_key === "total_tokens" ||
+            metric.metric_key === "tokens_per_case")
+        ),
+    )
     .sort((a, b) => metricCardPriority(a.metric_key) - metricCardPriority(b.metric_key));
   const unknown = metrics.filter((metric) => !isKnownMetricKind(metric.display_kind));
   const deltaByKey = new Map((comparison?.metric_deltas ?? []).map((item) => [item.metric_key, item]));
@@ -1935,6 +1987,35 @@ function ResultsPanel(props: ResultsPanelProps) {
           </Card>
         )}
       </div>
+      {tokenSummary ? (
+        <TokenComposition
+          className="section-gap"
+          subtitle="总 = cache 输入（read + creation）+ 非缓存输入 + 输出"
+          badge={<Tag color="processing">cache 已计入</Tag>}
+          items={[
+            {
+              label: "总 Token（含缓存）",
+              value: formatTokenAmount(tokenSummary.total_tokens_with_cache),
+              meta: `覆盖 ${tokenSummary.cases_with_tokens} / ${tokenSummary.case_count} 个用例`,
+            },
+            {
+              label: "cache 输入",
+              value: formatTokenOrZero(tokenSummary.cache_input_tokens),
+              meta: `read ${formatTokenOrZero(tokenSummary.cache_read_tokens)} · creation ${formatTokenOrZero(tokenSummary.cache_creation_tokens)}`,
+            },
+            {
+              label: "非缓存输入",
+              value: formatTokenAmount(tokenSummary.input_tokens),
+              meta: "prompt input（不含 cache）",
+            },
+            {
+              label: "输出",
+              value: formatTokenAmount(tokenSummary.output_tokens),
+              meta: "completion output",
+            },
+          ]}
+        />
+      ) : null}
       <div className="eval-results-layout section-gap">
         <Card title="用例结果分布" className="eval-panel-card eval-panel-flush">
           <div className="card-body">

@@ -305,6 +305,10 @@ def _session_body(
         "span_count": stats.get("span_count", 0),
         "input_tokens": stats.get("input_tokens"),
         "output_tokens": stats.get("output_tokens"),
+        "cache_read_tokens": stats.get("cache_read_tokens"),
+        "cache_creation_tokens": stats.get("cache_creation_tokens"),
+        "cache_input_tokens": stats.get("cache_input_tokens"),
+        "total_tokens_with_cache": stats.get("total_tokens_with_cache"),
         "cost": stats.get("cost"),
         "children": [
             _session_body(child, children=[], stats={})
@@ -411,6 +415,28 @@ def attempt_trace(
                         else_=None,
                     )
                 ),
+                func.sum(
+                    case(
+                        (
+                            TraceSpan.kind != "AGENT",
+                            TraceSpan.attributes_json[
+                                "gen_ai.usage.cache_read_input_tokens"
+                            ].as_integer(),
+                        ),
+                        else_=None,
+                    )
+                ),
+                func.sum(
+                    case(
+                        (
+                            TraceSpan.kind != "AGENT",
+                            TraceSpan.attributes_json[
+                                "gen_ai.usage.cache_creation_input_tokens"
+                            ].as_integer(),
+                        ),
+                        else_=None,
+                    )
+                ),
                 func.sum(TraceSpan.cost),
                 func.min(TraceSpan.started_at),
                 func.max(TraceSpan.ended_at),
@@ -432,10 +458,19 @@ def attempt_trace(
                 "span_count": int(row[1] or 0),
                 "input_tokens": int(row[2]) if row[2] is not None else None,
                 "output_tokens": int(row[3]) if row[3] is not None else None,
-                "cost": str(row[4]) if row[4] is not None else None,
-                "started_at": row[5],
-                "ended_at": row[6],
-                "clock_invalid": int(row[7] or 0),
+                "cache_read_tokens": int(row[4] or 0),
+                "cache_creation_tokens": int(row[5] or 0),
+                "cache_input_tokens": int(row[4] or 0) + int(row[5] or 0),
+                "total_tokens_with_cache": (
+                    int(row[2] or 0)
+                    + int(row[3] or 0)
+                    + int(row[4] or 0)
+                    + int(row[5] or 0)
+                ),
+                "cost": str(row[6]) if row[6] is not None else None,
+                "started_at": row[7],
+                "ended_at": row[8],
+                "clock_invalid": int(row[9] or 0),
             }
             for row in rows
         }
@@ -490,6 +525,15 @@ def attempt_trace(
         for stats in span_rows.values()
         if stats.get("output_tokens") is not None
     )
+    total_cache_read = sum(
+        int(stats.get("cache_read_tokens") or 0)
+        for stats in span_rows.values()
+    )
+    total_cache_creation = sum(
+        int(stats.get("cache_creation_tokens") or 0)
+        for stats in span_rows.values()
+    )
+    total_cache_input = total_cache_read + total_cache_creation
     return {
         "case_run_id": case_run.id,
         "trace_status": case_run.trace_status,
@@ -544,6 +588,12 @@ def attempt_trace(
             "span_count": total_spans,
             "input_tokens": total_input,
             "output_tokens": total_output,
+            "cache_read_tokens": total_cache_read,
+            "cache_creation_tokens": total_cache_creation,
+            "cache_input_tokens": total_cache_input,
+            "total_tokens_with_cache": (
+                total_input + total_output + total_cache_input
+            ),
         },
         "quality": {
             "files": _file_quality(files),

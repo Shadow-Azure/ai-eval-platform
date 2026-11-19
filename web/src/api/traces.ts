@@ -72,6 +72,10 @@ export interface TraceSession extends Record<string, unknown> {
   span_count: number;
   input_tokens: number | null;
   output_tokens: number | null;
+  cache_read_tokens: number | null;
+  cache_creation_tokens: number | null;
+  cache_input_tokens: number | null;
+  total_tokens_with_cache: number | null;
   cost: string | null;
   relation_evidence: Record<string, unknown>;
   children: TraceSession[];
@@ -104,6 +108,10 @@ export interface TraceAttemptResponse {
     spanCount: number;
     inputTokens: number;
     outputTokens: number;
+    cacheReadTokens: number;
+    cacheCreationTokens: number;
+    cacheInputTokens: number;
+    totalTokensWithCache: number;
   };
   quality: TraceQuality;
   parserVersions: string[];
@@ -215,6 +223,10 @@ function parseSession(value: unknown): TraceSession {
     span_count: numberValue(item.span_count) ?? 0,
     input_tokens: numberValue(item.input_tokens),
     output_tokens: numberValue(item.output_tokens),
+    cache_read_tokens: numberValue(item.cache_read_tokens),
+    cache_creation_tokens: numberValue(item.cache_creation_tokens),
+    cache_input_tokens: numberValue(item.cache_input_tokens),
+    total_tokens_with_cache: numberValue(item.total_tokens_with_cache),
     cost: stringValue(item.cost),
     relation_evidence: record(item.relation_evidence),
     children: array(item.children).map(parseSession),
@@ -267,6 +279,13 @@ export function parseAttemptTrace(payload: unknown): TraceAttemptResponse {
       spanCount: numberValue(stats.span_count) ?? 0,
       inputTokens: numberValue(stats.input_tokens) ?? 0,
       outputTokens: numberValue(stats.output_tokens) ?? 0,
+      cacheReadTokens: numberValue(stats.cache_read_tokens) ?? 0,
+      cacheCreationTokens: numberValue(stats.cache_creation_tokens) ?? 0,
+      cacheInputTokens: numberValue(stats.cache_input_tokens) ?? 0,
+      totalTokensWithCache:
+        numberValue(stats.total_tokens_with_cache) ??
+        (numberValue(stats.input_tokens) ?? 0) +
+          (numberValue(stats.output_tokens) ?? 0),
     },
     quality: parseQuality(item.quality),
     parserVersions: array(item.parser_versions).filter(

@@ -71,6 +71,7 @@ attributes_json / usage / cost / content_preview / content_object_key
 | `gen_ai.agent.name/id` | Runtime Agent 名称与 ID |
 | `gen_ai.request.model` | 冻结模型名 |
 | `gen_ai.usage.input_tokens/output_tokens` | 最终用量，非 delta 累加 |
+| `gen_ai.usage.cache_read_input_tokens/cache_creation_input_tokens` | cache 输入明细；与 `input_tokens` 分开计，不重复累加 |
 | `gen_ai.tool.name` / `gen_ai.tool.call.id` | 工具关联 |
 | `openinference.span.kind` | AGENT/LLM/TOOL/CHAIN |
 | `eval.run.id` / `eval.case_run.id` / `eval.attempt.id` | 评测归属 |

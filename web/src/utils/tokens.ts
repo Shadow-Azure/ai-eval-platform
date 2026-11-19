@@ -1,9 +1,11 @@
 /**
  * Token formatting shared by eval and dataset pages (M8-53 / issue #332).
  *
- * Token aggregates come from trace spans (`input_tokens + output_tokens`) and
- * follow the prototype's compact zh-CN scale: 万 / 亿. Cache read/write tokens
- * are a separate concept and must not be folded into these totals.
+ * Token aggregates come from trace spans and follow the prototype's compact
+ * zh-CN scale: 万 / 亿. Since #339 the user-facing total includes cache input
+ * (`total_tokens_with_cache`); `formatTokenAmount` stays a pure formatter and
+ * `formatTokenOrZero` exists because a genuine zero cache-creation count is
+ * meaningful, unlike a missing value.
  */
 
 /** Parse a number that may arrive as a JSON number or a decimal string. */
@@ -30,4 +32,10 @@ export function formatTokenAmount(value: number | null | undefined): string {
     return `${Number((value / 10_000).toFixed(1))} 万`;
   }
   return value.toLocaleString("zh-CN");
+}
+
+/** Format a token count, keeping a real zero visible (`0` vs `—`). */
+export function formatTokenOrZero(value: number | null | undefined): string {
+  if (value === 0) return "0";
+  return formatTokenAmount(value);
 }

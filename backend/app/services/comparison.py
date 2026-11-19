@@ -435,7 +435,15 @@ def _metric_deltas(
             for key in set(current_by_key) | set(baseline_by_key)
             # M8-53 (#332): usage metrics are live trace aggregates; a frozen
             # MetricResult row from the old scoring path would compare 0 vs 0.
-            if key not in {"total_tokens", "tokens_per_case", "total_cost_usd", "cost_per_case_usd"}
+            if key
+            not in {
+                "total_tokens",
+                "tokens_per_case",
+                "total_tokens_with_cache",
+                "tokens_with_cache_per_case",
+                "total_cost_usd",
+                "cost_per_case_usd",
+            }
         ),
         key=lambda key: (METRIC_ORDER.get(key, 100), key),
     )

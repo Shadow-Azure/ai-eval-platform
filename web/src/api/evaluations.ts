@@ -150,13 +150,20 @@ export interface EvaluationProgress {
  * is deliberately not mixed into the platform's CNY budget fields.
  */
 export interface EvalTokenSummary {
+  /** #332 semantics: non-cache input + output, kept unchanged. */
   input_tokens: number;
   output_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+  cache_input_tokens: number;
   total_tokens: number;
+  /** #339 user-facing total: non-cache input + cache input + output. */
+  total_tokens_with_cache: number;
   cost_usd: number | null;
   case_count: number;
   cases_with_tokens: number;
   average_tokens: number | null;
+  average_tokens_with_cache: number | null;
   average_cost_usd: number | null;
 }
 
@@ -655,6 +662,13 @@ function readOptionalString(value: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
 
+/** Metric numerators/denominators may be JSON numbers or decimal strings. */
+function readMetricCounter(value: unknown): string | null {
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  if (typeof value === "string" && value.trim() !== "") return value;
+  return null;
+}
+
 function readOptionalNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
@@ -853,14 +867,36 @@ function readTokenCount(value: unknown): number {
  */
 export function parseTokenSummary(value: unknown): EvalTokenSummary | null {
   if (!isRecord(value)) return null;
+  const input = readTokenCount(value.input_tokens);
+  const output = readTokenCount(value.output_tokens);
+  const cacheRead = readTokenCount(value.cache_read_tokens);
+  const cacheCreation = readTokenCount(value.cache_creation_tokens);
+  const cacheInput = readTokenCount(value.cache_input_tokens);
+  const total = readTokenCount(value.total_tokens);
+  const totalWithCache = readTokenCount(value.total_tokens_with_cache);
+  const caseCount = readTokenCount(value.case_count);
+  const casesWithTokens = readTokenCount(value.cases_with_tokens);
+  const resolvedCacheInput =
+    cacheInput > 0 ? cacheInput : cacheRead + cacheCreation;
+  const resolvedTotalWithCache =
+    totalWithCache > 0 ? totalWithCache : total + resolvedCacheInput;
   return {
-    input_tokens: readTokenCount(value.input_tokens),
-    output_tokens: readTokenCount(value.output_tokens),
-    total_tokens: readTokenCount(value.total_tokens),
+    input_tokens: input,
+    output_tokens: output,
+    cache_read_tokens: cacheRead,
+    cache_creation_tokens: cacheCreation,
+    cache_input_tokens: resolvedCacheInput,
+    total_tokens: total,
+    total_tokens_with_cache: resolvedTotalWithCache,
     cost_usd: readOptionalNumeric(value.cost_usd),
-    case_count: readTokenCount(value.case_count),
-    cases_with_tokens: readTokenCount(value.cases_with_tokens),
+    case_count: caseCount,
+    cases_with_tokens: casesWithTokens,
     average_tokens: readOptionalNumeric(value.average_tokens),
+    average_tokens_with_cache:
+      readOptionalNumeric(value.average_tokens_with_cache) ??
+      (casesWithTokens
+        ? Math.round(resolvedTotalWithCache / casesWithTokens)
+        : null),
     average_cost_usd: readOptionalNumeric(value.average_cost_usd),
   };
 }
@@ -1283,13 +1319,18 @@ export async function retryImageReadiness(
 export async function fetchEvaluationResults(
   runId: string,
   signal?: AbortSignal,
-): Promise<{ is_final: boolean; items: MetricResult[] }> {
+): Promise<{
+  is_final: boolean;
+  items: MetricResult[];
+  token_summary: EvalTokenSummary | null;
+}> {
   const payload = await request(`/api/v1/eval-runs/${runId}/results`, { signal });
   if (!isRecord(payload) || !Array.isArray(payload.items)) {
     throw new ApiError("控制面返回了无法识别的结果数据", { code: "invalid_response" });
   }
   return {
     is_final: Boolean(payload.is_final),
+    token_summary: parseTokenSummary(payload.token_summary),
     items: payload.items.map((entry) => {
       const item = (entry ?? {}) as Record<string, unknown>;
       return {
@@ -1303,8 +1344,8 @@ export async function fetchEvaluationResults(
         direction: readString(item.direction),
         denominator_policy: readOptionalString(item.denominator_policy),
         value: item.value,
-        numerator: readOptionalString(item.numerator),
-        denominator: readOptionalString(item.denominator),
+        numerator: readMetricCounter(item.numerator),
+        denominator: readMetricCounter(item.denominator),
         is_final: Boolean(item.is_final),
         generated_at: readOptionalString(item.generated_at),
       };
