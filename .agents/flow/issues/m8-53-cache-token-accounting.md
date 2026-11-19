@@ -9,6 +9,7 @@ priority: P2
 status: in-progress
 scope:
   - .agents/flow/issues/m8-53-cache-token-accounting.*
+  - .agents/flow/issues/m9-self-evolution-session-addressing.*
   - plans/m1-02-fullstack-design/07-datasets-metrics-and-agents.md
   - plans/m1-02-fullstack-design/08-trace-normalization.md
   - plans/2026-11-19-pr*-review.md
