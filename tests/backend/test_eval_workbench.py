@@ -426,7 +426,10 @@ def test_retry_case_creates_attempt_outbox_and_event(
     )
     assert event is not None
     assert event.eval_case_run_id == target.id
-    assert event.attempt_no == 2
+    # M8-44 (#306): the retry request is attached to the attempt that failed;
+    # the new attempt's sequence 0 belongs to the Runner's case.started.
+    assert event.attempt_no == 1
+    assert event.payload_json["new_attempt_no"] == 2
     assert event.payload_json["requested_by"] == "admin@test.local"
 
     # The exact same request cannot double-retry: the case already moved on.

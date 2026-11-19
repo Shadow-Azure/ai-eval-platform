@@ -63,6 +63,7 @@ RETRYABLE_FAILURE_CODES = frozenset(
         HEARTBEAT_TIMEOUT,
         "spot_interrupted",
         "runner_lost",
+        "runner_bootstrap_failed",
         "network_error",
         "model_rate_limited",
         "model_unavailable",

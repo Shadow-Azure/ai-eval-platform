@@ -664,3 +664,172 @@ def test_completion_clears_case_error_fields(eval_env, client) -> None:
     assert case.execution_status == "succeeded"
     assert case.error_code is None
     assert case.error_summary is None
+
+
+def test_manual_retry_started_is_not_a_sequence_conflict(
+    eval_env, client: TestClient
+) -> None:
+    """M8-44 (#306): manual retry must not occupy the new attempt's sequence 0."""
+
+    env = eval_env
+    case_run_id = env["cases"]["case-a"]
+    client.post(
+        case_url(env, case_run_id, "started"),
+        json=started_body(env, case_run_id),
+        headers=auth(env),
+    )
+    failed = client.post(
+        case_url(env, case_run_id, "failed"),
+        json=failure_body(case_run_id, retryable=False),
+        headers=auth(env),
+    )
+    assert failed.status_code == 200
+
+    retried = client.post(f"/api/v1/eval-case-runs/{case_run_id}/retry")
+    assert retried.status_code == 200, retried.text
+
+    env["session"].expire_all()
+    attempt2 = (
+        env["session"].query(EvalCaseAttempt)
+        .filter(EvalCaseAttempt.eval_case_run_id == case_run_id)
+        .filter(EvalCaseAttempt.attempt_no == 2)
+        .one()
+    )
+    retry_token = issue_short_token(
+        {"eval_run_id": env["run_id"], "shard_id": attempt2.shard_id, "attempt": 2},
+        SECRET,
+        ttl_seconds=600,
+    )
+    headers = {"Authorization": f"Bearer {retry_token}"}
+    started = client.post(
+        case_url(env, case_run_id, "started"),
+        json=started_body(env, case_run_id, attempt=2),
+        headers=headers,
+    )
+    assert started.status_code == 200, started.text
+    assert started.json()["deduped"] is False
+
+    retry_event = (
+        env["session"]
+        .query(EvalEvent)
+        .filter(EvalEvent.event_type == "case.retry_requested")
+        .one()
+    )
+    assert retry_event.attempt_no == 1
+    assert retry_event.payload_json["new_attempt_no"] == 2
+
+    completed = client.post(
+        case_url(env, case_run_id, "completed"),
+        json=completion_body(env, case_run_id, attempt=2),
+        headers=headers,
+    )
+    assert completed.status_code == 200, completed.text
+
+
+def test_started_recovers_legacy_retry_event_collision(
+    eval_env, client: TestClient
+) -> None:
+    """Attempts created before the deploy still carry retry_requested at seq 0."""
+
+    env = eval_env
+    case_run_id = env["cases"]["case-a"]
+    client.post(
+        case_url(env, case_run_id, "started"),
+        json=started_body(env, case_run_id),
+        headers=auth(env),
+    )
+    client.post(
+        case_url(env, case_run_id, "failed"),
+        json=failure_body(case_run_id, retryable=False),
+        headers=auth(env),
+    )
+    assert client.post(f"/api/v1/eval-case-runs/{case_run_id}/retry").status_code == 200
+
+    env["session"].expire_all()
+    attempt2 = (
+        env["session"].query(EvalCaseAttempt)
+        .filter(EvalCaseAttempt.eval_case_run_id == case_run_id)
+        .filter(EvalCaseAttempt.attempt_no == 2)
+        .one()
+    )
+    env["session"].add(
+        EvalEvent(
+            tenant_id=attempt2.tenant_id,
+            eval_run_id=env["run_id"],
+            eval_case_run_id=case_run_id,
+            attempt_no=2,
+            sequence=0,
+            event_type="case.retry_requested",
+            payload_json={"legacy": True},
+        )
+    )
+    env["session"].commit()
+
+    retry_token = issue_short_token(
+        {"eval_run_id": env["run_id"], "shard_id": attempt2.shard_id, "attempt": 2},
+        SECRET,
+        ttl_seconds=600,
+    )
+    started = client.post(
+        case_url(env, case_run_id, "started"),
+        json=started_body(env, case_run_id, attempt=2),
+        headers={"Authorization": f"Bearer {retry_token}"},
+    )
+    assert started.status_code == 200, started.text
+
+    env["session"].expire_all()
+    events = (
+        env["session"]
+        .query(EvalEvent)
+        .filter(EvalEvent.eval_case_run_id == case_run_id)
+        .filter(EvalEvent.attempt_no == 2)
+        .order_by(EvalEvent.sequence)
+        .all()
+    )
+    by_type = {event.event_type: event for event in events}
+    assert by_type["case.started"].sequence == 0
+    assert by_type["case.retry_requested"].sequence == 1
+
+
+def test_bootstrap_failure_before_started_retries_immediately(
+    eval_env, client: TestClient
+) -> None:
+    """M8-44 (#306): a job that dies before started settles as retryable."""
+
+    env = eval_env
+    case_run_id = env["cases"]["case-a"]
+    body = failure_body(
+        case_run_id,
+        retryable=True,
+        error_code="runner_bootstrap_failed",
+        event_id="evt_bootstrap_failed",
+    )
+    body["sequence"] = 1_000_002
+    body["phase"] = "bootstrap"
+
+    response = client.post(
+        case_url(env, case_run_id, "failed"), json=body, headers=auth(env)
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["retry_queued"] is True
+
+    rows = attempt_rows(env, case_run_id)
+    assert [row.attempt_no for row in rows] == [1, 2]
+    assert rows[0].status == "failed"
+    assert rows[0].error_code == "runner_bootstrap_failed"
+    assert rows[0].phase == "bootstrap"
+    assert rows[1].status == "pending"
+
+    env["session"].expire_all()
+    case = env["session"].query(EvalCaseRun).filter(EvalCaseRun.id == case_run_id).one()
+    assert case.execution_status == "queued"
+    event = (
+        env["session"]
+        .query(EvalEvent)
+        .filter(EvalEvent.eval_case_run_id == case_run_id)
+        .filter(EvalEvent.event_type == "case.failed")
+        .one()
+    )
+    assert event.payload_json["error_code"] == "runner_bootstrap_failed"
+    assert event.payload_json["phase"] == "bootstrap"
+    assert event.payload_json["retryable"] is True

@@ -597,6 +597,86 @@ def test_sync_reclaims_offline_ephemeral_runner_after_short_grace(
     assert any(event.payload_json.get("reason") == "runner_exited" for event in events)
 
 
+def test_sync_reclaims_runner_exit_as_runner_lost(
+    session: Session,
+    scope: dict[str, str],
+    clock: datetime,
+    eval_env,
+) -> None:
+    """M8-44 (#306): a Running instance whose Runner exited is runner_lost."""
+
+    env = eval_env
+    connection = _connection(session, scope)
+    pool = _pool(session, scope, connection)
+    runner = session.scalar(
+        select(Runner).where(Runner.provider_runner_id == "fixed-linux-eval")
+    )
+    assert runner is not None
+    runner.resource_pool_id = pool.id
+    runner.status = "offline"
+    runner.last_heartbeat_at = clock - timedelta(seconds=61)
+    session.flush()
+
+    case_run_id = env["cases"]["case-a"]
+    attempt = session.scalar(
+        select(EvalCaseAttempt).where(EvalCaseAttempt.eval_case_run_id == case_run_id)
+    )
+    assert attempt is not None
+    attempt.status = "running"
+    attempt.runner_id = runner.id
+    attempt.started_at = clock - timedelta(minutes=3)
+    attempt.heartbeat_at = clock - timedelta(seconds=61)
+
+    instance = ProvisionedInstance(
+        tenant_id=scope["tenant_id"],
+        resource_pool_id=pool.id,
+        provider_instance_id="i-runner-exit",
+        status="online",
+        spot_strategy="spot",
+        runner_id=runner.id,
+        cost_json={"runner_name": runner.provider_runner_id},
+        ready_at=clock - timedelta(minutes=5),
+        created_at=clock - timedelta(minutes=6),
+    )
+    session.add(instance)
+    session.flush()
+    transport = FakeAliyun()
+    transport.instances["i-runner-exit"] = {
+        "InstanceId": "i-runner-exit",
+        "Status": "Running",
+    }
+
+    counts = _provisioner(transport=transport).sync(
+        session=session, connection=connection, pool=pool, now=clock
+    )
+
+    assert counts["interrupted"] == 1
+    session.expire_all()
+    first = session.get(EvalCaseAttempt, attempt.id)
+    assert first is not None
+    assert first.status == "failed"
+    assert first.error_code == "runner_lost"
+    assert "runner_exited" in (first.error_summary or "")
+    assert "provider_state=Running" in (first.error_summary or "")
+    attempts = list(
+        session.scalars(
+            select(EvalCaseAttempt)
+            .where(EvalCaseAttempt.eval_case_run_id == case_run_id)
+            .order_by(EvalCaseAttempt.attempt_no)
+        )
+    )
+    assert [row.attempt_no for row in attempts] == [1, 2]
+    events = list(
+        session.scalars(select(EvalEvent).where(EvalEvent.eval_case_run_id == case_run_id))
+    )
+    assert not any(event.event_type == "case.spot_interrupted" for event in events)
+    lost = next(event for event in events if event.event_type == "case.runner_lost")
+    assert lost.payload_json["reason"] == "runner_exited"
+    assert lost.payload_json["provider_state"] == "Running"
+    assert instance.status == "released"
+    assert instance.cost_json["reclaimed_reason"] == "runner_exited"
+
+
 def test_sync_does_not_reclaim_a_healthy_long_running_job(
     session: Session, scope: dict[str, str], clock: datetime
 ) -> None:

@@ -18,7 +18,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..config import Settings
-from ..models import EvalRun, ResourcePool, Runner
+from ..models import EvalCaseAttempt, EvalCaseRun, EvalRun, ResourcePool, Runner
 
 # Values persisted on ``eval_run.queue_reason``; NULL means "not waiting".
 QUEUE_REASON_CAPACITY_WAITING = "capacity_waiting"
@@ -91,6 +91,64 @@ def pool_runner_capacity(
     )
 
 
+def pool_in_flight(
+    session: Session, pool: ResourcePool, *, exclude_run_id: str | None = None
+) -> int:
+    """Attempts already released to this pool, optionally ignoring one run.
+
+    ``effective_concurrency`` is per evaluation, so two evaluations used to
+    each receive the full pool capacity and oversubscribe it. A released
+    attempt (dispatching → uploading) reserves the slot for its run until it
+    reaches a terminal state; other runs subtract that reservation before they
+    are allowed to release more shards (M8-44 #306).
+    """
+
+    statement = (
+        select(func.count())
+        .select_from(EvalCaseAttempt)
+        .join(EvalCaseRun, EvalCaseRun.id == EvalCaseAttempt.eval_case_run_id)
+        .join(EvalRun, EvalRun.id == EvalCaseRun.eval_run_id)
+        .where(
+            EvalRun.resource_pool_id == pool.id,
+            EvalCaseAttempt.status.in_(RELEASED_ATTEMPT_STATUSES),
+        )
+    )
+    if exclude_run_id:
+        statement = statement.where(EvalRun.id != exclude_run_id)
+    return int(session.scalar(statement) or 0)
+
+
+def pool_started_attempts(session: Session, pool: ResourcePool) -> int:
+    """Attempts currently consuming an Agent slot across the whole pool."""
+
+    return int(
+        session.scalar(
+            select(func.count())
+            .select_from(EvalCaseAttempt)
+            .join(EvalCaseRun, EvalCaseRun.id == EvalCaseAttempt.eval_case_run_id)
+            .join(EvalRun, EvalRun.id == EvalCaseRun.eval_run_id)
+            .where(
+                EvalRun.resource_pool_id == pool.id,
+                EvalCaseAttempt.status.in_(("running", "scoring", "uploading")),
+            )
+        )
+        or 0
+    )
+
+
+def lock_pool(session: Session, pool_id: str) -> None:
+    """Serialize cross-run capacity checks on PostgreSQL.
+
+    SQLite ignores ``FOR UPDATE``; the caller already flushes a write (the
+    run's ``effective_concurrency``) before counting, which takes its database
+    write lock.
+    """
+
+    session.execute(
+        select(ResourcePool.id).where(ResourcePool.id == pool_id).with_for_update()
+    ).scalar_one_or_none()
+
+
 def effective_concurrency(
     session: Session,
     run: EvalRun,
@@ -111,8 +169,15 @@ def effective_concurrency(
     pool = session.get(ResourcePool, run.resource_pool_id)
     if pool is None or pool.status != "active":
         return 0
-    return combine_effective_concurrency(
+    pool_max = pool_max_capacity(pool)
+    cap = combine_effective_concurrency(
         requested,
         pool_runner_capacity(session, pool, settings=settings, now=now),
-        pool_max_capacity(pool),
+        pool_max,
     )
+    if pool_max is not None:
+        # Pool-level in-flight reservation: a second evaluation sees only the
+        # capacity the first evaluation's released attempts have not claimed.
+        reserved_by_others = pool_in_flight(session, pool, exclude_run_id=run.id)
+        cap = min(cap, max(0, pool_max - reserved_by_others))
+    return cap

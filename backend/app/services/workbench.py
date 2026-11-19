@@ -456,16 +456,22 @@ def _create_retry_attempt(
     case.result_status = "not_scored"
     case.error_code = None
     case.error_summary = None
+    # M8-44 (#306): the platform event belongs to the attempt that was retried,
+    # not the fresh attempt. Putting it on the new attempt with the default
+    # sequence 0 collided with the Runner's ``case.started`` (also sequence 0)
+    # and made every manual retry fail with a unique-constraint 500.
     session.add(
         EvalEvent(
             tenant_id=run.tenant_id,
             eval_run_id=run.id,
             eval_case_run_id=case.id,
-            attempt_no=new_attempt_no,
+            attempt_no=latest.attempt_no,
+            sequence=case_attempts.next_free_sequence(session, case, latest),
             event_type="case.retry_requested",
             payload_json={
                 "requested_by": actor,
                 "previous_attempt_no": latest.attempt_no,
+                "new_attempt_no": new_attempt_no,
                 "dispatch_key": outbox.dispatch_key,
             },
         )
