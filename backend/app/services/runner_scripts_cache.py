@@ -15,6 +15,7 @@ from __future__ import annotations
 import gzip
 import hashlib
 import io
+import json
 import re
 import subprocess
 import tarfile
@@ -156,6 +157,32 @@ def _valid_bundle(payload: bytes) -> bool:
     return len(payload) >= MIN_RUNNER_SCRIPTS_BYTES and payload[:2] == b"\x1f\x8b"
 
 
+def write_runner_scripts_cache(artifact: BundleArtifact, out_dir: Path | str) -> Path:
+    """Write the image-cache form of the bundle for a spot image build (M8-47).
+
+    The file name stays the content address so the workflow can find it from
+    the dispatch pin alone, and ``manifest.json`` records the same md5/sha256
+    the OSS publisher reports. This is the release step for images that bake
+    the scripts instead of prefetching them at boot.
+    """
+
+    target_dir = Path(out_dir)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir / artifact.name
+    target.write_bytes(artifact.payload)
+    manifest = {
+        "name": artifact.name,
+        "md5": artifact.md5,
+        "sha256": artifact.sha256,
+        "size": artifact.size,
+    }
+    (target_dir / "manifest.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return target
+
+
 def ensure_runner_scripts_bundle(
     store: ObjectStore,
     *,
@@ -203,4 +230,5 @@ __all__ = [
     "runner_scripts_path",
     "runner_scripts_url",
     "valid_runner_scripts_name",
+    "write_runner_scripts_cache",
 ]

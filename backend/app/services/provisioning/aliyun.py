@@ -52,6 +52,7 @@ from .. import runner_cache
 from ..object_store import object_store_from_settings
 from ..runner_labels import pool_runner_labels
 from ..runner_registration import GitHubRunnerRegistrar
+from ..runner_scripts_cache import runner_scripts_key, valid_runner_scripts_name
 from . import (
     CAPABILITY_ECS_INVENTORY,
     CAPABILITY_ECS_SPOT,
@@ -709,6 +710,27 @@ class AliyunEcsProvisioner:
                 self.settings.runner_spot_runner_version
             )
             tarball_token = None
+        # M8-47 (#312): pre-seed the scripts bundle during boot so the GitHub
+        # job never waits on the platform scripts endpoint. A baked image keeps
+        # the local file; otherwise cloud-init downloads the same immutable
+        # OSS object through a short-lived private presigned GET and verifies
+        # sha256 before moving it into the image-cache directory.
+        scripts_bundle = None
+        scripts_bundle_url = None
+        bundle_name = self.settings.runner_scripts_bundle_name
+        bundle_sha256 = self.settings.runner_scripts_bundle_sha256
+        if bundle_name and bundle_sha256 and valid_runner_scripts_name(bundle_name):
+            store = object_store_from_settings(self.settings, internal=True)
+            if store is not None:
+                scripts_bundle = {
+                    "name": bundle_name,
+                    "md5": self.settings.runner_scripts_bundle_md5 or "",
+                    "sha256": bundle_sha256,
+                    "size": int(self.settings.runner_scripts_bundle_size or 0),
+                }
+                scripts_bundle_url = store.presign_get_url(
+                    runner_scripts_key(bundle_name), expires=3600
+                )
         return render_cloud_init(
             platform_base_url=base_url,
             runner_name=runner_name,
@@ -718,6 +740,8 @@ class AliyunEcsProvisioner:
             heartbeat_token=self.settings.runner_heartbeat_token,
             runner_tarball_url=tarball_url,
             runner_tarball_token=tarball_token,
+            scripts_bundle=scripts_bundle,
+            scripts_bundle_url=scripts_bundle_url,
         )
 
     @staticmethod

@@ -190,65 +190,146 @@ jobs:
       cases: ${{ steps.plan.outputs.cases }}
       runs_on: ${{ steps.plan.outputs.runs_on }}
     steps:
+      # M8-47 (#312): the image pre-seed is the primary source, direct private
+      # OSS is the secondary source, and GitHub checkout is the last fallback.
+      # The whole acquisition (metadata + download) is bounded by
+      # RUNNER_SCRIPTS_FETCH_BUDGET_MS so a dead endpoint reaches
+      # runner_bootstrap_failed instead of stalling startup.
       - name: Fetch the scripts bundle
         id: bundle
+        timeout-minutes: 2
         env:
           DISPATCH_PAYLOAD: ${{ toJson(github.event.client_payload) }}
+          RUNNER_SCRIPTS_IMAGE_DIR: /opt/eval/runner-scripts
+          RUNNER_SCRIPTS_FETCH_BUDGET_MS: "60000"
         run: |
           set -uo pipefail
           mkdir -p "$RUNNER_TEMP/eval-dispatch"
           printf '%s' "$DISPATCH_PAYLOAD" > "$RUNNER_TEMP/eval-dispatch/dispatch.json"
           rm -rf "$RUNNER_TEMP/eval-scripts"
           mkdir -p "$RUNNER_TEMP/eval-scripts"
+          rm -f "$RUNNER_TEMP/eval-scripts.tar.gz"
           if node - "$RUNNER_TEMP/eval-dispatch/dispatch.json" "$RUNNER_TEMP/eval-scripts.tar.gz" <<'NODE'
           const fs = require("node:fs");
           const crypto = require("node:crypto");
+          const path = require("node:path");
 
           const dispatch = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
           const archive = process.argv[3];
-          const manifestUrl = new URL(dispatch.manifest_url);
-          manifestUrl.pathname = manifestUrl.pathname.replace(/\/manifest$/, "/scripts");
-          const metadataUrl = manifestUrl.toString();
-          const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+          const pin = dispatch.scripts_bundle || {};
+          const expected = {
+            // The name becomes a path component below, so reject anything that
+            // is not the content-addressed form before it can escape the cache.
+            name:
+              typeof pin.name === "string" &&
+              /^eval-runner-scripts-[0-9a-f]{32}\.tar\.gz$/.test(pin.name)
+                ? pin.name
+                : "",
+            md5: typeof pin.md5 === "string" ? pin.md5 : "",
+            sha256: typeof pin.sha256 === "string" ? pin.sha256 : "",
+            size: Number(pin.size || 0),
+          };
+          const imageDir = process.env.RUNNER_SCRIPTS_IMAGE_DIR || "/opt/eval/runner-scripts";
+          const budgetMs = Number(process.env.RUNNER_SCRIPTS_FETCH_BUDGET_MS || 60000);
+          const deadline = Date.now() + budgetMs;
+          const digest = (bytes, algorithm) =>
+            crypto.createHash(algorithm).update(bytes).digest("hex");
 
-          async function get(url, options = {}, timeout = 15000) {
-            let lastError;
-            for (let attempt = 0; attempt < 3; attempt += 1) {
-              try {
-                const response = await fetch(url, {
-                  ...options,
-                  signal: AbortSignal.timeout(timeout),
-                });
-                if (!response.ok) throw new Error(`HTTP ${response.status}`);
-                return response;
-              } catch (error) {
-                lastError = error;
-                if (attempt < 2) await sleep(1000 * (attempt + 1));
-              }
+          function remaining() {
+            const left = deadline - Date.now();
+            if (left <= 0) throw new Error("scripts bundle fetch budget exhausted");
+            return left;
+          }
+
+          function verify(bytes, metadata) {
+            const sha256 = expected.sha256 || metadata?.sha256 || "";
+            const md5 = expected.md5 || metadata?.md5 || "";
+            const size = expected.size || Number(metadata?.size || 0);
+            if (!sha256 && !md5) throw new Error("bundle metadata has no digest");
+            if (expected.sha256 && metadata?.sha256 && expected.sha256 !== metadata.sha256) {
+              throw new Error("dispatch/metadata sha256 disagree");
             }
-            throw lastError;
+            if (expected.md5 && metadata?.md5 && expected.md5 !== metadata.md5) {
+              throw new Error("dispatch/metadata md5 disagree");
+            }
+            if (sha256 && digest(bytes, "sha256") !== sha256) throw new Error("sha256 mismatch");
+            if (md5 && digest(bytes, "md5") !== md5) throw new Error("md5 mismatch");
+            if (size && bytes.length !== size) throw new Error(`size ${bytes.length} != ${size}`);
+          }
+
+          function readImageCache() {
+            // A dispatch without a pinned digest cannot prove a cached file is
+            // the expected bundle, so only a complete pin may use the image.
+            if (!expected.name || !expected.sha256) return null;
+            const candidate = path.join(imageDir, expected.name);
+            if (!fs.existsSync(candidate)) return null;
+            const bytes = fs.readFileSync(candidate);
+            verify(bytes, null);
+            return bytes;
+          }
+
+          async function get(url, headers = {}, timeout = 20000) {
+            const response = await fetch(url, {
+              headers,
+              signal: AbortSignal.timeout(Math.min(timeout, remaining())),
+            });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            return Buffer.from(await response.arrayBuffer());
           }
 
           (async () => {
-            const metadata = await (await get(metadataUrl)).json();
-            if (!metadata.url || !metadata.token) throw new Error("metadata missing url/token");
-            const response = await get(
-              metadata.url,
-              { headers: { authorization: `Bearer ${metadata.token}` } },
-              120000,
-            );
-            const bytes = Buffer.from(await response.arrayBuffer());
-            if (metadata.size && bytes.length !== metadata.size) {
-              throw new Error(`size ${bytes.length} != ${metadata.size}`);
+            let bytes = null;
+            let source = "";
+            try {
+              bytes = readImageCache();
+              if (bytes) source = "image";
+            } catch (error) {
+              console.error(`scripts bundle image cache rejected: ${error.message}`);
             }
-            if (metadata.md5 && crypto.createHash("md5").update(bytes).digest("hex") !== metadata.md5) {
-              throw new Error("md5 mismatch");
+
+            let metadata = null;
+            if (!bytes) {
+              const metadataUrl = new URL(dispatch.manifest_url);
+              metadataUrl.pathname = metadataUrl.pathname.replace(/\/manifest$/, "/scripts");
+              try {
+                metadata = JSON.parse((await get(metadataUrl.toString(), {}, 10000)).toString("utf8"));
+              } catch (error) {
+                console.error(`scripts bundle metadata unavailable: ${error.message}`);
+              }
             }
-            if (metadata.sha256 && crypto.createHash("sha256").update(bytes).digest("hex") !== metadata.sha256) {
-              throw new Error("sha256 mismatch");
+
+            if (!bytes && metadata) {
+              if (expected.name && metadata.name && expected.name !== metadata.name) {
+                throw new Error(`metadata bundle ${metadata.name} != pinned ${expected.name}`);
+              }
+              const candidates = [
+                ["oss", metadata.oss_url, {}],
+                [
+                  "proxy",
+                  metadata.url,
+                  metadata.token ? { authorization: `Bearer ${metadata.token}` } : {},
+                ],
+              ];
+              for (const [kind, url, headers] of candidates) {
+                if (!url) continue;
+                try {
+                  const candidate = await get(url, headers, 20000);
+                  verify(candidate, metadata);
+                  bytes = candidate;
+                  source = kind;
+                  break;
+                } catch (error) {
+                  console.error(`scripts bundle ${kind} path failed: ${error.message}`);
+                }
+              }
             }
+
+            if (!bytes) throw new Error("image cache and OSS sources unavailable");
             fs.writeFileSync(archive, bytes);
-            console.log(`scripts bundle ${metadata.name} size=${bytes.length}`);
+            console.log(
+              `scripts bundle ${expected.name || metadata?.name || "unknown"} ` +
+                `source=${source} size=${bytes.length}`,
+            );
           })().catch((error) => {
             console.error(`scripts bundle unavailable: ${error.message}`);
             process.exit(1);
@@ -269,14 +350,11 @@ jobs:
       - name: Checkout (fallback)
         id: fallback_checkout
         if: steps.bundle.outputs.ok != 'true'
+        timeout-minutes: 1
         uses: actions/checkout@v4
         continue-on-error: true
-      - name: Checkout (fallback retry)
-        id: fallback_retry
-        if: steps.bundle.outputs.ok != 'true' && steps.fallback_checkout.outcome == 'failure'
-        uses: actions/checkout@v4
       - name: Use the checked-out repository scripts
-        if: steps.bundle.outputs.ok != 'true' && (steps.fallback_checkout.outcome == 'success' || steps.fallback_retry.outcome == 'success')
+        if: steps.bundle.outputs.ok != 'true' && steps.fallback_checkout.outcome == 'success'
         run: echo "EVAL_SCRIPTS_DIR=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
 
       - name: Materialize and validate the dispatch payload
@@ -325,65 +403,146 @@ jobs:
       matrix:
         case: ${{ fromJson(needs.prepare.outputs.cases) }}
     steps:
+      # M8-47 (#312): the image pre-seed is the primary source, direct private
+      # OSS is the secondary source, and GitHub checkout is the last fallback.
+      # The whole acquisition (metadata + download) is bounded by
+      # RUNNER_SCRIPTS_FETCH_BUDGET_MS so a dead endpoint reaches
+      # runner_bootstrap_failed instead of stalling startup.
       - name: Fetch the scripts bundle
         id: bundle
+        timeout-minutes: 2
         env:
           DISPATCH_PAYLOAD: ${{ toJson(github.event.client_payload) }}
+          RUNNER_SCRIPTS_IMAGE_DIR: /opt/eval/runner-scripts
+          RUNNER_SCRIPTS_FETCH_BUDGET_MS: "60000"
         run: |
           set -uo pipefail
           mkdir -p "$RUNNER_TEMP/eval-dispatch"
           printf '%s' "$DISPATCH_PAYLOAD" > "$RUNNER_TEMP/eval-dispatch/dispatch.json"
           rm -rf "$RUNNER_TEMP/eval-scripts"
           mkdir -p "$RUNNER_TEMP/eval-scripts"
+          rm -f "$RUNNER_TEMP/eval-scripts.tar.gz"
           if node - "$RUNNER_TEMP/eval-dispatch/dispatch.json" "$RUNNER_TEMP/eval-scripts.tar.gz" <<'NODE'
           const fs = require("node:fs");
           const crypto = require("node:crypto");
+          const path = require("node:path");
 
           const dispatch = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
           const archive = process.argv[3];
-          const manifestUrl = new URL(dispatch.manifest_url);
-          manifestUrl.pathname = manifestUrl.pathname.replace(/\/manifest$/, "/scripts");
-          const metadataUrl = manifestUrl.toString();
-          const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+          const pin = dispatch.scripts_bundle || {};
+          const expected = {
+            // The name becomes a path component below, so reject anything that
+            // is not the content-addressed form before it can escape the cache.
+            name:
+              typeof pin.name === "string" &&
+              /^eval-runner-scripts-[0-9a-f]{32}\.tar\.gz$/.test(pin.name)
+                ? pin.name
+                : "",
+            md5: typeof pin.md5 === "string" ? pin.md5 : "",
+            sha256: typeof pin.sha256 === "string" ? pin.sha256 : "",
+            size: Number(pin.size || 0),
+          };
+          const imageDir = process.env.RUNNER_SCRIPTS_IMAGE_DIR || "/opt/eval/runner-scripts";
+          const budgetMs = Number(process.env.RUNNER_SCRIPTS_FETCH_BUDGET_MS || 60000);
+          const deadline = Date.now() + budgetMs;
+          const digest = (bytes, algorithm) =>
+            crypto.createHash(algorithm).update(bytes).digest("hex");
 
-          async function get(url, options = {}, timeout = 15000) {
-            let lastError;
-            for (let attempt = 0; attempt < 3; attempt += 1) {
-              try {
-                const response = await fetch(url, {
-                  ...options,
-                  signal: AbortSignal.timeout(timeout),
-                });
-                if (!response.ok) throw new Error(`HTTP ${response.status}`);
-                return response;
-              } catch (error) {
-                lastError = error;
-                if (attempt < 2) await sleep(1000 * (attempt + 1));
-              }
+          function remaining() {
+            const left = deadline - Date.now();
+            if (left <= 0) throw new Error("scripts bundle fetch budget exhausted");
+            return left;
+          }
+
+          function verify(bytes, metadata) {
+            const sha256 = expected.sha256 || metadata?.sha256 || "";
+            const md5 = expected.md5 || metadata?.md5 || "";
+            const size = expected.size || Number(metadata?.size || 0);
+            if (!sha256 && !md5) throw new Error("bundle metadata has no digest");
+            if (expected.sha256 && metadata?.sha256 && expected.sha256 !== metadata.sha256) {
+              throw new Error("dispatch/metadata sha256 disagree");
             }
-            throw lastError;
+            if (expected.md5 && metadata?.md5 && expected.md5 !== metadata.md5) {
+              throw new Error("dispatch/metadata md5 disagree");
+            }
+            if (sha256 && digest(bytes, "sha256") !== sha256) throw new Error("sha256 mismatch");
+            if (md5 && digest(bytes, "md5") !== md5) throw new Error("md5 mismatch");
+            if (size && bytes.length !== size) throw new Error(`size ${bytes.length} != ${size}`);
+          }
+
+          function readImageCache() {
+            // A dispatch without a pinned digest cannot prove a cached file is
+            // the expected bundle, so only a complete pin may use the image.
+            if (!expected.name || !expected.sha256) return null;
+            const candidate = path.join(imageDir, expected.name);
+            if (!fs.existsSync(candidate)) return null;
+            const bytes = fs.readFileSync(candidate);
+            verify(bytes, null);
+            return bytes;
+          }
+
+          async function get(url, headers = {}, timeout = 20000) {
+            const response = await fetch(url, {
+              headers,
+              signal: AbortSignal.timeout(Math.min(timeout, remaining())),
+            });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            return Buffer.from(await response.arrayBuffer());
           }
 
           (async () => {
-            const metadata = await (await get(metadataUrl)).json();
-            if (!metadata.url || !metadata.token) throw new Error("metadata missing url/token");
-            const response = await get(
-              metadata.url,
-              { headers: { authorization: `Bearer ${metadata.token}` } },
-              120000,
-            );
-            const bytes = Buffer.from(await response.arrayBuffer());
-            if (metadata.size && bytes.length !== metadata.size) {
-              throw new Error(`size ${bytes.length} != ${metadata.size}`);
+            let bytes = null;
+            let source = "";
+            try {
+              bytes = readImageCache();
+              if (bytes) source = "image";
+            } catch (error) {
+              console.error(`scripts bundle image cache rejected: ${error.message}`);
             }
-            if (metadata.md5 && crypto.createHash("md5").update(bytes).digest("hex") !== metadata.md5) {
-              throw new Error("md5 mismatch");
+
+            let metadata = null;
+            if (!bytes) {
+              const metadataUrl = new URL(dispatch.manifest_url);
+              metadataUrl.pathname = metadataUrl.pathname.replace(/\/manifest$/, "/scripts");
+              try {
+                metadata = JSON.parse((await get(metadataUrl.toString(), {}, 10000)).toString("utf8"));
+              } catch (error) {
+                console.error(`scripts bundle metadata unavailable: ${error.message}`);
+              }
             }
-            if (metadata.sha256 && crypto.createHash("sha256").update(bytes).digest("hex") !== metadata.sha256) {
-              throw new Error("sha256 mismatch");
+
+            if (!bytes && metadata) {
+              if (expected.name && metadata.name && expected.name !== metadata.name) {
+                throw new Error(`metadata bundle ${metadata.name} != pinned ${expected.name}`);
+              }
+              const candidates = [
+                ["oss", metadata.oss_url, {}],
+                [
+                  "proxy",
+                  metadata.url,
+                  metadata.token ? { authorization: `Bearer ${metadata.token}` } : {},
+                ],
+              ];
+              for (const [kind, url, headers] of candidates) {
+                if (!url) continue;
+                try {
+                  const candidate = await get(url, headers, 20000);
+                  verify(candidate, metadata);
+                  bytes = candidate;
+                  source = kind;
+                  break;
+                } catch (error) {
+                  console.error(`scripts bundle ${kind} path failed: ${error.message}`);
+                }
+              }
             }
+
+            if (!bytes) throw new Error("image cache and OSS sources unavailable");
             fs.writeFileSync(archive, bytes);
-            console.log(`scripts bundle ${metadata.name} size=${bytes.length}`);
+            console.log(
+              `scripts bundle ${expected.name || metadata?.name || "unknown"} ` +
+                `source=${source} size=${bytes.length}`,
+            );
           })().catch((error) => {
             console.error(`scripts bundle unavailable: ${error.message}`);
             process.exit(1);
@@ -404,14 +563,11 @@ jobs:
       - name: Checkout (fallback)
         id: fallback_checkout
         if: steps.bundle.outputs.ok != 'true'
+        timeout-minutes: 1
         uses: actions/checkout@v4
         continue-on-error: true
-      - name: Checkout (fallback retry)
-        id: fallback_retry
-        if: steps.bundle.outputs.ok != 'true' && steps.fallback_checkout.outcome == 'failure'
-        uses: actions/checkout@v4
       - name: Use the checked-out repository scripts
-        if: steps.bundle.outputs.ok != 'true' && (steps.fallback_checkout.outcome == 'success' || steps.fallback_retry.outcome == 'success')
+        if: steps.bundle.outputs.ok != 'true' && steps.fallback_checkout.outcome == 'success'
         run: echo "EVAL_SCRIPTS_DIR=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
 
       # runner.temp is per job: never read the prepare job's dispatch file.
@@ -457,7 +613,6 @@ jobs:
           RUNNER_STATE_DIR: ${{ runner.temp }}/eval-state
           BUNDLE_OUTCOME: ${{ steps.bundle.outcome }}
           CHECKOUT_OUTCOME: ${{ steps.fallback_checkout.outcome }}
-          CHECKOUT_RETRY_OUTCOME: ${{ steps.fallback_retry.outcome }}
           VALIDATE_OUTCOME: ${{ steps.validate_dispatch.outcome }}
           EXECUTE_OUTCOME: ${{ steps.execute_case.outcome }}
         run: |
@@ -518,7 +673,6 @@ jobs:
               "execute job 启动阶段失败：" +
               `bundle=${process.env.BUNDLE_OUTCOME || "unknown"} ` +
               `checkout=${process.env.CHECKOUT_OUTCOME || "unknown"} ` +
-              `checkout_retry=${process.env.CHECKOUT_RETRY_OUTCOME || "unknown"} ` +
               `validate=${process.env.VALIDATE_OUTCOME || "unknown"} ` +
               `execute=${process.env.EXECUTE_OUTCOME || "unknown"}`
             ).slice(0, 1000);

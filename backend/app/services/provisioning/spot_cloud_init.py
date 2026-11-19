@@ -15,7 +15,7 @@ from __future__ import annotations
 import base64
 import json
 import shlex
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 
 def _heartbeat_script(
@@ -62,10 +62,14 @@ def _bootstrap_script(
     encoded_jit: str,
     runner_tarball_url: str,
     runner_tarball_token: str | None,
+    scripts_bundle: Mapping[str, object] | None = None,
+    scripts_bundle_url: str | None = None,
 ) -> str:
     # The JIT blob is a single-use GitHub registration credential. It is
     # written 0600 and removed by the cleanup service after the runner reads
     # it; it is never echoed or written to a log.
+    scripts_name = str((scripts_bundle or {}).get("name") or "")
+    scripts_sha256 = str((scripts_bundle or {}).get("sha256") or "")
     return f"""#!/bin/bash
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
@@ -73,6 +77,9 @@ export DEBIAN_FRONTEND=noninteractive
 # explicitly configured external mirror URL leaves it empty so no credential
 # is sent to a third party.
 RUNNER_TARBALL_TOKEN={shlex.quote(runner_tarball_token or "")}
+RUNNER_SCRIPTS_BUNDLE_NAME={shlex.quote(scripts_name)}
+RUNNER_SCRIPTS_BUNDLE_SHA256={shlex.quote(scripts_sha256)}
+RUNNER_SCRIPTS_BUNDLE_URL={shlex.quote(scripts_bundle_url or "")}
 apt-get update -y
 apt-get install -y --no-install-recommends ca-certificates curl git jq docker.io libicu-dev xz-utils
 systemctl enable --now docker
@@ -91,6 +98,34 @@ curl -fsSL --max-time 300 --retry 3 --retry-delay 5 -o /tmp/node.tar.xz \\
 tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1
 rm -f /tmp/node.tar.xz
 node --version
+
+# M8-47 (#312): pre-seed the platform runner scripts bundle before the GitHub
+# runner can pick a job. An image may already carry the content-addressed file
+# at /opt/eval/runner-scripts/<name>.tar.gz; otherwise download the same object
+# from a short-lived private OSS presigned URL. The GitHub job then reads local
+# disk and survives a flaky platform scripts endpoint. The URL is a capability,
+# not a stored credential: no OSS key or platform token is written here, and
+# cleanup removes this user-data file after boot. A preload failure must not
+# fail bootstrap; the workflow still has the OSS/proxy/checkout fallbacks.
+mkdir -p /opt/eval/runner-scripts
+if [ -n "$RUNNER_SCRIPTS_BUNDLE_NAME" ]; then
+  target="/opt/eval/runner-scripts/$RUNNER_SCRIPTS_BUNDLE_NAME"
+  if [ -f "$target" ] \\
+    && printf '%s  %s\n' "$RUNNER_SCRIPTS_BUNDLE_SHA256" "$target" | sha256sum -c - >/dev/null 2>&1; then
+    echo "runner scripts already baked into the image: $RUNNER_SCRIPTS_BUNDLE_NAME"
+  elif [ -n "$RUNNER_SCRIPTS_BUNDLE_URL" ]; then
+    tmp="$(mktemp /tmp/runner-scripts-XXXXXX.tar.gz)"
+    if curl -fsSL --max-time 60 --retry 2 --retry-delay 2 -o "$tmp" "$RUNNER_SCRIPTS_BUNDLE_URL" \\
+      && printf '%s  %s\n' "$RUNNER_SCRIPTS_BUNDLE_SHA256" "$tmp" | sha256sum -c - >/dev/null 2>&1; then
+      chmod 0644 "$tmp"
+      mv "$tmp" "$target"
+      echo "runner scripts preloaded: $RUNNER_SCRIPTS_BUNDLE_NAME"
+    else
+      rm -f "$tmp"
+      echo "runner scripts preload failed; the workflow will use OSS or checkout" >&2
+    fi
+  fi
+fi
 
 mkdir -p /opt/actions-runner /etc/eval
 cd /opt/actions-runner
@@ -198,9 +233,15 @@ def render_cloud_init(
     heartbeat_token: str | None,
     runner_tarball_url: str,
     runner_tarball_token: str | None = None,
+    scripts_bundle: Mapping[str, object] | None = None,
+    scripts_bundle_url: str | None = None,
 ) -> str:
     """Return a cloud-config document (base64 payload + runcmd).
 
+    ``scripts_bundle`` is the frozen content-addressed bundle metadata and
+    ``scripts_bundle_url`` its short-lived private OSS GET URL. Both are
+    optional so deployments without object storage keep the older cloud-init
+    and the workflow falls back to its own acquisition path.
     """
     heartbeat = _heartbeat_script(
         platform_base_url=platform_base_url,
@@ -213,6 +254,8 @@ def render_cloud_init(
         encoded_jit=encoded_jit,
         runner_tarball_url=runner_tarball_url,
         runner_tarball_token=runner_tarball_token,
+        scripts_bundle=scripts_bundle,
+        scripts_bundle_url=scripts_bundle_url,
     )
     cleanup = _cleanup_script()
     # Cloud-init write_files runs as a single document; keep each file in a
