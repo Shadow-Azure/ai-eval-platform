@@ -216,11 +216,12 @@ GitHub `workflow_job` webhook 触发 reconcile，30s 轮询兜底；容量公式
 M8-48 允许 `min_capacity≥1` 的小规模 warm pool：`min_capacity` 按 Runner 数解释，无排队时也补足到该下限，
 仍受 `max_capacity`、价格阈值和单批创建上限约束；默认 0 保持零常驻语义。
 
-## 竞价资源 SpotDuration 保底（M8-35）
+## 竞价资源 SpotDuration 保底（M8-35 / M8-52）
 
-竞价实例在创建时按本次评测最长 `case_timeout_seconds` 向上取整设置 Aliyun `SpotDuration`（1–6 小时），
-使 job 在保底窗口内不被竞价回收。并发批次取最大超时；超过 6 小时时不能静默创建无保底实例，应明确
-回退按量/fixed 或报可诊断错误。`SpotDuration` 写入实例 cost_json 便于排障，不改变零常驻语义。
+竞价实例在创建时按本次评测最长 `case_timeout_seconds` 计算保护窗口，但阿里云 `RunInstances` 的
+`SpotDuration` 目前只接受 0 或 1：平台始终按 1 小时申请，使 job 在创建后的第一个小时不被竞价回收；
+超过 1 小时后的回收由 spot 中断重试/回退机制兜底，不再返回 2–6 或把 >6 小时判为无法扩容。
+`SpotDuration` 写入实例 cost_json 便于排障，不改变零常驻语义。
 
 
 ## spot 中断快速重试（M8-37）

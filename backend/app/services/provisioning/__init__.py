@@ -54,8 +54,10 @@ class InstanceSpec:
     instance_type: str
     image_id: str | None = None
     spot: bool = True
-    # M8-35: Aliyun spot protection window in whole hours (1..6). None keeps
-    # the provider default (SpotAsPriceGo without a guaranteed duration).
+    # M8-52: Aliyun spot protection window in whole hours. ``RunInstances``
+    # currently accepts only 0 or 1; the capacity controller always requests 1
+    # for spot pools. None keeps the provider default (SpotAsPriceGo without a
+    # guaranteed duration).
     spot_duration_hours: int | None = None
 
 
