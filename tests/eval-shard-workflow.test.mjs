@@ -75,6 +75,38 @@ test("eval-shard execute job runs exactly one case per matrix job", () => {
   assert.equal(text.includes("synthetic-shard"), false);
 });
 
+test("eval-shard reports a pre-started bootstrap failure without the scripts bundle", () => {
+  const text = workflow();
+  const execute = jobBlock(text, "execute");
+  for (const expected of [
+    "name: Report bootstrap failure",
+    "if: failure() || cancelled()",
+    "continue-on-error: true",
+    "runner_bootstrap_failed",
+    "phase: \"bootstrap\"",
+    'sequence: 1000002',
+    "/runner/v1/case-runs/${caseRunId}/failed",
+    "x-runner-task-token",
+    "manifest.callback_base_url",
+    "RUNNER_STATE_DIR",
+    ".capacity-wait-",
+    ".started-",
+  ]) {
+    assert.ok(execute.includes(expected), `execute failure settlement missing ${expected}`);
+  }
+  // A missing Runner row must not turn the failed callback into a 404; the
+  // failed action does not need the runner binding header.
+  assert.equal(execute.includes('"x-runner-id"'), false);
+  // The callback must work when the scripts bundle/checkout already failed.
+  const stepStart = execute.indexOf("name: Report bootstrap failure");
+  const step = execute.slice(stepStart);
+  assert.equal(step.includes("real-task.mjs"), false);
+  assert.equal(step.includes("EVAL_SCRIPTS_DIR"), false);
+  // The retry dispatch is still driven by the platform; the workflow just
+  // posts the failure and never creates attempts itself.
+  assert.equal(step.includes("dispatch_key"), false);
+});
+
 test("eval-shard keeps one workflow run per shard and the bootstrap", () => {
   const text = workflow();
   assert.ok(text.includes("concurrency:"), "workflow-level concurrency is still required");

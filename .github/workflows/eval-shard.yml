@@ -416,6 +416,7 @@ jobs:
 
       # runner.temp is per job: never read the prepare job's dispatch file.
       - name: Materialize and validate the dispatch payload
+        id: validate_dispatch
         env:
           DISPATCH_PAYLOAD: ${{ toJson(github.event.client_payload) }}
         run: |
@@ -425,6 +426,7 @@ jobs:
           node runner/lib/contracts.mjs dispatch "$RUNNER_TEMP/eval-dispatch/dispatch.json"
 
       - name: Execute exactly one case
+        id: execute_case
         env:
           RUNNER_PRESIGN_UPLOADS: "1"
           RUNNER_STATE_DIR: ${{ runner.temp }}/eval-state
@@ -438,3 +440,118 @@ jobs:
             --case "${{ matrix.case.id }}" \
             --state-dir "$RUNNER_STATE_DIR" \
             --object-store-root "$RUNNER_OBJECT_ROOT"
+
+      # M8-44 (#306): a job that dies before real-task reaches `started` used to
+      # leave the platform waiting for the 3600s queue timeout. Settle the
+      # attempt now with a retryable bootstrap failure. The manifest endpoint
+      # (not the scripts bundle) issues the short token, so this works even when
+      # `Fetch the scripts bundle` or the checkout fallback already failed.
+      # real-task writes markers for "capacity wait, attempt stays queued" and
+      # "started already happened"; both must NOT be re-settled as bootstrap.
+      - name: Report bootstrap failure
+        if: failure() || cancelled()
+        continue-on-error: true
+        env:
+          DISPATCH_FILE: ${{ runner.temp }}/eval-dispatch/dispatch.json
+          CASE_RUN_ID: ${{ matrix.case.id }}
+          RUNNER_STATE_DIR: ${{ runner.temp }}/eval-state
+          BUNDLE_OUTCOME: ${{ steps.bundle.outcome }}
+          CHECKOUT_OUTCOME: ${{ steps.fallback_checkout.outcome }}
+          CHECKOUT_RETRY_OUTCOME: ${{ steps.fallback_retry.outcome }}
+          VALIDATE_OUTCOME: ${{ steps.validate_dispatch.outcome }}
+          EXECUTE_OUTCOME: ${{ steps.execute_case.outcome }}
+        run: |
+          set -uo pipefail
+          node - <<'NODE'
+          const fs = require("node:fs");
+          const path = require("node:path");
+
+          const caseRunId = process.env.CASE_RUN_ID;
+          const stateDir = process.env.RUNNER_STATE_DIR;
+          const timeoutMs = 15000;
+          const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+          async function request(url, init = {}, attempts = 3) {
+            let lastError;
+            for (let attempt = 0; attempt < attempts; attempt += 1) {
+              try {
+                const response = await fetch(url, {
+                  ...init,
+                  signal: AbortSignal.timeout(timeoutMs),
+                });
+                if (!response.ok && response.status !== 409) {
+                  throw new Error(`HTTP ${response.status}`);
+                }
+                return response;
+              } catch (error) {
+                lastError = error;
+                if (attempt < attempts - 1) await sleep(500 * (attempt + 1));
+              }
+            }
+            throw lastError;
+          }
+
+          (async () => {
+            // real-task deliberately leaves a capacity-wait attempt queued for
+            // a re-run; a post-started crash is the heartbeat/reaper's job.
+            if (stateDir) {
+              if (fs.existsSync(path.join(stateDir, `.capacity-wait-${caseRunId}`))) {
+                console.log("capacity-wait marker: leaving the queued attempt for a re-run");
+                return;
+              }
+              if (fs.existsSync(path.join(stateDir, `.started-${caseRunId}`))) {
+                console.log("started marker: leaving the running attempt to its terminal callback");
+                return;
+              }
+            }
+
+            const dispatch = JSON.parse(fs.readFileSync(process.env.DISPATCH_FILE, "utf8"));
+            const response = await request(dispatch.manifest_url);
+            const token = response.headers.get("x-runner-task-token");
+            const manifest = JSON.parse(await response.text());
+            if (!token) throw new Error("manifest response missing X-Runner-Task-Token");
+            const item = (manifest.cases || []).find(
+              (candidate) => candidate.case_run_id === caseRunId,
+            );
+            if (!item) throw new Error(`case ${caseRunId} missing from manifest`);
+            const summary = (
+              "execute job 启动阶段失败：" +
+              `bundle=${process.env.BUNDLE_OUTCOME || "unknown"} ` +
+              `checkout=${process.env.CHECKOUT_OUTCOME || "unknown"} ` +
+              `checkout_retry=${process.env.CHECKOUT_RETRY_OUTCOME || "unknown"} ` +
+              `validate=${process.env.VALIDATE_OUTCOME || "unknown"} ` +
+              `execute=${process.env.EXECUTE_OUTCOME || "unknown"}`
+            ).slice(0, 1000);
+            const payload = {
+              schema_version: "1.0",
+              event_id: `evt_${caseRunId}_bootstrap_failed_${dispatch.attempt}`,
+              case_run_id: caseRunId,
+              attempt: dispatch.attempt,
+              sequence: 1000002,
+              error_code: "runner_bootstrap_failed",
+              retryable: true,
+              error_summary: summary,
+              phase: "bootstrap",
+            };
+            const callback = await request(
+              `${manifest.callback_base_url}/runner/v1/case-runs/${caseRunId}/failed`,
+              {
+                method: "POST",
+                headers: {
+                  authorization: `Bearer ${token}`,
+                  "content-type": "application/json",
+                },
+                body: JSON.stringify(payload),
+              },
+            );
+            const text = await callback.text();
+            if (callback.ok) {
+              console.log(`bootstrap failure settled: HTTP ${callback.status} ${text}`);
+            } else {
+              console.log(`bootstrap failure already settled: HTTP ${callback.status} ${text}`);
+            }
+          })().catch((error) => {
+            console.error(`bootstrap failure callback failed: ${error.message}`);
+            process.exitCode = 1;
+          });
+          NODE
