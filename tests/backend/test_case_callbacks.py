@@ -715,7 +715,8 @@ def test_manual_retry_started_is_not_a_sequence_conflict(
         .filter(EvalEvent.event_type == "case.retry_requested")
         .one()
     )
-    assert retry_event.attempt_no == 1
+    assert retry_event.attempt_no == 2
+    assert retry_event.sequence == -1
     assert retry_event.payload_json["new_attempt_no"] == 2
 
     completed = client.post(
