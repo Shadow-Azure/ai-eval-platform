@@ -1,5 +1,5 @@
 # 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
 # git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
 #   pnpm run record:i18n -- .agents/flow/issues/m8-51-dispatch-payload-guard.md
-m8-51-dispatch-payload-guard.md: 858a032a2c6cf031a62ad542e000f74b3f9bcb59
-m8-51-dispatch-payload-guard.en.md: 14ab503dbe06f3a069667b205b055d2bfd3d2144
+m8-51-dispatch-payload-guard.md: 85746beb79f63da77f6ddaec84b7c986f32bf985
+m8-51-dispatch-payload-guard.en.md: cce51c341620c19ae646a34e7ded4edbb93d7240

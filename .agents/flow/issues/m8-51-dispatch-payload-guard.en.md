@@ -6,7 +6,7 @@ English | [中文](m8-51-dispatch-payload-guard.md)
 kind: issue
 milestone: m8
 priority: P2
-status: in-progress
+status: done
 scope:
   - .agents/flow/issues/m8-51-dispatch-payload-guard.*
   - .github/workflows/eval-shard.yml
