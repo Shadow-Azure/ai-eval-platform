@@ -6,7 +6,7 @@ English | [中文](m8-53-runner-sigterm-observability.md)
 kind: issue
 milestone: m8
 priority: P2
-status: in-progress
+status: done
 scope:
   - .agents/flow/issues/m8-53-runner-sigterm-observability.*
   - .agents/flow/issues/m8-53-token-usage-stats.*
