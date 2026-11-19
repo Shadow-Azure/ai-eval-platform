@@ -19,3 +19,18 @@
 | `05/06-datasets-list` | 数据集卡片只有版本/用例数/核心指标 | 卡片新增累计 Token 与平均每次评测 Token |
 
 > 原型数据为本地 mock，用于验证信息架构与统计口径；真实数值来自生产 trace 的 `input_tokens + output_tokens` 聚合。
+
+## 生产前端缺失对照（2026-11-19 复核）
+
+生产环境 `http://47.98.144.243:8080`，版本 `0075120`，数据集 `SWE-bench Verified 复现`（6 用例）。
+
+| 文件 | 位置 | 生产现状 |
+|---|---|---|
+| `production/01-prod-results-cards.jpg` | 结果分析 | 只有解决率 / Resolved 数 / 执行失败率 4 张卡，无 Token、无成本 |
+| `production/02-prod-cases-table.jpg` | 用例明细 | 列为用例 / session / 执行 / 结果 / 轨迹 / 测试打点 / 耗时，无 Token/成本列 |
+| `production/03-prod-config-metrics.jpg` | 指标口径 | 只有 4 个解决率类指标，无 `tokens_per_case` / `cost_per_case` |
+| `production/04-prod-dataset-detail.jpg` | 数据集详情 | 卡片只有版本/用例数/指标/适配器；用例预览无 Token |
+| `production/05-prod-dataset-list.jpg` | 数据集列表 | 卡片只有版本/用例数/核心指标，无累计 Token |
+| `production/06-prod-trace.jpg` | 会话轨迹 | 唯一有 Token 的位置：单次 attempt 60.9 万 tokens / ¥2.56 |
+
+结论：生产只有“单次轨迹级”Token，缺少“用例集级”汇总与“数据集级”聚合；原型修改定义了目标形态。
