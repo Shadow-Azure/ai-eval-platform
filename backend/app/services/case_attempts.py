@@ -279,31 +279,34 @@ def _enforce_capacity_gate(ctx: CaseContext, *, now: datetime) -> None:
     run = ctx.run
     if not run.resource_pool_id or run.status not in ("queued", "running"):
         return
+    pool = ctx.session.get(ResourcePool, run.resource_pool_id)
+    pool_max = capacity.pool_max_capacity(pool) if pool is not None else None
+    if pool is not None and pool_max is not None:
+        # M8-44 (#306): lock the pool BEFORE flushing the eval_run write. The
+        # pool reconciler holds the pool row and then updates eval_run while
+        # reclaiming an attempt; taking eval_run first here would invert the
+        # lock order and deadlock (ABBA) on PostgreSQL.
+        capacity.lock_pool(ctx.session, pool.id)
     cap = capacity.effective_concurrency(ctx.session, run, settings=get_settings(), now=now)
     run.effective_concurrency = cap
     # The count below is check-then-act, so serialize concurrent started
-    # callbacks by flushing this write first: Postgres takes the eval_run row
-    # lock, SQLite takes the database write lock (SELECT ... FOR UPDATE is a
-    # no-op on SQLite, so a read lock would not protect the cap).
+    # callbacks by flushing this write: Postgres takes the eval_run row lock,
+    # SQLite takes the database write lock (SELECT ... FOR UPDATE is a no-op on
+    # SQLite, so a read lock would not protect the cap).
     ctx.session.flush()
-    pool = ctx.session.get(ResourcePool, run.resource_pool_id)
-    if pool is not None:
-        pool_max = capacity.pool_max_capacity(pool)
-        if pool_max is not None:
-            # M8-44 (#306): the per-run cap above is not enough when two
-            # evaluations share one pool. Lock the pool row (Postgres) and
-            # refuse the start once the whole pool has max_capacity Agent
-            # slots in use, regardless of which run owns them.
-            capacity.lock_pool(ctx.session, pool.id)
-            started_in_pool = capacity.pool_started_attempts(ctx.session, pool)
-            if started_in_pool >= pool_max:
-                run.queue_reason = capacity.QUEUE_REASON_CONCURRENCY_CAP
-                ctx.session.commit()
-                raise CaseCallbackError(
-                    "资源池并发已达上限，请稍后重试",
-                    code="capacity_waiting",
-                    status_code=429,
-                )
+    if pool is not None and pool_max is not None:
+        # The per-run cap above is not enough when two evaluations share one
+        # pool. Refuse the start once the whole pool has max_capacity Agent
+        # slots in use, regardless of which run owns them.
+        started_in_pool = capacity.pool_started_attempts(ctx.session, pool)
+        if started_in_pool >= pool_max:
+            run.queue_reason = capacity.QUEUE_REASON_CONCURRENCY_CAP
+            ctx.session.commit()
+            raise CaseCallbackError(
+                "资源池并发已达上限，请稍后重试",
+                code="capacity_waiting",
+                status_code=429,
+            )
     if cap <= 0:
         run.queue_reason = capacity.QUEUE_REASON_CAPACITY_WAITING
         return
@@ -400,17 +403,21 @@ def _reject_started_for_pause(ctx: CaseContext, *, payload: dict) -> None:
 
 
 def _recover_started_sequence_conflict(
-    session: Session, *, payload: dict, now: datetime
+    session: Session, *, payload: dict
 ) -> dict:
     """Resolve a sequence-0 collision without turning the callback into a 500.
 
     The manual-retry path used to write ``case.retry_requested`` on the NEW
     attempt with the model default sequence 0; the Runner's ``case.started``
-    then hit ``uq_eval_event_case_attempt_sequence``. New rows put that event
-    on the old attempt, but attempts created before the deploy still exist.
-    Relocate those platform events to the next free sequence and retry the
-    started callback once; a genuine duplicate started is deduped, anything
-    else is a diagnosable 409 instead of a 500.
+    then hit ``uq_eval_event_case_attempt_sequence``. New rows use the
+    platform reserved sequence, but attempts created before the deploy still
+    exist. Relocate those platform events into the reserved POSITIVE range and
+    retry the started callback once; a genuine duplicate started is deduped,
+    anything else is a diagnosable 409 instead of a 500.
+
+    The reserved range must stay positive: the console's event reader rejects
+    negative sequences, and moving to 1 would collide with the Runner's first
+    heartbeat.
     """
 
     ctx = resolve_context(
@@ -438,8 +445,21 @@ def _recover_started_sequence_conflict(
             code="sequence_conflict",
             status_code=409,
         )
+    used = set(
+        session.scalars(
+            select(EvalEvent.sequence).where(
+                EvalEvent.eval_case_run_id == ctx.case_run.id,
+                EvalEvent.attempt_no == ctx.attempt.attempt_no,
+            )
+        )
+    )
+    next_platform = lifecycle.PLATFORM_EVENT_SEQUENCE
     for event in legacy_platform_events:
-        event.sequence = next_free_sequence(session, ctx.case_run, ctx.attempt)
+        while next_platform in used:
+            next_platform += 1
+        event.sequence = next_platform
+        used.add(next_platform)
+        next_platform += 1
     session.commit()
     return {"ok": True, "recovered": True}
 
@@ -507,7 +527,7 @@ def handle_started(
                 code="sequence_conflict",
                 status_code=409,
             ) from None
-        _recover_started_sequence_conflict(session, payload=payload, now=now)
+        _recover_started_sequence_conflict(session, payload=payload)
         return handle_started(
             session, payload=payload, now=now, _recovery_depth=_recovery_depth + 1
         )
@@ -1111,7 +1131,9 @@ def handle_runner_lost(
     run = session.get(EvalRun, case_run.eval_run_id)
     if run is None or run.status in evaluations.TERMINAL_RUN_STATUSES:
         return False
-    if run.status in evaluations.PAUSED_RUN_STATUSES:
+    if run.status in ("cancelling", *evaluations.PAUSED_RUN_STATUSES):
+        # Cancellation/budget-pause owns the attempt; a reclaim must not turn
+        # it into a normal retry or a misleading "max_attempts exhausted".
         return False
     attempts = list(
         session.scalars(
@@ -1181,7 +1203,9 @@ def handle_spot_interruption(
     run = session.get(EvalRun, case_run.eval_run_id)
     if run is None or run.status in evaluations.TERMINAL_RUN_STATUSES:
         return False
-    if run.status in evaluations.PAUSED_RUN_STATUSES:
+    if run.status in ("cancelling", *evaluations.PAUSED_RUN_STATUSES):
+        # Cancellation/budget-pause owns the attempt; a reclaim must not turn
+        # it into a normal retry or a misleading "max_attempts exhausted".
         return False
     attempts = list(
         session.scalars(

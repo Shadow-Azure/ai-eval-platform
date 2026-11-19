@@ -20,6 +20,7 @@ scope:
   - plans/2026-11-19-pr*-review.md
   - reports/**
   - runner-contract/schemas/v1/failure.schema.json
+  - runner/scripts/real-task.mjs
   - scripts/doc-budgets.manifest.json
   - tests/backend/test_aliyun_provisioner.py
   - tests/backend/test_case_callbacks.py
@@ -40,7 +41,7 @@ A production m9 spot × SuperPower evaluation exposed four scheduling reliabilit
 
 ## Goals
 
-- Give manual retry's `case.retry_requested` a platform-only negative sequence so it never occupies the Runner's `case.started` sequence 0; on a started sequence collision, read the stored event, return idempotently or a diagnosable 409 instead of a 500.
+- Give manual retry's `case.retry_requested` a platform-reserved positive sequence so it never occupies the Runner's `case.started` sequence 0; on a started sequence collision, relocate historical platform events into the reserved range, read the stored event, return idempotently or a diagnosable 409 instead of a 500.
 - When an execute job fails before started (scripts bundle, checkout, dispatch validation or execution), call back `runner_bootstrap_failed` with the manifest endpoint's short token; the platform settles it immediately under the normal retry budget.
 - Only a provider-confirmed stop consumes the spot interruption path; `runner_exited`/`runner_heartbeat_lost` settle as `runner_lost`, preserving the real reason, provider_state and last_heartbeat without consuming spot retries.
 - Pool-level in-flight reservation: a second evaluation sees only capacity the first evaluation has not claimed; a hard pool cap at started keeps concurrent Agents at or below `max_capacity`.

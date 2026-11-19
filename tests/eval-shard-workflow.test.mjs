@@ -88,9 +88,15 @@ test("eval-shard reports a pre-started bootstrap failure without the scripts bun
     "/runner/v1/case-runs/${caseRunId}/failed",
     "x-runner-task-token",
     "manifest.callback_base_url",
+    "RUNNER_STATE_DIR",
+    ".capacity-wait-",
+    ".started-",
   ]) {
     assert.ok(execute.includes(expected), `execute failure settlement missing ${expected}`);
   }
+  // A missing Runner row must not turn the failed callback into a 404; the
+  // failed action does not need the runner binding header.
+  assert.equal(execute.includes('"x-runner-id"'), false);
   // The callback must work when the scripts bundle/checkout already failed.
   const stepStart = execute.indexOf("name: Report bootstrap failure");
   const step = execute.slice(stepStart);

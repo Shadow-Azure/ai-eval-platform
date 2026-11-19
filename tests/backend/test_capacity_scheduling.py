@@ -678,3 +678,45 @@ def test_second_evaluation_waits_for_pool_in_flight(
     )
     assert run2_attempt is not None
     assert run2_attempt.status == "queued"
+
+def test_started_hard_caps_a_shared_pool(
+    seeded: Session, configure_settings
+) -> None:
+    """M8-44 (#306 P1-2): started cannot exceed the pool's max capacity."""
+
+    configure_settings(RUNNER_HEARTBEAT_TIMEOUT_SECONDS="90")
+    pool = _make_pool(seeded, runners=1, key="hard-cap")
+    pool.max_capacity = 1
+    seeded.commit()
+    run1 = _create_run(
+        seeded, pool=pool, case_count=1, shard_size=1, requested=1, key="hard-cap-1"
+    )
+    run2 = _create_run(
+        seeded, pool=pool, case_count=1, shard_size=1, requested=1, key="hard-cap-2"
+    )
+    case1 = seeded.scalar(select(EvalCaseRun).where(EvalCaseRun.eval_run_id == run1.id))
+    case2 = seeded.scalar(select(EvalCaseRun).where(EvalCaseRun.eval_run_id == run2.id))
+
+    case_attempts.handle_started(
+        seeded,
+        payload={"case_run_id": case1.id, "attempt": 1, "event_id": "evt-hard-cap-1"},
+    )
+    with pytest.raises(case_attempts.CaseCallbackError) as rejected:
+        case_attempts.handle_started(
+            seeded,
+            payload={"case_run_id": case2.id, "attempt": 1, "event_id": "evt-hard-cap-2"},
+        )
+
+    assert rejected.value.status_code == 429
+    assert rejected.value.code == "capacity_waiting"
+    seeded.expire_all()
+    assert seeded.get(EvalCaseRun, case2.id).execution_status == "queued"
+    assert (
+        seeded.scalar(
+            select(EvalCaseAttempt.status).where(
+                EvalCaseAttempt.eval_case_run_id == case2.id
+            )
+        )
+        == "pending"
+    )
+

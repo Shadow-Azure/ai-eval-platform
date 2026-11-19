@@ -32,16 +32,13 @@ from ..models import (
 )
 from ..money import money_str
 from . import datasets as dataset_service
-from . import evaluations
+from . import evaluations, lifecycle
 from .trace_sessions import main_session_id as lookup_main_session_id
 from .trace_sessions import main_session_ids
 
 CASE_LIST_STATUSES = ("all", "resolved", "unresolved", "running", "failed", "queued")
 FAILED_CASE_STATUSES = ("failed", "timeout")
 RETRYABLE_CASE_STATUSES = ("failed", "timeout")
-# Platform-only event namespace: negative numbers never collide with the
-# Runner's case.started (0) or monotonic heartbeat sequences (M8-44 #306).
-PLATFORM_EVENT_SEQUENCE = -1
 TEST_SUMMARY_KEYS = ("passed", "failed", "skipped", "error", "f2p_failed", "p2p_failed")
 SORTABLE_CASE_COLUMNS = {
     "ordinal": EvalCaseRun.ordinal,
@@ -459,19 +456,19 @@ def _create_retry_attempt(
     case.result_status = "not_scored"
     case.error_code = None
     case.error_summary = None
-    # M8-44 (#306): platform-only events use their own negative sequence
-    # namespace. The model default sequence 0 belongs to the Runner's
-    # ``case.started``; writing ``case.retry_requested`` at 0 made every manual
-    # retry fail with the unique-constraint 500 (design 06 allows an independent
-    # sequence namespace). The event still belongs to the new attempt so the
-    # console can render "attempt 1 → 2".
+    # M8-44 (#306): platform-only events use a reserved POSITIVE sequence
+    # namespace. Sequence 0 belongs to the Runner's ``case.started``; writing
+    # ``case.retry_requested`` at 0 made every manual retry fail with the
+    # unique-constraint 500. The console rejects negative sequences, so the
+    # reserved range starts above the runner's terminal callbacks. The event
+    # belongs to the new attempt so the console can render "attempt 1 → 2".
     session.add(
         EvalEvent(
             tenant_id=run.tenant_id,
             eval_run_id=run.id,
             eval_case_run_id=case.id,
             attempt_no=new_attempt_no,
-            sequence=PLATFORM_EVENT_SEQUENCE,
+            sequence=lifecycle.PLATFORM_EVENT_SEQUENCE,
             event_type="case.retry_requested",
             payload_json={
                 "requested_by": actor,

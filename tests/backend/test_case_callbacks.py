@@ -716,8 +716,16 @@ def test_manual_retry_started_is_not_a_sequence_conflict(
         .one()
     )
     assert retry_event.attempt_no == 2
-    assert retry_event.sequence == -1
+    assert retry_event.sequence == 1_000_100
     assert retry_event.payload_json["new_attempt_no"] == 2
+
+    # The console event reader accepts the reserved positive sequence.
+    events_response = client.get(f"/api/v1/evaluations/{env['run_id']}/events")
+    assert events_response.status_code == 200, events_response.text
+    assert any(
+        item["sequence"] == 1_000_100 and item["event_type"] == "case.retry_requested"
+        for item in events_response.json()["items"]
+    )
 
     completed = client.post(
         case_url(env, case_run_id, "completed"),
@@ -753,17 +761,15 @@ def test_started_recovers_legacy_retry_event_collision(
         .filter(EvalCaseAttempt.attempt_no == 2)
         .one()
     )
-    env["session"].add(
-        EvalEvent(
-            tenant_id=attempt2.tenant_id,
-            eval_run_id=env["run_id"],
-            eval_case_run_id=case_run_id,
-            attempt_no=2,
-            sequence=0,
-            event_type="case.retry_requested",
-            payload_json={"legacy": True},
-        )
+    # Simulate a row written before the deploy: the manual retry event still
+    # occupies sequence 0 on the new attempt.
+    legacy_event = (
+        env["session"]
+        .query(EvalEvent)
+        .filter(EvalEvent.event_type == "case.retry_requested")
+        .one()
     )
+    legacy_event.sequence = 0
     env["session"].commit()
 
     retry_token = issue_short_token(
@@ -771,12 +777,22 @@ def test_started_recovers_legacy_retry_event_collision(
         SECRET,
         ttl_seconds=600,
     )
+    headers = {"Authorization": f"Bearer {retry_token}"}
     started = client.post(
         case_url(env, case_run_id, "started"),
         json=started_body(env, case_run_id, attempt=2),
-        headers={"Authorization": f"Bearer {retry_token}"},
+        headers=headers,
     )
     assert started.status_code == 200, started.text
+
+    # A relocation into heartbeat sequence 1 would now collide with the first
+    # heartbeat; the reserved positive range must leave 1 free.
+    heartbeat = client.post(
+        case_url(env, case_run_id, "heartbeat"),
+        json=heartbeat_body(case_run_id, sequence=1, attempt=2),
+        headers=headers,
+    )
+    assert heartbeat.status_code == 200, heartbeat.text
 
     env["session"].expire_all()
     events = (
@@ -789,7 +805,8 @@ def test_started_recovers_legacy_retry_event_collision(
     )
     by_type = {event.event_type: event for event in events}
     assert by_type["case.started"].sequence == 0
-    assert by_type["case.retry_requested"].sequence == 1
+    assert by_type["case.retry_requested"].sequence == 1_000_100
+    assert by_type["case.heartbeat"].sequence == 1
 
 
 def test_bootstrap_failure_before_started_retries_immediately(

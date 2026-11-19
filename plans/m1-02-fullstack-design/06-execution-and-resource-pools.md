@@ -234,8 +234,8 @@ started 回调使用 `RUNNER_ID || RUNNER_NAME`，确保 `eval_case_attempt.runn
 
 ## 竞争态池调度可靠性（M8-44）
 
-手动重试的 `case.retry_requested` 使用平台专用负数序号，不占用新 attempt 的 sequence 0，因此
-`case.started` 的 0 只属于 Runner；started 遇到唯一键冲突时回读事件并幂等返回，历史冲突行把平台事件迁移到空闲序号后重试，不返回 500。
+手动重试的 `case.retry_requested` 使用平台保留的正数序号，不占用新 attempt 的 sequence 0，因此
+`case.started` 的 0 只属于 Runner；started 遇到唯一键冲突时回读事件并幂等返回，历史冲突行把平台事件迁入保留区间后重试，不返回 500。
 
 execute job 在 `started` 前失败（脚本包、checkout、dispatch 校验或执行异常）时，由独立失败步骤用 manifest 端点的
 短期 token 回调 `runner_bootstrap_failed`，平台按普通重试预算立即结算，queue timeout 仅作兜底。失败步骤不依赖

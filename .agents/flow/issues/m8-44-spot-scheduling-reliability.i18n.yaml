@@ -1,5 +1,5 @@
 # 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
 # git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
 #   pnpm run record:i18n -- .agents/flow/issues/m8-44-spot-scheduling-reliability.md
-m8-44-spot-scheduling-reliability.md: 87f5f91e5905d77842e891a3c3f9ce560e99fdeb
-m8-44-spot-scheduling-reliability.en.md: 01a4615c3d27766f7a66ff1462f830c5c91f8bee
+m8-44-spot-scheduling-reliability.md: 94673d19924c1ba4b1262edfe2269bf9a291403a
+m8-44-spot-scheduling-reliability.en.md: 4bc0df6218ea8dcc7b54988ea5573798906a2daa

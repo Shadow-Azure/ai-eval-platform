@@ -427,10 +427,10 @@ def test_retry_case_creates_attempt_outbox_and_event(
     assert event is not None
     assert event.eval_case_run_id == target.id
     # M8-44 (#306): the retry request lives on the new attempt but uses the
-    # platform-only negative sequence namespace, leaving sequence 0 for the
-    # Runner's case.started.
+    # platform-reserved positive sequence, leaving sequence 0 for the Runner's
+    # case.started and sequence 1 for its first heartbeat.
     assert event.attempt_no == 2
-    assert event.sequence == -1
+    assert event.sequence == 1_000_100
     assert event.payload_json["new_attempt_no"] == 2
     assert event.payload_json["previous_attempt_no"] == 1
     assert event.payload_json["requested_by"] == "admin@test.local"

@@ -110,6 +110,9 @@ def pool_in_flight(
         .join(EvalRun, EvalRun.id == EvalCaseRun.eval_run_id)
         .where(
             EvalRun.resource_pool_id == pool.id,
+            # A stale attempt of a terminal run must not reserve capacity for
+            # every other run until the reaper clears it.
+            EvalRun.status.in_(("queued", "running")),
             EvalCaseAttempt.status.in_(RELEASED_ATTEMPT_STATUSES),
         )
     )
@@ -129,6 +132,7 @@ def pool_started_attempts(session: Session, pool: ResourcePool) -> int:
             .join(EvalRun, EvalRun.id == EvalCaseRun.eval_run_id)
             .where(
                 EvalRun.resource_pool_id == pool.id,
+                EvalRun.status.in_(("queued", "running")),
                 EvalCaseAttempt.status.in_(("running", "scoring", "uploading")),
             )
         )

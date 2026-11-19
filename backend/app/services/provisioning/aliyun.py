@@ -119,10 +119,13 @@ BILLING_ERROR_CODES = {
 INSTANCE_ACTIVE_STATUSES = ("requested", "creating", "registering", "online")
 SPOT_INTERRUPTION_LOCKS = ("recycl", "spot", "maintenance", "beingrecycled")
 
-# M8-44 (#306): only a provider-confirmed stop/reclaim consumes the spot retry
-# budget. A runner that exited or lost its heartbeat is a normal retryable
-# runner failure, even when the instance row is being released.
-PROVIDER_STOP_REASONS = frozenset({"provider_stopped", "spot_interrupted"})
+# M8-44 (#306): provider-originated loss/reclaim reasons. A runner that exited
+# or lost its heartbeat is a normal retryable runner failure, even when the
+# instance row is being released; the provider reasons below stay on the spot
+# interruption path.
+PROVIDER_INTERRUPTION_REASONS = frozenset(
+    {"provider_stopped", "spot_interrupted", "provider_unhealthy", "instance_missing"}
+)
 
 
 def _aware(value: datetime | None) -> datetime | None:
@@ -1031,7 +1034,7 @@ class AliyunEcsProvisioner:
                 # through the normal retry budget so an ephemeral Runner blip
                 # does not exhaust the three-spot-retry allowance or rewrite
                 # the failure as "云侧停止了 spot 实例".
-                if reason in PROVIDER_STOP_REASONS:
+                if reason in PROVIDER_INTERRUPTION_REASONS:
                     case_attempts.handle_spot_interruption(
                         session,
                         case_run_id=active_case,
@@ -1171,6 +1174,7 @@ class AliyunEcsProvisioner:
                         reason="instance_missing",
                         now=now,
                         event_type=EVENT_INSTANCE_INTERRUPTED,
+                        provider_state="missing",
                     )
                 continue
             status = str(row.get("Status") or "")
@@ -1187,6 +1191,7 @@ class AliyunEcsProvisioner:
                     now=now,
                     event_type=EVENT_INSTANCE_INTERRUPTED,
                     detail=status,
+                    provider_state=status,
                 )
                 continue
             if unhealthy_lock or status not in ("Running", "Starting", "Pending"):
@@ -1199,6 +1204,7 @@ class AliyunEcsProvisioner:
                     now=now,
                     event_type=EVENT_INSTANCE_INTERRUPTED,
                     detail=lock_text or status,
+                    provider_state=status,
                 )
                 continue
             if status != "Running":
@@ -1213,6 +1219,7 @@ class AliyunEcsProvisioner:
                         reason="create_timeout",
                         now=now,
                         event_type=EVENT_INSTANCE_CREATE_TIMEOUT,
+                        provider_state=status,
                     )
                 continue
             if runner is not None and runner.status in ("online", "busy"):
@@ -1316,6 +1323,7 @@ class AliyunEcsProvisioner:
                     reason="register_timeout",
                     now=now,
                     event_type=EVENT_INSTANCE_CREATE_TIMEOUT,
+                    provider_state=status,
                 )
         session.flush()
         return counters

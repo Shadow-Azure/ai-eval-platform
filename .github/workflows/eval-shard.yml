@@ -444,13 +444,15 @@ jobs:
       # attempt now with a retryable bootstrap failure. The manifest endpoint
       # (not the scripts bundle) issues the short token, so this works even when
       # `Fetch the scripts bundle` or the checkout fallback already failed.
+      # real-task writes markers for "capacity wait, attempt stays queued" and
+      # "started already happened"; both must NOT be re-settled as bootstrap.
       - name: Report bootstrap failure
         if: failure() || cancelled()
         continue-on-error: true
         env:
           DISPATCH_FILE: ${{ runner.temp }}/eval-dispatch/dispatch.json
           CASE_RUN_ID: ${{ matrix.case.id }}
-          RUNNER_NAME: ${{ runner.name }}
+          RUNNER_STATE_DIR: ${{ runner.temp }}/eval-state
           BUNDLE_OUTCOME: ${{ steps.bundle.outcome }}
           CHECKOUT_OUTCOME: ${{ steps.fallback_checkout.outcome }}
           CHECKOUT_RETRY_OUTCOME: ${{ steps.fallback_retry.outcome }}
@@ -460,22 +462,49 @@ jobs:
           set -uo pipefail
           node - <<'NODE'
           const fs = require("node:fs");
+          const path = require("node:path");
 
-          const dispatch = JSON.parse(fs.readFileSync(process.env.DISPATCH_FILE, "utf8"));
           const caseRunId = process.env.CASE_RUN_ID;
+          const stateDir = process.env.RUNNER_STATE_DIR;
           const timeoutMs = 15000;
+          const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-          async function get(url, headers = {}) {
-            const response = await fetch(url, {
-              headers,
-              signal: AbortSignal.timeout(timeoutMs),
-            });
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
-            return response;
+          async function request(url, init = {}, attempts = 3) {
+            let lastError;
+            for (let attempt = 0; attempt < attempts; attempt += 1) {
+              try {
+                const response = await fetch(url, {
+                  ...init,
+                  signal: AbortSignal.timeout(timeoutMs),
+                });
+                if (!response.ok && response.status !== 409) {
+                  throw new Error(`HTTP ${response.status}`);
+                }
+                return response;
+              } catch (error) {
+                lastError = error;
+                if (attempt < attempts - 1) await sleep(500 * (attempt + 1));
+              }
+            }
+            throw lastError;
           }
 
           (async () => {
-            const response = await get(dispatch.manifest_url);
+            // real-task deliberately leaves a capacity-wait attempt queued for
+            // a re-run; a post-started crash is the heartbeat/reaper's job.
+            if (stateDir) {
+              if (fs.existsSync(path.join(stateDir, `.capacity-wait-${caseRunId}`))) {
+                console.log("capacity-wait marker: leaving the queued attempt for a re-run");
+                return;
+              }
+              if (fs.existsSync(path.join(stateDir, `.started-${caseRunId}`))) {
+                console.log("started marker: leaving the running attempt to its terminal callback");
+                return;
+              }
+            }
+
+            const dispatch = JSON.parse(fs.readFileSync(process.env.DISPATCH_FILE, "utf8"));
+            const response = await request(dispatch.manifest_url);
             const token = response.headers.get("x-runner-task-token");
             const manifest = JSON.parse(await response.text());
             if (!token) throw new Error("manifest response missing X-Runner-Task-Token");
@@ -502,28 +531,22 @@ jobs:
               error_summary: summary,
               phase: "bootstrap",
             };
-            const callback = await fetch(
+            const callback = await request(
               `${manifest.callback_base_url}/runner/v1/case-runs/${caseRunId}/failed`,
               {
                 method: "POST",
                 headers: {
                   authorization: `Bearer ${token}`,
                   "content-type": "application/json",
-                  ...(process.env.RUNNER_NAME
-                    ? { "x-runner-id": process.env.RUNNER_NAME }
-                    : {}),
                 },
                 body: JSON.stringify(payload),
-                signal: AbortSignal.timeout(timeoutMs),
               },
             );
             const text = await callback.text();
             if (callback.ok) {
               console.log(`bootstrap failure settled: HTTP ${callback.status} ${text}`);
-            } else if (callback.status === 409) {
-              console.log(`bootstrap failure already settled: HTTP 409 ${text}`);
             } else {
-              throw new Error(`failure callback HTTP ${callback.status}: ${text}`);
+              console.log(`bootstrap failure already settled: HTTP ${callback.status} ${text}`);
             }
           })().catch((error) => {
             console.error(`bootstrap failure callback failed: ${error.message}`);

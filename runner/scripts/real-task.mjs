@@ -1177,7 +1177,14 @@ async function main() {
       if (startedResult.status === 429) {
         // Capacity budget exhausted: the attempt is still `queued` on the
         // platform. Never post a failed callback here; release the claim and
-        // let a re-run pick the case up.
+        // let a re-run pick the case up. The marker tells the workflow's
+        // failure settlement step to leave the attempt queued as well.
+        try {
+          mkdirSync(args.stateDir, { recursive: true });
+          writeFileSync(join(args.stateDir, `.capacity-wait-${item.case_run_id}`), "1\n");
+        } catch {
+          // Best effort: the platform queue timeout still covers this case.
+        }
         fail(
           `评测并发已满：started 回调在 ${capacityWait}s 内持续 429，attempt 保持 queued`,
           "callback_retryable",
@@ -1208,6 +1215,16 @@ async function main() {
             : "callback_permanent",
           1,
         );
+      }
+
+      // A pre-started failure may be settled as runner_bootstrap_failed by the
+      // workflow; a post-started crash must not be. The marker keeps the two
+      // cases distinguishable without another platform callback.
+      try {
+        mkdirSync(args.stateDir, { recursive: true });
+        writeFileSync(join(args.stateDir, `.started-${item.case_run_id}`), "1\n");
+      } catch {
+        // Ambient marker only; the heartbeat/reaper still cover a lost runner.
       }
 
       const heartbeat = requireValid("heartbeat", {

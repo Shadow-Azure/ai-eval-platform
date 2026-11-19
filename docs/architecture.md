@@ -52,7 +52,7 @@ M2 把执行与数据集、Agent 解耦：平台经 repository_dispatch 传 eval
 
 平台为排队、执行、评分、上传与心跳维护五类超时；取消停止新派发，Worker 对账补齐丢失完成事件。资源连接与竞价池按排队缺口扩缩容，价格超阈值只排队。
 
-竞价池由供给器管理：Worker 解密租户资源连接中的阿里云 AccessKey，查询区域竞价价格与库存，按排队缺口创建 Spot ECS；实例以一次性 JIT 配置注册为 ephemeral Runner 并绑定池标签。价格、实例状态、竞价中断、心跳丢失与创建超时写入资源事件，队列保持可诊断；缩容先注销 Runner 再释放实例。竞争态池的容量按池级 in-flight 预留在评测间分配：一个评测只看到其他评测尚未占用的容量，started 再按池上限硬闸。execute job 在 started 前失败时回调 `runner_bootstrap_failed` 并按普通重试结算；provider 确认停止的回收走 spot 中断，runner 退出或心跳丢失记为 `runner_lost` 并计入 `max_attempts`。手动重试的平台事件使用负数序号命名空间，started 对序号冲突幂等。
+竞价池由供给器管理：Worker 解密租户资源连接中的阿里云 AccessKey，查询区域竞价价格与库存，按排队缺口创建 Spot ECS；实例以一次性 JIT 配置注册为 ephemeral Runner 并绑定池标签。价格、实例状态、竞价中断、心跳丢失与创建超时写入资源事件，队列保持可诊断；缩容先注销 Runner 再释放实例。竞争态池的容量按池级 in-flight 预留在评测间分配：一个评测只看到其他评测尚未占用的容量，started 再按池上限硬闸。execute job 在 started 前失败时回调 `runner_bootstrap_failed` 并按普通重试结算；provider 确认停止的回收走 spot 中断，runner 退出或心跳丢失记为 `runner_lost` 并计入 `max_attempts`。手动重试的平台事件使用平台保留的正数序号，started 对序号冲突幂等。
 
 生产部署把 Runner 回调入口绑定到 VPC 私网地址（`API_BIND_ADDRESS`），安全组按 VPC 网段放行 8000（不新增公网入口），固定 Runner 保留回环路径；`RUNNER_CALLBACK_BASE_URL` 默认由 `API_BIND_ADDRESS` 推导并注入 api 与 worker（可显式覆盖），竞价实例据此取 manifest 并回传结果，并默认从固定端点 `/runner/v1/runner-tarball/<版本>.tar.gz` 下载 actions-runner 包：api 以 OSS 凭据流式读取并要求心跳 Token，地址不随预签名过期，OSS 保持私有；`RUNNER_SPOT_RUNNER_TARBALL_URL` 可显式覆盖为外部镜像。同一发布流水线还会把 `runner/` 与 `runner-contract/schemas/` 打成按 md5 命名的确定性脚本包并缓存到同一私有 OSS，由 `/runner/v1/scripts/<name>` 代理给 Runner；prepare/execute 优先从脚本包运行，只有包不可用时才回退 `actions/checkout`，checkout 不再是主路径。池的 `labels_json.runs_on` 同时决定 Runner 注册标签与分片 dispatch/manifest 的 `runs_on`，自定义标签池因此能接到 execute job；未配置时沿用 `self-hosted,linux,eval`。`/resources` 的供给测试是创建验证，实例在注册 Runner 前释放，完整链路由真实评测验证。
 
