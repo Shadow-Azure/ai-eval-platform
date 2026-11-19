@@ -119,6 +119,14 @@ BILLING_ERROR_CODES = {
 INSTANCE_ACTIVE_STATUSES = ("requested", "creating", "registering", "online")
 SPOT_INTERRUPTION_LOCKS = ("recycl", "spot", "maintenance", "beingrecycled")
 
+# M8-44 (#306): provider-originated loss/reclaim reasons. A runner that exited
+# or lost its heartbeat is a normal retryable runner failure, even when the
+# instance row is being released; the provider reasons below stay on the spot
+# interruption path.
+PROVIDER_INTERRUPTION_REASONS = frozenset(
+    {"provider_stopped", "spot_interrupted", "provider_unhealthy", "instance_missing"}
+)
+
 
 def _aware(value: datetime | None) -> datetime | None:
     if value is None or value.tzinfo is not None:
@@ -916,6 +924,7 @@ class AliyunEcsProvisioner:
         now: datetime,
         event_type: str,
         detail: str | None = None,
+        provider_state: str | None = None,
     ) -> None:
         from ..capacity_control import EVENT_RELEASE_FAILED
 
@@ -948,7 +957,8 @@ class AliyunEcsProvisioner:
             "reason": reason,
             "detail": detail,
             "provider_state": (
-                detail if detail in ("Stopped", "Stopping") else cost.get("last_state")
+                provider_state
+                or (detail if detail in ("Stopped", "Stopping") else cost.get("last_state"))
             ),
             "instance_type": cost.get("instance_type"),
             "zone_id": cost.get("zone_id"),
@@ -1019,9 +1029,31 @@ class AliyunEcsProvisioner:
                     }
                 )
             if active_case:
-                case_attempts.handle_spot_interruption(
-                    session, case_run_id=active_case, now=now
-                )
+                # M8-44 (#306): a runner exit/heartbeat loss is NOT a spot
+                # reclaim — the provider instance was still Running. Route it
+                # through the normal retry budget so an ephemeral Runner blip
+                # does not exhaust the three-spot-retry allowance or rewrite
+                # the failure as "云侧停止了 spot 实例".
+                if reason in PROVIDER_INTERRUPTION_REASONS:
+                    case_attempts.handle_spot_interruption(
+                        session,
+                        case_run_id=active_case,
+                        reason=reason,
+                        detail=detail,
+                        provider_state=stop_context.get("provider_state"),
+                        last_heartbeat=stop_context.get("runner_last_heartbeat_at"),
+                        now=now,
+                    )
+                else:
+                    case_attempts.handle_runner_lost(
+                        session,
+                        case_run_id=active_case,
+                        reason=reason,
+                        detail=detail,
+                        provider_state=stop_context.get("provider_state"),
+                        last_heartbeat=stop_context.get("runner_last_heartbeat_at"),
+                        now=now,
+                    )
             runner.status = "offline"
             runner.deregistered_at = runner.deregistered_at or now
             session.flush()
@@ -1142,6 +1174,7 @@ class AliyunEcsProvisioner:
                         reason="instance_missing",
                         now=now,
                         event_type=EVENT_INSTANCE_INTERRUPTED,
+                        provider_state="missing",
                     )
                 continue
             status = str(row.get("Status") or "")
@@ -1158,6 +1191,7 @@ class AliyunEcsProvisioner:
                     now=now,
                     event_type=EVENT_INSTANCE_INTERRUPTED,
                     detail=status,
+                    provider_state=status,
                 )
                 continue
             if unhealthy_lock or status not in ("Running", "Starting", "Pending"):
@@ -1170,6 +1204,7 @@ class AliyunEcsProvisioner:
                     now=now,
                     event_type=EVENT_INSTANCE_INTERRUPTED,
                     detail=lock_text or status,
+                    provider_state=status,
                 )
                 continue
             if status != "Running":
@@ -1184,6 +1219,7 @@ class AliyunEcsProvisioner:
                         reason="create_timeout",
                         now=now,
                         event_type=EVENT_INSTANCE_CREATE_TIMEOUT,
+                        provider_state=status,
                     )
                 continue
             if runner is not None and runner.status in ("online", "busy"):
@@ -1218,6 +1254,7 @@ class AliyunEcsProvisioner:
                         now=now,
                         event_type=EVENT_INSTANCE_INTERRUPTED,
                         detail=f"last_heartbeat={_iso(last_seen)}",
+                        provider_state=status,
                     )
                 continue
             if instance.status == "online":
@@ -1243,6 +1280,7 @@ class AliyunEcsProvisioner:
                             now=now,
                             event_type=EVENT_INSTANCE_INTERRUPTED,
                             detail="runner_missing",
+                            provider_state=status,
                         )
                 elif runner.status == "offline" and (
                     (last_seen or anchor) is not None
@@ -1257,6 +1295,7 @@ class AliyunEcsProvisioner:
                         now=now,
                         event_type=EVENT_INSTANCE_INTERRUPTED,
                         detail=f"last_heartbeat={_iso(last_seen)}",
+                        provider_state=status,
                     )
                 elif last_seen is not None and now - last_seen > heartbeat_timeout + lost_grace:
                     # Fallback for a row that is neither live nor marked
@@ -1270,6 +1309,7 @@ class AliyunEcsProvisioner:
                         now=now,
                         event_type=EVENT_INSTANCE_INTERRUPTED,
                         detail=f"last_heartbeat={_iso(last_seen)}",
+                        provider_state=status,
                     )
                 continue
             if instance.status in ("requested", "creating"):
@@ -1283,6 +1323,7 @@ class AliyunEcsProvisioner:
                     reason="register_timeout",
                     now=now,
                     event_type=EVENT_INSTANCE_CREATE_TIMEOUT,
+                    provider_state=status,
                 )
         session.flush()
         return counters

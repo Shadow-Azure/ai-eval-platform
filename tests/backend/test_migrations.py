@@ -342,6 +342,37 @@ def test_dataset_image_artifact_roundtrip(database_url: str) -> None:
     run_alembic(database_url, "upgrade", "head")
 
 
+def test_queue_progress_lease_columns_roundtrip(database_url: str) -> None:
+    """0030 adds the nullable shard progress lease columns (M8-45 / #307)."""
+
+    run_alembic(database_url, "upgrade", "0030_queue_progress_lease")
+    engine = create_engine(database_url, future=True)
+    try:
+        columns = {
+            column["name"]: column
+            for column in inspect(engine).get_columns("eval_case_attempt")
+        }
+        assert {"queue_started_at", "queue_deadline"} <= set(columns)
+        assert columns["queue_started_at"]["nullable"] is True
+        assert columns["queue_deadline"]["nullable"] is True
+    finally:
+        engine.dispose()
+
+    run_alembic(database_url, "downgrade", "0029_dataset_image_artifacts")
+    engine = create_engine(database_url, future=True)
+    try:
+        columns = {
+            column["name"]
+            for column in inspect(engine).get_columns("eval_case_attempt")
+        }
+        assert "queue_started_at" not in columns
+        assert "queue_deadline" not in columns
+    finally:
+        engine.dispose()
+
+    run_alembic(database_url, "upgrade", "head")
+
+
 def test_self_evolution_columns_roundtrip(database_url: str) -> None:
     """0028 adds the reporting target, the outbox table and the session index."""
 

@@ -31,6 +31,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..agent_timeout import DEFAULT_AGENT_TIMEOUT_SECONDS
@@ -43,10 +44,11 @@ from ..models import (
     EvalRun,
     MetricDefinition,
     Outbox,
+    ResourcePool,
 )
 from ..runner_contracts import validate_payload
 from ..scoring.service import ingest_score_report, recompute_metrics
-from . import capacity, evaluations, lifecycle
+from . import capacity, evaluations, lifecycle, queue_lease
 from .evaluations import refresh_run_progress
 from .object_store import ObjectMissing, ObjectSizeMismatch, object_store_from_settings
 from .trace_manifest import (
@@ -253,6 +255,15 @@ def _promote_running(ctx: CaseContext, *, now: datetime, runner_id: str | None =
         ctx.run.status = "running"
         if ctx.run.started_at is None:
             ctx.run.started_at = now
+    # M8-45 (#307): a start is real shard progress, so every still-waiting
+    # sibling gets a fresh queue lease before this transaction commits.
+    queue_lease.renew_shard_leases(
+        ctx.session,
+        attempt=ctx.attempt,
+        run=ctx.run,
+        settings=get_settings(),
+        now=now,
+    )
     return True
 
 
@@ -277,13 +288,34 @@ def _enforce_capacity_gate(ctx: CaseContext, *, now: datetime) -> None:
     run = ctx.run
     if not run.resource_pool_id or run.status not in ("queued", "running"):
         return
+    pool = ctx.session.get(ResourcePool, run.resource_pool_id)
+    pool_max = capacity.pool_max_capacity(pool) if pool is not None else None
+    if pool is not None and pool_max is not None:
+        # M8-44 (#306): lock the pool BEFORE flushing the eval_run write. The
+        # pool reconciler holds the pool row and then updates eval_run while
+        # reclaiming an attempt; taking eval_run first here would invert the
+        # lock order and deadlock (ABBA) on PostgreSQL.
+        capacity.lock_pool(ctx.session, pool.id)
     cap = capacity.effective_concurrency(ctx.session, run, settings=get_settings(), now=now)
     run.effective_concurrency = cap
     # The count below is check-then-act, so serialize concurrent started
-    # callbacks by flushing this write first: Postgres takes the eval_run row
-    # lock, SQLite takes the database write lock (SELECT ... FOR UPDATE is a
-    # no-op on SQLite, so a read lock would not protect the cap).
+    # callbacks by flushing this write: Postgres takes the eval_run row lock,
+    # SQLite takes the database write lock (SELECT ... FOR UPDATE is a no-op on
+    # SQLite, so a read lock would not protect the cap).
     ctx.session.flush()
+    if pool is not None and pool_max is not None:
+        # The per-run cap above is not enough when two evaluations share one
+        # pool. Refuse the start once the whole pool has max_capacity Agent
+        # slots in use, regardless of which run owns them.
+        started_in_pool = capacity.pool_started_attempts(ctx.session, pool)
+        if started_in_pool >= pool_max:
+            run.queue_reason = capacity.QUEUE_REASON_CONCURRENCY_CAP
+            ctx.session.commit()
+            raise CaseCallbackError(
+                "资源池并发已达上限，请稍后重试",
+                code="capacity_waiting",
+                status_code=429,
+            )
     if cap <= 0:
         run.queue_reason = capacity.QUEUE_REASON_CAPACITY_WAITING
         return
@@ -379,7 +411,75 @@ def _reject_started_for_pause(ctx: CaseContext, *, payload: dict) -> None:
     )
 
 
-def handle_started(session: Session, *, payload: dict, now: datetime | None = None) -> dict:
+def _recover_started_sequence_conflict(
+    session: Session, *, payload: dict
+) -> dict:
+    """Resolve a sequence-0 collision without turning the callback into a 500.
+
+    The manual-retry path used to write ``case.retry_requested`` on the NEW
+    attempt with the model default sequence 0; the Runner's ``case.started``
+    then hit ``uq_eval_event_case_attempt_sequence``. New rows use the
+    platform reserved sequence, but attempts created before the deploy still
+    exist. Relocate those platform events into the reserved POSITIVE range and
+    retry the started callback once; a genuine duplicate started is deduped,
+    anything else is a diagnosable 409 instead of a 500.
+
+    The reserved range must stay positive: the console's event reader rejects
+    negative sequences, and moving to 1 would collide with the Runner's first
+    heartbeat.
+    """
+
+    ctx = resolve_context(
+        session, case_run_id=payload["case_run_id"], attempt_no=payload["attempt"]
+    )
+    if _event_exists(ctx, sequence=0, event_id=payload["event_id"]):
+        return {"ok": True, "deduped": True, "status": ctx.attempt.status}
+    stored = list(
+        session.scalars(
+            select(EvalEvent).where(
+                EvalEvent.eval_case_run_id == ctx.case_run.id,
+                EvalEvent.attempt_no == ctx.attempt.attempt_no,
+                EvalEvent.sequence == 0,
+            )
+        )
+    )
+    legacy_platform_events = [
+        event
+        for event in stored
+        if event.event_type in ("case.retry_requested", "case.retry_queued")
+    ]
+    if not legacy_platform_events:
+        raise CaseCallbackError(
+            "started 事件序号冲突，请稍后重试",
+            code="sequence_conflict",
+            status_code=409,
+        )
+    used = set(
+        session.scalars(
+            select(EvalEvent.sequence).where(
+                EvalEvent.eval_case_run_id == ctx.case_run.id,
+                EvalEvent.attempt_no == ctx.attempt.attempt_no,
+            )
+        )
+    )
+    next_platform = lifecycle.PLATFORM_EVENT_SEQUENCE
+    for event in legacy_platform_events:
+        while next_platform in used:
+            next_platform += 1
+        event.sequence = next_platform
+        used.add(next_platform)
+        next_platform += 1
+    session.commit()
+    return {"ok": True, "recovered": True}
+
+
+def handle_started(
+    session: Session,
+    *,
+    payload: dict,
+    now: datetime | None = None,
+    _recovery_depth: int = 0,
+) -> dict:
     now = now or datetime.now(UTC)
     ctx = resolve_context(session, case_run_id=payload["case_run_id"], attempt_no=payload["attempt"])
     if ctx.run.status in ("cancelling", "cancelled"):
@@ -420,8 +520,26 @@ def handle_started(session: Session, *, payload: dict, now: datetime | None = No
         sequence=0,
         payload={"event_id": payload["event_id"], "runner_id": payload.get("runner_id")},
     )
-    refresh_run_progress(session, ctx.run, now=now)
-    session.commit()
+    try:
+        # refresh_run_progress flushes; the unique-key violation surfaces here,
+        # not only at commit.
+        refresh_run_progress(session, ctx.run, now=now)
+        session.commit()
+    except IntegrityError:
+        # At-least-once callbacks and pre-deploy manual retries can race on the
+        # natural key (case, attempt, sequence=0). Roll back this attempt and
+        # recover idempotently instead of surfacing a 500 to the Runner.
+        session.rollback()
+        if _recovery_depth >= 1:
+            raise CaseCallbackError(
+                "started 事件序号冲突，请稍后重试",
+                code="sequence_conflict",
+                status_code=409,
+            ) from None
+        _recover_started_sequence_conflict(session, payload=payload)
+        return handle_started(
+            session, payload=payload, now=now, _recovery_depth=_recovery_depth + 1
+        )
     return {"ok": True, "deduped": False, "status": ctx.attempt.status}
 
 
@@ -653,6 +771,17 @@ def finalize_completion(
     attempt_status = COMPLETION_TO_ATTEMPT_STATUS[execution_status]
     lifecycle.mark_status(attempt, attempt_status, now)
     attempt.ended_at = now
+    if attempt.started_at is not None:
+        # M8-45 (#307): a completed (or runner-failed) attempt is shard
+        # progress, so the still-waiting siblings get a fresh lease before this
+        # transaction commits.
+        queue_lease.renew_shard_leases(
+            session,
+            attempt=attempt,
+            run=run,
+            settings=settings or get_settings(),
+            now=now,
+        )
     merged = dict(attempt.artifact_manifest_json or {})
     manifests = {"score_manifest": score_manifest}
     if trace_manifest is not None:
@@ -957,6 +1086,9 @@ def handle_failed(
     retryable = bool(payload["retryable"]) and (
         lifecycle.classify_failure(payload["error_code"]) != lifecycle.SCORING_ONLY
     )
+    phase = payload.get("phase")
+    if isinstance(phase, str) and phase:
+        ctx.attempt.phase = phase[:64]
     retry_queued = lifecycle.settle_attempt_failure(
         session,
         ctx=ctx,
@@ -970,6 +1102,7 @@ def handle_failed(
             "error_code": payload["error_code"],
             "retryable": retryable,
             "error_summary": payload["error_summary"][:200],
+            "phase": phase,
         },
         now=now,
     )
@@ -999,16 +1132,117 @@ SPOT_ACTIVE_ATTEMPT_STATUSES = (
 )
 
 
+def _runner_loss_summary(
+    prefix: str,
+    reason: str,
+    *,
+    detail: str | None = None,
+    provider_state: str | None = None,
+    last_heartbeat: str | None = None,
+) -> str:
+    """Stable, diagnosable text that keeps the real reclaim reason.
+
+    The old spot path collapsed every reclaim into "云侧停止了 spot 实例",
+    which hid ``runner_exited`` / ``runner_heartbeat_lost`` and made an
+    ephemeral-runner exit look like a provider reclaim (M8-44 #306).
+    """
+
+    parts = [f"{prefix}（{reason}）"]
+    if provider_state:
+        parts.append(f"provider_state={provider_state}")
+    if detail:
+        parts.append(f"detail={detail}")
+    if last_heartbeat:
+        parts.append(f"last_heartbeat={last_heartbeat}")
+    return "；".join(parts)[:1000]
+
+
+def handle_runner_lost(
+    session: Session,
+    *,
+    case_run_id: str,
+    reason: str,
+    detail: str | None = None,
+    provider_state: str | None = None,
+    last_heartbeat: str | None = None,
+    now: datetime | None = None,
+) -> bool:
+    """Settle a Runner that exited or lost its heartbeat (M8-44 #306).
+
+    The provider instance is still Running; this is not a spot reclaim. The
+    attempt settles as a retryable ``runner_lost`` and consumes the run's
+    normal ``max_attempts`` budget, not the spot retry budget. Uploaded trace
+    objects stay on the attempt for later ingestion.
+    """
+
+    now = now or datetime.now(UTC)
+    case_run = session.get(EvalCaseRun, case_run_id)
+    if case_run is None:
+        return False
+    run = session.get(EvalRun, case_run.eval_run_id)
+    if run is None or run.status in evaluations.TERMINAL_RUN_STATUSES:
+        return False
+    if run.status in ("cancelling", *evaluations.PAUSED_RUN_STATUSES):
+        # Cancellation/budget-pause owns the attempt; a reclaim must not turn
+        # it into a normal retry or a misleading "max_attempts exhausted".
+        return False
+    attempts = list(
+        session.scalars(
+            select(EvalCaseAttempt)
+            .where(
+                EvalCaseAttempt.eval_case_run_id == case_run.id,
+                EvalCaseAttempt.status.in_(SPOT_ACTIVE_ATTEMPT_STATUSES),
+            )
+            .order_by(EvalCaseAttempt.attempt_no)
+        )
+    )
+    summary = _runner_loss_summary(
+        "Runner 退出或失联",
+        reason,
+        detail=detail,
+        provider_state=provider_state,
+        last_heartbeat=last_heartbeat,
+    )
+    retried = False
+    for attempt in attempts:
+        ctx = CaseContext(session, case_run, run, attempt)
+        retried = lifecycle.settle_attempt_failure(
+            session,
+            ctx=ctx,
+            error_code="runner_lost",
+            error_summary=summary,
+            retryable=True,
+            event_type="case.runner_lost",
+            event_payload={
+                "reason": reason,
+                "detail": detail,
+                "provider_state": provider_state,
+                "last_heartbeat": last_heartbeat,
+                "attempt_id": attempt.id,
+            },
+            now=now,
+        ) or retried
+    return retried
+
+
 def handle_spot_interruption(
-    session: Session, *, case_run_id: str, now: datetime | None = None
+    session: Session,
+    *,
+    case_run_id: str,
+    reason: str = "provider_stopped",
+    detail: str | None = None,
+    provider_state: str | None = None,
+    last_heartbeat: str | None = None,
+    now: datetime | None = None,
 ) -> bool:
     """Fail the active attempt fast and re-dispatch a new spot attempt (M8-37).
 
     The provider stopped the instance under a running job. Waiting for the
     300s heartbeat reaper wastes the whole agent window and turns an
     infrastructure event into ``heartbeat_timeout``. This settles the attempt
-    as ``spot_interrupted`` and immediately creates the next attempt, capped at
-    ``SPOT_RETRY_LIMIT`` independent of the run's normal ``max_attempts``.
+    as ``spot_interrupted`` and immediately creates the next attempt, capped by
+    both ``SPOT_RETRY_LIMIT`` and the run's normal ``max_attempts`` so a run
+    never grows beyond its declared attempt budget (M8-44 #306 P2-4).
 
     Returns True when at least one retry dispatch was queued.
     """
@@ -1020,7 +1254,9 @@ def handle_spot_interruption(
     run = session.get(EvalRun, case_run.eval_run_id)
     if run is None or run.status in evaluations.TERMINAL_RUN_STATUSES:
         return False
-    if run.status in evaluations.PAUSED_RUN_STATUSES:
+    if run.status in ("cancelling", *evaluations.PAUSED_RUN_STATUSES):
+        # Cancellation/budget-pause owns the attempt; a reclaim must not turn
+        # it into a normal retry or a misleading "max_attempts exhausted".
         return False
     attempts = list(
         session.scalars(
@@ -1031,6 +1267,13 @@ def handle_spot_interruption(
             )
             .order_by(EvalCaseAttempt.attempt_no)
         )
+    )
+    summary = _runner_loss_summary(
+        "云侧停止了 spot 实例",
+        reason,
+        detail=detail,
+        provider_state=provider_state,
+        last_heartbeat=last_heartbeat,
     )
     retried = False
     for attempt in attempts:
@@ -1049,9 +1292,19 @@ def handle_spot_interruption(
         attempt.status = "failed"
         attempt.ended_at = now
         attempt.error_code = SPOT_INTERRUPTED
-        attempt.error_summary = "云侧停止了 spot 实例（provider_stopped）"
+        attempt.error_summary = summary
         attempt.retry_reason = "spot_interruption"
         lifecycle.release_runner_binding(session, attempt)
+        if attempt.started_at is not None:
+            # M8-45 (#307): a started attempt ending (even by spot reclaim) is
+            # shard progress; renew the siblings that never started.
+            queue_lease.renew_shard_leases(
+                session,
+                attempt=attempt,
+                run=run,
+                settings=get_settings(),
+                now=now,
+            )
         sequence = next_free_sequence(session, case_run, attempt)
         session.add(
             EvalEvent(
@@ -1065,10 +1318,16 @@ def handle_spot_interruption(
                     "error_code": SPOT_INTERRUPTED,
                     "attempt_no": attempt.attempt_no,
                     "spot_retry_no": prior,
+                    "reason": reason,
+                    "detail": detail,
+                    "provider_state": provider_state,
+                    "last_heartbeat": last_heartbeat,
                 },
             )
         )
-        if prior < SPOT_RETRY_LIMIT:
+        spot_budget_left = prior < SPOT_RETRY_LIMIT
+        attempt_budget_left = lifecycle.retry_allowed(run, attempt)
+        if spot_budget_left and attempt_budget_left:
             outbox = build_retry_dispatch(
                 session,
                 ctx,
@@ -1099,8 +1358,17 @@ def handle_spot_interruption(
             retried = True
         else:
             case_run.execution_status = "failed"
-            case_run.error_code = SPOT_RETRY_EXHAUSTED
-            case_run.error_summary = f"spot 实例连续被回收 {SPOT_RETRY_LIMIT} 次，已停止重试"
+            if not spot_budget_left:
+                case_run.error_code = SPOT_RETRY_EXHAUSTED
+                case_run.error_summary = (
+                    f"spot 实例连续被回收 {SPOT_RETRY_LIMIT} 次，已停止重试"
+                )
+            else:
+                case_run.error_code = SPOT_INTERRUPTED
+                case_run.error_summary = (
+                    "spot 实例被回收，已达到用例重试上限 "
+                    f"max_attempts={run.max_attempts}，已停止重试"
+                )
         refresh_run_progress(session, run, now=now)
     if attempts:
         session.commit()

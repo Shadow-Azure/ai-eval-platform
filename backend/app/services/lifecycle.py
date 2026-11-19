@@ -29,7 +29,7 @@ from sqlalchemy.orm import Session
 
 from ..config import get_settings
 from ..models import EvalCaseAttempt, EvalEvent, EvalRun
-from . import evaluations
+from . import evaluations, queue_lease
 from .evaluations import refresh_run_progress
 
 if TYPE_CHECKING:  # pragma: no cover - typing only (avoids an import cycle)
@@ -43,6 +43,13 @@ EXECUTION_TIMEOUT = "execution_timeout"
 SCORING_TIMEOUT = "scoring_timeout"
 UPLOAD_TIMEOUT = "upload_timeout"
 HEARTBEAT_TIMEOUT = "heartbeat_timeout"
+
+# Platform-only case events use a reserved POSITIVE sequence (M8-44 #306).
+# The console's event reader accepts only sequence >= 0, so a negative
+# namespace would break the whole eval event feed. 1_000_100 is above the
+# runner's terminal failure (1_000_001) and far above heartbeats, so it cannot
+# collide with started (0), heartbeat (1..N) or a terminal callback.
+PLATFORM_EVENT_SEQUENCE = 1_000_100
 TIMEOUT_CODES = (
     QUEUE_TIMEOUT,
     EXECUTION_TIMEOUT,
@@ -66,6 +73,7 @@ RETRYABLE_FAILURE_CODES = frozenset(
         HEARTBEAT_TIMEOUT,
         "spot_interrupted",
         "runner_lost",
+        "runner_bootstrap_failed",
         "network_error",
         "model_rate_limited",
         "model_unavailable",
@@ -293,6 +301,17 @@ def settle_attempt_failure(
     attempt.error_summary = error_summary
     attempt.retry_reason = RETRYABLE if retryable else PERMANENT
     release_runner_binding(session, attempt)
+    if attempt.started_at is not None:
+        # M8-45 (#307): only an attempt that actually ran proves shard
+        # progress. A queue-timeout/cancelled queued attempt must not renew its
+        # siblings, or a completely stuck shard would keep renewing itself.
+        queue_lease.renew_shard_leases(
+            session,
+            attempt=attempt,
+            run=ctx.run,
+            settings=get_settings(),
+            now=now,
+        )
     _add_attempt_event(session, ctx, event_type=event_type, sequence=sequence, payload=payload)
 
     # M8-43 (#304): a cancelled/timed-out runner may have uploaded a partial

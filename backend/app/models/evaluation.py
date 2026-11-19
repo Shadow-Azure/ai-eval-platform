@@ -274,6 +274,13 @@ class EvalCaseAttempt(Base, TimestampMixin):
     # measures scoring/upload/queue budgets from here because ``updated_at``
     # moves on any write and therefore cannot be a phase clock.
     phase_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # M8-45 (#307): shard progress lease. ``queue_started_at`` is when this
+    # attempt first entered ``queued`` (the shard's absolute ceiling starts at
+    # the earliest such stamp); ``queue_deadline`` is the current lease, which
+    # the reaper reads instead of a fixed wall clock. Both stay NULL on rows
+    # created before the upgrade, which keeps the old 3600s fallback.
+    queue_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    queue_deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (
         UniqueConstraint(

@@ -167,7 +167,9 @@ waiting_for_price → requested → creating → cloud-init/user_data → regist
 
 | 故障 | 默认处理 |
 |---|---|
-| Spot 回收、Runner 失联、网络中断 | 同用例自动新 attempt，最多 2 次；使用指数退避 |
+| Spot 回收（provider 确认停止） | 同用例自动新 attempt；spot 预算最多 3 次，且不超过 run 的 `max_attempts` |
+| Runner 退出、心跳丢失（实例仍 Running） | 记为 `runner_lost` 的普通可重试失败，计入 `max_attempts`，不消耗 spot 预算 |
+| 网络中断 | 同用例自动新 attempt，受 `max_attempts` 约束；使用指数退避 |
 | Agent 进程非零退出 | 依据适配器错误分类；环境类可重试，确定性配置错误不重试 |
 | 模型限流/5xx | 尊重 provider retry-after，计入用例超时与预算 |
 | 评分镜像失败 | 与 Agent 失败分开记录；可只重试评分，避免重跑 Agent |
@@ -178,6 +180,8 @@ waiting_for_price → requested → creating → cloud-init/user_data → regist
 ## 7. 超时、心跳与取消
 
 - 平台同时维护 GitHub queued 超时、Agent 执行超时、评分超时、上传宽限期和 heartbeat 超时，不用一个总超时掩盖所有故障。
+- 平台排队是分片进度租约：初始预算为 `case_timeout + 600s`；分片内任意 attempt `started` 或已运行 attempt 进入终态，就为仍在排队的兄弟 attempt 续期；只有整片连续无进度超过预算才判 `queue_timeout`。租约绝对上限 23 小时（82800 秒），低于 GitHub 自托管 Job 的 24 小时排队上限。心跳不续期，避免僵尸分片无限延长。
+- 升级前已存在的排队 attempt 没有租约列，reaper 回退到 `phase_changed_at + eval_queue_timeout_seconds`；`queue_timeout` 事件记录排队等待时长、最近进度时间、租约截止时间、分片大小与并发，详情页据此区分“排队超时（未启动）”与“执行超时（跑过 Agent）”。
 - heartbeat 只证明控制脚本活着；长工具调用可发送阶段/用量心跳。Agent stdout 静默不必然代表死亡。
 - 取消先更新 `cancelling` 并撤销短期 token，再请求 GitHub cancel workflow/job；Runner 收到 SIGTERM 后上传已存在产物并退出。
 - 失联 Runner 无法保证本地进程立即停止，因此取消后的迟到结果按 attempt 状态处理，不覆盖取消事实，可保留用于诊断。
@@ -218,7 +222,8 @@ GitHub `workflow_job` webhook 触发 reconcile，30s 轮询兜底；容量公式
 ## spot 中断快速重试（M8-37）
 
 消费 `provider_stopped` 后，平台立即把该实例上的 active attempt 标为 `spot_interrupted`，释放 runner 绑定，
-并重新申请原竞争态 spot 池；同一 case 的 spot 重试独立计数，最多 3 次，第 4 次标 `spot_retry_exhausted`。
+并重新申请原竞争态 spot 池；同一 case 的 spot 重试最多 3 次且不超过 run 的 `max_attempts`，达 `max_attempts`
+时以 `spot_interrupted` 终态收口，spot 预算耗尽时标 `spot_retry_exhausted`。
 不默认切 fixed/on-demand；可选配置兜底池。这样不再把云侧停止伪装成 300s `heartbeat_timeout`。
 
 
@@ -227,3 +232,22 @@ GitHub `workflow_job` webhook 触发 reconcile，30s 轮询兜底；容量公式
 started 回调使用 `RUNNER_ID || RUNNER_NAME`，确保 `eval_case_attempt.runner_id` 落库；Runner 的 online 心跳保留
 `busy_case_attempt_id`，只有 terminal callback、`release_case` 或 offline 才清空。这样 provider_stopped 时
 `_reclaim` 能通过 attempt.runner_id 或 busy 绑定找到 active case，触发 M8-37 的快速重试。
+
+
+## 竞争态池调度可靠性（M8-44）
+
+手动重试的 `case.retry_requested` 使用平台保留的正数序号，不占用新 attempt 的 sequence 0，因此
+`case.started` 的 0 只属于 Runner；started 遇到唯一键冲突时回读事件并幂等返回，历史冲突行把平台事件迁入保留区间后重试，不返回 500。
+
+execute job 在 `started` 前失败（脚本包、checkout、dispatch 校验或执行异常）时，由独立失败步骤用 manifest 端点的
+短期 token 回调 `runner_bootstrap_failed`，平台按普通重试预算立即结算，queue timeout 仅作兜底。失败步骤不依赖
+脚本包或 checkout，因而脚本包不可用时仍能结算。
+
+`_reclaim` 按真实原因分流：只有 provider 确认停止（`provider_stopped`、`spot_interrupted`）走 spot 中断；`runner_exited`
+与 `runner_heartbeat_lost` 走 `runner_lost` 普通重试，错误摘要保留 reason、provider_state、detail 与 last_heartbeat，
+并计入 run 的 `max_attempts`，不消耗 spot 预算。
+
+有效并发在池级按 in-flight attempt 预留：一个评测的 cap 会扣除其他评测已释放到池中的 attempt 数；started 再对全池
+running/scoring/uploading attempt 做 `max_capacity` 硬闸，因此两条评测并发时 Agent 数不超过池上限。
+
+分片进度租约与 queue timeout 的改造由 #307 单列，不重复实现。

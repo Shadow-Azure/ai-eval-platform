@@ -20,6 +20,7 @@ CLASSIFICATION_TABLE = {
     "heartbeat_timeout": "retryable",
     "spot_interrupted": "retryable",
     "runner_lost": "retryable",
+    "runner_bootstrap_failed": "retryable",
     "network_error": "retryable",
     "model_rate_limited": "retryable",
     "model_unavailable": "retryable",
@@ -201,6 +202,7 @@ def test_failed_event_payload_keeps_the_callback_shape(session: Session) -> None
         "error_code": "callback_retryable",
         "retryable": True,
         "error_summary": body["error_summary"][:200],
+        "phase": body["phase"],
     }
     retry_queued = events[1]
     assert retry_queued.sequence == body["sequence"] + 1
