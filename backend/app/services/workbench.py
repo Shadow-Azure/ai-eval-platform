@@ -51,7 +51,7 @@ SORTABLE_CASE_COLUMNS = {
 
 # M8-53 (#332): token/cost live in trace spans, not eval_case_run columns, so
 # they are sorted after loading the filtered set; a run is capped at 500 cases.
-USAGE_SORT_KEYS = ("total_tokens", "cost_usd")
+USAGE_SORT_KEYS = ("total_tokens", "total_tokens_with_cache", "cost_usd")
 
 
 class WorkbenchNotFound(Exception):
@@ -292,11 +292,11 @@ def list_cases(
             usage = usage_by_case.get(case.id)
             if usage is None or not usage.has_trace:
                 return None
-            return (
-                float(usage.total_tokens)
-                if sort == "total_tokens"
-                else float(usage.cost_usd)
-            )
+            if sort == "cost_usd":
+                return float(usage.cost_usd)
+            if sort == "total_tokens_with_cache":
+                return float(usage.total_tokens_with_cache)
+            return float(usage.total_tokens)
 
         measured = [case for case in all_cases if usage_value(case) is not None]
         missing = [case for case in all_cases if usage_value(case) is None]

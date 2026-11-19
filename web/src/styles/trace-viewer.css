@@ -3164,3 +3164,17 @@
   border-radius: 50%;
   background: #1677ff;
 }
+
+/* #339: cache/non-cache/output split under the trace summary header. */
+.trace-token-breakdown {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+  padding: 0 18px 10px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.trace-token-breakdown strong {
+  color: var(--ink);
+}

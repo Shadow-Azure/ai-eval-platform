@@ -175,6 +175,8 @@ def metric_value(
     if metric_key in {
         "total_tokens",
         "tokens_per_case",
+        "total_tokens_with_cache",
+        "tokens_with_cache_per_case",
         "total_cost_usd",
         "cost_per_case_usd",
     }:

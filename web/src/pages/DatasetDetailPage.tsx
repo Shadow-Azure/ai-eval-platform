@@ -34,8 +34,9 @@ import { EmptyState } from "../components/EmptyState";
 import { Icon, type IconName } from "../components/Icon";
 import { PageHeading } from "../components/PageHeading";
 import { QueryError } from "../components/QueryError";
+import { TokenComposition } from "../components/TokenComposition";
 import { formatUsd } from "../utils/money";
-import { formatTokenAmount } from "../utils/tokens";
+import { formatTokenAmount, formatTokenOrZero } from "../utils/tokens";
 
 const DIFFICULTY_LABEL: Record<DatasetDifficultyLevel, string> = {
   easy: "easy",
@@ -155,24 +156,27 @@ const caseColumns: TableColumnsType<DatasetCaseSummary> = [
     render: (value: number) => (value > 0 ? `${value} 项` : "—"),
   },
   {
-    title: "平均 Token",
-    dataIndex: "token_avg",
-    key: "token_avg",
-    width: 104,
-    render: (_value, record) =>
-      record.token_avg === null || record.token_avg === undefined ? (
-        <span className="muted small">—</span>
-      ) : (
+    title: "平均 Token（含缓存）",
+    dataIndex: "token_avg_with_cache",
+    key: "token_avg_with_cache",
+    width: 132,
+    render: (_value, record) => {
+      const value = record.token_avg_with_cache ?? record.token_avg;
+      if (value === null || value === undefined) {
+        return <span className="muted small">—</span>;
+      }
+      return (
         <Tooltip
           title={
             record.token_run_count
-              ? `按 ${record.token_run_count} 次有用例数据的评测聚合（所有 attempt）`
+              ? `按 ${record.token_run_count} 次有轨迹评测聚合（所有 attempt）；不含缓存为 ${formatTokenAmount(record.token_avg)}`
               : "按 trace 聚合（所有 attempt）"
           }
         >
-          <span className="mono small">{formatTokenAmount(record.token_avg)}</span>
+          <span className="mono small">{formatTokenAmount(value)}</span>
         </Tooltip>
-      ),
+      );
+    },
   },
 ];
 
@@ -493,11 +497,7 @@ export function DatasetDetailPage() {
   const refreshing = version.isFetching || cases.isFetching;
   const hasFilters = Boolean(search) || difficulty !== null;
   const tokenStats = dataset.data?.token_stats ?? null;
-  const datasetTotalTokens = tokenStats
-    ? tokenStats.total_tokens > 0
-      ? tokenStats.total_tokens
-      : tokenStats.input_tokens + tokenStats.output_tokens
-    : 0;
+  const datasetTotalTokens = tokenStats?.total_tokens_with_cache ?? 0;
 
   const refresh = () => {
     void dataset.refetch();
@@ -611,22 +611,22 @@ export function DatasetDetailPage() {
         <>
           <div className="grid grid-4 section-gap">
             <MetricCard
-              label="累计 Token"
+              label="累计 Token（含缓存）"
               value={formatTokenAmount(datasetTotalTokens)}
-              meta={`${tokenStats.eval_count} 次评测 · ${tokenStats.case_count} 个用例执行`}
+              meta={`${tokenStats.eval_count_with_tokens}/${tokenStats.eval_count} 次评测有轨迹 · ${tokenStats.case_count} 个用例执行`}
               icon="cpu"
               tone="violet"
             />
             <MetricCard
-              label="平均 / 用例"
-              value={formatTokenAmount(tokenStats.average_tokens)}
-              meta={`输入 ${formatTokenAmount(tokenStats.input_tokens)} · 输出 ${formatTokenAmount(tokenStats.output_tokens)}`}
+              label="平均 / 用例（含缓存）"
+              value={formatTokenAmount(tokenStats.average_tokens_with_cache)}
+              meta={`缓存 ${formatTokenAmount(tokenStats.cache_input_tokens)} · 非缓存 ${formatTokenAmount(tokenStats.input_tokens)}`}
               icon="sparkles"
             />
             <MetricCard
-              label="平均 / 评测"
-              value={formatTokenAmount(tokenStats.average_eval_tokens)}
-              meta={`按 ${tokenStats.eval_count_with_tokens} 次有轨迹数据的评测`}
+              label="平均 / 评测（含缓存）"
+              value={formatTokenAmount(tokenStats.average_eval_tokens_with_cache)}
+              meta={`按 ${tokenStats.eval_count_with_tokens} 次有轨迹评测`}
               icon="pipeline"
               tone="success"
             />
@@ -638,9 +638,36 @@ export function DatasetDetailPage() {
               tone="warning"
             />
           </div>
+          <TokenComposition
+            subtitle="跨该数据集全部版本与评测；cache 输入不混入非缓存输入"
+            badge={<Tag color="processing">cache 已计入</Tag>}
+            items={[
+              {
+                label: "总 Token（含缓存）",
+                value: formatTokenAmount(tokenStats.total_tokens_with_cache),
+                meta: `覆盖 ${tokenStats.eval_count_with_tokens}/${tokenStats.eval_count} 次评测`,
+              },
+              {
+                label: "cache 输入",
+                value: formatTokenOrZero(tokenStats.cache_input_tokens),
+                meta: `read ${formatTokenOrZero(tokenStats.cache_read_tokens)} · creation ${formatTokenOrZero(tokenStats.cache_creation_tokens)}`,
+              },
+              {
+                label: "非缓存输入",
+                value: formatTokenAmount(tokenStats.input_tokens),
+                meta: "prompt input（不含 cache）",
+              },
+              {
+                label: "输出",
+                value: formatTokenAmount(tokenStats.output_tokens),
+                meta: "completion output",
+              },
+            ]}
+          />
           <div className="token-metric-note">
-            统计口径：Token = input_tokens + output_tokens；成本来自 trace cost-state（USD），
-            缓存 token 不计入合计。
+            统计口径：总 = 非缓存输入 + cache 输入（read + creation）+ 输出；cache 不混入
+            非缓存输入；成本来自 trace cost-state（USD）；仅覆盖{" "}
+            {tokenStats.eval_count_with_tokens}/{tokenStats.eval_count} 次有解析轨迹的评测。
           </div>
         </>
       ) : null}

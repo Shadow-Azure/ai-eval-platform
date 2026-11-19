@@ -13,6 +13,10 @@ Two rules keep the numbers honest:
   total on the root AGENT span while every LLM span stores its own usage, so
   summing both double counts. Cost stays on the AGENT span, therefore cost sums
   every span.
+* Cache read/creation tokens live on the LLM span's ``attributes_json`` as
+  ``gen_ai.usage.cache_read_input_tokens`` / ``cache_creation_input_tokens``.
+  They are summed separately and never added to the non-cache ``input_tokens``
+  field (#339). ``total_tokens_with_cache`` is the user-facing total.
 
 Cost is the provider-reported ``TraceSpan.cost`` in USD (Claude Code's
 ``cost-state.totalCostUSD``). It is deliberately named ``cost_usd`` and never
@@ -50,12 +54,24 @@ class TokenUsage:
 
     input_tokens: int = 0
     output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_creation_tokens: int = 0
     cost_usd: Decimal = Decimal("0")
     span_count: int = 0
 
     @property
     def total_tokens(self) -> int:
+        """#332 semantics: non-cache input + output only (kept unchanged)."""
+
         return self.input_tokens + self.output_tokens
+
+    @property
+    def cache_input_tokens(self) -> int:
+        return self.cache_read_tokens + self.cache_creation_tokens
+
+    @property
+    def total_tokens_with_cache(self) -> int:
+        return self.total_tokens + self.cache_input_tokens
 
     @property
     def has_trace(self) -> bool:
@@ -68,13 +84,21 @@ class TokenUsage:
             return {
                 "input_tokens": None,
                 "output_tokens": None,
+                "cache_read_tokens": None,
+                "cache_creation_tokens": None,
+                "cache_input_tokens": None,
                 "total_tokens": None,
+                "total_tokens_with_cache": None,
                 "cost_usd": None,
             }
         return {
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
+            "cache_read_tokens": self.cache_read_tokens,
+            "cache_creation_tokens": self.cache_creation_tokens,
+            "cache_input_tokens": self.cache_input_tokens,
             "total_tokens": self.total_tokens,
+            "total_tokens_with_cache": self.total_tokens_with_cache,
             "cost_usd": _money_float(self.cost_usd),
         }
 
@@ -87,9 +111,22 @@ def _usage_from_row(row: Any) -> TokenUsage:
     return TokenUsage(
         input_tokens=int(row.input_tokens or 0),
         output_tokens=int(row.output_tokens or 0),
+        cache_read_tokens=int(row.cache_read_tokens or 0),
+        cache_creation_tokens=int(row.cache_creation_tokens or 0),
         cost_usd=Decimal(str(row.cost_usd or 0)).quantize(_COST_QUANT),
         span_count=int(row.span_count or 0),
     )
+
+
+# SQLAlchemy renders JSON index access as ``json_extract`` on SQLite and
+# ``->>`` on PostgreSQL's JSONB, so the same expression serves tests and
+# production (issue #339).
+_CACHE_READ = TraceSpan.attributes_json[
+    "gen_ai.usage.cache_read_input_tokens"
+].as_integer()
+_CACHE_CREATION = TraceSpan.attributes_json[
+    "gen_ai.usage.cache_creation_input_tokens"
+].as_integer()
 
 
 def _usage_columns() -> tuple[Any, ...]:
@@ -100,6 +137,12 @@ def _usage_columns() -> tuple[Any, ...]:
         func.coalesce(
             func.sum(case((_TOKEN_SPAN, TraceSpan.output_tokens), else_=0)), 0
         ).label("output_tokens"),
+        func.coalesce(
+            func.sum(case((_TOKEN_SPAN, _CACHE_READ), else_=0)), 0
+        ).label("cache_read_tokens"),
+        func.coalesce(
+            func.sum(case((_TOKEN_SPAN, _CACHE_CREATION), else_=0)), 0
+        ).label("cache_creation_tokens"),
         func.coalesce(func.sum(TraceSpan.cost), 0).label("cost_usd"),
         func.count(TraceSpan.id).label("span_count"),
     )
@@ -154,22 +197,35 @@ def summarize_case_usage(usages: Iterable[TokenUsage]) -> dict[str, Any]:
     cases_with_tokens = sum(1 for usage in rows if usage.has_trace)
     input_tokens = sum(usage.input_tokens for usage in rows)
     output_tokens = sum(usage.output_tokens for usage in rows)
+    cache_read_tokens = sum(usage.cache_read_tokens for usage in rows)
+    cache_creation_tokens = sum(usage.cache_creation_tokens for usage in rows)
+    cache_input_tokens = cache_read_tokens + cache_creation_tokens
     total_tokens = input_tokens + output_tokens
+    total_tokens_with_cache = total_tokens + cache_input_tokens
     cost_usd = sum((usage.cost_usd for usage in rows), Decimal("0"))
     if cases_with_tokens:
         average_tokens: int | None = int(round(total_tokens / cases_with_tokens))
+        average_tokens_with_cache: int | None = int(
+            round(total_tokens_with_cache / cases_with_tokens)
+        )
         average_cost_usd: float | None = _money_float(cost_usd / cases_with_tokens)
     else:
         average_tokens = None
+        average_tokens_with_cache = None
         average_cost_usd = None
     return {
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
+        "cache_read_tokens": cache_read_tokens,
+        "cache_creation_tokens": cache_creation_tokens,
+        "cache_input_tokens": cache_input_tokens,
         "total_tokens": total_tokens,
+        "total_tokens_with_cache": total_tokens_with_cache,
         "cost_usd": _money_float(cost_usd),
         "case_count": case_count,
         "cases_with_tokens": cases_with_tokens,
         "average_tokens": average_tokens,
+        "average_tokens_with_cache": average_tokens_with_cache,
         "average_cost_usd": average_cost_usd,
     }
 
@@ -189,13 +245,19 @@ def empty_dataset_token_stats() -> dict[str, Any]:
     return {
         "input_tokens": 0,
         "output_tokens": 0,
+        "cache_read_tokens": 0,
+        "cache_creation_tokens": 0,
+        "cache_input_tokens": 0,
         "total_tokens": 0,
+        "total_tokens_with_cache": 0,
         "cost_usd": 0.0,
         "case_count": 0,
         "eval_count": 0,
         "eval_count_with_tokens": 0,
         "average_tokens": None,
+        "average_tokens_with_cache": None,
         "average_eval_tokens": None,
+        "average_eval_tokens_with_cache": None,
         "average_cost_usd": None,
     }
 
@@ -266,6 +328,8 @@ def dataset_token_stats(
             per_case.c.dataset_id,
             func.coalesce(func.sum(per_case.c.input_tokens), 0),
             func.coalesce(func.sum(per_case.c.output_tokens), 0),
+            func.coalesce(func.sum(per_case.c.cache_read_tokens), 0),
+            func.coalesce(func.sum(per_case.c.cache_creation_tokens), 0),
             func.coalesce(func.sum(per_case.c.cost_usd), 0),
             func.count(per_case.c.case_id),
             func.count(func.distinct(per_case.c.run_id)),
@@ -287,16 +351,24 @@ def dataset_token_stats(
         dataset_id = row[0]
         input_tokens = int(row[1] or 0)
         output_tokens = int(row[2] or 0)
+        cache_read_tokens = int(row[3] or 0)
+        cache_creation_tokens = int(row[4] or 0)
+        cache_input_tokens = cache_read_tokens + cache_creation_tokens
         total_tokens = input_tokens + output_tokens
-        cost_usd = Decimal(str(row[3] or 0)).quantize(_COST_QUANT)
-        case_count = int(row[4] or 0)
-        eval_count = int(row[5] or 0)
-        cases_with_tokens = int(row[6] or 0)
-        eval_count_with_tokens = int(row[7] or 0)
+        total_tokens_with_cache = total_tokens + cache_input_tokens
+        cost_usd = Decimal(str(row[5] or 0)).quantize(_COST_QUANT)
+        case_count = int(row[6] or 0)
+        eval_count = int(row[7] or 0)
+        cases_with_tokens = int(row[8] or 0)
+        eval_count_with_tokens = int(row[9] or 0)
         stats[dataset_id] = {
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
+            "cache_read_tokens": cache_read_tokens,
+            "cache_creation_tokens": cache_creation_tokens,
+            "cache_input_tokens": cache_input_tokens,
             "total_tokens": total_tokens,
+            "total_tokens_with_cache": total_tokens_with_cache,
             "cost_usd": _money_float(cost_usd),
             "case_count": case_count,
             "eval_count": eval_count,
@@ -306,8 +378,18 @@ def dataset_token_stats(
                 if cases_with_tokens
                 else None
             ),
+            "average_tokens_with_cache": (
+                int(round(total_tokens_with_cache / cases_with_tokens))
+                if cases_with_tokens
+                else None
+            ),
             "average_eval_tokens": (
                 int(round(total_tokens / eval_count_with_tokens))
+                if eval_count_with_tokens
+                else None
+            ),
+            "average_eval_tokens_with_cache": (
+                int(round(total_tokens_with_cache / eval_count_with_tokens))
                 if eval_count_with_tokens
                 else None
             ),
@@ -325,32 +407,41 @@ def version_case_token_averages(
 ) -> dict[str, Mapping[str, Any]]:
     """Per-case average tokens across the dataset's runs (all versions).
 
-    Returns ``{case_key: {"token_avg": int | None, "token_run_count": int}}``.
-    ``token_avg`` is the mean of the per-run all-attempt totals for runs that
-    actually parsed a trace; ``token_run_count`` is how many such runs
-    contributed.
+    Returns ``{case_key: {"token_avg": int | None, "token_avg_with_cache":
+    int | None, "token_run_count": int}}``. Both averages are means of the
+    per-run all-attempt totals for runs that actually parsed a trace;
+    ``token_run_count`` is how many such runs contributed.
     """
 
     per_case, _ids = _dataset_case_subquery([dataset_id])
     if per_case is None:
         return {}
+    cache_total = (
+        per_case.c.cache_read_tokens + per_case.c.cache_creation_tokens
+    )
     rows = session.execute(
         select(
             per_case.c.case_key,
             func.coalesce(
                 func.sum(per_case.c.input_tokens + per_case.c.output_tokens), 0
             ),
+            func.coalesce(func.sum(cache_total), 0),
             func.coalesce(
                 func.sum(case((per_case.c.span_count > 0, 1), else_=0)), 0
             ),
         ).group_by(per_case.c.case_key)
     ).all()
     averages: dict[str, Mapping[str, Any]] = {}
-    for case_key, total_tokens, run_count in rows:
+    for case_key, total_tokens, cache_tokens, run_count in rows:
         count = int(run_count or 0)
+        token_total = int(total_tokens or 0)
+        token_total_with_cache = token_total + int(cache_tokens or 0)
         averages[str(case_key)] = {
             "token_avg": (
-                int(round(int(total_tokens or 0) / count)) if count else None
+                int(round(token_total / count)) if count else None
+            ),
+            "token_avg_with_cache": (
+                int(round(token_total_with_cache / count)) if count else None
             ),
             "token_run_count": count,
         }

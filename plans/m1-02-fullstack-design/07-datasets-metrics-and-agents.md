@@ -159,7 +159,10 @@ SWE-bench 官方 `make_run_report` 输出 `total/submitted/completed/resolved/un
 - 数据源是归一化轨迹（`trace_span`），不是 runner 完成回调。Claude Code 的 `AGENT` 根 span 保存会话汇总，`LLM` span 保存逐条消息 usage；token 求和必须排除 `AGENT`，否则重复计数。成本只落在 `AGENT` span，按全部 span 求和。
 - 用例行聚合该用例**所有 attempt**（重试也是真实消耗），run/dataset 汇总等于可见用例行之和；平均值按有已解析轨迹的用例数 `cases_with_tokens`。
 - 成本来自 Claude Code `cost-state.totalCostUSD`，API 字段名 `cost_usd`，UI 标注 USD；不混入平台 CNY 预算。
-- 数据集级：`GET /datasets`、`GET /datasets/{id}` 返回 `token_stats`（累计 / 平均 / 评测数），`GET /dataset-versions/{id}/cases` 返回 `token_avg` 与 `token_run_count`，跨该数据集全部版本与 run。
+- Cache 输入来自 `LLM` span 属性 `gen_ai.usage.cache_read_input_tokens` / `cache_creation_input_tokens`（`trace_span.attributes_json`），同样排除 `AGENT`。聚合查询用同一 SQLAlchemy JSON 取值表达式，SQLite 编译为 `json_extract`、PostgreSQL 编译为 `->>`，测试与生产共用一套代码。
+- 口径拆分：`input_tokens` 保持 #332 的非缓存输入语义；新增 `cache_read_tokens`、`cache_creation_tokens`、`cache_input_tokens`、`total_tokens_with_cache`。用户可见总 Token = 非缓存输入 + cache 输入 + 输出，cache 不混入非缓存输入；`total_tokens` 仍是非缓存输入 + 输出，向后兼容。
+- 用例 `/cases` 的 `metrics`、run/detail `/results` 与 `/evaluations/{id}` 的 `token_summary`、数据集 `token_stats`、轨迹 `stats`/每个 session 都返回上述字段；`/cases` 支持 `sort=total_tokens_with_cache`，`/dataset-versions/{id}/cases` 额外返回 `token_avg_with_cache`。
+- 数据集级：`GET /datasets`、`GET /datasets/{id}` 返回 `token_stats`（累计 / 平均 / 评测数 / 有轨迹覆盖率），`GET /dataset-versions/{id}/cases` 返回 `token_avg`、`token_avg_with_cache` 与 `token_run_count`，跨该数据集全部版本与 run。累计卡片明确显示 `eval_count_with_tokens / eval_count`，缺失轨迹的评测不计入平均，也不冒充 0。
 - 既有 run 的 `/results` 直接按 trace 计算 token 指标，不依赖新增 `MetricResult` 行；既有数据版本若要让“指标口径”列出新指标，需要重新导入或做一次管理员 backfill（本 issue 不做数据迁移）。
 
 ### 3.2.2 测试级完整打点
