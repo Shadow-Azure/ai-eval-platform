@@ -19,7 +19,7 @@ from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from ..config import Settings, get_settings
@@ -129,6 +129,68 @@ def _verify_run_scope(
     return None
 
 
+def _run_scoped_sessions(run_id: str):
+    """TraceSession rows owned by one eval run (through attempt → case run)."""
+
+    return (
+        select(TraceSession)
+        .join(
+            EvalCaseAttempt,
+            TraceSession.eval_case_attempt_id == EvalCaseAttempt.id,
+        )
+        .join(
+            EvalCaseRun,
+            EvalCaseAttempt.eval_case_run_id == EvalCaseRun.id,
+        )
+        .where(EvalCaseRun.eval_run_id == run_id)
+    )
+
+
+def _resolve_session(session: Session, session_id: str, run_id: str) -> TraceSession:
+    """Resolve one envelope node inside the signed run.
+
+    The root entry keeps the frozen native root id, so it selects the run's
+    root row (``parent_session_id`` null, not ``unlinked``, lowest ordinal)
+    instead of the newest row sharing that id: Claude Code subagents reuse the
+    root ``sessionId``, which made the old "latest row" query return a child.
+    Subagent entries use ``TraceSession.id``, the console's session identity.
+    """
+
+    root = session.scalar(
+        _run_scoped_sessions(run_id)
+        .where(
+            TraceSession.native_session_id == session_id,
+            TraceSession.parent_session_id.is_(None),
+            TraceSession.status != "unlinked",
+        )
+        .order_by(TraceSession.ordinal, TraceSession.id)
+        .limit(1)
+    )
+    if root is not None:
+        return root
+
+    node = session.scalar(
+        _run_scoped_sessions(run_id).where(TraceSession.id == session_id).limit(1)
+    )
+    if node is not None:
+        if node.status == "unlinked":
+            raise _error(404, "self_evolution_session_not_found", "会话不存在")
+        return node
+
+    # Nothing usable in this run. Rows in another run stay indistinguishable
+    # from a bad signature so a leaked template cannot probe other runs; an id
+    # that only exists here but is unusable (for example unlinked) is 404.
+    identity = or_(
+        TraceSession.native_session_id == session_id,
+        TraceSession.id == session_id,
+    )
+    if session.scalar(_run_scoped_sessions(run_id).where(identity).limit(1)) is not None:
+        raise _error(404, "self_evolution_session_not_found", "会话不存在")
+    if session.scalar(select(TraceSession.id).where(identity).limit(1)) is not None:
+        raise _error(401, "self_evolution_signature_invalid", "会话下载签名无效")
+    raise _error(404, "self_evolution_session_not_found", "会话不存在")
+
+
 def _load_trajectory(
     trace_file: TraceFile, settings: Settings
 ) -> tuple[str, int]:
@@ -212,15 +274,10 @@ def get_session_envelope(
     failure = _verify_signature(session_id, run, exp, sig, settings, now)
     if failure is not None:
         raise failure
+    if run is None:  # pragma: no cover - _verify_signature rejects a missing run
+        raise _error(401, "self_evolution_signature_invalid", "会话下载签名无效")
 
-    trace_session = session.scalar(
-        select(TraceSession)
-        .where(TraceSession.native_session_id == session_id)
-        .order_by(TraceSession.created_at.desc(), TraceSession.id)
-        .limit(1)
-    )
-    if trace_session is None:
-        raise _error(404, "self_evolution_session_not_found", "会话不存在")
+    trace_session = _resolve_session(session, session_id, run)
 
     failure = _verify_run_scope(session, trace_session, run)
     if failure is not None:
@@ -249,13 +306,19 @@ def get_session_envelope(
     if trace_session.parent_session_id is not None:
         parent = session.get(TraceSession, trace_session.parent_session_id)
         if parent is not None:
-            parent_session_id = parent.native_session_id
+            # The root envelope keeps its native id; deeper nodes use the
+            # platform session id so HE can re-substitute it into the URL.
+            parent_session_id = (
+                parent.native_session_id
+                if parent.parent_session_id is None
+                else parent.id
+            )
     child_session_ids = list(
         session.execute(
-            select(TraceSession.native_session_id)
+            select(TraceSession.id)
             .where(
                 TraceSession.parent_session_id == trace_session.id,
-                TraceSession.eval_case_attempt_id == trace_session.eval_case_attempt_id,
+                TraceSession.status != "unlinked",
             )
             .order_by(TraceSession.ordinal, TraceSession.id)
         ).scalars()
