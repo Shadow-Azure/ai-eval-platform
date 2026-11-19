@@ -26,6 +26,7 @@ test("schema files are valid JSON Schema documents", () => {
 
 const validFixtures = [
   ["dispatch", "dispatch.valid.json"],
+  ["dispatch", "dispatch.minimal.valid.json"],
   ["manifest", "manifest.valid.json"],
   ["started", "started.valid.json"],
   ["heartbeat", "heartbeat.valid.json"],
@@ -47,6 +48,7 @@ for (const [kind, file] of validFixtures) {
 const invalidFixtures = [
   ["dispatch", "dispatch.invalid-missing-digest.json", /manifest_digest/],
   ["dispatch", "dispatch.invalid-extra-property.json", /model_api_key/],
+  ["dispatch", "dispatch.minimal.invalid-missing-timeout.json", /job_timeout_minutes/],
   ["manifest", "manifest.invalid-attempt.json", /attempt/],
   ["heartbeat", "heartbeat.invalid-sequence.json", /sequence/],
   ["upload", "upload.invalid-sha.json", /sha256/],
@@ -83,6 +85,28 @@ test("dispatch accepts the derived execute job timeout and rejects out-of-range 
   }
   // Older dispatches stay valid: the workflow falls back to its static floor.
   assert.equal(validatePayload("dispatch", dispatch).ok, true);
+});
+
+test("minimal 1.1 dispatch keeps the eight pre-start fields and the legacy shape stays valid", () => {
+  const minimal = readFixture("dispatch.minimal.valid.json");
+  const legacy = readFixture("dispatch.valid.json");
+  assert.equal(validatePayload("dispatch", minimal).ok, true);
+  assert.equal(validatePayload("dispatch", legacy).ok, true);
+  // A 1.1 dispatch must still freeze the scheduler labels and job timeout.
+  const withoutRunsOn = { ...minimal };
+  delete withoutRunsOn.runs_on;
+  assert.match(validatePayload("dispatch", withoutRunsOn).errors.join("; "), /runs_on/);
+  const withoutTimeout = { ...minimal };
+  delete withoutTimeout.job_timeout_minutes;
+  assert.match(validatePayload("dispatch", withoutTimeout).errors.join("; "), /job_timeout_minutes/);
+  // The legacy version still requires the digest and expiry it used to carry.
+  const legacyWithoutDigest = { ...legacy };
+  delete legacyWithoutDigest.manifest_digest;
+  assert.match(validatePayload("dispatch", legacyWithoutDigest).errors.join("; "), /manifest_digest/);
+  // 1.1 is exactly the eight pre-start fields: a digest/expiry smuggled back
+  // into it is a contract error, not a silently accepted legacy shape.
+  const minimalWithDigest = { ...minimal, manifest_digest: legacy.manifest_digest };
+  assert.match(validatePayload("dispatch", minimalWithDigest).errors.join("; "), /最多 8 个属性/);
 });
 
 test("failure accepts runner cancellation codes and a partial trace manifest", () => {

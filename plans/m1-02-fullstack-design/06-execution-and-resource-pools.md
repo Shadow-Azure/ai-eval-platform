@@ -67,16 +67,18 @@ pending → dispatching → queued → leased → running → scoring → upload
 
 ```json
 {
-  "tenant_hint": "default",
+  "schema_version": "1.1",
   "eval_run_id": "eval_01...",
   "shard_id": "shard_01...",
+  "attempt": 1,
   "dispatch_key": "eval_01...:shard_01...:1",
   "manifest_url": "https://platform.example/runner/v1/shards/shard_01.../manifest",
-  "manifest_digest": "sha256:..."
+  "runs_on": ["self-hosted", "linux", "eval"],
+  "job_timeout_minutes": 70
 }
 ```
 
-完整用例、资产快照、模型配置和回调凭据不进入 GitHub payload。`tenant_hint` 也可省略；生产更建议只传 opaque ID。
+完整用例、资产快照、模型配置和回调凭据不进入 GitHub payload。这里只保留 job 调度与启动前必须知道的 8 个字段：`runs_on` 决定 job 在哪个池运行、`job_timeout_minutes` 在 steps 之前求值，`manifest_url` 是启动后的第一跳。manifest 摘要与 dispatch 过期时间由分片 manifest 响应的 `X-Manifest-Digest` / `X-Manifest-Expires-At` 头返回，脚本包 pin 由 `/scripts` 元数据端点返回；1.0 旧格式（带 digest/expires）仍可被契约接受，便于滚动发布期间的在途派发。
 
 ### 3.3 通用 workflow 结构
 
@@ -275,7 +277,7 @@ Worker 定期调用 Runner 清理：只删除超过 `eval_runner_offline_retenti
 本阶段只改变 Runner 获取它的路径：
 
 1. spot 实例启动时仍可在 `/opt/eval/runner-scripts/` 预置脚本包。镜像可直接烘焙；没有烘焙时 cloud-init 用平台在创建实例时生成的短时私有 OSS 预签名 GET 预取，并用 sha256 校验后落盘。预取是 best-effort，失败不阻塞实例启动；dispatch 载荷不含 pin 时该缓存不作为 workflow 的直达来源。
-2. dispatcher 把本次分片冻结的 `scripts_bundle`（name/md5/sha256/size）写到 outbox 行，不写入 repository_dispatch payload；workflow 通过分片 `/scripts` 元数据端点从 outbox 行取回 pin，`client_payload` 保持 10 个顶层键。
+2. dispatcher 把本次分片冻结的 `scripts_bundle`（name/md5/sha256/size）写到 outbox 行，不写入 repository_dispatch payload；workflow 通过分片 `/scripts` 元数据端点从 outbox 行取回 pin。schema 1.1 的 dispatch 保持 8 个启动前必需字段，manifest 摘要与过期时间由 manifest 响应头返回。
 3. prepare/execute 的脚本包获取使用元数据返回的私有 OSS 直连 `oss_url`、平台 `/runner/v1/scripts/<name>` 代理，最后才回退 `actions/checkout`。网络下载校验 sha256/md5；总预算 60 秒。
 4. 获取失败由 #308 的 `runner_bootstrap_failed` 在 started 前结算，平台按普通重试预算生成下一次 attempt，不等待 queue timeout。
 5. 实例上不写 OSS secret 或平台长期 token；预签名 URL 是短时下载能力，随 cloud-init user-data 一起清理。
@@ -286,7 +288,9 @@ Worker 定期调用 Runner 清理：只删除超过 `eval_runner_offline_retenti
 
 `repository_dispatch.client_payload` 最多 10 个顶层属性、序列化后小于 64KB，`event_type` 不超过 100 字符。平台在 POST 前本地校验 10 个顶层键、60KB 字节预算与 100 字符 `event_type`：违反时 outbox 直接 `failed`，写入 `dispatch_payload_invalid`（含具体字段数/字节数），用例转 `dispatch_failed`，不调用 GitHub transport，也不消耗重试预算。`runner-contract/schemas/v1/dispatch.schema.json` 增加 `maxProperties: 10`，Python 与 Node 的 schema 子集同步支持 `maxProperties`/`minProperties`。
 
-422 按响应体分类：参数校验错误（属性数、长度、大小等）是终态；包含 `spammed` 的 422 与 429、5xx、网络错误仍按退避重试。`scripts_bundle` pin 只保留在 outbox 行，dispatch 载荷不再复制，顶层字段回到 10 个；代价是 spot 启动多一次 `/scripts` 元数据请求，正确性、评分与轨迹不变。
+422 按响应体分类：参数校验错误（属性数、长度、大小等）是终态；包含 `spammed` 的 422 与 429、5xx、网络错误仍按退避重试。
+
+字段收敛采用服务端 descriptor（选项 C）：`dispatch.schema.json` 的 1.1 版本只要求 `schema_version`、`eval_run_id`、`shard_id`、`attempt`、`dispatch_key`、`manifest_url`、`runs_on`、`job_timeout_minutes` 共 8 个顶层键，`manifest_digest`、`expires_at` 与 `scripts_bundle` 下放到服务端。workflow 启动后从 manifest 响应的 `X-Manifest-Digest` / `X-Manifest-Expires-At` 取摘要与过期时间并校验，从 `/scripts` 元数据取 bundle pin。1.0 版本（带 digest/expires，最多 10 键）仍被同一 schema 接受，滚动发布期间已派发的旧行不需要重写；新建与重试派发都使用 1.1。代价是 spot 启动多一次 manifest/`/scripts` 请求，正确性、评分与轨迹不变；未来新增字段可继续留在服务端而不挤占 GitHub 的 10 键上限。
 
 ## spot 连续失败回退 fixed/按量（M8-46）
 

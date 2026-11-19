@@ -7,11 +7,15 @@ Run manually (not collected by pytest):
       --out /tmp/m8-51-evidence.json
 
 The smoke builds a disposable SQLite control plane and drives the real outbox
-dispatcher against a fake GitHub transport. It covers the acceptance timeline:
+dispatcher against a fake GitHub transport. It covers the dispatcher half of
+the acceptance timeline:
 
-1. a complete scripts-bundle configuration still dispatches a 10-property
-   client_payload, with the pin in the outbox row and not in the payload;
-2. an injected 11th top-level property fails locally with
+1. a complete scripts-bundle configuration dispatches the minimal 1.1
+   client_payload (eight pre-start properties), with the pin, digest and
+   expiry stored on the outbox row; the manifest response headers and the
+   `/scripts` endpoint that expose them are covered by ``test_runners.py`` and
+   ``test_runner_scripts.py``;
+2. an injected eleventh top-level property fails locally with
    ``dispatch_payload_invalid`` and never calls the transport;
 3. a 422 parameter-validation response is terminal (no retry);
 4. a 422 "spammed" response keeps the retry/backoff path.
@@ -117,7 +121,8 @@ def main() -> int:
             .all()[-1]
         )
 
-    # Scenario 1: complete bundle config → 10-property payload, pin in row only.
+    # Scenario 1: complete bundle config → 8-property minimal payload; the
+    # pin, digest and expiry stay in the outbox row (server descriptor).
     run1 = create_run("bundle")
     transport1 = FakeTransport([(204, "")])
     outcome1 = dispatcher.dispatch_pending_outbox(session, transport=transport1)
@@ -125,24 +130,39 @@ def main() -> int:
     payload1 = transport1.calls[0]["body"]["client_payload"]
     serialized = json.dumps(payload1, ensure_ascii=False).encode("utf-8")
     assert outcome1.dispatched == 1
-    assert len(payload1) == 10, f"expected 10 properties, got {len(payload1)}"
+    assert len(payload1) == 8, f"expected 8 properties, got {len(payload1)}"
+    assert payload1["schema_version"] == "1.1"
     assert len(serialized) < 60 * 1024
     assert "scripts_bundle" not in payload1
+    assert "manifest_digest" not in payload1
+    assert "expires_at" not in payload1
     assert row1.payload_json["scripts_bundle"]["name"] == BUNDLE_NAME
+    assert row1.payload_json["manifest_digest"].startswith("sha256:")
+    assert row1.payload_json["expires_at"]
     assert row1.status == "sent"
-    evidence["scenario_1_ten_properties"] = {
+    evidence["scenario_1_eight_properties"] = {
         "client_payload_properties": len(payload1),
         "client_payload_bytes": len(serialized),
         "scripts_bundle_in_payload": "scripts_bundle" in payload1,
+        "descriptor_in_payload": {
+            "manifest_digest": "manifest_digest" in payload1,
+            "expires_at": "expires_at" in payload1,
+        },
         "scripts_bundle_in_outbox_row": row1.payload_json["scripts_bundle"],
+        "descriptor_in_outbox_row": {
+            "manifest_digest": row1.payload_json["manifest_digest"],
+            "expires_at": row1.payload_json["expires_at"],
+        },
         "github_status": row1.payload_json["github_status"],
     }
 
-    # Scenario 2: an injected 11th property fails locally, transport untouched.
+    # Scenario 2: three injected properties push the payload past ten and fail
+    # locally, transport untouched.
     run2 = create_run("eleven")
     row2 = row_for(run2)
     payload2 = dict(row2.payload_json["client_payload"])
-    payload2["extra"] = "boom"
+    for extra in ("extra_a", "extra_b", "extra_c"):
+        payload2[extra] = "boom"
     row2.payload_json = {**row2.payload_json, "client_payload": payload2}
     session.commit()
     transport2 = FakeTransport()

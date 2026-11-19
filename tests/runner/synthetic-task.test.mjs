@@ -52,6 +52,7 @@ async function scenario(overrides = {}) {
     manifestText: () => manifestText,
     expectedToken: token,
     behavior: overrides.behavior ?? {},
+    manifestExpiresAt: () => future(),
   });
   const manifest = {
     schema_version: "1.0",
@@ -69,16 +70,31 @@ async function scenario(overrides = {}) {
     ],
   };
   manifestText = `${JSON.stringify(manifest, null, 2)}\n`;
-  const dispatch = {
-    schema_version: "1.0",
-    eval_run_id: evalRunId,
-    shard_id: shardId,
-    attempt,
-    dispatch_key: manifest.dispatch_key,
-    manifest_url: `${platform.baseUrl}/manifest`,
-    manifest_digest: overrides.manifestDigest ?? sha256(manifestText),
-    expires_at: future(),
-  };
+  // M8-51 (#323) option C: minimal 1.1 dispatches read digest/expiry from the
+  // manifest response; the legacy 1.0 shape stays covered by the default.
+  const dispatch = overrides.minimal
+    ? {
+        schema_version: "1.1",
+        eval_run_id: evalRunId,
+        shard_id: shardId,
+        attempt,
+        dispatch_key: manifest.dispatch_key,
+        manifest_url: `${platform.baseUrl}/manifest`,
+        runs_on: ["self-hosted", "linux", "eval"],
+        job_timeout_minutes: 70,
+        ...(overrides.dispatchOverrides ?? {}),
+      }
+    : {
+        schema_version: "1.0",
+        eval_run_id: evalRunId,
+        shard_id: shardId,
+        attempt,
+        dispatch_key: manifest.dispatch_key,
+        manifest_url: `${platform.baseUrl}/manifest`,
+        manifest_digest: overrides.manifestDigest ?? sha256(manifestText),
+        expires_at: future(),
+        ...(overrides.dispatchOverrides ?? {}),
+      };
   const dir = mkdtempSync(join(tmpdir(), "m203-"));
   const dispatchPath = join(dir, "dispatch.json");
   writeFileSync(dispatchPath, `${JSON.stringify(dispatch, null, 2)}\n`);
@@ -125,6 +141,22 @@ test("successful synthetic shard uploads deterministic objects and completes eve
       assert.ok(existsSync(file));
       assert.equal(createHash("sha256").update(readFileSync(file)).digest("hex"), object.sha256);
     }
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("minimal 1.1 dispatch reads the descriptor from the manifest response", async () => {
+  const ctx = await scenario({ minimal: true });
+  try {
+    assert.equal(ctx.dispatch.schema_version, "1.1");
+    assert.equal("manifest_digest" in ctx.dispatch, false);
+    assert.equal("expires_at" in ctx.dispatch, false);
+    const result = await ctx.run();
+    assert.equal(result.code, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim().split("\n").at(-1));
+    assert.equal(payload.status, "completed");
+    assert.equal(payload.cases, 2);
   } finally {
     await ctx.close();
   }

@@ -1,10 +1,10 @@
 # Runner 任务协议 v1
 
-本目录定义 M2 的 Runner 派发、清单、心跳、上传、完成与失败契约。协议只传不透明 ID、清单地址与 digest；用例内容、模型 Key 和云凭据不进入 GitHub payload。
+本目录定义 M2 的 Runner 派发、清单、心跳、上传、完成与失败契约。协议只传不透明 ID、清单地址与调度参数；用例内容、模型 Key 和云凭据不进入 GitHub payload。
 
 ## 版本
 
-`schema_version` 固定为 `"1.0"`。新增字段先以可选字段进入 v1，破坏性变更发布 v2 并保留 v1 至少一个 milestone。Schema 文件在 `schemas/v1/`，平台 API、GitHub workflow 和本地 fixture 共用同一份。
+dispatch 的 `schema_version` 取 `"1.0"` 或 `"1.1"`：1.0 是带 `manifest_digest`/`expires_at` 的旧格式（最多 10 个顶层键）；1.1 只保留 8 个启动前必需字段，digest、过期时间与脚本包 pin 由服务端 manifest/`/scripts` 响应提供。新增字段先以可选字段进入 v1，破坏性变更发布 v2 并保留 v1 至少一个 milestone。Schema 文件在 `schemas/v1/`，平台 API、GitHub workflow 和本地 fixture 共用同一份。
 
 ## 一次分片执行
 
@@ -21,7 +21,7 @@ workflow --校验 dispatch--> 拉取 manifest --校验 sha256--> 执行用例
 
 ## 安全边界
 
-- dispatch 只含 `eval_run_id`、`shard_id`、`attempt`、`dispatch_key`、`manifest_url`、`manifest_digest` 和过期时间。
+- dispatch 1.1 只含 `schema_version`、`eval_run_id`、`shard_id`、`attempt`、`dispatch_key`、`manifest_url`、`runs_on` 与 `job_timeout_minutes`；`manifest_digest`、`expires_at` 和脚本包 pin 由 manifest/`/scripts` 响应返回，1.0 旧载荷仍被接受。
 - 平台签发绑定 `eval_run_id / shard_id / attempt / pool_id` 的短期 token；Runner 在执行前校验，不把长期模型 Key 或云 AK 写入任务包。
 - 平台生成对象键；Runner 只上报 digest 与 size。平台收到完成回调后仍要校验对象存在。
 - 回调按至少一次投递设计，以 `event_id` 和唯一约束幂等；重复 dispatch 由 `dispatch_key` 原子 claim 拦截。

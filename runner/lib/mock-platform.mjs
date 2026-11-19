@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 
 /**
@@ -20,8 +21,16 @@ export async function startMockPlatform({
   expectedToken,
   behavior = {},
   manifestContentType = "application/json",
+  manifestExpiresAt = null,
+  manifestDigestHeader = null,
 }) {
   const getManifest = typeof manifestText === "function" ? manifestText : () => manifestText;
+  const expiresAtHeader =
+    typeof manifestExpiresAt === "function" ? manifestExpiresAt : () => manifestExpiresAt;
+  const digestHeader =
+    typeof manifestDigestHeader === "function"
+      ? manifestDigestHeader
+      : () => manifestDigestHeader;
   const requests = [];
   const objects = new Map();
   const state = {
@@ -54,7 +63,15 @@ export async function startMockPlatform({
     };
 
     if (request.method === "GET" && request.url === "/manifest") {
+      const manifest = getManifest();
       const headers = { "content-type": manifestContentType };
+      // M8-51 (#323) option C: the real manifest endpoint serves the server
+      // descriptor (digest + dispatch expiry) so a minimal 1.1 dispatch can
+      // omit both fields.
+      headers["x-manifest-digest"] = digestHeader() ??
+        `sha256:${createHash("sha256").update(manifest).digest("hex")}`;
+      const expiresAt = expiresAtHeader();
+      if (expiresAt) headers["x-manifest-expires-at"] = String(expiresAt);
       if (expectedToken) headers["x-runner-task-token"] = expectedToken;
       // M4-02: an opt-in tasks endpoint lets a test drive the real-repo path
       // (real-task only runs the agent when /tasks returns a task with repo).

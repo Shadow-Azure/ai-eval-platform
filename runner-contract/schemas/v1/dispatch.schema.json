@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://ai-eval-platform.local/runner-contract/v1/dispatch.schema.json",
   "title": "Eval shard dispatch",
-  "description": "repository_dispatch client_payload for one evaluation shard. It carries opaque IDs, a manifest reference, a digest and the runner labels the shard must run on, never cases, prompts, model keys or cloud credentials. GitHub allows at most 10 top-level properties and 64KB per dispatch, so scripts bundle metadata stays in the outbox row and is fetched by the workflow through the shard scripts metadata endpoint.",
+  "description": "repository_dispatch client_payload for one evaluation shard. Version 1.1 keeps only the eight fields the job needs before it starts (schema_version, eval_run_id, shard_id, attempt, dispatch_key, manifest_url, runs_on, job_timeout_minutes); manifest_digest, expires_at and the scripts bundle pin are served by the shard manifest response and the /scripts metadata endpoint after the job starts. Version 1.0 (digest and expiry in the payload, at most ten properties) stays accepted for dispatches created before the rollout. It never carries cases, prompts, model keys or cloud credentials.",
   "type": "object",
   "maxProperties": 10,
   "additionalProperties": false,
@@ -12,13 +12,11 @@
     "shard_id",
     "attempt",
     "dispatch_key",
-    "manifest_url",
-    "manifest_digest",
-    "expires_at"
+    "manifest_url"
   ],
   "properties": {
     "schema_version": {
-      "const": "1.0"
+      "enum": ["1.0", "1.1"]
     },
     "eval_run_id": {
       "type": "string",
@@ -48,7 +46,8 @@
     },
     "manifest_digest": {
       "type": "string",
-      "pattern": "^sha256:[0-9a-f]{64}$"
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "Version 1.0 only: the manifest digest is now returned by the shard manifest response (X-Manifest-Digest)."
     },
     "runs_on": {
       "type": "array",
@@ -63,13 +62,41 @@
     },
     "expires_at": {
       "type": "string",
-      "format": "date-time"
+      "format": "date-time",
+      "description": "Version 1.0 only: the dispatch expiry is now returned by the shard manifest response (X-Manifest-Expires-At)."
     },
     "job_timeout_minutes": {
       "type": "integer",
       "minimum": 1,
       "maximum": 7200,
-      "description": "GitHub execute job timeout derived from the frozen case budget. Optional for dispatches created before #304; the workflow falls back to 60 minutes only when absent."
+      "description": "GitHub execute job timeout derived from the frozen case budget. Required in 1.1; optional for 1.0 dispatches created before #304, where the workflow falls back to 60 minutes."
     }
-  }
+  },
+  "oneOf": [
+    {
+      "description": "Version 1.0: legacy dispatch with the manifest digest and expiry frozen in the payload.",
+      "properties": {
+        "schema_version": {
+          "const": "1.0"
+        }
+      },
+      "required": [
+        "manifest_digest",
+        "expires_at"
+      ]
+    },
+    {
+      "description": "Version 1.1: minimal dispatch; digest, expiry and the scripts bundle pin come from the server descriptor after the job starts. Exactly eight pre-start properties are allowed.",
+      "properties": {
+        "schema_version": {
+          "const": "1.1"
+        }
+      },
+      "maxProperties": 8,
+      "required": [
+        "runs_on",
+        "job_timeout_minutes"
+      ]
+    }
+  ]
 }

@@ -55,7 +55,9 @@ test("plan-cases writes the matrix to --out instead of stdout", async () => {
 });
 
 test("plan-cases reads a file:// manifest without touching the network", async () => {
-  const ctx = await createScenario();
+  // file:// has no server descriptor, so the local smoke uses the legacy 1.0
+  // shape that carries its own digest (1.1 is exactly the eight HTTP fields).
+  const ctx = await createScenario({ dispatchVersion: "1.0" });
   const manifestPath = join(ctx.dir, "manifest.json");
   const manifestText = `${JSON.stringify(ctx.manifest, null, 2)}\n`;
   const dispatchPath = join(ctx.dir, "dispatch-file.json");
@@ -76,13 +78,29 @@ test("plan-cases reads a file:// manifest without touching the network", async (
 });
 
 test("plan-cases rejects a manifest digest mismatch with a JSON error", async () => {
-  const ctx = await createScenario({ manifestDigest: sha256("tampered") });
+  const ctx = await createScenario({
+    manifestDigest: sha256("tampered"),
+    dispatchVersion: "1.0",
+  });
   try {
     const result = await runNode(script, planArgs(ctx));
     assert.equal(result.code, 2);
     assert.equal(parseError(result.stderr).error_code, "manifest_digest_mismatch");
     assert.equal(result.stdout, "");
     assert.deepEqual(postRequests(ctx), []);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("plan-cases verifies the 1.1 descriptor digest from the manifest response", async () => {
+  const ctx = await createScenario({ manifestDigestHeader: sha256("tampered") });
+  try {
+    assert.equal("manifest_digest" in ctx.dispatch, false);
+    const result = await runNode(script, planArgs(ctx));
+    assert.equal(result.code, 2);
+    assert.equal(parseError(result.stderr).error_code, "manifest_digest_mismatch");
+    assert.equal(result.stdout, "");
   } finally {
     await ctx.close();
   }

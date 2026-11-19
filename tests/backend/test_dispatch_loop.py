@@ -122,10 +122,14 @@ def test_dispatch_pins_the_scripts_bundle_for_image_cache_lookup(
 
     assert len(transport.calls) == 1
     payload = transport.calls[0]["body"]["client_payload"]
-    # M8-51 (#323): the pin stays in the outbox row; the workflow fetches it
-    # through the `/scripts` metadata endpoint instead of the dispatch payload.
+    # M8-51 (#323) option C: the pin stays in the outbox row and is fetched
+    # through the `/scripts` metadata endpoint; the dispatch keeps only the
+    # eight pre-start fields.
     assert "scripts_bundle" not in payload
-    assert len(payload) == 10
+    assert payload["schema_version"] == "1.1"
+    assert len(payload) == 8
+    assert "manifest_digest" not in payload
+    assert "expires_at" not in payload
     row = outbox_rows(seeded)[0]
     assert row.payload_json["scripts_bundle"] == {
         "name": name,
@@ -133,6 +137,48 @@ def test_dispatch_pins_the_scripts_bundle_for_image_cache_lookup(
         "sha256": "a" * 64,
         "size": 40960,
     }
+    assert row.payload_json["manifest_digest"].startswith("sha256:")
+    assert row.payload_json["expires_at"]
+
+
+def test_legacy_1_0_dispatch_still_sends_and_refreshes_its_descriptor(
+    seeded: Session, configure_settings
+) -> None:
+    """M8-51 (#323): a row created before the 1.1 rollout still dispatches.
+
+    The 1.0 payload keeps digest/expiry inside the client payload; the refresh
+    window must rewrite those fields in place (and keep the contract valid) so
+    an in-flight shard is not broken by the deploy.
+    """
+
+    configure_settings(GITHUB_TOKEN="gh-token")
+    create_run(seeded, key="legacy-10")
+    row = outbox_rows(seeded)[0]
+    payload = dict(row.payload_json)
+    client_payload = dict(payload["client_payload"])
+    client_payload["schema_version"] = "1.0"
+    client_payload["manifest_digest"] = payload["manifest_digest"]
+    client_payload["expires_at"] = payload["expires_at"]
+    payload["client_payload"] = client_payload
+    payload.pop("expires_at", None)
+    row.payload_json = payload
+    seeded.commit()
+    transport = FakeTransport([(204, "")])
+
+    outcome = dispatcher.dispatch_pending_outbox(seeded, transport=transport)
+
+    assert outcome.dispatched == 1
+    sent_payload = transport.calls[0]["body"]["client_payload"]
+    sent = outbox_rows(seeded)[0]
+    # The real contract still accepts the legacy shape after the refresh.
+    from app.runner_contracts import validate_payload
+
+    validate_payload("dispatch", sent_payload)
+    assert sent_payload["schema_version"] == "1.0"
+    assert len(sent_payload) == 10
+    assert sent_payload["manifest_digest"] == sent.payload_json["manifest_digest"]
+    assert sent_payload["expires_at"] == sent.payload_json["expires_at"]
+    assert sent.status == "sent"
 
 
 def test_dispatch_omits_an_incomplete_scripts_bundle_pin(
@@ -292,7 +338,12 @@ def test_dispatch_guard_rejects_eleven_properties_without_calling_transport(
 ) -> None:
     configure_settings(GITHUB_TOKEN="gh-token")
     run = create_run(seeded, key="guard-11")
-    _mutate_client_payload(seeded, lambda payload: payload.update({"extra": "boom"}))
+    # The minimal 1.1 payload has 8 keys; three injected keys reach GitHub's
+    # 10-property ceiling.
+    _mutate_client_payload(
+        seeded,
+        lambda payload: payload.update({"extra_a": "boom", "extra_b": "boom", "extra_c": "boom"}),
+    )
     transport = FakeTransport([])
 
     outcome = dispatcher.dispatch_pending_outbox(seeded, transport=transport)
@@ -318,7 +369,7 @@ def test_dispatch_guard_rejects_oversized_payload_without_calling_transport(
 ) -> None:
     configure_settings(GITHUB_TOKEN="gh-token")
     create_run(seeded, key="guard-64k")
-    # Keep the 10 top-level keys and grow one value past the local byte guard.
+    # Keep the 8 top-level keys and grow one value past the local byte guard.
     _mutate_client_payload(
         seeded, lambda payload: payload.update({"manifest_url": "http://x/" + "a" * (61 * 1024)})
     )
