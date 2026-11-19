@@ -197,15 +197,14 @@ test("eval-shard prefers the image/OSS scripts bundle and gates checkout as a fa
       `${name} must prefer direct OSS over the platform proxy`,
     );
     const checkouts = job.match(/uses: actions\/checkout@v4/g) ?? [];
-    assert.equal(checkouts.length, 2, `${name} must keep a two-attempt checkout fallback`);
+    assert.equal(checkouts.length, 1, `${name} must keep one bounded checkout fallback`);
     assert.ok(job.includes("if: steps.bundle.outputs.ok != 'true'"), `${name} checkout must be gated`);
-    assert.ok(job.includes("steps.fallback_checkout.outcome == 'failure'"), `${name} must retry the fallback`);
     assert.ok(job.includes("EVAL_SCRIPTS_DIR=$GITHUB_WORKSPACE"), `${name} must resolve fallback root`);
   }
   const total = text.match(/uses: actions\/checkout@v4/g) ?? [];
   assert.equal(
     total.length,
-    5,
-    "prepare/execute keep two checkout fallbacks and trace-e2e keeps its single checkout",
+    3,
+    "prepare/execute keep one checkout fallback each and trace-e2e keeps its single checkout",
   );
 });

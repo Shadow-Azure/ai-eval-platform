@@ -353,12 +353,8 @@ jobs:
         timeout-minutes: 1
         uses: actions/checkout@v4
         continue-on-error: true
-      - name: Checkout (fallback retry)
-        id: fallback_retry
-        if: steps.bundle.outputs.ok != 'true' && steps.fallback_checkout.outcome == 'failure'
-        uses: actions/checkout@v4
       - name: Use the checked-out repository scripts
-        if: steps.bundle.outputs.ok != 'true' && (steps.fallback_checkout.outcome == 'success' || steps.fallback_retry.outcome == 'success')
+        if: steps.bundle.outputs.ok != 'true' && steps.fallback_checkout.outcome == 'success'
         run: echo "EVAL_SCRIPTS_DIR=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
 
       - name: Materialize and validate the dispatch payload
@@ -570,12 +566,8 @@ jobs:
         timeout-minutes: 1
         uses: actions/checkout@v4
         continue-on-error: true
-      - name: Checkout (fallback retry)
-        id: fallback_retry
-        if: steps.bundle.outputs.ok != 'true' && steps.fallback_checkout.outcome == 'failure'
-        uses: actions/checkout@v4
       - name: Use the checked-out repository scripts
-        if: steps.bundle.outputs.ok != 'true' && (steps.fallback_checkout.outcome == 'success' || steps.fallback_retry.outcome == 'success')
+        if: steps.bundle.outputs.ok != 'true' && steps.fallback_checkout.outcome == 'success'
         run: echo "EVAL_SCRIPTS_DIR=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
 
       # runner.temp is per job: never read the prepare job's dispatch file.
@@ -621,7 +613,6 @@ jobs:
           RUNNER_STATE_DIR: ${{ runner.temp }}/eval-state
           BUNDLE_OUTCOME: ${{ steps.bundle.outcome }}
           CHECKOUT_OUTCOME: ${{ steps.fallback_checkout.outcome }}
-          CHECKOUT_RETRY_OUTCOME: ${{ steps.fallback_retry.outcome }}
           VALIDATE_OUTCOME: ${{ steps.validate_dispatch.outcome }}
           EXECUTE_OUTCOME: ${{ steps.execute_case.outcome }}
         run: |
@@ -682,7 +673,6 @@ jobs:
               "execute job 启动阶段失败：" +
               `bundle=${process.env.BUNDLE_OUTCOME || "unknown"} ` +
               `checkout=${process.env.CHECKOUT_OUTCOME || "unknown"} ` +
-              `checkout_retry=${process.env.CHECKOUT_RETRY_OUTCOME || "unknown"} ` +
               `validate=${process.env.VALIDATE_OUTCOME || "unknown"} ` +
               `execute=${process.env.EXECUTE_OUTCOME || "unknown"}`
             ).slice(0, 1000);
