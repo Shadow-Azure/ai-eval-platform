@@ -148,7 +148,12 @@ def post_repository_dispatch(
     validate_dispatch_request(event_type=event_type, client_payload=client_payload)
 
     url = f"{settings.github_api_url.rstrip('/')}/repos/{settings.github_repo}/dispatches"
-    body = json.dumps({"event_type": event_type, "client_payload": client_payload}).encode()
+    # Serialize exactly like the preflight so the validated byte count is the
+    # byte count GitHub receives (escaped non-ASCII would inflate it).
+    body = json.dumps(
+        {"event_type": event_type, "client_payload": client_payload},
+        ensure_ascii=False,
+    ).encode("utf-8")
     headers = _headers(settings)
 
     try:
