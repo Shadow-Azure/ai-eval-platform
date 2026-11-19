@@ -43,6 +43,13 @@ EXECUTION_TIMEOUT = "execution_timeout"
 SCORING_TIMEOUT = "scoring_timeout"
 UPLOAD_TIMEOUT = "upload_timeout"
 HEARTBEAT_TIMEOUT = "heartbeat_timeout"
+
+# Platform-only case events use a reserved POSITIVE sequence (M8-44 #306).
+# The console's event reader accepts only sequence >= 0, so a negative
+# namespace would break the whole eval event feed. 1_000_100 is above the
+# runner's terminal failure (1_000_001) and far above heartbeats, so it cannot
+# collide with started (0), heartbeat (1..N) or a terminal callback.
+PLATFORM_EVENT_SEQUENCE = 1_000_100
 TIMEOUT_CODES = (
     QUEUE_TIMEOUT,
     EXECUTION_TIMEOUT,
@@ -66,6 +73,7 @@ RETRYABLE_FAILURE_CODES = frozenset(
         HEARTBEAT_TIMEOUT,
         "spot_interrupted",
         "runner_lost",
+        "runner_bootstrap_failed",
         "network_error",
         "model_rate_limited",
         "model_unavailable",

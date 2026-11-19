@@ -591,3 +591,132 @@ def test_pool_max_capacity_column_bounds_effective_concurrency(
     run = _create_run(seeded, pool=pool, requested=8, key="column-cap")
 
     assert capacity.effective_concurrency(seeded, run, settings=get_settings()) == 2
+
+
+def test_second_evaluation_waits_for_pool_in_flight(
+    seeded: Session, configure_settings
+) -> None:
+    """M8-44 (#306 P1-2): pool-level in-flight reservation across runs."""
+
+    configure_settings(GITHUB_TOKEN="gh-token", RUNNER_HEARTBEAT_TIMEOUT_SECONDS="90")
+    pool = _make_pool(seeded, runners=5, key="pool-reserve")
+    pool.max_capacity = 5
+    seeded.commit()
+    run1 = _create_run(
+        seeded, pool=pool, case_count=5, shard_size=1, requested=5, key="reserve-1"
+    )
+    run2 = _create_run(
+        seeded, pool=pool, case_count=1, shard_size=1, requested=5, key="reserve-2"
+    )
+    now = datetime.now(UTC)
+
+    # Simulate the first evaluation fully in flight: its shard was dispatched
+    # and all five cases are running.
+    for row in seeded.scalars(select(Outbox).where(Outbox.aggregate_id == run1.id)):
+        row.status = "sent"
+    cases1 = list(
+        seeded.scalars(select(EvalCaseRun).where(EvalCaseRun.eval_run_id == run1.id))
+    )
+    attempts1 = list(
+        seeded.scalars(
+            select(EvalCaseAttempt)
+            .where(
+                EvalCaseAttempt.eval_case_run_id.in_([case.id for case in cases1])
+            )
+            .order_by(EvalCaseAttempt.attempt_no)
+        )
+    )
+    for case in cases1:
+        case.execution_status = "running"
+    for attempt in attempts1:
+        attempt.status = "running"
+        attempt.started_at = now
+        attempt.phase_changed_at = now
+    seeded.commit()
+
+    assert capacity.effective_concurrency(seeded, run1, settings=get_settings()) == 5
+    assert capacity.effective_concurrency(seeded, run2, settings=get_settings()) == 0
+
+    held = dispatcher.dispatch_pending_outbox(
+        seeded, settings=get_settings(), transport=FakeTransport()
+    )
+    assert held.dispatched == 0
+    assert held.queued == 1
+    run2_outbox = seeded.query(Outbox).filter(Outbox.aggregate_id == run2.id).one()
+    assert run2_outbox.status == "pending"
+    cases2 = list(
+        seeded.scalars(select(EvalCaseRun).where(EvalCaseRun.eval_run_id == run2.id))
+    )
+    assert {attempt.status for attempt in seeded.scalars(
+        select(EvalCaseAttempt).where(
+            EvalCaseAttempt.eval_case_run_id == cases2[0].id
+        )
+    )} == {"pending"}
+
+    # One in-flight case finishes: exactly one pool slot becomes available.
+    first_case = cases1[0]
+    first_case.execution_status = "succeeded"
+    first_attempt = next(
+        attempt for attempt in attempts1
+        if attempt.eval_case_run_id == first_case.id
+    )
+    first_attempt.status = "succeeded"
+    seeded.commit()
+
+    assert capacity.effective_concurrency(seeded, run2, settings=get_settings()) == 1
+    later = now + timedelta(seconds=120)
+    released = dispatcher.dispatch_pending_outbox(
+        seeded, settings=get_settings(), transport=FakeTransport(), now=later
+    )
+    assert released.dispatched == 1
+    run2_attempt = seeded.scalar(
+        select(EvalCaseAttempt)
+        .join(EvalCaseRun, EvalCaseRun.id == EvalCaseAttempt.eval_case_run_id)
+        .where(
+            EvalCaseRun.eval_run_id == run2.id,
+        )
+    )
+    assert run2_attempt is not None
+    assert run2_attempt.status == "queued"
+
+def test_started_hard_caps_a_shared_pool(
+    seeded: Session, configure_settings
+) -> None:
+    """M8-44 (#306 P1-2): started cannot exceed the pool's max capacity."""
+
+    configure_settings(RUNNER_HEARTBEAT_TIMEOUT_SECONDS="90")
+    pool = _make_pool(seeded, runners=1, key="hard-cap")
+    pool.max_capacity = 1
+    seeded.commit()
+    run1 = _create_run(
+        seeded, pool=pool, case_count=1, shard_size=1, requested=1, key="hard-cap-1"
+    )
+    run2 = _create_run(
+        seeded, pool=pool, case_count=1, shard_size=1, requested=1, key="hard-cap-2"
+    )
+    case1 = seeded.scalar(select(EvalCaseRun).where(EvalCaseRun.eval_run_id == run1.id))
+    case2 = seeded.scalar(select(EvalCaseRun).where(EvalCaseRun.eval_run_id == run2.id))
+
+    case_attempts.handle_started(
+        seeded,
+        payload={"case_run_id": case1.id, "attempt": 1, "event_id": "evt-hard-cap-1"},
+    )
+    with pytest.raises(case_attempts.CaseCallbackError) as rejected:
+        case_attempts.handle_started(
+            seeded,
+            payload={"case_run_id": case2.id, "attempt": 1, "event_id": "evt-hard-cap-2"},
+        )
+
+    assert rejected.value.status_code == 429
+    assert rejected.value.code == "capacity_waiting"
+    seeded.expire_all()
+    assert seeded.get(EvalCaseRun, case2.id).execution_status == "queued"
+    assert (
+        seeded.scalar(
+            select(EvalCaseAttempt.status).where(
+                EvalCaseAttempt.eval_case_run_id == case2.id
+            )
+        )
+        == "pending"
+    )
+
