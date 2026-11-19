@@ -46,7 +46,7 @@ from ..models import (
 )
 from ..runner_contracts import validate_payload
 from ..scoring.service import ingest_score_report, recompute_metrics
-from . import capacity, evaluations, lifecycle
+from . import capacity, evaluations, lifecycle, queue_lease
 from .evaluations import refresh_run_progress
 from .object_store import ObjectMissing, ObjectSizeMismatch, object_store_from_settings
 from .trace_manifest import (
@@ -253,6 +253,15 @@ def _promote_running(ctx: CaseContext, *, now: datetime, runner_id: str | None =
         ctx.run.status = "running"
         if ctx.run.started_at is None:
             ctx.run.started_at = now
+    # M8-45 (#307): a start is real shard progress, so every still-waiting
+    # sibling gets a fresh queue lease before this transaction commits.
+    queue_lease.renew_shard_leases(
+        ctx.session,
+        attempt=ctx.attempt,
+        run=ctx.run,
+        settings=get_settings(),
+        now=now,
+    )
     return True
 
 
@@ -653,6 +662,17 @@ def finalize_completion(
     attempt_status = COMPLETION_TO_ATTEMPT_STATUS[execution_status]
     lifecycle.mark_status(attempt, attempt_status, now)
     attempt.ended_at = now
+    if attempt.started_at is not None:
+        # M8-45 (#307): a completed (or runner-failed) attempt is shard
+        # progress, so the still-waiting siblings get a fresh lease before this
+        # transaction commits.
+        queue_lease.renew_shard_leases(
+            session,
+            attempt=attempt,
+            run=run,
+            settings=settings or get_settings(),
+            now=now,
+        )
     merged = dict(attempt.artifact_manifest_json or {})
     manifests = {"score_manifest": score_manifest}
     if trace_manifest is not None:
@@ -1021,6 +1041,16 @@ def handle_spot_interruption(
         attempt.error_summary = "云侧停止了 spot 实例（provider_stopped）"
         attempt.retry_reason = "spot_interruption"
         lifecycle.release_runner_binding(session, attempt)
+        if attempt.started_at is not None:
+            # M8-45 (#307): a started attempt ending (even by spot reclaim) is
+            # shard progress; renew the siblings that never started.
+            queue_lease.renew_shard_leases(
+                session,
+                attempt=attempt,
+                run=run,
+                settings=get_settings(),
+                now=now,
+            )
         sequence = next_free_sequence(session, case_run, attempt)
         session.add(
             EvalEvent(

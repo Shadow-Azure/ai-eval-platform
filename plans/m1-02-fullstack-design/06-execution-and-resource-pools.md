@@ -178,6 +178,8 @@ waiting_for_price → requested → creating → cloud-init/user_data → regist
 ## 7. 超时、心跳与取消
 
 - 平台同时维护 GitHub queued 超时、Agent 执行超时、评分超时、上传宽限期和 heartbeat 超时，不用一个总超时掩盖所有故障。
+- 平台排队是分片进度租约：初始预算为 `case_timeout + 600s`；分片内任意 attempt `started` 或已运行 attempt 进入终态，就为仍在排队的兄弟 attempt 续期；只有整片连续无进度超过预算才判 `queue_timeout`。租约绝对上限 23 小时（82800 秒），低于 GitHub 自托管 Job 的 24 小时排队上限。心跳不续期，避免僵尸分片无限延长。
+- 升级前已存在的排队 attempt 没有租约列，reaper 回退到 `phase_changed_at + eval_queue_timeout_seconds`；`queue_timeout` 事件记录排队等待时长、最近进度时间、租约截止时间、分片大小与并发，详情页据此区分“排队超时（未启动）”与“执行超时（跑过 Agent）”。
 - heartbeat 只证明控制脚本活着；长工具调用可发送阶段/用量心跳。Agent stdout 静默不必然代表死亡。
 - 取消先更新 `cancelling` 并撤销短期 token，再请求 GitHub cancel workflow/job；Runner 收到 SIGTERM 后上传已存在产物并退出。
 - 失联 Runner 无法保证本地进程立即停止，因此取消后的迟到结果按 attempt 状态处理，不覆盖取消事实，可保留用于诊断。

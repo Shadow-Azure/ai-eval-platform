@@ -226,7 +226,14 @@ class Settings(BaseSettings):
     # scoring, upload grace period and heartbeat. The agent execution timeout
     # is per run (``run.case_timeout_seconds``); the value here is only the
     # fallback for a run without one.
+    # M8-45 (#307): the queue timeout is a shard progress lease, not a fixed
+    # wall clock. Keep ``eval_queue_timeout_seconds`` only as the fallback for
+    # rows written before the lease columns existed. New rows get
+    # ``case_timeout + grace`` per renewal, capped at the absolute ceiling
+    # (23h, below GitHub's 24h self-hosted job queue limit).
     eval_queue_timeout_seconds: int = 3600
+    eval_queue_timeout_grace_seconds: int = 600
+    eval_queue_timeout_max_seconds: int = 82800
     eval_execution_timeout_seconds: int = 900
     eval_scoring_timeout_seconds: int = 900
     eval_upload_grace_seconds: int = 300
