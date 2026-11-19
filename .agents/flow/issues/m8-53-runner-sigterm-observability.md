@@ -9,6 +9,7 @@ priority: P2
 status: in-progress
 scope:
   - .agents/flow/issues/m8-53-runner-sigterm-observability.*
+  - .agents/flow/issues/m8-53-token-usage-stats.*
   - backend/app/services/provisioning/aliyun.py
   - runner/lib/diagnostics.mjs
   - runner/scripts/real-task.mjs
