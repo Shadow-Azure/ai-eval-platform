@@ -26,20 +26,9 @@ from sqlalchemy.orm import Session
 from ..config import Settings, get_settings
 from ..defaults import DEFAULT_PROJECT_ID, DEFAULT_TENANT_ID
 from ..models import EvalCaseAttempt, Project, ProvisionedInstance, ResourcePool, Runner, Tenant
+from .evaluations import ACTIVE_ATTEMPT_STATUSES
 from .runner_labels import DEFAULT_RUNS_ON
 
-#: M8-48 (#313): attempts in these states still own work. Mirrors
-#: ``services.evaluations.ACTIVE_ATTEMPT_STATUSES`` without importing the much
-#: heavier evaluation module into the runner service.
-ACTIVE_ATTEMPT_STATUSES = (
-    "pending",
-    "dispatching",
-    "queued",
-    "leased",
-    "running",
-    "scoring",
-    "uploading",
-)
 #: Provisioned instances in these states are already settled; only such an
 #: instance may let go of its runner pointer during retention cleanup.
 TERMINAL_INSTANCE_STATUSES = ("released", "interrupted")
