@@ -42,6 +42,7 @@ CLASSIFICATION_TABLE = {
     "validation_error": "permanent",
     "callback_permanent": "permanent",
     "dispatch_failed": "permanent",
+    "execution_timeout": "permanent",
     # scoring_only
     "scoring_failed": "scoring_only",
     "scoring_timeout": "scoring_only",
