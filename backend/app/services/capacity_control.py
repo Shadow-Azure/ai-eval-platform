@@ -367,12 +367,14 @@ def _build_state(
     # least that much live capacity even when no shard is waiting. The default
     # (0) keeps the M8-34 zero-resident behaviour unchanged.
     warm_gap = max(0, int(pool.min_capacity) - live - starting * slots)
-    gap = max(queue_gap, warm_gap)
+    # The controller acts on whichever deficit is larger; ``capacity_gap``
+    # keeps its historical queue-only meaning for the console and tests.
+    capacity_deficit = max(queue_gap, warm_gap)
     current_size = live + starting
-    desired = min(pool.max_capacity, current_size + math.ceil(gap / slots))
+    desired = min(pool.max_capacity, current_size + math.ceil(capacity_deficit / slots))
     reason = _capacity_reason(
         pool,
-        gap=gap,
+        gap=capacity_deficit,
         idle=idle,
         quote=quote,
         provisioner=provisioner,
@@ -394,7 +396,8 @@ def _build_state(
         "max_capacity": pool.max_capacity,
         "current_size": current_size,
         "desired_capacity": desired,
-        "capacity_gap": gap,
+        "capacity_gap": queue_gap,
+        "capacity_deficit": capacity_deficit,
         "queue_gap": queue_gap,
         "warm_pool_gap": warm_gap,
         "price_cny": money_str(price),
@@ -483,7 +486,7 @@ def append_resource_event(
 
 def _state_dedupe_key(pool: ResourcePool, state: Mapping[str, Any], reason: str | None) -> str:
     return (
-        f"{pool.id}:capacity:{reason}:{state['capacity_gap']}:{state['price_cny']}"
+        f"{pool.id}:capacity:{reason}:{state['capacity_deficit']}:{state['price_cny']}"
     )
 
 
@@ -522,11 +525,12 @@ def _record_provisioning_failure(
             "code": code,
             "message": message,
             "capacity_gap": state["capacity_gap"],
+            "capacity_deficit": state["capacity_deficit"],
             "price_cny": state["price_cny"],
         },
         dedupe_key=(
             f"{pool.id}:provisioning_failed:{code}:"
-            f"{state['capacity_gap']}:{state['price_cny']}"
+            f"{state['capacity_deficit']}:{state['price_cny']}"
         ),
     )
 
@@ -543,7 +547,11 @@ def _scale_up(
 ) -> int:
     slots = int(state["runners_per_instance"])
     headroom = max(0, pool.max_capacity - int(state["current_size"]))
-    needed = math.ceil(int(state["capacity_gap"]) / slots) if state["capacity_gap"] else 0
+    needed = (
+        math.ceil(int(state["capacity_deficit"]) / slots)
+        if state["capacity_deficit"]
+        else 0
+    )
     batch = min(headroom, needed, max(0, int(settings.eval_capacity_batch_size)))
     if batch <= 0:
         return 0
@@ -900,6 +908,7 @@ def reconcile_pool(
         {
             "reason": reported_reason,
             "capacity_gap": state["capacity_gap"],
+            "capacity_deficit": state["capacity_deficit"],
             "queue_gap": state["queue_gap"],
             "warm_pool_gap": state["warm_pool_gap"],
             "min_capacity": state["min_capacity"],

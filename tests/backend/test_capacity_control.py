@@ -359,6 +359,8 @@ def test_warm_pool_replenishes_min_capacity_without_queue(
 
     assert state["capacity_reason"] == capacity_control.REASON_CAPACITY_SCALE_UP
     assert state["warm_pool_gap"] == 1
+    assert state["capacity_gap"] == 0  # queue gap stays queue-only
+    assert state["capacity_deficit"] == 1
     assert state["scaled_up"] == 1
     instances = list(
         session.scalars(
