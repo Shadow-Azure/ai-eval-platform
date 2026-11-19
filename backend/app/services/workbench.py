@@ -32,7 +32,7 @@ from ..models import (
 )
 from ..money import money_str
 from . import datasets as dataset_service
-from . import evaluations, lifecycle, spot_fallback
+from . import evaluations, lifecycle, spot_fallback, token_usage
 from .trace_sessions import main_session_id as lookup_main_session_id
 from .trace_sessions import main_session_ids
 
@@ -48,6 +48,10 @@ SORTABLE_CASE_COLUMNS = {
     "execution_status": EvalCaseRun.execution_status,
     "result_status": EvalCaseRun.result_status,
 }
+
+# M8-53 (#332): token/cost live in trace spans, not eval_case_run columns, so
+# they are sorted after loading the filtered set; a run is capped at 500 cases.
+USAGE_SORT_KEYS = ("total_tokens", "cost_usd")
 
 
 class WorkbenchNotFound(Exception):
@@ -188,7 +192,14 @@ def case_row(
     summary: dict[str, int] | None = None,
     *,
     main_session_id: str | None = None,
+    usage: token_usage.TokenUsage | None = None,
 ) -> dict[str, Any]:
+    # M8-53 (#332): the token fields live inside the existing ``metrics``
+    # object so the prototype table and CSV export can read one stable shape.
+    # All attempts; the runner's hardcoded summary is not used.
+    metrics = dict(case.metrics_json or {})
+    if usage is not None:
+        metrics.update(usage.as_metrics())
     return {
         "id": case.id,
         "case_key": case.case_key,
@@ -202,7 +213,7 @@ def case_row(
         "duration_ms": case.duration_ms,
         "error_code": case.error_code,
         "error_summary": case.error_summary,
-        "metrics": case.metrics_json or {},
+        "metrics": metrics,
         "test_summary": summary or empty_test_summary(),
         "updated_at": evaluations._iso(case.updated_at),
     }
@@ -257,31 +268,69 @@ def list_cases(
                     status_code=422,
                 )
             conditions.append(column == value)
-    column = SORTABLE_CASE_COLUMNS.get(sort)
-    if column is None:
-        raise WorkbenchRejected(f"未知的排序字段：{sort}", code="invalid_case_sort", status_code=422)
     if order not in ("asc", "desc"):
         raise WorkbenchRejected(f"未知的排序方向：{order}", code="invalid_case_sort", status_code=422)
-    direction = column.desc() if order == "desc" else column.asc()
     safe_limit = max(1, min(limit, 200))
     safe_offset = max(0, offset)
 
-    total = int(
-        session.scalar(
-            select(func.count()).select_from(EvalCaseRun).where(*conditions)
+    usage_by_case: dict[str, token_usage.TokenUsage] = {}
+    if sort in USAGE_SORT_KEYS:
+        # Compute usage for the whole filtered set so pagination and sorting
+        # agree; runs are capped at 500 cases, so this is bounded.
+        all_cases = list(
+            session.scalars(
+                select(EvalCaseRun)
+                .where(*conditions)
+                .order_by(EvalCaseRun.ordinal, EvalCaseRun.id)
+            )
         )
-        or 0
-    )
-    cases = list(
-        session.scalars(
-            select(EvalCaseRun)
-            .where(*conditions)
-            .order_by(direction, EvalCaseRun.id)
-            .offset(safe_offset)
-            .limit(safe_limit)
+        usage_by_case = token_usage.case_usage(
+            session, [case.id for case in all_cases]
         )
-    )
+
+        def usage_value(case: EvalCaseRun) -> float | None:
+            usage = usage_by_case.get(case.id)
+            if usage is None or not usage.has_trace:
+                return None
+            return (
+                float(usage.total_tokens)
+                if sort == "total_tokens"
+                else float(usage.cost_usd)
+            )
+
+        measured = [case for case in all_cases if usage_value(case) is not None]
+        missing = [case for case in all_cases if usage_value(case) is None]
+        measured.sort(key=usage_value, reverse=(order == "desc"))
+        ordered = measured + missing
+        total = len(ordered)
+        cases = ordered[safe_offset : safe_offset + safe_limit]
+    else:
+        column = SORTABLE_CASE_COLUMNS.get(sort)
+        if column is None:
+            raise WorkbenchRejected(
+                f"未知的排序字段：{sort}", code="invalid_case_sort", status_code=422
+            )
+        direction = column.desc() if order == "desc" else column.asc()
+        total = int(
+            session.scalar(
+                select(func.count()).select_from(EvalCaseRun).where(*conditions)
+            )
+            or 0
+        )
+        cases = list(
+            session.scalars(
+                select(EvalCaseRun)
+                .where(*conditions)
+                .order_by(direction, EvalCaseRun.id)
+                .offset(safe_offset)
+                .limit(safe_limit)
+            )
+        )
     summaries, latest_attempt_ids = _summaries_for_latest_attempts(session, cases)
+    if not usage_by_case:
+        usage_by_case = token_usage.case_usage(
+            session, [case.id for case in cases]
+        )
     session_ids = main_session_ids(
         session,
         latest_attempt_ids.values(),
@@ -295,6 +344,7 @@ def list_cases(
                 case,
                 summaries.get(case.id),
                 main_session_id=session_ids.get(latest_attempt_ids.get(case.id, "")),
+                usage=usage_by_case.get(case.id),
             )
             for case in cases
         ],
@@ -398,6 +448,7 @@ def get_case(session: Session, case_run_id: str) -> dict[str, Any]:
         raise WorkbenchNotFound(f"评测不存在：{case.eval_run_id}", code="eval_run_not_found")
     attempts = _attempt_rows(session, case)
     latest = _latest_attempt(session, case)
+    usage = token_usage.case_usage(session, [case.id]).get(case.id)
     return {
         "case": case_row(
             case,
@@ -408,6 +459,7 @@ def get_case(session: Session, case_run_id: str) -> dict[str, Any]:
                 if latest is not None
                 else None
             ),
+            usage=usage,
         ),
         "run": {
             "id": run.id,
@@ -528,6 +580,7 @@ def retry_case(session: Session, *, case_run_id: str, actor: str, now: datetime 
             main_session_id=lookup_main_session_id(
                 session, attempt.id, tenant_id=case.tenant_id
             ),
+            usage=token_usage.case_usage(session, [case.id]).get(case.id),
         ),
         "attempt": _attempt_row(session, attempt),
         "retry": retry_state(session, run, case),

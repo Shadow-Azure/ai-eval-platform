@@ -23,6 +23,13 @@ from ..models import AGGREGATOR_WHITELIST, Dataset, MetricDefinition
 CASE_RESULT_KEYS = ("resolved", "unresolved", "not_scored", "execution_failed")
 CASE_SET_KEYS = ("selected_total", "submitted", "graded", "resolved", "execution_failed")
 
+# M8-53 (#332): platform-wide usage metrics are computed from the trace tree
+# (all attempts per case per design 07 §3.2), not from a case-result set, so
+# their numerator/denominator are descriptive rather than registry references.
+USAGE_METRIC_KEYS = frozenset(
+    {"total_tokens", "tokens_per_case", "total_cost_usd", "cost_per_case_usd"}
+)
+
 # 需要分母的聚合器；sum/mean 只看分子。
 AGGREGATORS_REQUIRING_DENOMINATOR = {"ratio"}
 
@@ -43,6 +50,7 @@ def validate_metric_config(
     denominator: dict[str, Any] | None,
     display_kind: str,
     direction: str = "higher_is_better",
+    metric_key: str | None = None,
 ) -> None:
     if aggregator_key not in AGGREGATOR_WHITELIST:
         raise MetricInvalid(
@@ -55,6 +63,10 @@ def validate_metric_config(
         raise MetricInvalid(f"展示类型 {display_kind!r} 不受支持", code="display_kind_invalid", field="display_kind")
     if direction not in ("higher_is_better", "lower_is_better"):
         raise MetricInvalid(f"方向 {direction!r} 不受支持", code="direction_invalid", field="direction")
+    # Usage metrics aggregate trace spans (see trace_usage.py); they have no
+    # case-result numerator and no registered case-set denominator.
+    if metric_key in USAGE_METRIC_KEYS:
+        return
     if not isinstance(numerator, dict) or numerator.get("case_result") not in CASE_RESULT_KEYS:
         raise MetricInvalid(
             "分子必须引用注册的用例结果集合：" + ", ".join(CASE_RESULT_KEYS),
@@ -98,6 +110,7 @@ def register_metric_definition(
         denominator=denominator,
         display_kind=display_kind,
         direction=direction,
+        metric_key=metric_key,
     )
     dataset = session.get(Dataset, dataset_id)
     if dataset is None:

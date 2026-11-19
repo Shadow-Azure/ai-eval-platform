@@ -1,6 +1,23 @@
 import { ApiError, notifyUnauthorized } from "./types";
 import { request } from "./evaluations";
 
+/**
+ * Dataset-level trace aggregate (M8-53 / issue #332). Additive: older control
+ * planes omit ``token_stats`` and the cards simply do not render.
+ */
+export interface DatasetTokenStats {
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  cost_usd: number | null;
+  case_count: number;
+  eval_count: number;
+  eval_count_with_tokens: number;
+  average_tokens: number | null;
+  average_eval_tokens: number | null;
+  average_cost_usd: number | null;
+}
+
 export interface DatasetSummary {
   id: string;
   slug: string;
@@ -10,6 +27,7 @@ export interface DatasetSummary {
   environment_kind: string | null;
   created_at: string;
   version_count?: number;
+  token_stats?: DatasetTokenStats | null;
 }
 
 export interface DatasetLatestVersion {
@@ -90,6 +108,10 @@ export interface DatasetCaseSummary {
   difficulty_label: string | null;
   expected_test_count: number;
   created_at: string;
+  /** Average trace tokens per run for this case across the version. */
+  token_avg?: number | null;
+  /** Number of measured eval runs behind ``token_avg``. */
+  token_run_count?: number;
 }
 
 export interface DatasetDifficultyFacet {
@@ -155,6 +177,31 @@ function number(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
+function optionalNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function parseTokenStats(value: unknown): DatasetTokenStats | null {
+  if (!isRecord(value)) return null;
+  return {
+    input_tokens: optionalNumber(value.input_tokens) ?? 0,
+    output_tokens: optionalNumber(value.output_tokens) ?? 0,
+    total_tokens: optionalNumber(value.total_tokens) ?? 0,
+    cost_usd: optionalNumber(value.cost_usd),
+    case_count: number(value.case_count),
+    eval_count: number(value.eval_count),
+    eval_count_with_tokens: optionalNumber(value.eval_count_with_tokens) ?? 0,
+    average_tokens: optionalNumber(value.average_tokens),
+    average_eval_tokens: optionalNumber(value.average_eval_tokens),
+    average_cost_usd: optionalNumber(value.average_cost_usd),
+  };
+}
+
 function items(payload: unknown): { records: Record<string, unknown>[]; page: PageInfo } {
   if (!isRecord(payload) || !Array.isArray(payload.items)) {
     throw new ApiError("控制面返回了无法识别的数据集数据", { code: "invalid_response" });
@@ -175,6 +222,7 @@ function parseDataset(item: Record<string, unknown>): DatasetSummary {
     environment_kind: optionalText(item.environment_kind),
     created_at: text(item.created_at),
     version_count: typeof item.version_count === "number" ? item.version_count : undefined,
+    token_stats: parseTokenStats(item.token_stats),
   };
 }
 
@@ -214,6 +262,8 @@ function parseCase(item: Record<string, unknown>): DatasetCaseSummary {
     difficulty_label: optionalText(item.difficulty_label),
     expected_test_count: number(item.expected_test_count),
     created_at: text(item.created_at),
+    token_avg: optionalNumber(item.token_avg),
+    token_run_count: number(item.token_run_count),
   };
 }
 

@@ -23,6 +23,20 @@ const precise = new Intl.NumberFormat("zh-CN", {
   maximumFractionDigits: 4,
 });
 
+const usdStandard = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+const usdPrecise = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 4,
+});
+
 /** Format one amount; unit prices keep up to four decimals. */
 export function formatMoney(
   value: string | number | null | undefined,
@@ -32,6 +46,24 @@ export function formatMoney(
   const parsed = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(parsed)) return String(value);
   return (options.precise ? precise : standard).format(parsed);
+}
+
+/**
+ * Format a trace-derived cost as USD.
+ *
+ * Trace `cost-state` values (Claude Code `totalCostUSD`) are stored as USD.
+ * They are intentionally not converted into the platform billing currency:
+ * every budget/CNY display keeps using `formatMoney`, while token/cost
+ * aggregates sourced from the trace must say USD explicitly.
+ */
+export function formatUsd(
+  value: string | number | null | undefined,
+  options: { precise?: boolean } = {},
+): string {
+  if (value === null || value === undefined || value === "") return "—";
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed)) return String(value);
+  return (options.precise ? usdPrecise : usdStandard).format(parsed);
 }
 
 /** Format one hourly unit price (spot quote or threshold). */

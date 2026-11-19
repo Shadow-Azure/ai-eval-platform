@@ -169,6 +169,16 @@ def _percentile(values: tuple[int, ...], fraction: float) -> int | None:
 def metric_value(
     metric_key: str, stats: EvaluationStats
 ) -> tuple[object, Decimal | None, Decimal | None] | None:
+    # M8-53 (#332): token/cost are computed live from trace spans. Freezing
+    # them here would persist the runner's 0-token summary and contradict
+    # /results and /evaluations/{id}. Keep them out of MetricResult entirely.
+    if metric_key in {
+        "total_tokens",
+        "tokens_per_case",
+        "total_cost_usd",
+        "cost_per_case_usd",
+    }:
+        return None
     total = stats.selected_total
     if metric_key == "resolved_count":
         return stats.resolved, Decimal(stats.resolved), None
@@ -182,9 +192,6 @@ def metric_value(
     if metric_key == "execution_failure_rate":
         value = stats.execution_failed / total if total else None
         return value, Decimal(stats.execution_failed), Decimal(total)
-    if metric_key == "tokens_per_case":
-        value = stats.tokens / stats.executed if stats.executed else None
-        return value, Decimal(stats.tokens), Decimal(stats.executed)
     if metric_key == "cost_per_case":
         value = (
             float((stats.cost_cny / stats.executed).amount) if stats.executed else None

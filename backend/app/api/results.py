@@ -5,10 +5,18 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..db import get_session
-from ..models import EvalCaseAttempt, EvalCaseRun, EvalRun, MetricDefinition, MetricResult, TestCaseResult
+from ..models import (
+    EvalCaseAttempt,
+    EvalCaseRun,
+    EvalRun,
+    MetricDefinition,
+    MetricResult,
+    TestCaseResult,
+    utcnow,
+)
 from ..scoring.service import case_test_summary
 from ..seed import ensure_default_scope
-from ..services import comparison
+from ..services import comparison, token_usage
 from ..services.evaluations import iso_utc
 
 router = APIRouter(tags=["results"])
@@ -35,6 +43,92 @@ def _run_or_404(session: Session, tenant_id: str, run_id: str) -> EvalRun:
     return run
 
 
+# M8-53 (#332): token/cost cards are derived from the trace tree on every
+# request, so an existing completed run shows them without a backfill command
+# and without depending on a frozen MetricResult row.
+USAGE_METRIC_KEYS = (
+    "total_tokens",
+    "tokens_per_case",
+    "total_cost_usd",
+    "cost_per_case_usd",
+)
+
+
+def _token_metric_items(
+    summary: dict[str, object], *, is_final: bool, generated_at: str
+) -> list[dict[str, object]]:
+    cases_with_tokens = int(summary.get("cases_with_tokens") or 0)
+    total_tokens = int(summary.get("total_tokens") or 0)
+    cost_usd = float(summary.get("cost_usd") or 0)
+    total_value = total_tokens if cases_with_tokens else None
+    average_tokens = summary.get("average_tokens")
+    average_cost = summary.get("average_cost_usd")
+    common = {
+        "metric_version": 1,
+        "display_kind": "number",
+        "direction": "lower_is_better",
+        "is_final": is_final,
+        "generated_at": generated_at,
+    }
+    return [
+        {
+            **common,
+            "metric_key": "total_tokens",
+            "display_name": "总 Token",
+            "description": "每个用例所有 attempt 的 input_tokens + output_tokens 合计；缓存读写不计入。",
+            "formula_text": (
+                "total_tokens = Σ 每个用例所有 attempt 的 input_tokens + output_tokens"
+            ),
+            "unit": "tokens",
+            "denominator_policy": None,
+            "value": total_value,
+            "numerator": total_tokens,
+            "denominator": None,
+        },
+        {
+            **common,
+            "metric_key": "tokens_per_case",
+            "display_name": "平均 Token / 用例",
+            "description": "按有轨迹数据的用例数取平均。",
+            "formula_text": (
+                "tokens_per_case = total_tokens / cases_with_tokens；"
+                "cases_with_tokens 为至少有一个已解析 attempt 轨迹的用例数"
+            ),
+            "unit": "tokens",
+            "denominator_policy": "cases_with_tokens",
+            "value": average_tokens,
+            "numerator": total_tokens,
+            "denominator": cases_with_tokens or None,
+        },
+        {
+            **common,
+            "metric_key": "total_cost_usd",
+            "display_name": "累计成本（USD）",
+            "description": "trace cost-state 上报的成本，单位 USD。",
+            "formula_text": "total_cost_usd = Σ 所有 attempt 的 TraceSpan.cost（USD）",
+            "unit": "USD",
+            "denominator_policy": None,
+            "value": cost_usd if cases_with_tokens else None,
+            "numerator": cost_usd,
+            "denominator": None,
+        },
+        {
+            **common,
+            "metric_key": "cost_per_case_usd",
+            "display_name": "平均成本（USD / 用例）",
+            "description": "按有轨迹数据的用例数取平均，单位 USD。",
+            "formula_text": (
+                "cost_per_case_usd = total_cost_usd / cases_with_tokens"
+            ),
+            "unit": "USD",
+            "denominator_policy": "cases_with_tokens",
+            "value": average_cost,
+            "numerator": cost_usd,
+            "denominator": cases_with_tokens or None,
+        },
+    ]
+
+
 @router.get("/api/v1/eval-runs/{run_id}/results")
 def get_eval_results(
     run_id: str, session: Session = Depends(get_session)
@@ -54,6 +148,7 @@ def get_eval_results(
     )
     final_rows = [(result, definition) for result, definition in rows if result.is_final]
     selected = final_rows or rows
+    is_final = bool(final_rows)
     items = []
     for result, definition in selected:
         value = result.value_json.get("value") if isinstance(result.value_json, dict) else None
@@ -75,11 +170,25 @@ def get_eval_results(
                 "generated_at": iso_utc(result.generated_at),
             }
         )
+    token_summary = token_usage.run_token_summary(session, run.id)
+    # A frozen MetricResult for a usage key would be stale (traces arrive after
+    # completion), so the live trace-derived item always wins.
+    items = [
+        item for item in items if item["metric_key"] not in USAGE_METRIC_KEYS
+    ]
+    items.extend(
+        _token_metric_items(
+            token_summary,
+            is_final=is_final,
+            generated_at=iso_utc(run.finished_at or utcnow()),
+        )
+    )
     return {
         "run_id": run.id,
         "status": run.status,
-        "is_final": bool(final_rows),
+        "is_final": is_final,
         "items": items,
+        "token_summary": token_summary,
     }
 
 

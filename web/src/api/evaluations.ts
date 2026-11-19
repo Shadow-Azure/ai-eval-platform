@@ -143,6 +143,23 @@ export interface EvaluationProgress {
   estimated_finish_at: string | null;
 }
 
+/**
+ * Case-set token aggregate from trace spans (M8-53 / issue #332).
+ *
+ * ``cost_usd`` is the trace ``cost-state`` amount and is displayed as USD; it
+ * is deliberately not mixed into the platform's CNY budget fields.
+ */
+export interface EvalTokenSummary {
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  cost_usd: number | null;
+  case_count: number;
+  cases_with_tokens: number;
+  average_tokens: number | null;
+  average_cost_usd: number | null;
+}
+
 export interface EvaluationDetail extends EvaluationSummary {
   cases: EvaluationCase[];
   shards: EvaluationShard[];
@@ -153,6 +170,8 @@ export interface EvaluationDetail extends EvaluationSummary {
   case_counts?: Record<string, number>;
   trace_counts?: Record<string, number>;
   retryable_count?: number;
+  /** All-attempt trace token aggregate; absent until the API ships it. */
+  token_summary?: EvalTokenSummary | null;
 }
 
 export interface EvaluationEvent {
@@ -750,6 +769,7 @@ export function parseEvaluationDetail(payload: unknown): EvaluationDetail {
     progress: readProgress(record.progress),
     retryable_count:
       typeof record.retryable_count === "number" ? record.retryable_count : undefined,
+    token_summary: parseTokenSummary(record.token_summary),
     cases: cases.map((entry) => {
       const item = (entry ?? {}) as Record<string, unknown>;
       return {
@@ -808,6 +828,41 @@ function readNumberMap(value: unknown): Record<string, number> | undefined {
       (entry): entry is [string, number] => typeof entry[1] === "number",
     ),
   );
+}
+
+function readOptionalNumeric(value: unknown): number | null {
+  const numeric = readOptionalNumber(value);
+  if (numeric !== null) return numeric;
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function readTokenCount(value: unknown): number {
+  return readOptionalNumeric(value) ?? 0;
+}
+
+/**
+ * Defensive parser for the additive ``token_summary`` block.
+ *
+ * Older control planes do not return it, and a partially rolled-out backend
+ * may omit individual counters; missing totals must not make the detail page
+ * fail to render.
+ */
+export function parseTokenSummary(value: unknown): EvalTokenSummary | null {
+  if (!isRecord(value)) return null;
+  return {
+    input_tokens: readTokenCount(value.input_tokens),
+    output_tokens: readTokenCount(value.output_tokens),
+    total_tokens: readTokenCount(value.total_tokens),
+    cost_usd: readOptionalNumeric(value.cost_usd),
+    case_count: readTokenCount(value.case_count),
+    cases_with_tokens: readTokenCount(value.cases_with_tokens),
+    average_tokens: readOptionalNumeric(value.average_tokens),
+    average_cost_usd: readOptionalNumeric(value.average_cost_usd),
+  };
 }
 
 export async function fetchEvaluations(

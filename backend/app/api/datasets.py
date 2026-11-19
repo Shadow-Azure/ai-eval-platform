@@ -30,7 +30,7 @@ from ..defaults import DEFAULT_TENANT_ID
 from ..models import Dataset, DatasetCase, DatasetImport, DatasetVersion, MetricDefinition
 from ..services import dataset_imports as import_service
 from ..services import datasets as dataset_service
-from ..services import identity
+from ..services import identity, token_usage
 from ..services import metrics as metric_service
 from ..services.dataset_images import DatasetImageUnavailable
 from .dependencies import require_admin
@@ -97,7 +97,12 @@ def version_summary(version: DatasetVersion) -> dict:
     }
 
 
-def case_summary(case: DatasetCase) -> dict:
+def case_summary(
+    case: DatasetCase,
+    *,
+    token_avg: int | None = None,
+    token_run_count: int = 0,
+) -> dict:
     # M5-14: the adapter's raw difficulty label is preserved, and the display
     # level (easy/medium/hard) comes from a documented time-band normalization.
     # No difficulty value is invented for datasets without the field.
@@ -113,6 +118,10 @@ def case_summary(case: DatasetCase) -> dict:
         "difficulty_label": difficulty_label,
         "expected_test_count": dataset_service.case_expected_test_count(case),
         "environment_image": case.environment_image,
+        # M8-53 (#332): mean tokens per run for this case_key across the
+        # dataset's runs. ``None`` when no run has parsed trace data.
+        "token_avg": token_avg,
+        "token_run_count": token_run_count,
         "created_at": case.created_at.isoformat(timespec="microseconds"),
     }
 
@@ -533,6 +542,14 @@ def list_datasets(
     session: Session = Depends(get_session),
 ) -> dict:
     items, total = dataset_service.dataset_catalog(session, limit=limit, offset=offset)
+    # M8-53 (#332): one grouped query for the page, never one per card.
+    stats = token_usage.dataset_token_stats(
+        session, [item["id"] for item in items]
+    )
+    for item in items:
+        item["token_stats"] = stats.get(
+            item["id"], token_usage.empty_dataset_token_stats()
+        )
     return {
         "items": items,
         "page_info": dataset_service.page_info(limit=limit, offset=offset, total=total),
@@ -551,7 +568,14 @@ def get_dataset(dataset_id: str, session: Session = Depends(get_session)) -> dic
     except dataset_service.DatasetNotFound as exc:
         raise _not_found("dataset_not_found", "数据集不存在") from exc
     _, version_total = dataset_service.list_dataset_versions(session, dataset.id, limit=1, offset=0)
-    return {**dataset_summary(dataset), "version_count": version_total}
+    token_stats = token_usage.dataset_token_stats(session, [dataset.id]).get(
+        dataset.id, token_usage.empty_dataset_token_stats()
+    )
+    return {
+        **dataset_summary(dataset),
+        "version_count": version_total,
+        "token_stats": token_stats,
+    }
 
 
 @router.get("/api/v1/datasets/{dataset_id}/versions")
@@ -598,7 +622,7 @@ def list_version_cases(
     session: Session = Depends(get_session),
 ) -> dict:
     try:
-        dataset_service.get_dataset_version(session, version_id)
+        version = dataset_service.get_dataset_version(session, version_id)
     except dataset_service.DatasetVersionNotFound as exc:
         raise _not_found("dataset_version_not_found", "数据集版本不存在") from exc
     items, total = dataset_service.list_version_cases(
@@ -609,8 +633,20 @@ def list_version_cases(
         q=q,
         difficulty=difficulty,
     )
+    token_averages = token_usage.version_case_token_averages(
+        session, dataset_id=version.dataset_id
+    )
     return {
-        "items": [case_summary(case) for case in items],
+        "items": [
+            case_summary(
+                case,
+                token_avg=(token_averages.get(case.case_key) or {}).get("token_avg"),
+                token_run_count=(token_averages.get(case.case_key) or {}).get(
+                    "token_run_count", 0
+                ),
+            )
+            for case in items
+        ],
         "page_info": dataset_service.page_info(limit=limit, offset=offset, total=total),
         # An adapter may not provide a difficulty label; the UI uses facets to
         # decide whether the filter is usable instead of assuming easy/hard.

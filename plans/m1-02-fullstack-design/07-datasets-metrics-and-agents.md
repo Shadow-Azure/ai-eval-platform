@@ -146,13 +146,23 @@ SWE-bench 官方 `make_run_report` 输出 `total/submitted/completed/resolved/un
 | `resolved_rate` | resolved / selected_total，对齐 SWE-bench 主口径 | 主结果卡 |
 | `resolved_rate_scored` | resolved / graded，无已评分用例时为 N/A | 辅助诊断卡 |
 | `execution_failure_rate` | 最终执行失败/超时/取消数 / selected_total | 质量告警 |
-| `tokens_per_case` | 所有 attempt token 总投入 / 已执行用例数 | 成本卡 |
-| `cost_per_case` | 所有 attempt 成本 / 已执行用例数 | 成本卡 |
+| `total_tokens` | 所有 attempt 的 input+output 合计（排除 AGENT 汇总 span） | 总 Token 卡 |
+| `tokens_per_case` | 所有 attempt token 总投入 / 有轨迹的用例数 | 平均 Token 卡 |
+| `total_cost_usd` | 所有 attempt 的 trace 成本合计（USD） | 累计成本卡 |
+| `cost_per_case` | 所有 attempt 成本 / 有轨迹的用例数（USD） | 平均成本卡 |
 | `duration_percentiles` | 逻辑用例最新有效 attempt 的 p50/p95 | 分布图 |
 
 主结果同时展示全量解决率与执行失败率。Token/成本明确区分“所有 attempt 总投入”和“最新有效 attempt 结果”，默认成本使用所有 attempt。
 
-### 3.2.1 测试级完整打点
+### 3.2.1 用例集与数据集级 Token 统计（M8-53）
+
+- 数据源是归一化轨迹（`trace_span`），不是 runner 完成回调。Claude Code 的 `AGENT` 根 span 保存会话汇总，`LLM` span 保存逐条消息 usage；token 求和必须排除 `AGENT`，否则重复计数。成本只落在 `AGENT` span，按全部 span 求和。
+- 用例行聚合该用例**所有 attempt**（重试也是真实消耗），run/dataset 汇总等于可见用例行之和；平均值按有已解析轨迹的用例数 `cases_with_tokens`。
+- 成本来自 Claude Code `cost-state.totalCostUSD`，API 字段名 `cost_usd`，UI 标注 USD；不混入平台 CNY 预算。
+- 数据集级：`GET /datasets`、`GET /datasets/{id}` 返回 `token_stats`（累计 / 平均 / 评测数），`GET /dataset-versions/{id}/cases` 返回 `token_avg` 与 `token_run_count`，跨该数据集全部版本与 run。
+- 既有 run 的 `/results` 直接按 trace 计算 token 指标，不依赖新增 `MetricResult` 行；既有数据版本若要让“指标口径”列出新指标，需要重新导入或做一次管理员 backfill（本 issue 不做数据迁移）。
+
+### 3.2.2 测试级完整打点
 
 SWE-bench 官方 `get_eval_tests_report` 已能生成 F2P/P2P 的 success/failure 测试清单，`include_tests_status` 可把 `tests_status` 写入每实例报告；`test_output.txt` 保存完整测试输出。平台必须保留这些信息，而不是只存最终布尔值 resolved。
 

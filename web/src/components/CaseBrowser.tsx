@@ -13,6 +13,11 @@ interface CaseBrowserProps<Row extends object> {
   searchValue: string;
   onSearchChange: (value: string) => void;
   searchPlaceholder: string;
+  /**
+   * Optional aggregate strip rendered under the card header and above the
+   * filters, e.g. the eval case-set token summary (M8-53).
+   */
+  summary?: ReactNode;
   /** Optional first toolbar row, e.g. a status segmented control. */
   leading?: ReactNode;
   /** Additional filters rendered next to the search input. */
@@ -52,6 +57,7 @@ export function CaseBrowser<Row extends object>({
   searchValue,
   onSearchChange,
   searchPlaceholder,
+  summary,
   leading,
   filters,
   columns,
@@ -94,6 +100,7 @@ export function CaseBrowser<Row extends object>({
         </div>
         {actions ? <div className="card-actions">{actions}</div> : null}
       </div>
+      {summary ? <div className="case-browser-summary">{summary}</div> : null}
       {leading ? <div className="case-browser-leading">{leading}</div> : null}
       <div className="case-browser-toolbar">
         <div className="case-browser-controls">

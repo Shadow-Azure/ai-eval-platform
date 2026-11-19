@@ -34,6 +34,8 @@ import { EmptyState } from "../components/EmptyState";
 import { Icon, type IconName } from "../components/Icon";
 import { PageHeading } from "../components/PageHeading";
 import { QueryError } from "../components/QueryError";
+import { formatUsd } from "../utils/money";
+import { formatTokenAmount } from "../utils/tokens";
 
 const DIFFICULTY_LABEL: Record<DatasetDifficultyLevel, string> = {
   easy: "easy",
@@ -111,12 +113,12 @@ function DifficultyTag({ caseRow }: { caseRow: DatasetCaseSummary }) {
 }
 
 const caseColumns: TableColumnsType<DatasetCaseSummary> = [
-  { title: "#", dataIndex: "ordinal", key: "ordinal", width: 56 },
+  { title: "#", dataIndex: "ordinal", key: "ordinal", width: 48 },
   {
     title: "实例 ID",
     dataIndex: "case_key",
     key: "case_key",
-    width: 262,
+    width: 210,
     ellipsis: true,
     render: (value: string) => (
       <Tooltip title={value}>
@@ -131,14 +133,14 @@ const caseColumns: TableColumnsType<DatasetCaseSummary> = [
     title: "难度",
     dataIndex: "difficulty",
     key: "difficulty",
-    width: 92,
+    width: 80,
     render: (_value, record) => <DifficultyTag caseRow={record} />,
   },
   {
     title: "基准提交",
     dataIndex: "base_commit",
     key: "base_commit",
-    width: 108,
+    width: 96,
     render: (value: string | null) => (
       <Tooltip title={value || undefined}>
         <span className="mono small">{baseCommitLabel(value)}</span>
@@ -149,8 +151,28 @@ const caseColumns: TableColumnsType<DatasetCaseSummary> = [
     title: "应通过测试",
     dataIndex: "expected_test_count",
     key: "expected_test_count",
-    width: 108,
+    width: 96,
     render: (value: number) => (value > 0 ? `${value} 项` : "—"),
+  },
+  {
+    title: "平均 Token",
+    dataIndex: "token_avg",
+    key: "token_avg",
+    width: 104,
+    render: (_value, record) =>
+      record.token_avg === null || record.token_avg === undefined ? (
+        <span className="muted small">—</span>
+      ) : (
+        <Tooltip
+          title={
+            record.token_run_count
+              ? `按 ${record.token_run_count} 次有用例数据的评测聚合（所有 attempt）`
+              : "按 trace 聚合（所有 attempt）"
+          }
+        >
+          <span className="mono small">{formatTokenAmount(record.token_avg)}</span>
+        </Tooltip>
+      ),
   },
 ];
 
@@ -470,6 +492,12 @@ export function DatasetDetailPage() {
   }, [version.data]);
   const refreshing = version.isFetching || cases.isFetching;
   const hasFilters = Boolean(search) || difficulty !== null;
+  const tokenStats = dataset.data?.token_stats ?? null;
+  const datasetTotalTokens = tokenStats
+    ? tokenStats.total_tokens > 0
+      ? tokenStats.total_tokens
+      : tokenStats.input_tokens + tokenStats.output_tokens
+    : 0;
 
   const refresh = () => {
     void dataset.refetch();
@@ -578,6 +606,44 @@ export function DatasetDetailPage() {
           />
         </div>
       )}
+
+      {tokenStats ? (
+        <>
+          <div className="grid grid-4 section-gap">
+            <MetricCard
+              label="累计 Token"
+              value={formatTokenAmount(datasetTotalTokens)}
+              meta={`${tokenStats.eval_count} 次评测 · ${tokenStats.case_count} 个用例执行`}
+              icon="cpu"
+              tone="violet"
+            />
+            <MetricCard
+              label="平均 / 用例"
+              value={formatTokenAmount(tokenStats.average_tokens)}
+              meta={`输入 ${formatTokenAmount(tokenStats.input_tokens)} · 输出 ${formatTokenAmount(tokenStats.output_tokens)}`}
+              icon="sparkles"
+            />
+            <MetricCard
+              label="平均 / 评测"
+              value={formatTokenAmount(tokenStats.average_eval_tokens)}
+              meta={`按 ${tokenStats.eval_count_with_tokens} 次有轨迹数据的评测`}
+              icon="pipeline"
+              tone="success"
+            />
+            <MetricCard
+              label="累计成本（USD）"
+              value={formatUsd(tokenStats.cost_usd)}
+              meta={`平均 ${formatUsd(tokenStats.average_cost_usd)} / 用例`}
+              icon="database"
+              tone="warning"
+            />
+          </div>
+          <div className="token-metric-note">
+            统计口径：Token = input_tokens + output_tokens；成本来自 trace cost-state（USD），
+            缓存 token 不计入合计。
+          </div>
+        </>
+      ) : null}
 
       <div className="grid dashboard-grid section-gap">
         <CaseBrowser<DatasetCaseSummary>
