@@ -42,6 +42,7 @@ from ...models import (
     Credential,
     EvalCaseAttempt,
     EvalCaseRun,
+    EvalRun,
     ProvisionedInstance,
     ResourcePool,
     Runner,
@@ -949,6 +950,7 @@ class AliyunEcsProvisioner:
         event_type: str,
         detail: str | None = None,
         provider_state: str | None = None,
+        operation_locks: Any = None,
     ) -> None:
         from ..capacity_control import EVENT_RELEASE_FAILED
 
@@ -988,6 +990,19 @@ class AliyunEcsProvisioner:
             "zone_id": cost.get("zone_id"),
             "price_cny": cost.get("price_cny"),
             "spot_duration_hours": cost.get("spot_duration_hours"),
+            "spot_termination_time": cost.get("spot_termination_time"),
+            "instance_status": (
+                provider_state
+                or (detail if detail in ("Stopped", "Stopping") else cost.get("last_state"))
+            ),
+            "instance_age_seconds": (
+                int((now - _aware(instance.created_at)).total_seconds())
+                if _aware(instance.created_at) is not None
+                else None
+            ),
+            "requested_at": cost.get("requested_at"),
+            "ready_at": _iso(instance.ready_at),
+            "operation_locks": operation_locks,
             "runner_name": cost.get("runner_name"),
             "runner_id": runner.id if runner is not None else None,
             "runner_status": runner.status if runner is not None else None,
@@ -1035,6 +1050,11 @@ class AliyunEcsProvisioner:
             active_case = active_attempt.eval_case_run_id if active_attempt else None
             if active_attempt is not None:
                 case_run = session.get(EvalCaseRun, active_attempt.eval_case_run_id)
+                run = (
+                    session.get(EvalRun, case_run.eval_run_id)
+                    if case_run is not None
+                    else None
+                )
                 stop_context.update(
                     {
                         "attempt_id": active_attempt.id,
@@ -1042,6 +1062,11 @@ class AliyunEcsProvisioner:
                         "attempt_status_before": active_attempt.status,
                         "attempt_error_code_before": active_attempt.error_code,
                         "attempt_updated_at": _iso(active_attempt.updated_at),
+                        "attempt_phase": active_attempt.phase,
+                        "attempt_started_at": _iso(active_attempt.started_at),
+                        "attempt_ended_at": _iso(active_attempt.ended_at),
+                        "case_key": case_run.case_key if case_run is not None else None,
+                        "github_run_id": run.github_run_id if run is not None else None,
                         "case_execution_status_before": (
                             case_run.execution_status if case_run is not None else None
                         ),
@@ -1186,6 +1211,7 @@ class AliyunEcsProvisioner:
             )
             age = (now - _aware(instance.created_at)) if _aware(instance.created_at) else timedelta(0)
             row = remote.get(instance.provider_instance_id)
+            operation_locks = row.get("OperationLocks") if isinstance(row, dict) else None
             if row is None:
                 # Aliyun's list API is eventually consistent right after
                 # RunInstances; only a persistent absence is an interruption.
@@ -1199,6 +1225,7 @@ class AliyunEcsProvisioner:
                         now=now,
                         event_type=EVENT_INSTANCE_INTERRUPTED,
                         provider_state="missing",
+                        operation_locks=operation_locks,
                     )
                 continue
             status = str(row.get("Status") or "")
@@ -1216,6 +1243,7 @@ class AliyunEcsProvisioner:
                     event_type=EVENT_INSTANCE_INTERRUPTED,
                     detail=status,
                     provider_state=status,
+                    operation_locks=operation_locks,
                 )
                 continue
             if unhealthy_lock or status not in ("Running", "Starting", "Pending"):
@@ -1229,6 +1257,7 @@ class AliyunEcsProvisioner:
                     event_type=EVENT_INSTANCE_INTERRUPTED,
                     detail=lock_text or status,
                     provider_state=status,
+                    operation_locks=operation_locks,
                 )
                 continue
             if status != "Running":
@@ -1244,6 +1273,7 @@ class AliyunEcsProvisioner:
                         now=now,
                         event_type=EVENT_INSTANCE_CREATE_TIMEOUT,
                         provider_state=status,
+                        operation_locks=operation_locks,
                     )
                 continue
             if runner is not None and runner.status in ("online", "busy"):
@@ -1279,6 +1309,7 @@ class AliyunEcsProvisioner:
                         event_type=EVENT_INSTANCE_INTERRUPTED,
                         detail=f"last_heartbeat={_iso(last_seen)}",
                         provider_state=status,
+                        operation_locks=operation_locks,
                     )
                 continue
             if instance.status == "online":
@@ -1305,6 +1336,7 @@ class AliyunEcsProvisioner:
                             event_type=EVENT_INSTANCE_INTERRUPTED,
                             detail="runner_missing",
                             provider_state=status,
+                            operation_locks=operation_locks,
                         )
                 elif runner.status == "offline" and (
                     (last_seen or anchor) is not None
@@ -1320,6 +1352,7 @@ class AliyunEcsProvisioner:
                         event_type=EVENT_INSTANCE_INTERRUPTED,
                         detail=f"last_heartbeat={_iso(last_seen)}",
                         provider_state=status,
+                        operation_locks=operation_locks,
                     )
                 elif last_seen is not None and now - last_seen > heartbeat_timeout + lost_grace:
                     # Fallback for a row that is neither live nor marked
@@ -1334,6 +1367,7 @@ class AliyunEcsProvisioner:
                         event_type=EVENT_INSTANCE_INTERRUPTED,
                         detail=f"last_heartbeat={_iso(last_seen)}",
                         provider_state=status,
+                        operation_locks=operation_locks,
                     )
                 continue
             if instance.status in ("requested", "creating"):
@@ -1348,6 +1382,7 @@ class AliyunEcsProvisioner:
                     now=now,
                     event_type=EVENT_INSTANCE_CREATE_TIMEOUT,
                     provider_state=status,
+                    operation_locks=operation_locks,
                 )
         session.flush()
         return counters

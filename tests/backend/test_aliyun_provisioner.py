@@ -508,6 +508,10 @@ def test_sync_reclaims_spot_interruption(
         event.event_type == capacity_control.EVENT_INSTANCE_INTERRUPTED
         for event in session.scalars(select(ResourceEvent))
     )
+    stop_context = instance.cost_json["stop_context"]
+    assert stop_context["operation_locks"] == {"LockReason": ["Recycling"]}
+    assert stop_context["instance_status"] == "Running"
+    assert stop_context["instance_age_seconds"] is not None
 
 
 def test_sync_reclaims_unregistered_instance_on_timeout(
