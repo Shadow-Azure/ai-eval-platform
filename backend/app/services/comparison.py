@@ -430,7 +430,13 @@ def _metric_deltas(
     current_by_key = {row.metric_key: (row, definition) for row, definition in current_rows}
     baseline_by_key = {row.metric_key: (row, definition) for row, definition in baseline_rows}
     keys = sorted(
-        set(current_by_key) | set(baseline_by_key),
+        (
+            key
+            for key in set(current_by_key) | set(baseline_by_key)
+            # M8-53 (#332): usage metrics are live trace aggregates; a frozen
+            # MetricResult row from the old scoring path would compare 0 vs 0.
+            if key not in {"total_tokens", "tokens_per_case", "total_cost_usd", "cost_per_case_usd"}
+        ),
         key=lambda key: (METRIC_ORDER.get(key, 100), key),
     )
     items: list[dict[str, Any]] = []

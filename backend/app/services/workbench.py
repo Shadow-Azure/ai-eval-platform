@@ -196,7 +196,7 @@ def case_row(
 ) -> dict[str, Any]:
     # M8-53 (#332): the token fields live inside the existing ``metrics``
     # object so the prototype table and CSV export can read one stable shape.
-    # ``latest attempt`` only; the runner's hardcoded summary is not used.
+    # All attempts; the runner's hardcoded summary is not used.
     metrics = dict(case.metrics_json or {})
     if usage is not None:
         metrics.update(usage.as_metrics())

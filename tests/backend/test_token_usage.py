@@ -380,3 +380,35 @@ def test_case_list_sorts_by_token_and_cost(
         case_b.case_key,
         case_a.case_key,
     ]
+
+
+def test_scoring_does_not_freeze_usage_metrics(
+    seeded: Session, client: TestClient
+) -> None:
+    from app.models import MetricResult
+    from app.scoring.service import recompute_metrics
+    from app.services import datasets as dataset_service
+
+    imported = post_import(client, records=fixture_records())
+    version_id = imported["version"]["id"]
+    run = _run(seeded, version_id=version_id, key="token-scoring")
+    first_case = _cases(seeded, run.id)[0]
+    _add_trace(
+        seeded,
+        first_case,
+        attempt_no=1,
+        input_tokens=100,
+        output_tokens=20,
+        cost_usd="0.50",
+    )
+    definitions = dataset_service.list_version_metrics(seeded, version_id)
+    recompute_metrics(seeded, run=run, definitions=definitions, is_final=True)
+    seeded.commit()
+    keys = {
+        row.metric_key
+        for row in seeded.scalars(
+            select(MetricResult).where(MetricResult.eval_run_id == run.id)
+        )
+    }
+    assert not (TOKEN_METRIC_KEYS & keys)
+    assert "resolved_rate" in keys
