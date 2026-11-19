@@ -40,7 +40,7 @@ github:
 
 ## 目标
 
-- 手动重试的 `case.retry_requested` 挂到旧 attempt 并取空闲序号；`started` 遇到序号冲突时回读事件、幂等返回或返回可诊断 409，不再 500。
+- 手动重试的 `case.retry_requested` 使用平台专用负数序号，不占用 Runner `case.started` 的 0；`started` 遇到序号冲突时回读事件、幂等返回或返回可诊断 409，不再 500。
 - execute job 在 started 前失败（脚本包、checkout、dispatch 校验、执行失败）时，用 manifest 端点的短期 token 回调 `runner_bootstrap_failed`；平台按普通重试预算立即结算。
 - 只有 provider 确认停止的回收走 `spot_interrupted`；`runner_exited`/`runner_heartbeat_lost` 走 `runner_lost`，保留真实 reason、provider_state 与 last_heartbeat，不消耗 spot 预算。
 - 池级 in-flight 预留：第二个评测只看到第一个评测未占用的容量；started 时再按池上限做硬闸，保证并发 Agent 数不超过 `max_capacity`。
