@@ -288,6 +288,8 @@ const denominatorPolicyLabels: Record<string, string> = {
   all_cases: "全部用例",
   scored_cases: "已评分用例",
   terminal_cases: "终态用例",
+  executed: "已执行用例",
+  cases_with_tokens: "有轨迹的用例",
 };
 
 const directionLabels: Record<string, string> = {
