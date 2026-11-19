@@ -149,11 +149,19 @@ def runners_per_instance(pool: ResourcePool) -> int:
     return max(1, value)
 
 
-def required_spot_duration_hours(session: Session, pool: ResourcePool) -> int:
-    """M8-35: cover the longest non-terminal attempt's case timeout.
+#: Aliyun ``RunInstances`` accepts ``SpotDuration`` 0 or 1 only. One hour is
+#: the longest protection the provider can guarantee today; a case timeout
+#: beyond it is still handled by the spot interruption retry/fallback path.
+SPOT_DURATION_MAX_HOURS = 1
 
-    Aliyun only accepts 1..6 hours. The caller must handle an over-limit value
-    instead of silently creating a spot instance without protection.
+
+def required_spot_duration_hours(session: Session, pool: ResourcePool) -> int:
+    """M8-52: request the longest spot protection Aliyun actually supports.
+
+    Aliyun ``RunInstances`` only accepts ``SpotDuration`` 0 or 1: 1 keeps the
+    instance for the first hour, 0 has no guarantee. A case timeout longer
+    than one hour is still requested as 1 and relies on the spot interruption
+    retry/fallback path if the instance is reclaimed later.
     """
 
     statement = (
@@ -185,7 +193,8 @@ def required_spot_duration_hours(session: Session, pool: ResourcePool) -> int:
     timeout = session.scalar(statement)
     if timeout is None:
         timeout = 3600
-    return max(1, math.ceil(int(timeout) / 3600))
+    requested = max(1, math.ceil(int(timeout) / 3600))
+    return min(requested, SPOT_DURATION_MAX_HOURS)
 
 
 def instance_spec(pool: ResourcePool, *, spot_duration_hours: int | None = None) -> InstanceSpec:
@@ -571,19 +580,6 @@ def _scale_up(
         if pool.provisioning_mode == PROVISIONING_MODE_SPOT
         else None
     )
-    if spot_duration is not None and spot_duration > 6:
-        # Aliyun cannot guarantee a window longer than six hours. Leave the
-        # queue waiting with an actionable reason instead of creating an
-        # unprotected instance that can be reclaimed mid-job.
-        pool.capacity_reason = "spot_duration_exceeds_limit"
-        _record_provisioning_failure(
-            session,
-            pool,
-            code="spot_duration_exceeds_limit",
-            state=state,
-            message="用例执行超时超过 6 小时，无法设置 Aliyun SpotDuration 保底",
-        )
-        return 0
     spec = instance_spec(pool, spot_duration_hours=spot_duration)
     created = 0
     for _ in range(batch):

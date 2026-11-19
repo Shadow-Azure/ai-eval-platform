@@ -35,7 +35,7 @@ from app.models import (
 )
 from app.seed import ensure_default_scope
 from app.services import capacity_control
-from app.services.provisioning import reset_provisioners
+from app.services.provisioning import InstanceSpec, reset_provisioners
 from app.services.provisioning.fake import FakeProvisioner, reset_fake_instance_counter
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -1085,8 +1085,8 @@ def test_resource_event_dedupe_key_is_unique_per_tenant(
 
 
 def test_instance_spec_carries_spot_duration() -> None:
-    # M8-35: the controller freezes the protection window on the request; the
-    # Aliyun RunInstances call must receive it as SpotDuration.
+    # M8-35/M8-52: the controller freezes the protection window on the request;
+    # the Aliyun RunInstances call must receive it as SpotDuration.
     from app.models import ResourcePool
     from app.services.capacity_control import instance_spec
 
@@ -1100,6 +1100,63 @@ def test_instance_spec_carries_spot_duration() -> None:
         status="active",
         instance_config_json={"instance_type": "ecs.g7.large"},
     )
-    spec = instance_spec(pool, spot_duration_hours=2)
+    spec = instance_spec(pool, spot_duration_hours=1)
     assert spec.spot is True
-    assert spec.spot_duration_hours == 2
+    assert spec.spot_duration_hours == 1
+
+
+@pytest.mark.parametrize("timeout_seconds", [3600, 4800, 8 * 3600])
+def test_required_spot_duration_caps_at_one_hour(
+    session: Session, scope: dict[str, str], timeout_seconds: int
+) -> None:
+    # M8-52: Aliyun RunInstances only accepts SpotDuration 0 or 1. Any longer
+    # case timeout must still request the one-hour protection.
+    pool = _spot_pool_with_connection(session, scope)
+    run = _queued_cases(session, scope, pool, 1)
+    run.case_timeout_seconds = timeout_seconds
+    session.flush()
+
+    assert capacity_control.required_spot_duration_hours(session, pool) == 1
+
+
+class _SpotSpecRecordingProvisioner(FakeProvisioner):
+    """Records the InstanceSpec handed to the provisioner."""
+
+    def __init__(self, **kwargs: object) -> None:
+        super().__init__(**kwargs)
+        self.specs: list[InstanceSpec] = []
+
+    def create(
+        self,
+        *,
+        session: Session,
+        connection: Connection | None,
+        pool: ResourcePool,
+        spec: InstanceSpec,
+        now: datetime,
+    ) -> ProvisionedInstance:
+        self.specs.append(spec)
+        return super().create(
+            session=session, connection=connection, pool=pool, spec=spec, now=now
+        )
+
+
+@pytest.mark.parametrize("timeout_seconds", [4800, 8 * 3600])
+def test_scale_up_requests_one_hour_spot_duration(
+    session: Session, scope: dict[str, str], timeout_seconds: int
+) -> None:
+    # M8-52 acceptance: a 4800-second or longer case timeout still sends
+    # SpotDuration=1 through the real scale-up path.
+    settings = get_settings()
+    fake = _SpotSpecRecordingProvisioner(price_cny=Decimal("0.1000"))
+    pool = _spot_pool_with_connection(session, scope, max_capacity=3)
+    run = _queued_cases(session, scope, pool, 2)
+    run.case_timeout_seconds = timeout_seconds
+    session.flush()
+
+    state = capacity_control.reconcile_pool(
+        session, pool, settings=settings, now=datetime.now(UTC), provisioner=fake
+    )
+
+    assert state["scaled_up"] == 2
+    assert [spec.spot_duration_hours for spec in fake.specs] == [1, 1]
