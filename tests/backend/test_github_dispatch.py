@@ -13,10 +13,12 @@ import json
 import pytest
 from app.config import get_settings
 from app.services.github_dispatch import (
+    DispatchPayloadInvalid,
     GitHubDispatchError,
     cancel_workflow_run,
     find_workflow_run,
     post_repository_dispatch,
+    validate_dispatch_request,
 )
 
 
@@ -109,6 +111,155 @@ def test_missing_token_is_a_dispatch_error(monkeypatch: pytest.MonkeyPatch) -> N
     assert excinfo.value.status == 0
     assert "token" in excinfo.value.message.lower()
     assert transport.calls == []
+
+
+# ---------------------------------------------------------------------------
+# M8-51 (#323): local transport guard + 422 classification
+# ---------------------------------------------------------------------------
+
+
+def test_preflight_rejects_more_than_ten_properties(monkeypatch: pytest.MonkeyPatch) -> None:
+    configure(monkeypatch)
+    transport = FakeTransport([])
+    payload = {f"key_{index}": index for index in range(11)}
+
+    with pytest.raises(DispatchPayloadInvalid) as excinfo:
+        post_repository_dispatch(
+            event_type="eval-shard", client_payload=payload, transport=transport
+        )
+
+    assert transport.calls == []
+    assert excinfo.value.retryable is False
+    assert "11" in excinfo.value.message
+    assert "超过 GitHub 上限 10" in excinfo.value.message
+
+
+def test_preflight_rejects_a_payload_at_or_above_the_byte_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configure(monkeypatch)
+    transport = FakeTransport([])
+    payload = {"manifest_url": "http://x/" + "a" * (60 * 1024)}
+
+    with pytest.raises(DispatchPayloadInvalid) as excinfo:
+        post_repository_dispatch(
+            event_type="eval-shard", client_payload=payload, transport=transport
+        )
+
+    assert transport.calls == []
+    assert excinfo.value.retryable is False
+    assert "字节" in excinfo.value.message
+
+
+def test_preflight_rejects_a_non_object_payload(monkeypatch: pytest.MonkeyPatch) -> None:
+    configure(monkeypatch)
+    transport = FakeTransport([])
+
+    with pytest.raises(DispatchPayloadInvalid):
+        post_repository_dispatch(
+            event_type="eval-shard", client_payload=["not", "an", "object"], transport=transport
+        )
+
+    assert transport.calls == []
+
+
+def test_preflight_rejects_an_overlong_event_type(monkeypatch: pytest.MonkeyPatch) -> None:
+    configure(monkeypatch)
+    transport = FakeTransport([])
+
+    with pytest.raises(DispatchPayloadInvalid) as excinfo:
+        post_repository_dispatch(
+            event_type="e" * 101, client_payload={"dispatch_key": "k"}, transport=transport
+        )
+
+    assert transport.calls == []
+    assert "101" in excinfo.value.message
+
+
+def test_preflight_accepts_exactly_ten_properties(monkeypatch: pytest.MonkeyPatch) -> None:
+    configure(monkeypatch)
+    transport = FakeTransport([(204, "")])
+
+    validate_dispatch_request(
+        event_type="eval-shard",
+        client_payload={f"key_{index}": index for index in range(10)},
+    )
+    result = post_repository_dispatch(
+        event_type="eval-shard",
+        client_payload={f"key_{index}": index for index in range(10)},
+        transport=transport,
+    )
+
+    assert result["ok"] is True
+    assert len(transport.calls) == 1
+
+
+def test_422_parameter_error_is_not_retryable(monkeypatch: pytest.MonkeyPatch) -> None:
+    configure(monkeypatch)
+    transport = FakeTransport(
+        [(422, '{"message":"No more than 10 properties are allowed; 11 were supplied."}')]
+    )
+
+    with pytest.raises(GitHubDispatchError) as excinfo:
+        post_repository_dispatch(
+            event_type="eval-shard", client_payload={"dispatch_key": "k"}, transport=transport
+        )
+
+    assert excinfo.value.status == 422
+    assert excinfo.value.retryable is False
+
+
+def test_422_spammed_error_is_retryable(monkeypatch: pytest.MonkeyPatch) -> None:
+    configure(monkeypatch)
+    transport = FakeTransport([(422, '{"message":"the endpoint has been spammed"}')])
+
+    with pytest.raises(GitHubDispatchError) as excinfo:
+        post_repository_dispatch(
+            event_type="eval-shard", client_payload={"dispatch_key": "k"}, transport=transport
+        )
+
+    assert excinfo.value.status == 422
+    assert excinfo.value.retryable is True
+
+
+@pytest.mark.parametrize("status", [403, 429, 500, 503])
+def test_other_dispatch_errors_stay_retryable(
+    monkeypatch: pytest.MonkeyPatch, status: int
+) -> None:
+    configure(monkeypatch)
+    transport = FakeTransport([(status, '{"message":"transient"}')])
+
+    with pytest.raises(GitHubDispatchError) as excinfo:
+        post_repository_dispatch(
+            event_type="eval-shard", client_payload={"dispatch_key": "k"}, transport=transport
+        )
+
+    assert excinfo.value.retryable is True
+
+
+def test_dispatch_schema_caps_top_level_properties() -> None:
+    from app.runner_contracts import ContractInvalid, validate_payload
+
+    payload = {
+        "schema_version": "1.0",
+        "eval_run_id": "run-1",
+        "shard_id": "shard_000",
+        "attempt": 1,
+        "dispatch_key": "run-1:shard_000:1",
+        "manifest_url": "http://127.0.0.1:8000/runner/v1/shards/shard_000/manifest?x=1",
+        "manifest_digest": "sha256:" + "a" * 64,
+        "runs_on": ["self-hosted", "linux", "eval"],
+        "job_timeout_minutes": 70,
+        "expires_at": "2026-11-19T00:00:00Z",
+    }
+    validate_payload("dispatch", payload)
+
+    with pytest.raises(ContractInvalid) as excinfo:
+        validate_payload("dispatch", {**payload, "scripts_bundle": {"name": "x"}})
+
+    assert "最多 10 个属性" in str(excinfo.value)
+    assert "不允许的额外字段" in str(excinfo.value)
+
 
 
 # ---------------------------------------------------------------------------

@@ -112,6 +112,12 @@ export function validate(schema, data, path = "$") {
   }
 
   if (isPlainObject(data)) {
+    if (schema.minProperties !== undefined && Object.keys(data).length < schema.minProperties) {
+      errors.push(`${path}: 至少 ${schema.minProperties} 个属性`);
+    }
+    if (schema.maxProperties !== undefined && Object.keys(data).length > schema.maxProperties) {
+      errors.push(`${path}: 最多 ${schema.maxProperties} 个属性`);
+    }
     for (const key of schema.required ?? []) {
       if (!(key in data)) errors.push(`${path}.${key}: 必填字段缺失`);
     }

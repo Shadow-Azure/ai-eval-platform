@@ -27,7 +27,11 @@ from ..config import Settings, get_settings
 from ..models import EvalCaseAttempt, EvalCaseRun, EvalEvent, EvalRun, Outbox
 from . import capacity, evaluations, lifecycle, queue_lease
 from .evaluations import SHARD_DISPATCH_TOPIC, refresh_run_progress
-from .github_dispatch import GitHubDispatchError, post_repository_dispatch
+from .github_dispatch import (
+    DispatchPayloadInvalid,
+    GitHubDispatchError,
+    post_repository_dispatch,
+)
 from .object_store import ObjectMissing, ObjectStoreError, object_store_from_settings
 from .runner_scripts_cache import runner_scripts_key
 
@@ -305,11 +309,12 @@ def _dispatch_row(
     # prepare and execute then read the same version even if a deploy changes
     # the platform default while the workflow is in flight.
     #
-    # M8-47 (#312): the same pin also goes into the repository_dispatch payload
-    # so a spot workflow can locate the image cache without first calling the
-    # platform scripts metadata endpoint. Only a complete pin is sent: the
-    # dispatch contract validates every digest, and an incomplete pin could not
-    # be verified on the runner anyway.
+    # M8-51 (#323): the pin stays in the outbox row only. Copying it into the
+    # repository_dispatch client_payload pushed the payload to 11 top-level
+    # properties, which GitHub rejects with HTTP 422 before the workflow ever
+    # starts (the dispatch API allows at most 10). The prepare step reads the
+    # pinned bundle back through the outbox-backed `/scripts` metadata endpoint
+    # (`backend/app/api/runners.py`), so the workflow can still fetch it.
     bundle_size = int(settings.runner_scripts_bundle_size or 0)
     if (
         settings.runner_scripts_bundle_name
@@ -326,10 +331,6 @@ def _dispatch_row(
         row.payload_json = {
             **row.payload_json,
             "scripts_bundle": bundle_pin,
-            "client_payload": {
-                **row.payload_json.get("client_payload", {}),
-                "scripts_bundle": bundle_pin,
-            },
         }
     session.commit()
 
@@ -378,7 +379,29 @@ def _dispatch_row(
             transport=transport,
             now=now,
         )
+    except DispatchPayloadInvalid as exc:
+        # M8-51 (#323): a locally detected limit violation can never be fixed
+        # by retrying, so the shard fails now with the concrete field count or
+        # byte size and the GitHub transport is never called.
+        _exhaust_dispatch(
+            session, row, run=run, attempts=attempts, now=now, last_error=exc.message[:500]
+        )
+        outcome.failed += 1
+        return
     except GitHubDispatchError as exc:
+        # A 422 parameter-validation error is terminal; transport errors,
+        # 429/5xx and a spammed 422 keep the exponential backoff.
+        if not exc.retryable:
+            _exhaust_dispatch(
+                session,
+                row,
+                run=run,
+                attempts=attempts,
+                now=now,
+                last_error=f"github_dispatch_failed:{exc.status}:{exc.message}"[:500],
+            )
+            outcome.failed += 1
+            return
         _handle_dispatch_error(session, row, run=run, attempts=attempts, exc=exc, settings=settings, now=now)
         outcome.retried += 1
         return
