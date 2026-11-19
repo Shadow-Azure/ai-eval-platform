@@ -99,7 +99,7 @@ Runner 归档会话、元数据与诊断，失败保留；清单记录路径、d
 
 ## 自进化上报
 
-发起评测可配置上报目标（workspace URL、ID 与 `whk_` 令牌，Fernet 密文存储、不回显）。结果不可变后（`succeeded` 非 resolved，或 `failed`/`timeout` 重试耗尽）逐条冻结 outbox，run 终态批量兜底，按阶梯退避上报；凭据/预算/契约错误终态失败。claude-code 另附短时 HMAC 签名会话包，按原生会话 id 返回子会话与 NDJSON 轨迹，超限 413；无原生主会话时回退 attempt id 且不带 `sessionSource`，无轨迹则提前入队跳过，配置缺失只降级为无会话链接。契约细节见设计 04 §8。
+发起评测可配置上报目标（workspace URL、ID 与 `whk_` 令牌，Fernet 密文存储、不回显）。结果不可变后（`succeeded` 非 resolved，或 `failed`/`timeout` 重试耗尽）逐条冻结 outbox，run 终态批量兜底，按阶梯退避上报；凭据/预算/契约错误终态失败。claude-code 另附短时 HMAC 签名会话包：原生根 id 入口、平台会话 id 下钻、返回 NDJSON 轨迹，超限 413；无原生主会话时回退 attempt id 且不带 `sessionSource`，无轨迹则提前入队跳过，配置缺失只降级为无会话链接。契约细节见设计 04 §8。
 
 ## 扩展位置
 
