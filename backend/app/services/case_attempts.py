@@ -48,7 +48,7 @@ from ..models import (
 )
 from ..runner_contracts import validate_payload
 from ..scoring.service import ingest_score_report, recompute_metrics
-from . import capacity, evaluations, lifecycle, queue_lease
+from . import capacity, evaluations, lifecycle, queue_lease, spot_fallback
 from .evaluations import refresh_run_progress
 from .object_store import ObjectMissing, ObjectSizeMismatch, object_store_from_settings
 from .trace_manifest import (
@@ -799,6 +799,9 @@ def finalize_completion(
         # 成功完成清掉旧失败 attempt 遗留在 case 行上的诊断字段。
         case_run.error_code = None
         case_run.error_summary = None
+        # M8-46 (#311): a completed case proves the current pool works again;
+        # restart the consecutive-failure and supply-block streaks.
+        spot_fallback.reset_after_success(session, run=run, now=now)
     from .trace_ingestion import has_ingestible_trace_objects, set_case_trace_status
 
     has_trace_objects = has_ingestible_trace_objects(attempt)
@@ -1305,6 +1308,16 @@ def handle_spot_interruption(
                 settings=get_settings(),
                 now=now,
             )
+        # M8-46 (#311): observe the reclaim before building the retry so a
+        # threshold hit switches the run pool first; the retry manifest then
+        # targets the fixed/on-demand pool labels instead of spot labels.
+        fallback = spot_fallback.record_spot_reclaim(
+            session,
+            run=run,
+            reason=reason,
+            now=now,
+            settings=get_settings(),
+        )
         sequence = next_free_sequence(session, case_run, attempt)
         session.add(
             EvalEvent(
@@ -1322,12 +1335,21 @@ def handle_spot_interruption(
                     "detail": detail,
                     "provider_state": provider_state,
                     "last_heartbeat": last_heartbeat,
+                    "fallback_active": fallback.active,
+                    "fallback_activated": fallback.activated,
+                    "fallback_to_pool_id": fallback.to_pool_id,
+                    "fallback_to_pool_name": fallback.to_pool_name,
                 },
             )
         )
         spot_budget_left = prior < SPOT_RETRY_LIMIT
         attempt_budget_left = lifecycle.retry_allowed(run, attempt)
-        if spot_budget_left and attempt_budget_left:
+        # A run that has already switched to the fallback pool is no longer
+        # spending the spot-retry budget; its retry is only bounded by the
+        # normal max_attempts budget. This is what keeps a run from ending as
+        # spot_retry_exhausted after the fallback threshold was reached.
+        retry_allowed = (spot_budget_left or fallback.active) and attempt_budget_left
+        if retry_allowed:
             outbox = build_retry_dispatch(
                 session,
                 ctx,
@@ -1339,7 +1361,13 @@ def handle_spot_interruption(
             session.add(outbox)
             case_run.execution_status = "queued"
             case_run.error_code = SPOT_INTERRUPTED
-            case_run.error_summary = "spot 实例被云侧停止，已重新申请竞争态资源池"
+            if fallback.active:
+                case_run.error_summary = (
+                    f"spot 实例连续被回收 {fallback.failures} 次，"
+                    f"{fallback.summary}，已重新派发"
+                )
+            else:
+                case_run.error_summary = "spot 实例被云侧停止，已重新申请竞争态资源池"
             session.add(
                 EvalEvent(
                     tenant_id=case_run.tenant_id,
@@ -1352,13 +1380,22 @@ def handle_spot_interruption(
                         "new_attempt_no": attempt.attempt_no + 1,
                         "spot_retry_no": prior + 1,
                         "reason": "spot_interruption",
+                        "fallback_active": fallback.active,
+                        "fallback_to_pool_id": fallback.to_pool_id,
                     },
                 )
             )
             retried = True
         else:
             case_run.execution_status = "failed"
-            if not spot_budget_left:
+            if fallback.active:
+                case_run.error_code = SPOT_INTERRUPTED
+                case_run.error_summary = (
+                    f"spot 实例连续被回收 {fallback.failures} 次，"
+                    f"{fallback.summary}，但已达到用例重试上限 "
+                    f"max_attempts={run.max_attempts}"
+                )
+            elif not spot_budget_left:
                 case_run.error_code = SPOT_RETRY_EXHAUSTED
                 case_run.error_summary = (
                     f"spot 实例连续被回收 {SPOT_RETRY_LIMIT} 次，已停止重试"

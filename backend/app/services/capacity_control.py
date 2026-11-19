@@ -45,6 +45,7 @@ from ..models import (
     Runner,
 )
 from ..money import Money, money_str
+from . import spot_fallback
 from .provisioning import (
     InstanceSpec,
     PriceQuote,
@@ -173,7 +174,9 @@ def required_spot_duration_hours(session: Session, pool: ResourcePool) -> int:
             ),
         )
         .where(
-            EvalRun.resource_pool_id == pool.id,
+            func.coalesce(
+                EvalCaseAttempt.resource_pool_id, EvalRun.resource_pool_id
+            ) == pool.id,
             EvalCaseAttempt.status.in_(
                 ("pending", "dispatching", "queued", "leased", "running", "scoring", "uploading")
             ),
@@ -227,7 +230,14 @@ def _queued_attempts(session: Session, pool: ResourcePool) -> int:
             ),
         )
         .where(
-            EvalRun.resource_pool_id == pool.id,
+            # M8-46 (#311): attribute a waiting attempt to the pool it will
+            # actually run in. A run that moved to a fallback pool can still
+            # have shards already dispatched to this spot pool; counting the
+            # attempt's own pool keeps those jobs alive without also counting
+            # them as fixed-pool demand.
+            func.coalesce(
+                EvalCaseAttempt.resource_pool_id, EvalRun.resource_pool_id
+            ) == pool.id,
             EvalCaseAttempt.status.in_(WAITING_ATTEMPT_STATUSES),
         )
     )
@@ -871,6 +881,20 @@ def reconcile_pool(
         and provisioner is not None
         and connection is not None
     )
+    # M8-46 (#311): a run whose spot queue keeps hitting missing inventory or
+    # a price above the threshold is a long availability outage, not a normal
+    # wait. Count consecutive blocked ticks and switch the run to its configured
+    # fallback pool when the threshold is reached.
+    if reason in (REASON_INVENTORY_INSUFFICIENT, REASON_PRICE_ABOVE_THRESHOLD):
+        for run in spot_fallback.waiting_runs_for_pool(session, pool):
+            spot_fallback.record_supply_block(
+                session,
+                run=run,
+                pool=pool,
+                reason=str(reason),
+                now=now,
+                settings=settings,
+            )
     if can_provision:
         if reason == REASON_CAPACITY_SCALE_UP:
             scaled_up = _scale_up(
@@ -899,6 +923,12 @@ def reconcile_pool(
                 state=state,
                 message="provider reports no inventory for the requested instance type",
             )
+
+    if scaled_up or reason in (None, REASON_CAPACITY_SCALE_DOWN):
+        # The pool can add or already has enough capacity again; the outage is
+        # no longer consecutive.
+        for run in spot_fallback.waiting_runs_for_pool(session, pool):
+            spot_fallback.reset_supply_blocks(session, run=run, now=now)
 
     reported_reason = pool.capacity_reason
     append_resource_event(

@@ -332,6 +332,23 @@ export interface EvalConfigSnapshot {
     capacity_reason: string | null;
     status: string;
   } | null;
+  spot_fallback: {
+    active: boolean;
+    from_pool_id: string | null;
+    from_pool_name: string | null;
+    to_pool_id: string | null;
+    to_pool_name: string | null;
+    to_provisioning_mode: string | null;
+    reason: string | null;
+    failures: number;
+    supply_blocks: number;
+    fallback_after: number | null;
+    max_price_cny: string | null;
+    fallback_price_cny: string | null;
+    suppressed_reason: string | null;
+    activated_at: string | null;
+    last_failure_at: string | null;
+  } | null;
   execution: {
     shard_size: number;
     requested_concurrency: number;
@@ -395,6 +412,29 @@ function parseConfigDataset(value: unknown): EvalConfigSnapshot["dataset"] {
     execution_image_digest: optStr(value.execution_image_digest),
     scoring_image_digest: optStr(value.scoring_image_digest),
     created_at: optStr(value.created_at),
+  };
+}
+
+function parseSpotFallback(
+  value: unknown,
+): EvalConfigSnapshot["spot_fallback"] {
+  if (!isRecord(value)) return null;
+  return {
+    active: Boolean(value.active),
+    from_pool_id: optStr(value.from_pool_id),
+    from_pool_name: optStr(value.from_pool_name),
+    to_pool_id: optStr(value.to_pool_id),
+    to_pool_name: optStr(value.to_pool_name),
+    to_provisioning_mode: optStr(value.to_provisioning_mode),
+    reason: optStr(value.reason),
+    failures: typeof value.failures === "number" ? value.failures : 0,
+    supply_blocks: typeof value.supply_blocks === "number" ? value.supply_blocks : 0,
+    fallback_after: typeof value.fallback_after === "number" ? value.fallback_after : null,
+    max_price_cny: optStr(value.max_price_cny),
+    fallback_price_cny: optStr(value.fallback_price_cny),
+    suppressed_reason: optStr(value.suppressed_reason),
+    activated_at: optStr(value.activated_at),
+    last_failure_at: optStr(value.last_failure_at),
   };
 }
 
@@ -463,6 +503,7 @@ export async function fetchEvaluationConfig(
           status: str(pool.status),
         }
       : null,
+    spot_fallback: parseSpotFallback(payload.spot_fallback),
     execution: {
       shard_size: num(execution.shard_size, "shard_size"),
       requested_concurrency: num(execution.requested_concurrency, "requested_concurrency"),

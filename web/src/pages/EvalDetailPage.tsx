@@ -2213,6 +2213,46 @@ interface ConfigPanelProps {
   agentTimeoutSeconds?: number | null;
 }
 
+const FALLBACK_REASON_LABELS: Record<string, string> = {
+  provider_spot_reclaim: "连续 spot 回收",
+  inventory_insufficient: "spot 库存不足",
+  price_above_threshold: "spot 价格超阈值",
+};
+
+function fallbackReasonLabel(reason: string | null | undefined): string {
+  return (reason && FALLBACK_REASON_LABELS[reason]) || reason || "spot 供给失败";
+}
+
+function FallbackSummary({
+  fallback,
+}: {
+  fallback: EvalConfigSnapshot["spot_fallback"];
+}) {
+  if (!fallback) return <>未触发</>;
+  if (fallback.active) {
+    return (
+      <Space size={6} wrap>
+        <Tag color="warning">已回退</Tag>
+        <span>
+          {fallback.from_pool_name ?? "spot"} → {fallback.to_pool_name ?? "固定/按量"}
+        </span>
+        <span className="small muted">
+          {fallbackReasonLabel(fallback.reason)} · 连续{" "}
+          {fallback.failures || fallback.supply_blocks} 次
+        </span>
+      </Space>
+    );
+  }
+  if (fallback.suppressed_reason) {
+    return (
+      <span className="small muted">
+        回退未启用 · {fallback.suppressed_reason}
+      </span>
+    );
+  }
+  return <>未触发</>;
+}
+
 function ConfigPanel({
   config,
   loading,
@@ -2252,6 +2292,7 @@ function ConfigPanel({
               ["模型", config.model ? `${config.model.model_name} · ${config.model.provider}` : config.model ? "—" : "未绑定模型"],
               ["模型凭据", config.model ? (config.model.is_temporary ? "临时模型，评测结束按策略销毁" : "平台模型网关托管") : "—"],
               ["资源池", config.resource_pool ? `${config.resource_pool.name} · ${config.resource_pool.provisioning_mode}` : "—"],
+              ["资源回退", <FallbackSummary fallback={config.spot_fallback} />],
               ["Agent 资产", `${config.assets.asset_count ?? 0} 项 / ${config.assets.file_count ?? 0} 个文件`],
               ["资产 Ref", config.assets.requested_ref ?? "—"],
               ["解析 commit", config.assets.resolved_commit ?? "—"],
