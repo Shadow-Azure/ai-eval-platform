@@ -10,16 +10,10 @@ status: in-progress
 scope:
   - .agents/flow/issues/m8-53-token-usage-stats.*
   - prototype/**
-  - reports/2026-11-19/token-stats-prototype/**
-  - web/src/pages/EvalDetailPage.tsx
-  - web/src/pages/DatasetDetailPage.tsx
-  - web/src/pages/DatasetsPage.tsx
-  - web/src/api/**
-  - backend/app/datasets/**
-  - backend/app/services/scoring/**
-  - backend/app/services/trace_queries.py
-  - backend/app/services/trace_ingestion.py
-  - backend/app/services/case_attempts.py
+  - reports/**
+  - plans/m1-02-fullstack-design/07-datasets-metrics-and-agents.md
+  - web/src/**
+  - backend/app/**
   - tests/backend/**
   - docs/**
 adr: []
