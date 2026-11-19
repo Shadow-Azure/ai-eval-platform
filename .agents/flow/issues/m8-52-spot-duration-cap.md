@@ -6,7 +6,7 @@
 kind: issue
 milestone: m8
 priority: P2
-status: in-progress
+status: done
 scope:
   - .agents/flow/issues/m8-52-spot-duration-cap.*
   - backend/app/services/capacity_control.py
