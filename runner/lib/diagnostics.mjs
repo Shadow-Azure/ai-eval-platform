@@ -93,14 +93,19 @@ export function buildSigtermDiagnostics({
     "-u",
     "github-runner",
     "-n",
-    "50",
+    "100",
     "--no-pager",
   ]);
-  const dmesgResult = run(exec, "dmesg", [], 400);
-  const lastResult = run(exec, "last", ["-x", "-n", "20"], 300);
-  const whoResult = run(exec, "who", [], 200);
-  const uptimeResult = run(exec, "uptime", [], 200);
-  const cloudInitResult = run(exec, "tail", ["-n", "50", "/var/log/cloud-init-output.log"], 300);
+  const dmesgResult = run(exec, "dmesg", [], 300);
+  const lastResult = run(exec, "last", ["-x", "-n", "20"], 250);
+  const whoResult = run(exec, "who", [], 150);
+  const uptimeResult = run(exec, "uptime", [], 150);
+  const cloudInitResult = run(exec, "tail", ["-n", "50", "/var/log/cloud-init-output.log"], 250);
+  // A local `systemctl stop` / SSH / sudo is not in Aliyun ActionTrail. These
+  // tails are the only remaining place to see who touched the runner unit.
+  const authResult = run(exec, "tail", ["-n", "100", "/var/log/auth.log"], 250);
+  const syslogResult = run(exec, "tail", ["-n", "100", "/var/log/syslog"], 250);
+  const bootResult = run(exec, "journalctl", ["-b", "-n", "100", "--no-pager"], 400);
 
   const instanceId = metadata(exec, "instance-id");
   const terminationTime = metadata(exec, "spot/termination-time");
@@ -128,10 +133,16 @@ export function buildSigtermDiagnostics({
     who: lines(whoResult.stdout),
     uptime: uptimeResult.stdout.trim() || null,
     cloud_init_tail: lines(cloudInitResult.stdout).slice(-30),
+    auth_log_tail: lines(authResult.stdout).slice(-50),
+    syslog_tail: lines(syslogResult.stdout).slice(-50),
+    boot_journal_tail: lines(bootResult.stdout).slice(-50),
     commands: {
       systemd: { status: systemdResult.status, error: systemdResult.error },
       journal: { status: journalResult.status, error: journalResult.error },
       dmesg: { status: dmesgResult.status, error: dmesgResult.error },
+      auth_log: { status: authResult.status, error: authResult.error },
+      syslog: { status: syslogResult.status, error: syslogResult.error },
+      boot_journal: { status: bootResult.status, error: bootResult.error },
       metadata_instance_id: { value: instanceId || null },
       metadata_termination_time: { value: terminationTime || null },
     },

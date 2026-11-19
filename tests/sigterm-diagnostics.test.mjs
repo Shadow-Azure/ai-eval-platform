@@ -57,6 +57,9 @@ test("buildSigtermDiagnostics captures systemd, journal, metadata and GitHub con
   assert.deepEqual(diagnostics.dmesg_tail, ["dmesg-a"]);
   assert.equal(diagnostics.github.run_id, "44506476534");
   assert.equal(diagnostics.github.runner_name, "spot-f772bf95-test");
+  assert.deepEqual(diagnostics.auth_log_tail, ["cloud-a"]);
+  assert.deepEqual(diagnostics.syslog_tail, ["cloud-a"]);
+  assert.deepEqual(diagnostics.boot_journal_tail, ["line-a", "line-b"]);
   assert.ok(calls.some((call) => call[0] === "systemctl"));
   assert.ok(calls.some((call) => call[0] === "journalctl"));
 });
