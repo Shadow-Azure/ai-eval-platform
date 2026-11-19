@@ -77,6 +77,16 @@ class Settings(BaseSettings):
     runner_heartbeat_timeout_seconds: int = 90
     runner_fixed_pool_name: str = "fixed-linux"
     runner_fixed_pool_provider_key: str = "fixed"
+    # M8-48 (#313): delete long-offline runner rows that no longer anchor a
+    # live attempt or a non-terminal instance. Retention is deliberately much
+    # longer than the heartbeat timeout so recent diagnostics stay queryable
+    # while the 300+ historical zero-resident spot rows stop accumulating.
+    # The worker runs the pass at most once per interval. Override with
+    # EVAL_RUNNER_OFFLINE_RETENTION_SECONDS / EVAL_RUNNER_CLEANUP_BATCH_SIZE /
+    # EVAL_RUNNER_CLEANUP_INTERVAL_SECONDS.
+    eval_runner_offline_retention_seconds: int = 604800
+    eval_runner_cleanup_batch_size: int = 200
+    eval_runner_cleanup_interval_seconds: int = 3600
     # M4-04 ephemeral spot runners. RUNNER_ADMIN_TOKEN is a repository-admin
     # PAT/App token used only for generate-jitconfig + runner deletion; the
     # dispatch token (GITHUB_TOKEN) is intentionally not reused.
@@ -215,12 +225,20 @@ class Settings(BaseSettings):
     # runner; queued attempts stay queued and the next tick retries.
     eval_spot_register_timeout_seconds: int = 1200
     # Grace before an instance whose ephemeral runner exited is reclaimed. A
-    # one-job runner stops heartbeating when it exits; 60s is long enough to
-    # absorb the worker's offline sweep and short enough not to starve queued
-    # shards (M8-34). Instances that never register still use
-    # eval_spot_register_timeout_seconds. Override with
-    # EVAL_SPOT_RUNNER_LOST_GRACE_SECONDS.
-    eval_spot_runner_lost_grace_seconds: int = 60
+    # one-job runner stops heartbeating when it exits. M8-34 used 60s to free
+    # capacity fast, but production showed cold start takes 2–3 minutes and a
+    # single missed heartbeat then killed a healthy instance; M8-48 (#313)
+    # raises the default to 180s so a short heartbeat jitter is absorbed while
+    # a real exit still frees capacity within a few minutes. Instances that
+    # never register still use eval_spot_register_timeout_seconds. Override
+    # with EVAL_SPOT_RUNNER_LOST_GRACE_SECONDS.
+    eval_spot_runner_lost_grace_seconds: int = 180
+    # M8-48 (#313): do not scale down a runner registered less than this many
+    # seconds ago. A zero-resident pool otherwise retires the instance in the
+    # same tick that it registers, before the waiting shard can bind to it.
+    # Only the registration age is guarded; a runner that just finished a job
+    # still scales down immediately.
+    eval_spot_runner_min_idle_seconds: int = 120
     # M4-02 execution lifecycle timeouts (design 06 §7). Five independent
     # clocks instead of one total timeout: platform queue, agent execution,
     # scoring, upload grace period and heartbeat. The agent execution timeout

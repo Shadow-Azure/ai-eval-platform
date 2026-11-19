@@ -36,9 +36,13 @@ from ..services import (
 from ..services.dataset_imports import reap_stale_imports
 from ..services.operations import record_worker_heartbeat
 from ..services.provisioning import register_builtin_provisioners
-from ..services.runners import sweep_stale_runners
+from ..services.runners import cleanup_offline_runners, sweep_stale_runners
 
 _STOP = False
+#: M8-48 (#313): the retention cleanup is cheap but does not need to run on
+#: every 5s poll; remember the last pass so a long-running worker only touches
+#: the runner table once per configured interval.
+_last_runner_cleanup_at: float | None = None
 
 
 def sweep_once(session: Session) -> int:
@@ -46,6 +50,23 @@ def sweep_once(session: Session) -> int:
 
     settings = get_settings()
     return sweep_stale_runners(session, timeout_seconds=settings.runner_heartbeat_timeout_seconds)
+
+
+def runner_cleanup_once(session: Session, *, now=None, force: bool = False) -> int:
+    """One offline-runner retention pass, rate-limited by the worker interval."""
+
+    global _last_runner_cleanup_at
+    settings = get_settings()
+    monotonic = time.monotonic()
+    if (
+        not force
+        and _last_runner_cleanup_at is not None
+        and monotonic - _last_runner_cleanup_at
+        < max(0, settings.eval_runner_cleanup_interval_seconds)
+    ):
+        return 0
+    _last_runner_cleanup_at = monotonic
+    return cleanup_offline_runners(session, settings=settings, now=now)
 
 
 def dispatch_once(session: Session, transport=None) -> dispatcher.DispatchOutcome:
@@ -256,6 +277,13 @@ def main() -> int:
                 print(f"worker: swept {swept} stale runner(s) offline", flush=True)
         except Exception as exc:  # pragma: no cover - retried on the next loop
             print(f"worker: runner sweep failed: {exc}", flush=True)
+        try:
+            with SessionLocal() as session:
+                cleaned = runner_cleanup_once(session)
+            if cleaned:
+                print(f"worker: cleaned {cleaned} expired offline runner(s)", flush=True)
+        except Exception as exc:  # pragma: no cover - retried on the next loop
+            print(f"worker: runner cleanup failed: {exc}", flush=True)
         try:
             with SessionLocal() as session:
                 reaped = reap_stale_imports(session)

@@ -91,6 +91,10 @@ STARTING_INSTANCE_STATUSES = ("requested", "creating", "registering")
 LIVE_RUNNER_STATUSES = ("online", "busy")
 #: Runner state that can be released by scale-down.
 IDLE_RUNNER_STATUS = "online"
+#: M8-48 (#313): offline/draining rows are history. They are kept for
+#: diagnosis and cleaned by the runner retention pass, never counted as
+#: capacity even if a stale heartbeat happens to look fresh.
+HISTORICAL_RUNNER_STATUSES = ("offline", "draining")
 DEFAULT_RUNNERS_PER_INSTANCE = 1
 DEFAULT_INSTANCE_TYPE = "standard"
 
@@ -243,6 +247,9 @@ def _runner_count(
     conditions = [
         Runner.resource_pool_id == pool.id,
         Runner.status.in_(statuses),
+        # M8-48: explicitly exclude historical rows as well as the allow-list;
+        # an offline row must never contribute to current/desired capacity.
+        Runner.status.not_in(HISTORICAL_RUNNER_STATUSES),
         Runner.last_heartbeat_at.is_(None) | (Runner.last_heartbeat_at >= stale_before),
     ]
     if exclude_busy:
@@ -353,12 +360,21 @@ def _build_state(
     )
     starting = _starting_instances(session, pool)
     slots = runners_per_instance(pool)
-    gap = max(0, queued - idle - starting * slots)
+    # Queue demand beyond the runners already available (idle + in-flight
+    # registrations), in runner slots.
+    queue_gap = max(0, queued - idle - starting * slots)
+    # M8-48 (#313): warm-pool floor. min_capacity is a runner count: keep at
+    # least that much live capacity even when no shard is waiting. The default
+    # (0) keeps the M8-34 zero-resident behaviour unchanged.
+    warm_gap = max(0, int(pool.min_capacity) - live - starting * slots)
+    # The controller acts on whichever deficit is larger; ``capacity_gap``
+    # keeps its historical queue-only meaning for the console and tests.
+    capacity_deficit = max(queue_gap, warm_gap)
     current_size = live + starting
-    desired = min(pool.max_capacity, current_size + math.ceil(gap / slots))
+    desired = min(pool.max_capacity, current_size + math.ceil(capacity_deficit / slots))
     reason = _capacity_reason(
         pool,
-        gap=gap,
+        gap=capacity_deficit,
         idle=idle,
         quote=quote,
         provisioner=provisioner,
@@ -380,7 +396,10 @@ def _build_state(
         "max_capacity": pool.max_capacity,
         "current_size": current_size,
         "desired_capacity": desired,
-        "capacity_gap": gap,
+        "capacity_gap": queue_gap,
+        "capacity_deficit": capacity_deficit,
+        "queue_gap": queue_gap,
+        "warm_pool_gap": warm_gap,
         "price_cny": money_str(price),
         "price_threshold_cny": money_str(pool.price_threshold_cny),
         "price_available": quote.available if quote is not None else None,
@@ -467,7 +486,7 @@ def append_resource_event(
 
 def _state_dedupe_key(pool: ResourcePool, state: Mapping[str, Any], reason: str | None) -> str:
     return (
-        f"{pool.id}:capacity:{reason}:{state['capacity_gap']}:{state['price_cny']}"
+        f"{pool.id}:capacity:{reason}:{state['capacity_deficit']}:{state['price_cny']}"
     )
 
 
@@ -506,11 +525,12 @@ def _record_provisioning_failure(
             "code": code,
             "message": message,
             "capacity_gap": state["capacity_gap"],
+            "capacity_deficit": state["capacity_deficit"],
             "price_cny": state["price_cny"],
         },
         dedupe_key=(
             f"{pool.id}:provisioning_failed:{code}:"
-            f"{state['capacity_gap']}:{state['price_cny']}"
+            f"{state['capacity_deficit']}:{state['price_cny']}"
         ),
     )
 
@@ -527,7 +547,11 @@ def _scale_up(
 ) -> int:
     slots = int(state["runners_per_instance"])
     headroom = max(0, pool.max_capacity - int(state["current_size"]))
-    needed = math.ceil(int(state["capacity_gap"]) / slots) if state["capacity_gap"] else 0
+    needed = (
+        math.ceil(int(state["capacity_deficit"]) / slots)
+        if state["capacity_deficit"]
+        else 0
+    )
     batch = min(headroom, needed, max(0, int(settings.eval_capacity_batch_size)))
     if batch <= 0:
         return 0
@@ -595,16 +619,27 @@ def _idle_runners_for_release(
     now: datetime,
     limit: int,
 ) -> list[Runner]:
-    """Fresh idle runners, newest first, so the newest instance is retired."""
+    """Fresh idle runners, newest first, so the newest instance is retired.
+
+    M8-48 (#313): a runner registered less than
+    ``eval_spot_runner_min_idle_seconds`` ago is protected. In a zero-resident
+    pool the controller otherwise sees a just-registered runner as surplus and
+    releases the instance in the same tick the waiting shard is about to bind.
+    """
 
     stale_before = now - timedelta(seconds=settings.runner_heartbeat_timeout_seconds)
+    registered_before = now - timedelta(
+        seconds=max(0, settings.eval_spot_runner_min_idle_seconds)
+    )
     statement = (
         select(Runner)
         .where(
             Runner.resource_pool_id == pool.id,
             Runner.status == IDLE_RUNNER_STATUS,
+            Runner.status.not_in(HISTORICAL_RUNNER_STATUSES),
             Runner.busy_case_attempt_id.is_(None),
             Runner.last_heartbeat_at.is_(None) | (Runner.last_heartbeat_at >= stale_before),
+            func.coalesce(Runner.registered_at, Runner.created_at) <= registered_before,
         )
         .order_by(
             func.coalesce(Runner.registered_at, Runner.created_at).desc(),
@@ -873,6 +908,10 @@ def reconcile_pool(
         {
             "reason": reported_reason,
             "capacity_gap": state["capacity_gap"],
+            "capacity_deficit": state["capacity_deficit"],
+            "queue_gap": state["queue_gap"],
+            "warm_pool_gap": state["warm_pool_gap"],
+            "min_capacity": state["min_capacity"],
             "queued_attempts": state["queued_attempts"],
             "idle_runners": state["idle_runners"],
             "starting_instances": state["starting_instances"],

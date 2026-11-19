@@ -16,7 +16,16 @@ from pathlib import Path
 import pytest
 from app.config import Settings, get_settings
 from app.defaults import DEFAULT_PROJECT_ID, DEFAULT_TENANT_ID
-from app.models import EvalCaseRun, EvalRun, ModelConfig, Outbox, ResourcePool, Runner
+from app.models import (
+    EvalCaseAttempt,
+    EvalCaseRun,
+    EvalRun,
+    ModelConfig,
+    Outbox,
+    ProvisionedInstance,
+    ResourcePool,
+    Runner,
+)
 from app.seed import ensure_default_scope
 from app.services.short_token import verify_short_token
 from case_helpers import EVAL_ENV_SECRET, auth
@@ -312,6 +321,191 @@ def test_sweep_stale_runners_service_function(seeded: Session, client: TestClien
 
 
 # ---------------------------------------------------------------------------
+# M8-48 (#313) offline-runner retention cleanup
+# ---------------------------------------------------------------------------
+
+
+def _retention_runner(
+    session: Session,
+    *,
+    pool: ResourcePool,
+    name: str,
+    status: str = "offline",
+    age: timedelta = timedelta(days=10),
+    now: datetime | None = None,
+) -> Runner:
+    now = now or datetime.now(UTC)
+    runner = Runner(
+        tenant_id=pool.tenant_id,
+        resource_pool_id=pool.id,
+        provider_runner_id=name,
+        name=name,
+        labels_json=["self-hosted", "spot"],
+        status=status,
+        last_heartbeat_at=now - age,
+        registered_at=now - age,
+        deregistered_at=now - age,
+    )
+    session.add(runner)
+    session.flush()
+    return runner
+
+
+def test_cleanup_offline_runners_deletes_expired_rows_and_is_idempotent(
+    seeded: Session,
+) -> None:
+    from app.services.runners import cleanup_offline_runners, ensure_fixed_pool
+
+    pool = ensure_fixed_pool(seeded)
+    now = datetime.now(UTC)
+    expired = _retention_runner(seeded, pool=pool, name="expired", now=now)
+    recent = _retention_runner(
+        seeded, pool=pool, name="recent", age=timedelta(hours=1), now=now
+    )
+    online = _retention_runner(
+        seeded, pool=pool, name="online", status="online", age=timedelta(days=30), now=now
+    )
+
+    settings = Settings(_env_file=None)
+    assert cleanup_offline_runners(seeded, settings=settings, now=now) == 1
+    seeded.expire_all()
+    assert seeded.get(Runner, expired.id) is None
+    assert seeded.get(Runner, recent.id) is not None
+    assert seeded.get(Runner, online.id) is not None
+
+    # A second pass has nothing left to delete.
+    assert cleanup_offline_runners(seeded, settings=settings, now=now) == 0
+
+
+def test_cleanup_offline_runners_keeps_live_references(seeded: Session) -> None:
+    from app.services.runners import cleanup_offline_runners, ensure_fixed_pool
+
+    tenant, _workspace, project = ensure_default_scope(seeded)
+    pool = ensure_fixed_pool(seeded)
+    now = datetime.now(UTC)
+    active_attempt_runner = _retention_runner(
+        seeded, pool=pool, name="active-attempt", now=now
+    )
+    active_instance_runner = _retention_runner(
+        seeded, pool=pool, name="active-instance", now=now
+    )
+
+    run = EvalRun(
+        tenant_id=tenant.id,
+        project_id=project.id,
+        resource_pool_id=pool.id,
+        name="cleanup-run",
+        status="running",
+        requested_concurrency=1,
+        total_cases=1,
+        queued_count=0,
+        idempotency_key=f"cleanup-{now.timestamp()}",
+        created_by="test",
+    )
+    seeded.add(run)
+    seeded.flush()
+    case = EvalCaseRun(
+        tenant_id=tenant.id,
+        eval_run_id=run.id,
+        dataset_case_id="case-1",
+        case_key="case-1",
+        ordinal=0,
+    )
+    seeded.add(case)
+    seeded.flush()
+    seeded.add(
+        EvalCaseAttempt(
+            tenant_id=tenant.id,
+            eval_case_run_id=case.id,
+            attempt_no=1,
+            status="running",
+            resource_pool_id=pool.id,
+            runner_id=active_attempt_runner.id,
+        )
+    )
+    seeded.add(
+        ProvisionedInstance(
+            tenant_id=tenant.id,
+            resource_pool_id=pool.id,
+            provider_instance_id="i-live",
+            status="online",
+            runner_id=active_instance_runner.id,
+            cost_json={},
+        )
+    )
+    seeded.flush()
+
+    settings = Settings(_env_file=None)
+    assert cleanup_offline_runners(seeded, settings=settings, now=now) == 0
+    seeded.expire_all()
+    assert seeded.get(Runner, active_attempt_runner.id) is not None
+    assert seeded.get(Runner, active_instance_runner.id) is not None
+
+
+def test_cleanup_offline_runners_detaches_terminal_history(seeded: Session) -> None:
+    from app.services.runners import cleanup_offline_runners, ensure_fixed_pool
+
+    tenant, _workspace, project = ensure_default_scope(seeded)
+    pool = ensure_fixed_pool(seeded)
+    now = datetime.now(UTC)
+    runner = _retention_runner(seeded, pool=pool, name="terminal-history", now=now)
+
+    instance = ProvisionedInstance(
+        tenant_id=tenant.id,
+        resource_pool_id=pool.id,
+        provider_instance_id="i-released",
+        status="released",
+        runner_id=runner.id,
+        cost_json={"runner_name": "terminal-history"},
+    )
+    seeded.add(instance)
+    run = EvalRun(
+        tenant_id=tenant.id,
+        project_id=project.id,
+        resource_pool_id=pool.id,
+        name="cleanup-history-run",
+        status="completed",
+        requested_concurrency=1,
+        total_cases=1,
+        queued_count=0,
+        idempotency_key=f"cleanup-history-{now.timestamp()}",
+        created_by="test",
+    )
+    seeded.add(run)
+    seeded.flush()
+    case = EvalCaseRun(
+        tenant_id=tenant.id,
+        eval_run_id=run.id,
+        dataset_case_id="case-h",
+        case_key="case-h",
+        ordinal=0,
+    )
+    seeded.add(case)
+    seeded.flush()
+    attempt = EvalCaseAttempt(
+        tenant_id=tenant.id,
+        eval_case_run_id=case.id,
+        attempt_no=1,
+        status="succeeded",
+        runner_id=runner.id,
+        resource_pool_id=pool.id,
+    )
+    seeded.add(attempt)
+    seeded.flush()
+
+    settings = Settings(_env_file=None)
+    assert cleanup_offline_runners(seeded, settings=settings, now=now) == 1
+    seeded.expire_all()
+    assert seeded.get(Runner, runner.id) is None
+    refreshed_attempt = seeded.get(EvalCaseAttempt, attempt.id)
+    assert refreshed_attempt is not None and refreshed_attempt.runner_id is None
+    refreshed_instance = seeded.get(ProvisionedInstance, instance.id)
+    assert refreshed_instance is not None and refreshed_instance.runner_id is None
+    # The instance keeps the diagnostic trail without the FK.
+    assert refreshed_instance.cost_json["runner_name"] == "terminal-history"
+
+
+# ---------------------------------------------------------------------------
 # Contract schema consumption (runner-contract/schemas/v1) + case callbacks
 # ---------------------------------------------------------------------------
 
@@ -596,6 +790,28 @@ def test_worker_sweep_once_uses_configured_timeout(
     backdate_last_heartbeat(seeded, seconds=130)
     with Session(engine) as worker_session:
         assert sweep_once(worker_session) == 1
+
+
+def test_worker_runner_cleanup_is_rate_limited(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """M8-48 (#313): the retention pass runs once per configured interval."""
+
+    from app.worker import main as worker_main
+
+    calls: list[int] = []
+
+    def _fake_cleanup(session, *, settings, now=None, batch_size=None):
+        calls.append(1)
+        return 1
+
+    monkeypatch.setattr(worker_main, "cleanup_offline_runners", _fake_cleanup)
+    monkeypatch.setattr(worker_main, "_last_runner_cleanup_at", None)
+
+    assert worker_main.runner_cleanup_once(None) == 1
+    assert worker_main.runner_cleanup_once(None) == 0
+    assert worker_main.runner_cleanup_once(None, force=True) == 1
+    assert len(calls) == 2
 
 
 def test_heartbeat_adopts_runner_row_left_in_stale_pool(
