@@ -95,6 +95,49 @@ def test_dispatch_success_marks_outbox_sent_and_attempts_queued(
     assert outcome.dispatched == 0
 
 
+def test_dispatch_pins_the_scripts_bundle_for_image_cache_lookup(
+    seeded: Session, configure_settings
+) -> None:
+    name = "eval-runner-scripts-0123456789abcdef0123456789abcdef.tar.gz"
+    configure_settings(
+        GITHUB_TOKEN="gh-token",
+        RUNNER_SCRIPTS_BUNDLE_NAME=name,
+        RUNNER_SCRIPTS_BUNDLE_MD5="0" * 32,
+        RUNNER_SCRIPTS_BUNDLE_SHA256="a" * 64,
+        RUNNER_SCRIPTS_BUNDLE_SIZE="40960",
+    )
+    create_run(seeded, key="bundle-pin")
+    transport = FakeTransport([(204, "")])
+
+    dispatcher.dispatch_pending_outbox(seeded, transport=transport)
+
+    assert len(transport.calls) == 1
+    payload = transport.calls[0]["body"]["client_payload"]
+    assert payload["scripts_bundle"] == {
+        "name": name,
+        "md5": "0" * 32,
+        "sha256": "a" * 64,
+        "size": 40960,
+    }
+    row = outbox_rows(seeded)[0]
+    assert row.payload_json["scripts_bundle"] == payload["scripts_bundle"]
+
+
+def test_dispatch_omits_an_incomplete_scripts_bundle_pin(
+    seeded: Session, configure_settings
+) -> None:
+    configure_settings(
+        GITHUB_TOKEN="gh-token",
+        RUNNER_SCRIPTS_BUNDLE_NAME="eval-runner-scripts-0123456789abcdef0123456789abcdef.tar.gz",
+    )
+    create_run(seeded, key="bundle-incomplete")
+    transport = FakeTransport([(204, "")])
+
+    dispatcher.dispatch_pending_outbox(seeded, transport=transport)
+
+    assert "scripts_bundle" not in transport.calls[0]["body"]["client_payload"]
+
+
 def test_dispatch_http_failure_backs_off_then_retries(
     seeded: Session, configure_settings
 ) -> None:

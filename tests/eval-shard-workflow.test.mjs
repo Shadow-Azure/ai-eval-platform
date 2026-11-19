@@ -162,16 +162,23 @@ test("500 cases at the default shard size of 64 form 8 dispatches", () => {
   assert.equal(Math.ceil(500 / 64), 8);
 });
 
-test("eval-shard downloads the scripts bundle and gates checkout as a fallback", () => {
+test("eval-shard prefers the image/OSS scripts bundle and gates checkout as a fallback", () => {
   const text = workflow();
   for (const name of ["prepare", "execute"]) {
     const job = jobBlock(text, name);
     for (const expected of [
       "name: Fetch the scripts bundle",
       "id: bundle",
+      "timeout-minutes: 2",
+      "RUNNER_SCRIPTS_IMAGE_DIR",
+      "RUNNER_SCRIPTS_FETCH_BUDGET_MS",
       "steps.bundle.outputs.ok != 'true'",
-      "manifestUrl.pathname.replace(/\\/manifest$/, \"/scripts\")",
-      "metadataUrl = manifestUrl.toString()",
+      "metadataUrl.pathname.replace(/\\/manifest$/, \"/scripts\")",
+      "const metadataUrl = new URL(dispatch.manifest_url)",
+      "readImageCache()",
+      "metadata.oss_url",
+      "const candidates = [",
+      'source = "image"',
       "$EVAL_SCRIPTS_DIR",
       "tar -xzf",
       "md5",
@@ -179,6 +186,16 @@ test("eval-shard downloads the scripts bundle and gates checkout as a fallback",
     ]) {
       assert.ok(job.includes(expected), `${name} missing ${expected}`);
     }
+    // The image cache must be checked before the platform metadata call, and
+    // the direct OSS URL must be tried before the platform proxy.
+    assert.ok(
+      job.indexOf("readImageCache()") < job.indexOf("metadataUrl.toString()"),
+      `${name} must check the image cache before the platform endpoint`,
+    );
+    assert.ok(
+      job.indexOf('"oss", metadata.oss_url') < job.indexOf('"proxy",'),
+      `${name} must prefer direct OSS over the platform proxy`,
+    );
     const checkouts = job.match(/uses: actions\/checkout@v4/g) ?? [];
     assert.equal(checkouts.length, 2, `${name} must keep a two-attempt checkout fallback`);
     assert.ok(job.includes("if: steps.bundle.outputs.ok != 'true'"), `${name} checkout must be gated`);

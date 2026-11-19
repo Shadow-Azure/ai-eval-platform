@@ -38,9 +38,16 @@ class FakeStore:
 
         return chunks()
 
+    def presign_get_url(self, key: str, *, expires: int = 3600) -> str:
+        return f"https://oss.example/{key}?expires={expires}"
+
 
 def _install_store(monkeypatch, fake: FakeStore) -> FakeStore:
-    monkeypatch.setattr(runners_api, "object_store_from_settings", lambda _settings: fake)
+    monkeypatch.setattr(
+        runners_api,
+        "object_store_from_settings",
+        lambda _settings, internal=False: fake,
+    )
     return fake
 
 
@@ -77,6 +84,7 @@ def test_metadata_returns_url_digest_and_scoped_token(
         f"/runner/v1/scripts/{NAME}?eval_run_id={env['run_id']}"
         f"&shard_id={env['shard']}&attempt=1"
     )
+    assert body["oss_url"].startswith(f"https://oss.example/runner/scripts/{NAME}?expires=")
     claims = verify_short_token(body["token"], SECRET)
     assert claims["scope"] == "runner_scripts"
     assert claims["eval_run_id"] == env["run_id"]
@@ -175,7 +183,9 @@ def test_proxy_error_paths(client: TestClient, configure_settings, monkeypatch) 
     _install_store(monkeypatch, FakeStore(error=ObjectStoreError("boom")))
     assert client.get(f"/runner/v1/scripts/{NAME}", params=params, headers=headers).status_code == 502
 
-    monkeypatch.setattr(runners_api, "object_store_from_settings", lambda _settings: None)
+    monkeypatch.setattr(
+        runners_api, "object_store_from_settings", lambda _settings, internal=False: None
+    )
     assert client.get(f"/runner/v1/scripts/{NAME}", params=params, headers=headers).status_code == 503
 
 

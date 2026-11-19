@@ -109,3 +109,30 @@ def test_build_rejects_a_traversal_path(tmp_path) -> None:
             tmp_path,
             entries=[BundleEntry("../evil.mjs", 0o644, b"x")],
         )
+
+
+def test_image_cache_uses_the_content_address_and_records_the_digests(tmp_path) -> None:
+    import json
+
+    from app.services.runner_scripts_cache import (
+        BundleEntry,
+        build_scripts_bundle,
+        write_runner_scripts_cache,
+    )
+
+    artifact = build_scripts_bundle(
+        tmp_path,
+        entries=[BundleEntry("runner/lib/contracts.mjs", 0o644, b"export const x = 1;\n")],
+    )
+    cache = tmp_path / "image-cache"
+    target = write_runner_scripts_cache(artifact, cache)
+
+    assert target == cache / artifact.name
+    assert target.read_bytes() == artifact.payload
+    manifest = json.loads((cache / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest == {
+        "name": artifact.name,
+        "md5": artifact.md5,
+        "sha256": artifact.sha256,
+        "size": artifact.size,
+    }

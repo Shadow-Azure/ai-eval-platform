@@ -1001,3 +1001,50 @@ def test_sync_reclaims_spot_interruption_before_instance_link(
         and event.payload_json.get("provider_instance_id") == "i-before-link"
     )
     assert reclaim_event.payload_json["stop_context"]["attempt_status_before"] == "running"
+
+
+def test_create_preloads_the_scripts_bundle_from_private_oss(
+    session: Session, scope: dict[str, str], clock: datetime, configure_settings
+) -> None:
+    name = "eval-runner-scripts-0123456789abcdef0123456789abcdef.tar.gz"
+    configure_settings(
+        S3_ENDPOINT="https://oss-cn-hangzhou.aliyuncs.com",
+        S3_BUCKET="eval-assets",
+        S3_ACCESS_KEY="test-access-key-id",
+        S3_SECRET_KEY="test-oss-secret-must-not-leak",
+        S3_REGION="oss-cn-hangzhou",
+        S3_ADDRESSING_STYLE="virtual",
+        RUNNER_SCRIPTS_BUNDLE_NAME=name,
+        RUNNER_SCRIPTS_BUNDLE_MD5="0" * 32,
+        RUNNER_SCRIPTS_BUNDLE_SHA256="a" * 64,
+        RUNNER_SCRIPTS_BUNDLE_SIZE="40960",
+    )
+    connection = _connection(session, scope)
+    pool = _pool(session, scope, connection, price_cny=Decimal("0.5000"))
+    transport = FakeAliyun()
+    registrar = FakeRegistrar()
+    provisioner = _provisioner(transport=transport, registrar=registrar)
+
+    provisioner.create(
+        session=session,
+        connection=connection,
+        pool=pool,
+        spec=InstanceSpec(instance_type="ecs.g7.large"),
+        now=clock,
+    )
+
+    run_call = next(call for call in transport.calls if call[0] == "RunInstances")
+    user_data = base64.b64decode(run_call[1]["UserData"][0]).decode()
+    bootstrap = _write_file_content(user_data, "/etc/eval/bootstrap.sh")
+
+    assert f"RUNNER_SCRIPTS_BUNDLE_NAME={name}" in bootstrap
+    assert f"RUNNER_SCRIPTS_BUNDLE_SHA256={'a' * 64}" in bootstrap
+    # The presigned URL uses the internal Aliyun endpoint so the instance does
+    # not spend public egress on the bundle.
+    assert "eval-assets.oss-cn-hangzhou-internal.aliyuncs.com" in bootstrap
+    assert "X-Amz-Signature=" in bootstrap
+    assert "sha256sum -c -" in bootstrap
+    # No long-lived OSS credential is written to the instance; the URL carries
+    # only the short-lived SigV4 capability (whose access key id is public).
+    assert "test-oss-secret-must-not-leak" not in user_data
+    assert "S3_SECRET_KEY" not in user_data

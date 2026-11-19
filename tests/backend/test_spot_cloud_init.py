@@ -167,3 +167,46 @@ def test_bootstrap_sends_no_token_to_an_external_mirror() -> None:
     # never reaches this script for an external mirror.
     assert "RUNNER_TARBALL_TOKEN=''" in bootstrap
     assert "heartbeat-token" not in bootstrap
+
+
+def test_bootstrap_preloads_the_scripts_bundle_from_private_oss() -> None:
+    name = "eval-runner-scripts-0123456789abcdef0123456789abcdef.tar.gz"
+    text = render_cloud_init(
+        platform_base_url="http://10.0.0.5:8000",
+        runner_name="spot-abc",
+        resource_pool_id="pool-1",
+        labels=["self-hosted"],
+        encoded_jit="jit",
+        heartbeat_token="heartbeat-token",
+        runner_tarball_url="http://10.0.0.5:8000/runner/v1/runner-tarball/2.338.2.tar.gz",
+        scripts_bundle={
+            "name": name,
+            "md5": "0" * 32,
+            "sha256": "a" * 64,
+            "size": 40960,
+        },
+        scripts_bundle_url=(
+            "https://bucket.oss-cn-hangzhou-internal.aliyuncs.com/runner/scripts/"
+            f"{name}?X-Amz-Signature=short-lived"
+        ),
+    )
+    bootstrap = _files(yaml.safe_load(text))["/etc/eval/bootstrap.sh"]
+
+    assert "mkdir -p /opt/eval/runner-scripts" in bootstrap
+    assert f"RUNNER_SCRIPTS_BUNDLE_NAME={name}" in bootstrap
+    assert f"RUNNER_SCRIPTS_BUNDLE_SHA256={'a' * 64}" in bootstrap
+    assert "runner/scripts/" in bootstrap
+    assert "oss-cn-hangzhou-internal.aliyuncs.com" in bootstrap
+    assert "sha256sum -c -" in bootstrap
+    # A valid baked file skips the download; the temporary file is only moved
+    # into place after the sha256 check.
+    assert bootstrap.index("already baked into the image") < bootstrap.index(
+        "runner scripts preloaded"
+    )
+    assert bootstrap.index("sha256sum -c -") < bootstrap.index('mv "$tmp" "$target"')
+    # The presigned URL is a short-lived capability, not an OSS credential.
+    assert "S3_SECRET_KEY" not in bootstrap
+    assert "S3_ACCESS_KEY" not in bootstrap
+    # The image cache is root-readable so the runner service can read it.
+    assert "chmod 0644" in bootstrap
+    assert len(text.encode()) < 16 * 1024

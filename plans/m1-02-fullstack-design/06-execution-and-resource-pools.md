@@ -251,3 +251,18 @@ execute job 在 `started` 前失败（脚本包、checkout、dispatch 校验或�
 running/scoring/uploading attempt 做 `max_capacity` 硬闸，因此两条评测并发时 Agent 数不超过池上限。
 
 分片进度租约与 queue timeout 的改造由 #307 单列，不重复实现。
+
+
+## Runner 脚本包预置与获取顺序（M8-47）
+
+脚本包仍是 M5-12 的确定性内容寻址 tar，名称 `eval-runner-scripts-<md5>.tar.gz`，存放在私有 OSS；
+
+本阶段只改变 Runner 获取它的路径：
+
+1. spot 实例启动时在 `/opt/eval/runner-scripts/` 预置脚本包。镜像可直接烘焙；没有烘焙时 cloud-init 用平台在创建实例时生成的短时私有 OSS 预签名 GET 预取，并用 sha256 校验后落盘。预取是 best-effort，失败不阻塞实例启动。
+2. dispatcher 把本次分片冻结的 `scripts_bundle`（name/md5/sha256/size）写进 repository_dispatch payload；workflow 不需要先访问平台 scripts 端点就能定位镜像缓存。
+3. prepare/execute 的脚本包获取依次尝试镜像缓存、平台 scripts 元数据返回的私有 OSS 直连 `oss_url`、平台 `/runner/v1/scripts/<name>` 代理，最后才回退 `actions/checkout`。镜像缓存与网络下载都校验 sha256/md5；总预算 60 秒。
+4. 获取失败由 #308 的 `runner_bootstrap_failed` 在 started 前结算，平台按普通重试预算生成下一次 attempt，不等待 queue timeout。
+5. 实例上不写 OSS secret 或平台长期 token；预签名 URL 是短时下载能力，随 cloud-init user-data 一起清理。
+
+发布步骤：OSS 由 deploy 的 `scripts/cache-runner-scripts.py` 上传；镜像缓存用同一脚本的 `--out-dir /opt/eval/runner-scripts` 生成文件与 `manifest.json` 后烘焙进镜像。两处使用同一 md5/sha256，便于互相校验。

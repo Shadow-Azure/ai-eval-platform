@@ -800,6 +800,13 @@ def shard_runner_scripts(
         f"{settings.runner_callback_base_url.rstrip('/')}"
         f"{runner_scripts_path(name)}?{query}"
     )
+    # M8-47 (#312): give the runner a direct private-OSS GET as well. A spot
+    # network path to the platform API can be flaky while the VPC/internet OSS
+    # path works, and a job waiting on a proxy retry is exactly the startup
+    # stall this issue targets. The private bucket stays private; the URL only
+    # carries a short-lived SigV4 capability.
+    presign_store = object_store_from_settings(settings, internal=True) or store
+    oss_url = presign_store.presign_get_url(runner_scripts_key(name), expires=600)
     expires_at = (datetime.now(UTC) + timedelta(seconds=600)).isoformat(
         timespec="microseconds"
     ).replace("+00:00", "Z")
@@ -811,6 +818,7 @@ def shard_runner_scripts(
         content={
             "name": name,
             "url": url,
+            "oss_url": oss_url,
             "md5": md5,
             "sha256": sha256,
             "size": size,

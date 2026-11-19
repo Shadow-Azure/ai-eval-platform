@@ -304,14 +304,31 @@ def _dispatch_row(
     # M5-12: pin the current content-addressed scripts bundle on the shard row.
     # prepare and execute then read the same version even if a deploy changes
     # the platform default while the workflow is in flight.
-    if settings.runner_scripts_bundle_name:
+    #
+    # M8-47 (#312): the same pin also goes into the repository_dispatch payload
+    # so a spot workflow can locate the image cache without first calling the
+    # platform scripts metadata endpoint. Only a complete pin is sent: the
+    # dispatch contract validates every digest, and an incomplete pin could not
+    # be verified on the runner anyway.
+    bundle_size = int(settings.runner_scripts_bundle_size or 0)
+    if (
+        settings.runner_scripts_bundle_name
+        and settings.runner_scripts_bundle_md5
+        and settings.runner_scripts_bundle_sha256
+        and bundle_size > 0
+    ):
+        bundle_pin = {
+            "name": settings.runner_scripts_bundle_name,
+            "md5": settings.runner_scripts_bundle_md5,
+            "sha256": settings.runner_scripts_bundle_sha256,
+            "size": bundle_size,
+        }
         row.payload_json = {
             **row.payload_json,
-            "scripts_bundle": {
-                "name": settings.runner_scripts_bundle_name,
-                "md5": settings.runner_scripts_bundle_md5,
-                "sha256": settings.runner_scripts_bundle_sha256,
-                "size": settings.runner_scripts_bundle_size,
+            "scripts_bundle": bundle_pin,
+            "client_payload": {
+                **row.payload_json.get("client_payload", {}),
+                "scripts_bundle": bundle_pin,
             },
         }
     session.commit()
