@@ -4155,9 +4155,86 @@ tbody tr.clickable {
 }
 
 .token-summary-split {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
   margin-top: 2px;
   color: var(--muted);
   font-size: 11px;
+}
+
+.token-summary-split strong {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.token-breakdown {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+
+.case-table .table-session,
+.case-table td:last-child {
+  white-space: nowrap;
+}
+
+.token-composition {
+  margin-top: 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: linear-gradient(120deg, #f7faff 0%, #ffffff 58%, #f7f9fc 100%);
+}
+
+.token-composition-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.token-composition-item {
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.token-composition-item span {
+  display: block;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.token-composition-item strong {
+  display: block;
+  margin-top: 3px;
+  color: var(--ink);
+  font-size: 18px;
+  letter-spacing: -0.3px;
+}
+
+.token-composition-item small {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.dataset-token-detail {
+  margin: 2px 0 12px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+@media (max-width: 900px) {
+  .token-composition-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .token-summary-stat {
@@ -5056,6 +5133,24 @@ function evalCasesForRun(run) {
     const project = repo.split("/")[1].replaceAll("-", "_");
     const status = statusPool[(index * 37) % statusPool.length];
     const finished = !["running", "queued"].includes(status);
+    const tokenLabel = finished || status === "running" ? `${180 + ((index * 29) % 760)}.${index % 10}k` : "—";
+    const nonCacheTotal = parseTokenLabel(tokenLabel);
+    const nonCacheInput = Math.round(nonCacheTotal * 0.88);
+    const output = nonCacheTotal - nonCacheInput;
+    // Mock cache ratio mirrors the production sample: cache read is the large
+    // part of model usage, while cache creation is rare.
+    const cacheRead = nonCacheTotal ? Math.round(nonCacheInput * (12 + (index % 5) * 3)) : 0;
+    const cacheCreate = 0;
+    const tokenBreakdown = nonCacheTotal
+      ? {
+          nonCacheInput,
+          output,
+          cacheRead,
+          cacheCreate,
+          cacheInput: cacheRead + cacheCreate,
+          total: nonCacheInput + output + cacheRead + cacheCreate,
+        }
+      : null;
     return {
       id: index < seedCases.length ? seed.id : `${project}__${project}-${10240 + index}`,
       session:
@@ -5069,7 +5164,8 @@ function evalCasesForRun(run) {
       status,
       score: status === "resolved" ? "1.0" : finished ? "0.0" : "—",
       duration: finished ? `${4 + (index % 24)}m ${String((index * 13) % 60).padStart(2, "0")}s` : status === "running" ? "6m 28s" : "—",
-      tokens: finished || status === "running" ? `${180 + ((index * 29) % 760)}.${index % 10}k` : "—",
+      tokens: tokenLabel,
+      tokenBreakdown,
     };
   });
 }
@@ -5087,20 +5183,31 @@ function formatTokenAmount(value) {
   return value.toLocaleString("zh-CN");
 }
 
+function formatTokenOrZero(value) {
+  return value === 0 ? "0" : formatTokenAmount(value);
+}
+
 function tokenSummaryForRun(run) {
   const cases = evalCasesForRun(run);
-  const measured = cases.filter((item) => parseTokenLabel(item.tokens) > 0);
-  const total = measured.reduce((sum, item) => sum + parseTokenLabel(item.tokens), 0);
-  const input = Math.round(total * 0.88);
-  const output = total - input;
+  const measured = cases.filter((item) => item.tokenBreakdown && item.tokenBreakdown.total > 0);
+  const sum = (pick) => measured.reduce((acc, item) => acc + (pick(item.tokenBreakdown) || 0), 0);
+  const nonCacheInput = sum((item) => item.nonCacheInput);
+  const output = sum((item) => item.output);
+  const cacheRead = sum((item) => item.cacheRead);
+  const cacheCreate = sum((item) => item.cacheCreate);
+  const cacheInput = cacheRead + cacheCreate;
+  const total = nonCacheInput + output + cacheInput;
   const average = measured.length ? Math.round(total / measured.length) : 0;
   const costMatch = /([\d.]+)/.exec(String(run.cost || ""));
   const costTotal = costMatch ? Number.parseFloat(costMatch[1]) : 0;
   const averageCost = measured.length ? costTotal / measured.length : 0;
   return {
     total,
-    input,
+    nonCacheInput,
     output,
+    cacheRead,
+    cacheCreate,
+    cacheInput,
     average,
     coverage: `${measured.length} / ${cases.length}`,
     cost: run.cost || "—",
@@ -5109,17 +5216,47 @@ function tokenSummaryForRun(run) {
 }
 
 const DATASET_TOKEN_STATS = {
-  "swebench-verified": { runs: 45, caseRuns: 270, total: 128574000, perCase: 476200, cost: "¥980.00" },
-  "swebench-lite": { runs: 30, caseRuns: 180, total: 61200000, perCase: 340000, cost: "¥486.00" },
+  "swebench-verified": {
+    runs: 45,
+    runsWithTraces: 41,
+    caseRuns: 270,
+    total: 128574000,
+    cost: "¥980.00",
+    cacheRead: 128574000 * 30,
+    cacheCreate: 0,
+  },
+  "swebench-lite": {
+    runs: 30,
+    runsWithTraces: 27,
+    caseRuns: 180,
+    total: 61200000,
+    cost: "¥486.00",
+    cacheRead: 61200000 * 30,
+    cacheCreate: 0,
+  },
 };
 
 function datasetTokenStats(id) {
   const stats = DATASET_TOKEN_STATS[id];
   if (!stats) return null;
   const costValue = Number(stats.cost.replace(/[^\d.]/g, ""));
+  const nonCacheInput = Math.round(stats.total * 0.88);
+  const output = stats.total - nonCacheInput;
+  const cacheRead = stats.cacheRead || 0;
+  const cacheCreate = stats.cacheCreate || 0;
+  const cacheInput = cacheRead + cacheCreate;
+  const totalWithCache = nonCacheInput + output + cacheInput;
   return {
     ...stats,
-    perRun: Math.round(stats.total / stats.runs),
+    nonCacheInput,
+    output,
+    cacheInput,
+    cacheRead,
+    cacheCreate,
+    totalWithCache,
+    perCase: Math.round(totalWithCache / stats.caseRuns),
+    perRun: Math.round(totalWithCache / stats.runs),
+    coverage: `${stats.runsWithTraces}/${stats.runs}`,
     averageCost: `¥${(costValue / stats.caseRuns).toFixed(2)}`,
   };
 }
@@ -5127,7 +5264,8 @@ function datasetTokenStats(id) {
 const DATASET_CASE_TOKEN_SAMPLES = [418600, 281100, 824700, 203400, 691200, 352800];
 
 function datasetCaseToken(index) {
-  return formatTokenAmount(DATASET_CASE_TOKEN_SAMPLES[index % DATASET_CASE_TOKEN_SAMPLES.length]);
+  const sample = DATASET_CASE_TOKEN_SAMPLES[index % DATASET_CASE_TOKEN_SAMPLES.length];
+  return formatTokenAmount(Math.round(sample * 13));
 }
 
 function mockSessionId(index) {
@@ -5557,7 +5695,7 @@ function datasetsPage() {
                           <div class="dataset-meta-item"><div class="dataset-meta-label">用例数</div><div class="dataset-meta-value">${dataset.count.toLocaleString("zh-CN")}</div></div>
                           <div class="dataset-meta-item"><div class="dataset-meta-label">核心指标</div><div class="dataset-meta-value">${dataset.metric}</div></div>
                         </div>
-                        ${datasetTokenStats(dataset.id) ? `<div class="dataset-token-row"><span>累计 Token</span><strong>${formatTokenAmount(datasetTokenStats(dataset.id).total)}</strong><span class="muted">均 ${formatTokenAmount(datasetTokenStats(dataset.id).perRun)} / 次评测</span></div>` : ""}
+                        ${datasetTokenStats(dataset.id) ? `<div class="dataset-token-row"><span>累计 Token（含缓存）</span><strong>${formatTokenAmount(datasetTokenStats(dataset.id).totalWithCache)}</strong><span class="muted">均 ${formatTokenAmount(datasetTokenStats(dataset.id).perRun)} / 次评测</span></div><div class="dataset-token-detail">缓存 ${formatTokenAmount(datasetTokenStats(dataset.id).cacheInput)} · 非缓存输入 ${formatTokenAmount(datasetTokenStats(dataset.id).nonCacheInput)} · 输出 ${formatTokenAmount(datasetTokenStats(dataset.id).output)} · 覆盖 ${datasetTokenStats(dataset.id).coverage} 次评测</div>` : ""}
                         <div class="dataset-footer">
                           <span class="small muted">${dataset.updated}</span>
                           ${
@@ -5624,7 +5762,7 @@ function datasetDetailPage(id) {
         ${[72, 88, 64, 91, 76, 58].map((width) => `<div class="row"><div class="skeleton" style="height:13px;width:${width}%"></div><div class="skeleton" style="width:80px;height:13px"></div></div>`).join("")}
       </div>`
     : `<div class="table-wrap"><table>
-        <thead><tr><th>实例 ID</th><th>仓库</th><th>难度</th><th>基准提交</th><th>应通过测试</th><th>平均 Token</th><th></th></tr></thead>
+        <thead><tr><th>实例 ID</th><th>仓库</th><th>难度</th><th>基准提交</th><th>应通过测试</th><th>平均 Token（含缓存）</th><th></th></tr></thead>
         <tbody>
           ${mock.cases.slice(0, isLite ? 4 : 6).map((item, index) => `<tr class="clickable" data-action="case-preview" data-case="${item.id}"><td><div class="table-primary mono">${item.id}</div></td><td>${item.repo}</td><td><span class="tag tag-neutral">${item.difficulty}</span></td><td class="mono small">3f2c9a1</td><td>${Math.floor(12 + item.id.length)} 项</td><td class="mono small">${datasetCaseToken(index)}</td><td>${icon("arrowRight", 14)}</td></tr>`).join("")}
         </tbody>
@@ -5645,12 +5783,21 @@ function datasetDetailPage(id) {
         ${metricCard("适配器版本", "swebench 1.4.0", "<span>Harbor 五文件任务包</span>", "terminal", "warning")}
       </div>
       ${tokenStats ? `<div class="grid grid-4 section-gap">
-        ${metricCard("累计 Token", formatTokenAmount(tokenStats.total), `<span>${tokenStats.runs} 次评测 · ${tokenStats.caseRuns} 个用例执行</span>`, "cpu", "violet")}
-        ${metricCard("平均 / 用例", formatTokenAmount(tokenStats.perCase), "<span>输入 418k · 输出 58k</span>", "sparkles")}
-        ${metricCard("平均 / 评测", formatTokenAmount(tokenStats.perRun), "<span>按每次 6 个用例估算</span>", "pipeline", "success")}
+        ${metricCard("累计 Token（含缓存）", formatTokenAmount(tokenStats.totalWithCache), `<span>${tokenStats.coverage} 次评测有轨迹 · ${tokenStats.caseRuns} 个用例执行</span>`, "cpu", "violet")}
+        ${metricCard("平均 / 用例（含缓存）", formatTokenAmount(tokenStats.perCase), `<span>缓存 ${formatTokenAmount(tokenStats.cacheInput)} · 非缓存 ${formatTokenAmount(tokenStats.nonCacheInput)}</span>`, "sparkles")}
+        ${metricCard("平均 / 评测（含缓存）", formatTokenAmount(tokenStats.perRun), `<span>按 ${tokenStats.coverage} 次有轨迹评测</span>`, "pipeline", "success")}
         ${metricCard("累计成本", tokenStats.cost, `<span>平均 ${tokenStats.averageCost} / 用例</span>`, "database", "warning")}
       </div>
-      <div class="token-metric-note">统计口径：input_tokens + output_tokens；cache token 单独统计；成本单位以 trace cost-state 为准。</div>` : ""}
+      <div class="token-composition">
+        <div class="row-between"><div><h3 class="card-title">Token 构成（含缓存）</h3><p class="card-subtitle">跨该数据集全部版本与评测</p></div><span class="tag tag-primary">cache 已计入</span></div>
+        <div class="token-composition-grid">
+          <div class="token-composition-item"><span>总 Token（含缓存）</span><strong>${formatTokenAmount(tokenStats.totalWithCache)}</strong><small>覆盖 ${tokenStats.coverage} 次评测</small></div>
+          <div class="token-composition-item"><span>cache 输入</span><strong>${formatTokenAmount(tokenStats.cacheInput)}</strong><small>read ${formatTokenAmount(tokenStats.cacheRead)} · creation ${formatTokenOrZero(tokenStats.cacheCreate)}</small></div>
+          <div class="token-composition-item"><span>非缓存输入</span><strong>${formatTokenAmount(tokenStats.nonCacheInput)}</strong><small>prompt input（不含 cache）</small></div>
+          <div class="token-composition-item"><span>输出</span><strong>${formatTokenAmount(tokenStats.output)}</strong><small>completion output</small></div>
+        </div>
+      </div>
+      <div class="token-metric-note">统计口径：总 = 非缓存输入 + cache 输入（read + creation）+ 输出；cache 不混入非缓存输入；成本单位以 trace cost-state 为准；仅覆盖 ${tokenStats.coverage} 次有解析轨迹的评测。</div>` : ""}
       <div class="grid dashboard-grid section-gap">
         <section class="card">
           <div class="card-header">
@@ -6807,11 +6954,11 @@ function evalCaseTable(run) {
       </div>
       <div class="token-summary-bar">
         <div class="token-summary-primary">
-          <div class="token-summary-eyebrow">用例集 TOKEN 总消耗</div>
+          <div class="token-summary-eyebrow">用例集 TOKEN 总消耗（含缓存）</div>
           <div class="token-summary-total">${formatTokenAmount(tokenSummary.total)}</div>
-          <div class="token-summary-split">输入 ${formatTokenAmount(tokenSummary.input)} · 输出 ${formatTokenAmount(tokenSummary.output)}</div>
+          <div class="token-summary-split"><span>缓存输入 <strong>${formatTokenAmount(tokenSummary.cacheInput)}</strong></span><span>非缓存输入 <strong>${formatTokenAmount(tokenSummary.nonCacheInput)}</strong></span><span>输出 <strong>${formatTokenAmount(tokenSummary.output)}</strong></span></div>
         </div>
-        <div class="token-summary-stat"><span>平均 / 用例</span><strong>${formatTokenAmount(tokenSummary.average)}</strong><small>覆盖 ${tokenSummary.coverage} 个用例</small></div>
+        <div class="token-summary-stat"><span>平均 / 用例（含缓存）</span><strong>${formatTokenAmount(tokenSummary.average)}</strong><small>覆盖 ${tokenSummary.coverage} 个用例</small></div>
         <div class="token-summary-stat"><span>累计成本</span><strong>${tokenSummary.cost}</strong><small>模型 + 算力</small></div>
         <div class="token-summary-stat"><span>平均成本 / 用例</span><strong>${tokenSummary.averageCost}</strong><small>按有用例数据的用例</small></div>
       </div>
@@ -6824,12 +6971,12 @@ function evalCaseTable(run) {
         <div class="input-with-icon" style="margin-left:auto"><span>${icon("search", 14)}</span><input class="input" id="case-search" value="${esc(ui.caseSearch)}" style="width:230px" placeholder="搜索实例 ID 或仓库" /></div>
       </div>
       ${rows.length ? `<div class="table-wrap"><table class="case-table">
-        <thead><tr><th>实例 ID</th><th>主 Agent session id</th><th>仓库</th><th>难度</th><th>状态</th><th>评分</th><th>耗时</th><th>Token</th><th>轨迹</th></tr></thead>
+        <thead><tr><th>实例 ID</th><th>主 Agent session id</th><th>仓库</th><th>难度</th><th>状态</th><th>评分</th><th>耗时</th><th>Token（含缓存）</th><th>轨迹</th></tr></thead>
         <tbody>${rows.map((item) => `<tr class="clickable" data-route="/trace/${run.id}/${item.id}">
           <td><div class="table-primary mono">${item.id}</div><div class="table-secondary">attempt 1</div></td>
           <td>${item.session ? `<span class="session-cell"><span class="mono table-session" title="${esc(item.session)}">${shortSessionId(item.session)}</span><button type="button" class="icon-button session-copy-button" data-copy-session="${esc(item.session)}" title="复制完整 session id" aria-label="复制完整 session id">${icon("copy", 12)}</button></span>` : `<span class="muted">—</span>`}</td>
           <td>${item.repo}</td><td><span class="tag tag-neutral">${item.difficulty}</span></td><td>${statusTag(item.status)}</td>
-          <td><strong>${item.score}</strong></td><td>${item.duration}</td><td>${item.tokens}</td>
+          <td><strong>${item.score}</strong></td><td>${item.duration}</td><td>${item.tokenBreakdown ? `<div class="mono">${formatTokenAmount(item.tokenBreakdown.total)}</div><div class="token-breakdown" title="缓存输入 ${formatTokenAmount(item.tokenBreakdown.cacheInput)} · 非缓存输入 ${formatTokenAmount(item.tokenBreakdown.nonCacheInput)} · 输出 ${formatTokenAmount(item.tokenBreakdown.output)}">缓存 ${formatTokenAmount(item.tokenBreakdown.cacheInput)} · 非缓存 ${formatTokenAmount(item.tokenBreakdown.nonCacheInput)}</div>` : '<span class="muted">—</span>'}</td>
           <td><span class="row" style="color:var(--primary)">${icon("list", 13)} 查看 ${icon("arrowRight", 12)}</span></td>
         </tr>`).join("")}</tbody>
       </table></div>` : `<div class="table-empty"><div class="empty-mark">${icon("filter", 20)}</div><strong>当前筛选下没有用例</strong><div class="small muted">调整状态或搜索条件后再试。</div></div>`}
@@ -6908,6 +7055,7 @@ function evalOverview(run) {
 
 function evalResults(run) {
   const summary = runStatusSummary(run);
+  const tokenSummary = tokenSummaryForRun(run);
   const rate = (run.status === "running" ? summary.stageRate : summary.overallRate).toFixed(1);
   const trendWeights = [18, 24, 27, 30, 31, 33, 34, 34];
   const allocate = (total, weights = trendWeights) => {
@@ -6972,8 +7120,17 @@ function evalResults(run) {
     <div class="grid grid-4">
       ${metricCard(run.status === "running" ? "阶段解决率" : "解决率", `${rate}%`, `<span>${summary.resolved} / ${run.status === "running" ? summary.completed : summary.submitted}</span><span>${run.status === "running" ? "已完成用例" : "全部用例"}</span>`, "sparkles", "violet")}
       ${metricCard("已解决", String(summary.resolved), `<span>共 ${summary.completed} 个已完成</span>`, "check", "success")}
-      ${metricCard("平均 Token", "476.2k", "<span>输入 418k · 输出 58k</span>", "cpu")}
+      ${metricCard("平均 Token（含缓存）", formatTokenAmount(tokenSummary.average), `<span>覆盖 ${tokenSummary.coverage} 个用例</span>`, "cpu")}
       ${metricCard("平均成本", "¥0.32", "<span>模型 ¥0.27 · 算力 ¥0.05</span>", "database", "warning")}
+    </div>
+    <div class="token-composition">
+      <div class="row-between"><div><h3 class="card-title">Token 构成（含缓存）</h3><p class="card-subtitle">总 = cache 输入（read + creation）+ 非缓存输入 + 输出</p></div><span class="tag tag-primary">cache 已计入</span></div>
+      <div class="token-composition-grid">
+        <div class="token-composition-item"><span>总 Token（含缓存）</span><strong>${formatTokenAmount(tokenSummary.total)}</strong><small>覆盖 ${tokenSummary.coverage} 个用例</small></div>
+        <div class="token-composition-item"><span>cache 输入</span><strong>${formatTokenAmount(tokenSummary.cacheInput)}</strong><small>read ${formatTokenAmount(tokenSummary.cacheRead)} · creation ${formatTokenOrZero(tokenSummary.cacheCreate)}</small></div>
+        <div class="token-composition-item"><span>非缓存输入</span><strong>${formatTokenAmount(tokenSummary.nonCacheInput)}</strong><small>prompt input（不含 cache）</small></div>
+        <div class="token-composition-item"><span>输出</span><strong>${formatTokenAmount(tokenSummary.output)}</strong><small>completion output</small></div>
+      </div>
     </div>
     <div class="result-layout section-gap">
       <section class="card chart-card">
@@ -7182,6 +7339,12 @@ function tracePage(runId, caseId) {
       ["openinference.span.kind", "AGENT"],
     ],
   };
+  const traceNonCacheTotal = 418600;
+  const traceOutput = 8400;
+  const traceNonCacheInput = traceNonCacheTotal - traceOutput;
+  const traceCacheRead = 128400;
+  const traceCacheCreate = 0;
+  const traceTotal = traceNonCacheTotal + traceCacheRead + traceCacheCreate;
   const attrs = attrBySpan[selected.id] || [
     ["gen_ai.operation.name", selected.kind === "TOOL" ? "execute_tool" : "chat"],
     ["gen_ai.tool.name", selected.name.includes("read_file") ? "read_file" : selected.name.includes("ripgrep") ? "ripgrep" : "bash"],
@@ -7202,8 +7365,9 @@ function tracePage(runId, caseId) {
         <div class="trace-top">
           <span class="tag tag-violet">Codex CLI</span><span class="tag tag-primary">deepseek-v4.1-flash</span><span class="tag tag-success">已解决</span>
           <span class="small muted mono">sess_01J9K4F8Q6</span>
-          <div class="trace-summary"><span><strong>${caseInfo.duration}</strong> 总耗时</span><span><strong>418.6k</strong> tokens</span><span><strong>¥0.27</strong> 模型成本</span><span><strong>17</strong> spans</span></div>
+          <div class="trace-summary"><span><strong>${caseInfo.duration}</strong> 总耗时</span><span><strong>${formatTokenAmount(traceTotal)}</strong> tokens（含缓存）</span><span><strong>¥0.27</strong> 模型成本</span><span><strong>17</strong> spans</span></div>
         </div>
+        <div class="trace-token-breakdown" style="padding:0 18px 10px">缓存输入 <strong>${formatTokenAmount(traceCacheRead + traceCacheCreate)}</strong>（read ${formatTokenAmount(traceCacheRead)} / creation ${formatTokenOrZero(traceCacheCreate)}） · 非缓存输入 <strong>${formatTokenAmount(traceNonCacheInput)}</strong> · 输出 <strong>${formatTokenAmount(traceOutput)}</strong></div>
         <div class="trace-layout">
           <aside class="trace-tree">
             <div class="pane-title">Session tree</div>
