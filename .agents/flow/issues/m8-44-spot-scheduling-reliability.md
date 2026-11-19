@@ -8,6 +8,7 @@ milestone: m8
 priority: P2
 status: in-progress
 scope:
+  - .agents/flow/issues/m8-43-job-timeout-headroom.*
   - .agents/flow/issues/m8-44-spot-scheduling-reliability.*
   - .github/workflows/eval-shard.yml
   - backend/app/services/case_attempts.py

@@ -6,7 +6,7 @@
 kind: issue
 milestone: m8
 priority: P2
-status: in-progress
+status: done
 scope:
   - .agents/flow/issues/m8-43-job-timeout-headroom.*
   - .agents/flow/issues/m8-dataset-image-preflight-ensure.*
