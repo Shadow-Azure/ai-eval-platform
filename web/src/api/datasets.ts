@@ -12,6 +12,7 @@ export interface DatasetTokenStats {
   cost_usd: number | null;
   case_count: number;
   eval_count: number;
+  eval_count_with_tokens: number;
   average_tokens: number | null;
   average_eval_tokens: number | null;
   average_cost_usd: number | null;
@@ -194,6 +195,7 @@ function parseTokenStats(value: unknown): DatasetTokenStats | null {
     cost_usd: optionalNumber(value.cost_usd),
     case_count: number(value.case_count),
     eval_count: number(value.eval_count),
+    eval_count_with_tokens: optionalNumber(value.eval_count_with_tokens) ?? 0,
     average_tokens: optionalNumber(value.average_tokens),
     average_eval_tokens: optionalNumber(value.average_eval_tokens),
     average_cost_usd: optionalNumber(value.average_cost_usd),

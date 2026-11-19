@@ -626,7 +626,7 @@ export function DatasetDetailPage() {
             <MetricCard
               label="平均 / 评测"
               value={formatTokenAmount(tokenStats.average_eval_tokens)}
-              meta={`按 ${tokenStats.eval_count} 次有用例数据的评测`}
+              meta={`按 ${tokenStats.eval_count_with_tokens} 次有轨迹数据的评测`}
               icon="pipeline"
               tone="success"
             />

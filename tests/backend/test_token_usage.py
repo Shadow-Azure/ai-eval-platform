@@ -279,6 +279,8 @@ def test_dataset_token_stats_and_version_case_average(
     version_id = imported["version"]["id"]
     dataset_id = imported["dataset"]["id"]
     run = _run(seeded, version_id=version_id, key="token-dataset")
+    # A run without a parsed trace must not dilute the per-evaluation average.
+    _run(seeded, version_id=version_id, key="token-dataset-empty")
     cases = _cases(seeded, run.id)
     assert len(cases) == len(fixture_records())
     first_case = cases[0]
@@ -301,8 +303,9 @@ def test_dataset_token_stats_and_version_case_average(
     assert stats["input_tokens"] == 100
     assert stats["output_tokens"] == 20
     assert stats["cost_usd"] == pytest.approx(0.50)
-    assert stats["case_count"] == len(cases)
-    assert stats["eval_count"] == 1
+    assert stats["case_count"] == len(cases) * 2
+    assert stats["eval_count"] == 2
+    assert stats["eval_count_with_tokens"] == 1
     assert stats["average_tokens"] == 120
     assert stats["average_eval_tokens"] == 120
     assert stats["average_cost_usd"] == pytest.approx(0.50)
@@ -337,6 +340,7 @@ def test_dataset_catalog_without_runs_has_zero_token_stats(
     assert stats["cost_usd"] == 0
     assert stats["case_count"] == 0
     assert stats["eval_count"] == 0
+    assert stats["eval_count_with_tokens"] == 0
     assert stats["average_tokens"] is None
     assert stats["average_eval_tokens"] is None
     # A dataset with no eval runs still resolves its id for detail reads.

@@ -193,6 +193,7 @@ def empty_dataset_token_stats() -> dict[str, Any]:
         "cost_usd": 0.0,
         "case_count": 0,
         "eval_count": 0,
+        "eval_count_with_tokens": 0,
         "average_tokens": None,
         "average_eval_tokens": None,
         "average_cost_usd": None,
@@ -271,6 +272,14 @@ def dataset_token_stats(
             func.coalesce(
                 func.sum(case((per_case.c.span_count > 0, 1), else_=0)), 0
             ),
+            func.count(
+                func.distinct(
+                    case(
+                        (per_case.c.span_count > 0, per_case.c.run_id),
+                        else_=None,
+                    )
+                )
+            ),
         ).group_by(per_case.c.dataset_id)
     ).all()
     stats = {dataset_id: empty_dataset_token_stats() for dataset_id in ids}
@@ -283,6 +292,7 @@ def dataset_token_stats(
         case_count = int(row[4] or 0)
         eval_count = int(row[5] or 0)
         cases_with_tokens = int(row[6] or 0)
+        eval_count_with_tokens = int(row[7] or 0)
         stats[dataset_id] = {
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
@@ -290,13 +300,16 @@ def dataset_token_stats(
             "cost_usd": _money_float(cost_usd),
             "case_count": case_count,
             "eval_count": eval_count,
+            "eval_count_with_tokens": eval_count_with_tokens,
             "average_tokens": (
                 int(round(total_tokens / cases_with_tokens))
                 if cases_with_tokens
                 else None
             ),
             "average_eval_tokens": (
-                int(round(total_tokens / eval_count)) if eval_count else None
+                int(round(total_tokens / eval_count_with_tokens))
+                if eval_count_with_tokens
+                else None
             ),
             "average_cost_usd": (
                 _money_float(cost_usd / cases_with_tokens)
