@@ -4122,6 +4122,97 @@ tbody tr.clickable {
   background: #eef5ff;
 }
 
+/* m8-53: case-set and dataset-level token summaries */
+.token-summary-bar {
+  display: grid;
+  grid-template-columns: 1.6fr 1fr 1fr 1fr;
+  gap: 14px;
+  margin: 4px 0 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: linear-gradient(120deg, #f7faff 0%, #ffffff 58%, #f7f9fc 100%);
+}
+
+.token-summary-primary {
+  min-width: 0;
+}
+
+.token-summary-eyebrow {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.token-summary-total {
+  margin-top: 3px;
+  color: var(--ink);
+  font-size: 26px;
+  font-weight: 750;
+  letter-spacing: -0.6px;
+  line-height: 1.2;
+}
+
+.token-summary-split {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.token-summary-stat {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding-left: 14px;
+  border-left: 1px solid var(--line);
+}
+
+.token-summary-stat span {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.token-summary-stat strong {
+  margin-top: 2px;
+  color: var(--ink);
+  font-size: 16px;
+}
+
+.token-summary-stat small {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.token-metric-note {
+  margin: -2px 0 16px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.dataset-token-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: -2px 0 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.dataset-token-row strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.dataset-token-row span:last-child {
+  margin-left: auto;
+}
+
     </style>
   </head>
   <body>
@@ -4983,6 +5074,62 @@ function evalCasesForRun(run) {
   });
 }
 
+function parseTokenLabel(label) {
+  if (typeof label !== "string") return 0;
+  const match = /^([\d.]+)k$/i.exec(label.trim());
+  return match ? Math.round(Number.parseFloat(match[1]) * 1000) : 0;
+}
+
+function formatTokenAmount(value) {
+  if (!Number.isFinite(value) || value <= 0) return "—";
+  if (value >= 100000000) return `${Number((value / 100000000).toFixed(2))} 亿`;
+  if (value >= 10000) return `${Number((value / 10000).toFixed(1))} 万`;
+  return value.toLocaleString("zh-CN");
+}
+
+function tokenSummaryForRun(run) {
+  const cases = evalCasesForRun(run);
+  const measured = cases.filter((item) => parseTokenLabel(item.tokens) > 0);
+  const total = measured.reduce((sum, item) => sum + parseTokenLabel(item.tokens), 0);
+  const input = Math.round(total * 0.88);
+  const output = total - input;
+  const average = measured.length ? Math.round(total / measured.length) : 0;
+  const costMatch = /([\d.]+)/.exec(String(run.cost || ""));
+  const costTotal = costMatch ? Number.parseFloat(costMatch[1]) : 0;
+  const averageCost = measured.length ? costTotal / measured.length : 0;
+  return {
+    total,
+    input,
+    output,
+    average,
+    coverage: `${measured.length} / ${cases.length}`,
+    cost: run.cost || "—",
+    averageCost: averageCost > 0 ? `¥${averageCost.toFixed(2)}` : "—",
+  };
+}
+
+const DATASET_TOKEN_STATS = {
+  "swebench-verified": { runs: 45, caseRuns: 270, total: 128574000, perCase: 476200, cost: "¥980.00" },
+  "swebench-lite": { runs: 30, caseRuns: 180, total: 61200000, perCase: 340000, cost: "¥486.00" },
+};
+
+function datasetTokenStats(id) {
+  const stats = DATASET_TOKEN_STATS[id];
+  if (!stats) return null;
+  const costValue = Number(stats.cost.replace(/[^\d.]/g, ""));
+  return {
+    ...stats,
+    perRun: Math.round(stats.total / stats.runs),
+    averageCost: `¥${(costValue / stats.caseRuns).toFixed(2)}`,
+  };
+}
+
+const DATASET_CASE_TOKEN_SAMPLES = [418600, 281100, 824700, 203400, 691200, 352800];
+
+function datasetCaseToken(index) {
+  return formatTokenAmount(DATASET_CASE_TOKEN_SAMPLES[index % DATASET_CASE_TOKEN_SAMPLES.length]);
+}
+
 function mockSessionId(index) {
   const hex = (value, width = 8) =>
     (value >>> 0)
@@ -5410,6 +5557,7 @@ function datasetsPage() {
                           <div class="dataset-meta-item"><div class="dataset-meta-label">用例数</div><div class="dataset-meta-value">${dataset.count.toLocaleString("zh-CN")}</div></div>
                           <div class="dataset-meta-item"><div class="dataset-meta-label">核心指标</div><div class="dataset-meta-value">${dataset.metric}</div></div>
                         </div>
+                        ${datasetTokenStats(dataset.id) ? `<div class="dataset-token-row"><span>累计 Token</span><strong>${formatTokenAmount(datasetTokenStats(dataset.id).total)}</strong><span class="muted">均 ${formatTokenAmount(datasetTokenStats(dataset.id).perRun)} / 次评测</span></div>` : ""}
                         <div class="dataset-footer">
                           <span class="small muted">${dataset.updated}</span>
                           ${
@@ -5468,6 +5616,7 @@ function datasetsPage() {
 
 function datasetDetailPage(id) {
   const isLite = id === "swebench-lite";
+  const tokenStats = datasetTokenStats(id);
   const count = isLite ? 300 : 500;
   const version = isLite ? "v2026.09" : "v2026.10";
   const skeleton = ui.datasetLoading
@@ -5475,9 +5624,9 @@ function datasetDetailPage(id) {
         ${[72, 88, 64, 91, 76, 58].map((width) => `<div class="row"><div class="skeleton" style="height:13px;width:${width}%"></div><div class="skeleton" style="width:80px;height:13px"></div></div>`).join("")}
       </div>`
     : `<div class="table-wrap"><table>
-        <thead><tr><th>实例 ID</th><th>仓库</th><th>难度</th><th>基准提交</th><th>应通过测试</th><th></th></tr></thead>
+        <thead><tr><th>实例 ID</th><th>仓库</th><th>难度</th><th>基准提交</th><th>应通过测试</th><th>平均 Token</th><th></th></tr></thead>
         <tbody>
-          ${mock.cases.slice(0, isLite ? 4 : 6).map((item) => `<tr class="clickable" data-action="case-preview" data-case="${item.id}"><td><div class="table-primary mono">${item.id}</div></td><td>${item.repo}</td><td><span class="tag tag-neutral">${item.difficulty}</span></td><td class="mono small">3f2c9a1</td><td>${Math.floor(12 + item.id.length)} 项</td><td>${icon("arrowRight", 14)}</td></tr>`).join("")}
+          ${mock.cases.slice(0, isLite ? 4 : 6).map((item, index) => `<tr class="clickable" data-action="case-preview" data-case="${item.id}"><td><div class="table-primary mono">${item.id}</div></td><td>${item.repo}</td><td><span class="tag tag-neutral">${item.difficulty}</span></td><td class="mono small">3f2c9a1</td><td>${Math.floor(12 + item.id.length)} 项</td><td class="mono small">${datasetCaseToken(index)}</td><td>${icon("arrowRight", 14)}</td></tr>`).join("")}
         </tbody>
       </table></div>`;
   return shell(
@@ -5495,6 +5644,13 @@ function datasetDetailPage(id) {
         ${metricCard("预期指标", "解决率", "<span>resolved / submitted</span>", "sparkles", "violet")}
         ${metricCard("适配器版本", "swebench 1.4.0", "<span>Harbor 五文件任务包</span>", "terminal", "warning")}
       </div>
+      ${tokenStats ? `<div class="grid grid-4 section-gap">
+        ${metricCard("累计 Token", formatTokenAmount(tokenStats.total), `<span>${tokenStats.runs} 次评测 · ${tokenStats.caseRuns} 个用例执行</span>`, "cpu", "violet")}
+        ${metricCard("平均 / 用例", formatTokenAmount(tokenStats.perCase), "<span>输入 418k · 输出 58k</span>", "sparkles")}
+        ${metricCard("平均 / 评测", formatTokenAmount(tokenStats.perRun), "<span>按每次 6 个用例估算</span>", "pipeline", "success")}
+        ${metricCard("累计成本", tokenStats.cost, `<span>平均 ${tokenStats.averageCost} / 用例</span>`, "database", "warning")}
+      </div>
+      <div class="token-metric-note">统计口径：input_tokens + output_tokens；cache token 单独统计；成本单位以 trace cost-state 为准。</div>` : ""}
       <div class="grid dashboard-grid section-gap">
         <section class="card">
           <div class="card-header">
@@ -6613,6 +6769,7 @@ function evalKeyCases(run) {
 
 function evalCaseTable(run) {
   const allCases = evalCasesForRun(run);
+  const tokenSummary = tokenSummaryForRun(run);
   const statusLabels = {
     all: "全部",
     resolved: "已解决",
@@ -6647,6 +6804,16 @@ function evalCaseTable(run) {
       <div class="card-header">
         <div><h2 class="card-title">用例明细</h2><p class="card-subtitle">共 ${allCases.length} 个用例 · 点击任意行进入主 / 子 Agent 会话轨迹</p></div>
         <div class="card-actions">${run.status === "running" ? '<span class="tag tag-success"><span class="status-dot pulse"></span>SSE 实时更新</span>' : '<span class="tag tag-success">最终结果快照</span>'}<button class="btn btn-sm" data-action="export-cases">${icon("download", 13)} 导出 CSV</button></div>
+      </div>
+      <div class="token-summary-bar">
+        <div class="token-summary-primary">
+          <div class="token-summary-eyebrow">用例集 TOKEN 总消耗</div>
+          <div class="token-summary-total">${formatTokenAmount(tokenSummary.total)}</div>
+          <div class="token-summary-split">输入 ${formatTokenAmount(tokenSummary.input)} · 输出 ${formatTokenAmount(tokenSummary.output)}</div>
+        </div>
+        <div class="token-summary-stat"><span>平均 / 用例</span><strong>${formatTokenAmount(tokenSummary.average)}</strong><small>覆盖 ${tokenSummary.coverage} 个用例</small></div>
+        <div class="token-summary-stat"><span>累计成本</span><strong>${tokenSummary.cost}</strong><small>模型 + 算力</small></div>
+        <div class="token-summary-stat"><span>平均成本 / 用例</span><strong>${tokenSummary.averageCost}</strong><small>按有用例数据的用例</small></div>
       </div>
       <div class="filter-bar">
         <div class="segmented">

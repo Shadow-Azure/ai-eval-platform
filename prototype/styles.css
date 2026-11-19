@@ -4110,3 +4110,94 @@ tbody tr.clickable {
   border-color: transparent;
   background: #eef5ff;
 }
+
+/* m8-53: case-set and dataset-level token summaries */
+.token-summary-bar {
+  display: grid;
+  grid-template-columns: 1.6fr 1fr 1fr 1fr;
+  gap: 14px;
+  margin: 4px 0 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: linear-gradient(120deg, #f7faff 0%, #ffffff 58%, #f7f9fc 100%);
+}
+
+.token-summary-primary {
+  min-width: 0;
+}
+
+.token-summary-eyebrow {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.token-summary-total {
+  margin-top: 3px;
+  color: var(--ink);
+  font-size: 26px;
+  font-weight: 750;
+  letter-spacing: -0.6px;
+  line-height: 1.2;
+}
+
+.token-summary-split {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.token-summary-stat {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding-left: 14px;
+  border-left: 1px solid var(--line);
+}
+
+.token-summary-stat span {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.token-summary-stat strong {
+  margin-top: 2px;
+  color: var(--ink);
+  font-size: 16px;
+}
+
+.token-summary-stat small {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.token-metric-note {
+  margin: -2px 0 16px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.dataset-token-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: -2px 0 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.dataset-token-row strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.dataset-token-row span:last-child {
+  margin-left: auto;
+}
