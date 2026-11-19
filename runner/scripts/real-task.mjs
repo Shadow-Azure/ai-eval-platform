@@ -16,6 +16,7 @@ import { verifyToken } from "../lib/auth.mjs";
 import { runAgentExec } from "../lib/agent-exec.mjs";
 import { postCallback } from "../lib/callback-client.mjs";
 import { buildCancellationFailure } from "../lib/cancellation.mjs";
+import { buildSigtermDiagnostics } from "../lib/diagnostics.mjs";
 import { requireValid, validateDispatch, validateManifest, validateStarted } from "../lib/contracts.mjs";
 import { DispatchGuard } from "../lib/dispatch-guard.mjs";
 import {
@@ -1301,35 +1302,50 @@ async function main() {
   const reportCancelledCase = async (item, caseResult) => {
     const failureEventId = `evt_${item.case_run_id}_failed_${dispatch.attempt}`;
     try {
+      // M8-53: capture the local stop scene before the terminal callback. The
+      // structured line is zero-dependency and lands in the job log even when
+      // the OSS upload is cut off; the artifact is the durable copy.
+      const diagnostics = buildSigtermDiagnostics();
+      console.error(JSON.stringify(diagnostics));
+      const diagnosticsBytes = Buffer.from(JSON.stringify(diagnostics, null, 2), "utf8");
       const caseBundle = caseResult.traceBundle ?? { files: [] };
       const traceFiles = dedupeTraceObjects(caseBundle.files ?? []);
       let traceManifest = null;
-      if (traceFiles.length > 0) {
-        const pendingObjects = traceFiles.map((file) => ({
+      const pendingObjects = [
+        ...traceFiles.map((file) => ({
           artifact_kind: file.artifact_kind,
           ...store.putBytes(file.bytes, { contentType: file.content_type }),
           ...uploadFields(file, caseBundle),
-        }));
-        // GitHub escalates SIGTERM to SIGKILL in ~7.5s. Spend at most 5s on the
-        // trace upload and still send the terminal failure if it is too slow.
+        })),
+        {
+          artifact_kind: "artifact",
+          ...store.putBytes(diagnosticsBytes, { contentType: "application/json" }),
+          logical_path: "diagnostics/sigterm.json",
+          native_format: "json",
+          format_version: "1",
+        },
+      ];
+      if (pendingObjects.length > 0) {
+        // GitHub escalates SIGTERM to SIGKILL in ~7.5s. Spend at most 3s on the
+        // upload and still send the terminal failure if it is too slow.
         const uploaded = await Promise.race([
           (async () => {
             const reportedObjects = await publishCaseObjects(item, pendingObjects);
             const uploadResult = await postUploads(item, reportedObjects);
             if (!uploadResult.ok) {
               console.error(
-                `cancelled trace uploads callback failed: HTTP ${uploadResult.status}`,
+                `cancelled trace/diagnostics uploads callback failed: HTTP ${uploadResult.status}`,
               );
               return null;
             }
             return traceManifestFromBundle(caseBundle, reportedObjects);
           })().catch((error) => {
-            console.error(`cancelled trace upload failed: ${error?.message || error}`);
+            console.error(`cancelled trace/diagnostics upload failed: ${error?.message || error}`);
             return null;
           }),
           new Promise((resolve) =>
             setTimeout(() => {
-              console.error("cancelled trace upload budget exhausted");
+              console.error("cancelled trace/diagnostics upload budget exhausted");
               resolve(null);
             }, 3_000).unref?.(),
           ),

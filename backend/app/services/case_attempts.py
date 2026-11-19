@@ -62,6 +62,7 @@ from .trace_manifest import (
 )
 
 ACTIVE_ATTEMPT_STATUSES = evaluations.ACTIVE_ATTEMPT_STATUSES
+RUNNER_LOST = "runner_lost"
 
 logger = logging.getLogger(__name__)
 
@@ -1047,6 +1048,34 @@ def build_retry_dispatch(
     )
 
 
+def _runner_lost_retryable(ctx: CaseContext, *, now: datetime) -> bool:
+    """Whether an external Runner loss is still inside the case budget.
+
+    The Runner's cancellation helper sends ``retryable=false`` because it
+    cannot distinguish an external SIGTERM from a spent job/case timeout (see
+    ``runner/lib/cancellation.mjs``). The platform can distinguish them: an
+    attempt killed well before ``case_timeout_seconds`` is infrastructure
+    loss and should use the normal ``max_attempts`` budget; one that already
+    consumed the case budget must stay terminal so a genuine timeout is not
+    rerun. Cancelling and budget-paused runs are owned by their own paths.
+    """
+
+    if ctx.run.status in ("cancelling", *evaluations.PAUSED_RUN_STATUSES):
+        return False
+    if ctx.run.status in evaluations.TERMINAL_RUN_STATUSES:
+        return False
+    max_attempts = int(ctx.run.max_attempts or 0)
+    if max_attempts and ctx.attempt.attempt_no >= max_attempts:
+        return False
+    started = ctx.attempt.started_at
+    if started is None:
+        return False
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=UTC)
+    budget = int(ctx.run.case_timeout_seconds or 0)
+    return budget <= 0 or (now - started).total_seconds() < budget
+
+
 def handle_failed(
     session: Session,
     *,
@@ -1087,8 +1116,14 @@ def handle_failed(
 
     # A scoring-only fault must never rerun the agent (design 06 §6.3): the
     # runner's retryable flag is ignored for that class and the case settles as
-    # a terminal failure. Everything else follows the runner's classification.
-    retryable = bool(payload["retryable"]) and (
+    # a terminal failure. A runner_lost callback is normally an external
+    # SIGTERM; the Runner marks it non-retryable because it cannot tell an
+    # infrastructure kill from a spent timeout. The platform can: within the
+    # case budget it is retryable, at/after the budget it stays terminal.
+    retryable = bool(payload["retryable"])
+    if payload["error_code"] == RUNNER_LOST and _runner_lost_retryable(ctx, now=now):
+        retryable = True
+    retryable = retryable and (
         lifecycle.classify_failure(payload["error_code"]) != lifecycle.SCORING_ONLY
     )
     phase = payload.get("phase")
