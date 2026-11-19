@@ -8,6 +8,7 @@ milestone: m8
 priority: P2
 status: in-progress
 scope:
+  - .agents/flow/issues/m8-45-queue-progress-lease.*
   - .agents/flow/issues/m8-47-runner-scripts-bundle.*
   - .github/workflows/deploy.yml
   - .github/workflows/eval-shard.yml
