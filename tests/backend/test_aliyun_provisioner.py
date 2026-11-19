@@ -565,19 +565,19 @@ def test_sync_reclaims_instance_after_runner_heartbeat_loss(
     assert runner.deregistered_at == clock
 
 
-def test_sync_reclaims_offline_ephemeral_runner_after_short_grace(
+def test_sync_reclaims_offline_ephemeral_runner_after_grace(
     session: Session, scope: dict[str, str], clock: datetime
 ) -> None:
-    """M8-34: a one-job runner exiting must free capacity in ~60s, not ~390s."""
+    """M8-48 (#313): a real exit still frees capacity after the extended grace."""
 
     connection = _connection(session, scope)
     pool = _pool(session, scope, connection)
     instance, runner = _instance_with_runner(session, scope, connection, pool, clock)
     instance.ready_at = clock - timedelta(minutes=5)
     runner.status = "offline"
-    # 61s is past the new fast grace but far below the old
+    # 181s is past the extended 180s grace but far below the old
     # heartbeat_timeout + lost_grace window.
-    runner.last_heartbeat_at = clock - timedelta(seconds=61)
+    runner.last_heartbeat_at = clock - timedelta(seconds=181)
     session.flush()
     transport = FakeAliyun()
     transport.instances["i-test-1"] = {"InstanceId": "i-test-1", "Status": "Running"}
@@ -597,6 +597,30 @@ def test_sync_reclaims_offline_ephemeral_runner_after_short_grace(
     assert any(event.payload_json.get("reason") == "runner_exited" for event in events)
 
 
+def test_sync_keeps_runner_after_brief_heartbeat_jitter(
+    session: Session, scope: dict[str, str], clock: datetime
+) -> None:
+    """M8-48 (#313): 60s of silence is a jitter, not an exit."""
+
+    connection = _connection(session, scope)
+    pool = _pool(session, scope, connection)
+    instance, runner = _instance_with_runner(session, scope, connection, pool, clock)
+    instance.ready_at = clock - timedelta(minutes=5)
+    runner.status = "offline"
+    runner.last_heartbeat_at = clock - timedelta(seconds=61)
+    session.flush()
+    transport = FakeAliyun()
+    transport.instances["i-test-1"] = {"InstanceId": "i-test-1", "Status": "Running"}
+
+    counts = _provisioner(transport=transport).sync(
+        session=session, connection=connection, pool=pool, now=clock
+    )
+
+    assert counts["interrupted"] == 0
+    assert instance.status == "online"
+    assert transport.delete_calls == []
+
+
 def test_sync_reclaims_runner_exit_as_runner_lost(
     session: Session,
     scope: dict[str, str],
@@ -614,7 +638,7 @@ def test_sync_reclaims_runner_exit_as_runner_lost(
     assert runner is not None
     runner.resource_pool_id = pool.id
     runner.status = "offline"
-    runner.last_heartbeat_at = clock - timedelta(seconds=61)
+    runner.last_heartbeat_at = clock - timedelta(seconds=181)
     session.flush()
 
     case_run_id = env["cases"]["case-a"]
@@ -698,13 +722,13 @@ def test_sync_does_not_reclaim_a_healthy_long_running_job(
     assert transport.delete_calls == []
 
 
-def test_sync_reclaims_missing_runner_after_short_grace(
+def test_sync_reclaims_missing_runner_after_grace(
     session: Session, scope: dict[str, str], clock: datetime
 ) -> None:
     connection = _connection(session, scope)
     pool = _pool(session, scope, connection)
     instance, runner = _instance_with_runner(session, scope, connection, pool, clock)
-    instance.ready_at = clock - timedelta(seconds=61)
+    instance.ready_at = clock - timedelta(seconds=181)
     instance.runner_id = None
     session.delete(runner)
     session.flush()

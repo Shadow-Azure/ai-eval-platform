@@ -1,0 +1,5 @@
+# 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
+# git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
+#   pnpm run record:i18n -- .agents/flow/issues/m8-48-spot-warm-pool-cleanup.md
+m8-48-spot-warm-pool-cleanup.md: 26caebafc2f4a189645934a8d9976262b585da28
+m8-48-spot-warm-pool-cleanup.en.md: 2704b3e6340e93271a3b0931f99528859a49ae0f

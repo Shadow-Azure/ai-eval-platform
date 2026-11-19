@@ -205,12 +205,14 @@ waiting_for_price → requested → creating → cloud-init/user_data → regist
 
 以下情况应启用架构预留的队列后端：持续需要 50–100 以上并发、要求秒级确定性派发、GitHub 排队/限流成为主要故障，或需要比 workflow_job 更精细的公平调度。切换时保留 in-job 执行脚本、任务包、回调与 OSS 契约，只替换 ExecutionBackend。
 
-## 竞争态池零常驻生命周期（M8-34）
+## 竞争态池零常驻与 warm pool（M8-34 / M8-48）
 
-竞争态 spot 池不保留常驻实例：无 queued job 时 `current_size=0`。每个 shard job 临时创建一台 spot 实例 +
+竞争态 spot 池默认不保留常驻实例（`min_capacity=0`）：无 queued job 时 `current_size=0`。每个 shard job 临时创建一台 spot 实例 +
 一个 ephemeral runner；runner 退出后实例立即关机/terminate，controller 以 Runner 可接单状态而非实例状态判定容量。
 GitHub `workflow_job` webhook 触发 reconcile，30s 轮询兜底；容量公式 `desired = queued_jobs - (online+registering)`。
-冷启动由预烘焙 AMI/预拉镜像承担，不引入 warm pool。
+冷启动由预烘焙 AMI/预拉镜像承担。
+M8-48 允许 `min_capacity≥1` 的小规模 warm pool：`min_capacity` 按 Runner 数解释，无排队时也补足到该下限，
+仍受 `max_capacity`、价格阈值和单批创建上限约束；默认 0 保持零常驻语义。
 
 ## 竞价资源 SpotDuration 保底（M8-35）
 
@@ -251,3 +253,17 @@ execute job 在 `started` 前失败（脚本包、checkout、dispatch 校验或�
 running/scoring/uploading attempt 做 `max_capacity` 硬闸，因此两条评测并发时 Agent 数不超过池上限。
 
 分片进度租约与 queue timeout 的改造由 #307 单列，不重复实现。
+
+## 竞争态池 warm pool、lost grace 与 Runner 清理（M8-48）
+
+容量缺口取排队缺口与 warm pool 缺口的最大值：`queue_gap = max(0, queued - idle - starting*slots)`，
+`warm_gap = max(0, min_capacity - live - starting*slots)`，`desired = min(max_capacity, current_size + ceil(max(queue_gap, warm_gap)/slots))`。
+`min_capacity` 是 Runner 数下限，默认 0 时行为与 M8-34 零常驻一致；价格阈值、`max_capacity` 与单批创建上限仍生效。
+
+`eval_spot_runner_lost_grace_seconds` 默认 180 秒，覆盖 2–3 分钟冷启动后的注册窗口和短暂心跳抖动；只有 Runner
+持续 offline 或心跳超过 `heartbeat_timeout + grace` 才回收，已恢复的 Runner 不会被一次短抖动带走。缩容跳过注册不满
+`eval_spot_runner_min_idle_seconds`（默认 120 秒）的 Runner，避免刚注册就被 drain；已运行过 Job 的 Runner 不受影响。
+
+Worker 定期调用 Runner 清理：只删除超过 `eval_runner_offline_retention_seconds`（默认 7 天）的 offline 行，
+且该行没有活跃 attempt 或非终态实例引用。终态 attempt 与已释放/中断实例保留历史，但先释放指向被删行的外键指针；
+实例的 `cost_json.runner_name` 仍可用于排障。容量统计使用 `online/busy` 白名单并显式排除历史状态，offline/draining 行不参与容量。

@@ -343,6 +343,139 @@ def test_desired_capacity_is_capped_by_max_capacity(
     assert state["capacity_reason"] == capacity_control.REASON_CAPACITY_SCALE_UP
 
 
+def test_warm_pool_replenishes_min_capacity_without_queue(
+    session: Session, scope: dict[str, str]
+) -> None:
+    """M8-48 (#313): min_capacity is a floor, not just a scale-down guard."""
+
+    settings = get_settings()
+    fake = FakeProvisioner(price_cny=Decimal("0.1000"))
+    pool = _spot_pool_with_connection(session, scope, min_capacity=1, max_capacity=4)
+    now = datetime.now(UTC)
+
+    state = capacity_control.reconcile_pool(
+        session, pool, settings=settings, now=now, provisioner=fake
+    )
+
+    assert state["capacity_reason"] == capacity_control.REASON_CAPACITY_SCALE_UP
+    assert state["warm_pool_gap"] == 1
+    assert state["scaled_up"] == 1
+    instances = list(
+        session.scalars(
+            select(ProvisionedInstance).where(ProvisionedInstance.resource_pool_id == pool.id)
+        )
+    )
+    assert [instance.status for instance in instances] == ["requested"]
+
+    # The in-flight instance reserves the warm slot; the next tick must not
+    # create a second one.
+    later = now + timedelta(seconds=30)
+    state = capacity_control.reconcile_pool(
+        session, pool, settings=settings, now=later, provisioner=fake
+    )
+    assert state["starting_instances"] == 1
+    assert state["warm_pool_gap"] == 0
+    assert state["scaled_up"] == 0
+    assert len(
+        list(
+            session.scalars(
+                select(ProvisionedInstance).where(
+                    ProvisionedInstance.resource_pool_id == pool.id
+                )
+            )
+        )
+    ) == 1
+
+
+def test_warm_pool_still_respects_price_threshold(
+    session: Session, scope: dict[str, str]
+) -> None:
+    """M8-48 (#313): the warm floor never bypasses the cost cap."""
+
+    settings = get_settings()
+    fake = FakeProvisioner(price_cny=Decimal("0.2000"))
+    pool = _spot_pool_with_connection(
+        session,
+        scope,
+        min_capacity=1,
+        max_capacity=4,
+        price_threshold_cny=Decimal("0.1000"),
+    )
+
+    state = capacity_control.reconcile_pool(
+        session, pool, settings=settings, now=datetime.now(UTC), provisioner=fake
+    )
+
+    assert state["capacity_reason"] == capacity_control.REASON_PRICE_ABOVE_THRESHOLD
+    assert state["warm_pool_gap"] == 1
+    assert state["scaled_up"] == 0
+    assert (
+        session.scalar(
+            select(func.count())
+            .select_from(ProvisionedInstance)
+            .where(ProvisionedInstance.resource_pool_id == pool.id)
+        )
+        == 0
+    )
+
+
+def test_zero_resident_default_stays_at_zero_without_queue(
+    session: Session, scope: dict[str, str]
+) -> None:
+    """The default min_capacity=0 keeps the M8-34 zero-resident behaviour."""
+
+    settings = get_settings()
+    fake = FakeProvisioner()
+    pool = _spot_pool_with_connection(session, scope, min_capacity=0, max_capacity=4)
+
+    state = capacity_control.reconcile_pool(
+        session, pool, settings=settings, now=datetime.now(UTC), provisioner=fake
+    )
+
+    assert state["capacity_reason"] is None
+    assert state["capacity_gap"] == 0
+    assert state["warm_pool_gap"] == 0
+    assert state["scaled_up"] == 0
+    assert (
+        session.scalar(
+            select(func.count())
+            .select_from(ProvisionedInstance)
+            .where(ProvisionedInstance.resource_pool_id == pool.id)
+        )
+        == 0
+    )
+
+
+def test_capacity_ignores_historical_offline_runner_rows(
+    session: Session, scope: dict[str, str]
+) -> None:
+    """M8-48 (#313): 300+ offline rows must not add current/desired capacity."""
+
+    pool = _spot_pool_with_connection(session, scope, min_capacity=0, max_capacity=4)
+    old = datetime.now(UTC) - timedelta(days=2)
+    for index in range(20):
+        _runner(
+            session,
+            scope,
+            pool,
+            name=f"history-{index}",
+            status="offline",
+            heartbeat_at=old,
+            registered_at=old,
+            with_instance=False,
+        )
+
+    state = capacity_control.pool_capacity_state(
+        session, pool, settings=get_settings(), now=datetime.now(UTC), provisioner=FakeProvisioner()
+    )
+
+    assert state["idle_runners"] == 0
+    assert state["live_runners"] == 0
+    assert state["current_size"] == 0
+    assert state["desired_capacity"] == 0
+    assert state["capacity_gap"] == 0
+
+
 # ---------------------------------------------------------------------------
 # Scale up
 # ---------------------------------------------------------------------------
@@ -622,6 +755,58 @@ def test_scale_down_respects_min_capacity(
     assert len(fake.releases) == 1
 
 
+def test_scale_down_protects_just_registered_runner(
+    session: Session, scope: dict[str, str]
+) -> None:
+    """M8-48 (#313): a new runner must not be drained in its registration tick."""
+
+    settings = get_settings()
+    fake = _RecordingProvisioner()
+    pool = _spot_pool_with_connection(session, scope, min_capacity=0, max_capacity=4)
+    now = datetime.now(UTC)
+    _runner(session, scope, pool, name="runner-new", heartbeat_at=now, registered_at=now)
+    _runner(
+        session,
+        scope,
+        pool,
+        name="runner-old",
+        heartbeat_at=now,
+        registered_at=now - timedelta(minutes=5),
+    )
+
+    state = capacity_control.reconcile_pool(
+        session, pool, settings=settings, now=now, provisioner=fake
+    )
+
+    # Both are surplus, but only the older runner is eligible this tick.
+    assert state["scaled_down"] == 1
+    assert len(fake.releases) == 1
+    released = session.scalar(
+        select(Runner).where(
+            Runner.resource_pool_id == pool.id, Runner.status == "offline"
+        )
+    )
+    assert released is not None and released.provider_runner_id == "runner-old"
+    new_runner = session.scalar(
+        select(Runner).where(
+            Runner.resource_pool_id == pool.id,
+            Runner.provider_runner_id == "runner-new",
+        )
+    )
+    assert new_runner is not None and new_runner.status == "online"
+
+    # Once the protection window passes the remaining runner is released.
+    later = now + timedelta(seconds=settings.eval_spot_runner_min_idle_seconds + 1)
+    new_runner.last_heartbeat_at = later
+    session.flush()
+    state = capacity_control.reconcile_pool(
+        session, pool, settings=settings, now=later, provisioner=fake
+    )
+    assert state["scaled_down"] == 1
+    assert len(fake.releases) == 2
+    assert new_runner.status == "offline"
+
+
 def test_scale_down_keeps_runners_needed_by_queued_cases(
     session: Session, scope: dict[str, str]
 ) -> None:
@@ -677,7 +862,16 @@ def test_release_failure_keeps_instance_and_continues(
     fake = _RecordingProvisioner(release_error="release_denied")
     pool = _spot_pool_with_connection(session, scope, min_capacity=0, max_capacity=4)
     now = datetime.now(UTC)
-    runner, instance = _runner(session, scope, pool, name="runner-1", heartbeat_at=now)
+    runner, instance = _runner(
+        session,
+        scope,
+        pool,
+        name="runner-1",
+        heartbeat_at=now,
+        # M8-48: the min-idle guard protects a just-registered runner; this
+        # test exercises release failure, so make it old enough to release.
+        registered_at=now - timedelta(minutes=5),
+    )
     assert instance is not None
 
     state = capacity_control.reconcile_pool(

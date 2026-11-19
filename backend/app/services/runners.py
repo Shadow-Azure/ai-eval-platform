@@ -19,14 +19,30 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..config import Settings, get_settings
 from ..defaults import DEFAULT_PROJECT_ID, DEFAULT_TENANT_ID
-from ..models import Project, ResourcePool, Runner, Tenant
+from ..models import EvalCaseAttempt, Project, ProvisionedInstance, ResourcePool, Runner, Tenant
 from .runner_labels import DEFAULT_RUNS_ON
+
+#: M8-48 (#313): attempts in these states still own work. Mirrors
+#: ``services.evaluations.ACTIVE_ATTEMPT_STATUSES`` without importing the much
+#: heavier evaluation module into the runner service.
+ACTIVE_ATTEMPT_STATUSES = (
+    "pending",
+    "dispatching",
+    "queued",
+    "leased",
+    "running",
+    "scoring",
+    "uploading",
+)
+#: Provisioned instances in these states are already settled; only such an
+#: instance may let go of its runner pointer during retention cleanup.
+TERMINAL_INSTANCE_STATUSES = ("released", "interrupted")
 
 
 class RunnerBusyConflict(Exception):
@@ -216,6 +232,97 @@ def sweep_stale_runners(
     if swept:
         session.commit()
     return swept
+
+
+def cleanup_offline_runners(
+    session: Session,
+    *,
+    settings: Settings,
+    now: datetime | None = None,
+    batch_size: int | None = None,
+) -> int:
+    """Delete expired offline runner rows (M8-48 #313).
+
+    A zero-resident spot pool creates one ephemeral runner per job, so runner
+    rows grow without bound (production held 300+ offline rows). This pass is
+    deliberately conservative:
+
+    * only ``offline`` rows with no busy binding and no *active* attempt or
+      non-terminal instance reference are candidates;
+    * a row expires only after ``eval_runner_offline_retention_seconds`` since
+      it was deregistered or last heartbeated, so recent diagnosis survives;
+    * terminal attempts and released/interrupted instances keep their history
+      but release the FK pointer to the deleted row. Their own events and
+      ``cost_json.runner_name`` remain the diagnostics trail.
+
+    Idempotent: a second pass finds no candidate. Returns the number deleted
+    and commits only when something was removed (the caller may keep its own
+    transaction otherwise).
+    """
+
+    now = now or datetime.now(UTC)
+    limit = max(
+        1,
+        int(batch_size if batch_size is not None else settings.eval_runner_cleanup_batch_size),
+    )
+    cutoff = now - timedelta(seconds=max(0, settings.eval_runner_offline_retention_seconds))
+    active_attempt = (
+        select(EvalCaseAttempt.id)
+        .where(
+            EvalCaseAttempt.runner_id == Runner.id,
+            EvalCaseAttempt.status.in_(ACTIVE_ATTEMPT_STATUSES),
+        )
+        .exists()
+    )
+    active_instance = (
+        select(ProvisionedInstance.id)
+        .where(
+            ProvisionedInstance.runner_id == Runner.id,
+            ProvisionedInstance.status.not_in(TERMINAL_INSTANCE_STATUSES),
+        )
+        .exists()
+    )
+    candidate_ids = list(
+        session.scalars(
+            select(Runner.id)
+            .where(
+                Runner.status == "offline",
+                Runner.busy_case_attempt_id.is_(None),
+                func.coalesce(
+                    Runner.deregistered_at,
+                    Runner.last_heartbeat_at,
+                    Runner.created_at,
+                )
+                <= cutoff,
+                ~active_attempt,
+                ~active_instance,
+            )
+            .order_by(Runner.id)
+            .limit(limit)
+        )
+    )
+    if not candidate_ids:
+        return 0
+
+    session.execute(
+        update(EvalCaseAttempt)
+        .where(
+            EvalCaseAttempt.runner_id.in_(candidate_ids),
+            EvalCaseAttempt.status.not_in(ACTIVE_ATTEMPT_STATUSES),
+        )
+        .values(runner_id=None)
+    )
+    session.execute(
+        update(ProvisionedInstance)
+        .where(
+            ProvisionedInstance.runner_id.in_(candidate_ids),
+            ProvisionedInstance.status.in_(TERMINAL_INSTANCE_STATUSES),
+        )
+        .values(runner_id=None)
+    )
+    session.execute(delete(Runner).where(Runner.id.in_(candidate_ids)))
+    session.commit()
+    return len(candidate_ids)
 
 
 def bind_case(session: Session, *, runner: Runner, case_run_id: str) -> Runner:
