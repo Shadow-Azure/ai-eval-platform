@@ -52,7 +52,7 @@ jobs:
     needs: prepare
     if: needs.prepare.outputs.cases != '[]'
     runs-on: [self-hosted, linux, eval]
-    timeout-minutes: 60
+    timeout-minutes: ${{ github.event.client_payload.job_timeout_minutes || 60 }}
     strategy:
       fail-fast: false
       matrix:

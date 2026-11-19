@@ -22,6 +22,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from ..agent_timeout import dispatch_timeout_seconds, job_timeout_minutes
 from ..config import Settings, get_settings
 from ..models import EvalCaseAttempt, EvalCaseRun, EvalEvent, EvalRun, Outbox
 from . import capacity, evaluations, lifecycle
@@ -200,11 +201,20 @@ def _refresh_dispatch_window(
     cases = manifest.get("cases") or []
     cap = run.effective_concurrency or run.requested_concurrency or 1
     waves = max(1, math.ceil(len(cases) / max(1, int(cap))))
-    deadline = now + timedelta(seconds=run.case_timeout_seconds * waves + 300)
+    # M8-43 (#304): both windows must outlive the execute job. The historical
+    # whole-shard formula stays as a lower bound for multi-wave shards; the
+    # job-derived value covers one matrix job's case + post-processing.
+    deadline_seconds = max(
+        run.case_timeout_seconds * waves + 300,
+        dispatch_timeout_seconds(run.case_timeout_seconds),
+    )
+    deadline = now + timedelta(seconds=deadline_seconds)
     manifest["deadline"] = deadline.isoformat(timespec="microseconds").replace("+00:00", "Z")
     text = json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True)
     digest = "sha256:" + hashlib.sha256(text.encode()).hexdigest()
-    expires_at = now + timedelta(seconds=settings.eval_shard_ttl_seconds)
+    expires_at = now + timedelta(
+        seconds=max(settings.eval_shard_ttl_seconds, deadline_seconds)
+    )
     row.payload_json = {
         **payload,
         "manifest_text": text,
@@ -212,6 +222,7 @@ def _refresh_dispatch_window(
         "client_payload": {
             **client_payload,
             "manifest_digest": digest,
+            "job_timeout_minutes": job_timeout_minutes(run.case_timeout_seconds),
             "expires_at": expires_at.isoformat(timespec="microseconds").replace("+00:00", "Z"),
         },
     }

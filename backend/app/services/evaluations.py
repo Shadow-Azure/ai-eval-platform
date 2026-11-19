@@ -24,8 +24,12 @@ from ..agent_timeout import (
     DEFAULT_AGENT_TIMEOUT_SECONDS,
     MAX_AGENT_TIMEOUT_SECONDS,
     MIN_AGENT_TIMEOUT_SECONDS,
+    TimeoutHierarchyError,
+    dispatch_timeout_seconds,
     effective_agent_timeout,
+    effective_case_timeout,
     is_valid_agent_timeout,
+    job_timeout_minutes,
 )
 from ..config import Settings
 from ..defaults import DEFAULT_PROJECT_ID, DEFAULT_TENANT_ID
@@ -186,10 +190,12 @@ def create_synthetic_evaluation(
     )
     if not isinstance(requested, int) or not 1 <= requested <= 256:
         raise EvaluationInvalid("requested_concurrency 必须在 1..256 之间", field="requested_concurrency")
-    timeout = case_timeout_seconds if case_timeout_seconds is not None else 3600
-    if not isinstance(timeout, int) or not (
+    requested_timeout = (
+        case_timeout_seconds if case_timeout_seconds is not None else 3600
+    )
+    if not isinstance(requested_timeout, int) or not (
         settings.eval_min_case_timeout_seconds
-        <= timeout
+        <= requested_timeout
         <= settings.eval_max_case_timeout_seconds
     ):
         raise EvaluationInvalid(
@@ -310,6 +316,17 @@ def create_synthetic_evaluation(
             f"{MIN_AGENT_TIMEOUT_SECONDS}..{MAX_AGENT_TIMEOUT_SECONDS} 之间",
             field="agent_timeout_seconds",
         )
+    # M8-43 (#304): the case budget must outlive the Agent, and a launch request
+    # that is equal or shorter is raised to the minimum instead of producing an
+    # inverted hierarchy. Reject only when even the minimum exceeds the cap.
+    try:
+        timeout = effective_case_timeout(
+            agent_timeout_seconds=agent_timeout,
+            requested_case_timeout_seconds=requested_timeout,
+            max_case_timeout_seconds=settings.eval_max_case_timeout_seconds,
+        )
+    except TimeoutHierarchyError as exc:
+        raise EvaluationInvalid(str(exc), field="agent_timeout_seconds") from exc
 
     run = EvalRun(
         tenant_id=tenant_id,
@@ -467,8 +484,17 @@ def build_case_dispatches(
 
     bundle = ShardDispatchBundle()
     tenant_id = str(DEFAULT_TENANT_ID)
-    deadline = now + timedelta(minutes=settings.eval_shard_deadline_minutes)
-    expires_at = now + timedelta(seconds=settings.eval_shard_ttl_seconds)
+    # M8-43 (#304): the manifest deadline and dispatch TTL must outlive the
+    # execute job; a 30-minute static deadline expired before a 90-minute job
+    # could even start under queue pressure.
+    deadline_seconds = max(
+        settings.eval_shard_deadline_minutes * 60,
+        dispatch_timeout_seconds(run.case_timeout_seconds),
+    )
+    deadline = now + timedelta(seconds=deadline_seconds)
+    expires_at = now + timedelta(
+        seconds=max(settings.eval_shard_ttl_seconds, deadline_seconds)
+    )
     runs_on = run_runs_on(session, run, settings)
 
     for shard_index, start in enumerate(range(0, len(case_runs), shard_size)):
@@ -527,6 +553,9 @@ def build_case_dispatches(
             "manifest_url": manifest_url,
             "manifest_digest": manifest_digest,
             "runs_on": runs_on,
+            # M8-43 (#304): the execute job reads this instead of a static
+            # 60-minute timeout. ceil(case + 10m) > case > agent.
+            "job_timeout_minutes": job_timeout_minutes(run.case_timeout_seconds),
             "expires_at": expires_at.isoformat(timespec="microseconds").replace("+00:00", "Z"),
         }
         try:

@@ -57,7 +57,7 @@ test("eval-shard execute job runs exactly one case per matrix job", () => {
     "RUNNER_PRESIGN_UPLOADS",
     "RUNNER_STATE_DIR",
     "RUNNER_OBJECT_ROOT",
-    "timeout-minutes: 60",
+    "timeout-minutes: ${{ github.event.client_payload.job_timeout_minutes || 60 }}",
   ]) {
     assert.ok(execute.includes(expected), `execute job missing ${expected}`);
   }
@@ -111,9 +111,19 @@ test("eval-shard workflow carries no secret material or demo tokens", () => {
     "only the explicit trace-e2e job may reference repository secrets",
   );
   assert.ok(traceE2e.includes("secrets.OSS_ENDPOINT"));
-  // The dispatch payload stays a reference: only the opaque matrix case id is
-  // interpolated into shell, never case data or credentials.
-  assert.doesNotMatch(text, /\$\{\{\s*github\.event\.client_payload\.(?!dispatch_key)/, "only dispatch_key may be interpolated");
+  // The dispatch payload stays a reference: only the opaque dispatch key and
+  // the schema-bounded integer job timeout may be interpolated, never case
+  // data or credentials.
+  assert.doesNotMatch(
+    text,
+    /\$\{\{\s*github\.event\.client_payload\.(?!dispatch_key|job_timeout_minutes)/,
+    "only dispatch_key and job_timeout_minutes may be interpolated",
+  );
+  assert.equal(
+    (text.match(/github\.event\.client_payload\.job_timeout_minutes/g) ?? []).length,
+    1,
+    "job_timeout_minutes may only feed the execute timeout-minutes",
+  );
 });
 
 test("500 cases at the default shard size of 64 form 8 dispatches", () => {
