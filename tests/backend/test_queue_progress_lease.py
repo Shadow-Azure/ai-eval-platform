@@ -258,7 +258,7 @@ def test_queue_timeout_does_not_renew_the_shard(
     timed_out = session.get(EvalCaseAttempt, attempts[0].id)
     assert timed_out.status == "timeout"
     # A queue timeout is not progress: the waiting siblings keep the old
-    # deadline instead of receiving a fresh 60s lease.
+    # deadline instead of receiving a fresh lease.
     for sibling in _attempt_rows(session, run)[1:]:
         assert _seconds(
             _aware(sibling.queue_deadline), now + timedelta(seconds=5)
@@ -301,7 +301,7 @@ def test_renewal_stops_at_the_absolute_ceiling(
         ) == pytest.approx(0, abs=1)
 
     # Six seconds later the capped deadline fires; the running attempt is still
-    # inside its 60s execution budget, so only the two queue rows time out.
+    # inside its case budget, so only the two queue rows time out.
     counts = reaper.sweep_lifecycle(
         session, settings=get_settings(), now=now + timedelta(seconds=6)
     )
