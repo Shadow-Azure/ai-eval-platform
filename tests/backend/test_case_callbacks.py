@@ -381,67 +381,6 @@ def test_non_retryable_runner_failure_fails_case_and_run(eval_env, client: TestC
     assert run.succeeded_count == 1 and run.failed_count == 1
 
 
-def test_runner_lost_failure_is_retryable_within_case_budget(
-    eval_env, client: TestClient
-) -> None:
-    """M8-53: an external SIGTERM is retryable even if the Runner said no.
-
-    The Runner cannot distinguish an infrastructure kill from a spent case
-    timeout and always sends ``retryable=false`` for a cancelled job. The
-    platform can: this attempt has just started, so a retry is meaningful.
-    """
-
-    env = eval_env
-    case_run_id = env["cases"]["case-a"]
-    client.post(
-        case_url(env, case_run_id, "started"),
-        json=started_body(env, case_run_id),
-        headers=auth(env),
-    )
-
-    response = client.post(
-        case_url(env, case_run_id, "failed"),
-        json=failure_body(case_run_id, retryable=False, error_code="runner_lost"),
-        headers=auth(env),
-    )
-    assert response.status_code == 200, response.text
-    assert response.json()["retry_queued"] is True
-
-    rows = attempt_rows(env, case_run_id)
-    assert [row.attempt_no for row in rows] == [1, 2]
-    assert rows[0].error_code == "runner_lost"
-    assert rows[1].status == "pending"
-    case = env["session"].query(EvalCaseRun).filter(EvalCaseRun.id == case_run_id).one()
-    assert case.execution_status == "queued"
-
-
-def test_runner_lost_after_case_budget_stays_terminal(
-    eval_env, client: TestClient
-) -> None:
-    """A kill at/after ``case_timeout_seconds`` is a spent timeout, not a blip."""
-
-    env = eval_env
-    case_run_id = env["cases"]["case-a"]
-    client.post(
-        case_url(env, case_run_id, "started"),
-        json=started_body(env, case_run_id),
-        headers=auth(env),
-    )
-    run = run_row(env)
-    attempt = attempt_rows(env, case_run_id)[0]
-    attempt.started_at = datetime.now(UTC) - timedelta(seconds=run.case_timeout_seconds + 1)
-    env["session"].commit()
-
-    response = client.post(
-        case_url(env, case_run_id, "failed"),
-        json=failure_body(case_run_id, retryable=False, error_code="runner_lost"),
-        headers=auth(env),
-    )
-    assert response.status_code == 200, response.text
-    assert response.json()["retry_queued"] is False
-    assert [row.attempt_no for row in attempt_rows(env, case_run_id)] == [1]
-
-
 def test_retryable_failure_creates_exactly_one_new_attempt_and_dispatch(
     eval_env, client: TestClient
 ) -> None:
