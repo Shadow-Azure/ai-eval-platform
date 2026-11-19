@@ -3,7 +3,7 @@
 One sweep covers every active attempt at most once, in a fixed order so the
 most specific timeout wins:
 
-1. platform queue  (dispatching/queued,   ``eval_queue_timeout_seconds``)
+1. platform queue  (dispatching/queued,   shard progress lease)
 2. agent execution (running,             ``run.case_timeout_seconds``)
 3. scoring         (scoring,             ``eval_scoring_timeout_seconds``)
 4. upload grace    (uploading,           ``eval_upload_grace_seconds``)
@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session
 
 from ..config import Settings
 from ..models import EvalCaseAttempt, EvalCaseRun, EvalRun
-from . import lifecycle
+from . import lifecycle, queue_lease
 from .case_attempts import CaseContext
 
 
@@ -49,6 +49,14 @@ def _expired(marker: datetime | None, budget_seconds: int, now: datetime) -> boo
     if marker is None:
         return False
     return marker + timedelta(seconds=budget_seconds) < now
+
+
+def _iso(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value.isoformat(timespec="microseconds")
 
 
 def sweep_lifecycle(
@@ -90,6 +98,7 @@ def sweep_lifecycle(
         error_code: str,
         summary: str,
         retryable: bool,
+        extra_payload: dict | None = None,
     ) -> None:
         if attempt.id in processed:
             return
@@ -114,23 +123,68 @@ def sweep_lifecycle(
                 "timeout_class": error_code,
                 "error_code": error_code,
                 "attempt_id": attempt.id,
+                **(extra_payload or {}),
             },
             now=now,
         )
 
-    # 1. Platform queue: the shard never produced a started callback.
+    # 1. Platform queue: the shard must show progress (a started attempt) or the
+    #    lease runs out. Lease-managed rows read ``queue_deadline``; rows that
+    #    predate the lease columns keep the old fixed wall clock from the phase
+    #    marker so an in-flight upgrade cannot mass-time-out a queued shard.
     for attempt, case, run in rows("dispatching", "queued"):
-        if _expired(_phase_marker(attempt), settings.eval_queue_timeout_seconds, now):
-            expire(
-                attempt,
-                case,
-                run,
-                error_code=lifecycle.QUEUE_TIMEOUT,
-                summary=(
-                    f"用例排队超时：{settings.eval_queue_timeout_seconds} 秒内未开始执行"
-                ),
-                retryable=False,
+        marker = _phase_marker(attempt)
+        deadline = _aware(attempt.queue_deadline)
+        if deadline is None:
+            budget = int(settings.eval_queue_timeout_seconds)
+            expired = _expired(marker, budget, now)
+        else:
+            budget = queue_lease.queue_budget_seconds(run, settings)
+            expired = deadline < now
+        if not expired:
+            continue
+
+        queue_started = _aware(attempt.queue_started_at) or marker
+        wait_seconds = (
+            int(max(0, (now - queue_started).total_seconds()))
+            if queue_started is not None
+            else None
+        )
+        last_progress, shard_started = queue_lease.shard_progress(
+            session, run=run, attempt=attempt
+        )
+        idle_seconds = (
+            int(max(0, (now - last_progress).total_seconds()))
+            if last_progress is not None
+            else wait_seconds
+        )
+        if wait_seconds is None:
+            summary = f"用例排队超时：分片连续无进度超过租约 {budget} 秒"
+        else:
+            summary = (
+                f"用例排队超时：等待 {wait_seconds} 秒未启动，"
+                f"最近 {idle_seconds} 秒无进度（租约 {budget} 秒）"
             )
+        expire(
+            attempt,
+            case,
+            run,
+            error_code=lifecycle.QUEUE_TIMEOUT,
+            summary=summary,
+            retryable=False,
+            extra_payload={
+                "queue_wait_seconds": wait_seconds,
+                "last_progress_at": _iso(last_progress),
+                "queue_started_at": _iso(queue_started),
+                "queue_deadline": _iso(attempt.queue_deadline),
+                "shard_queue_started_at": _iso(shard_started),
+                "lease_budget_seconds": budget,
+                "shard_size": int(run.shard_size or 0),
+                "concurrency": int(
+                    run.effective_concurrency or run.requested_concurrency or 1
+                ),
+            },
+        )
 
     # 2. Agent execution: the per-run case budget is spent.
     for attempt, case, run in rows("running"):

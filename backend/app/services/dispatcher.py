@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session
 from ..agent_timeout import dispatch_timeout_seconds, job_timeout_minutes
 from ..config import Settings, get_settings
 from ..models import EvalCaseAttempt, EvalCaseRun, EvalEvent, EvalRun, Outbox
-from . import capacity, evaluations, lifecycle
+from . import capacity, evaluations, lifecycle, queue_lease
 from .evaluations import SHARD_DISPATCH_TOPIC, refresh_run_progress
 from .github_dispatch import GitHubDispatchError, post_repository_dispatch
 from .object_store import ObjectMissing, ObjectStoreError, object_store_from_settings
@@ -375,9 +375,12 @@ def _dispatch_row(
     }
     for attempt in attempts:
         attempt.dispatch_status = "sent"
-        # The queue timeout budget starts when the shard actually reaches
-        # GitHub, not at creation (capacity gate can hold shards for hours).
+        # The queue budget starts when the shard actually reaches GitHub, not
+        # at creation (capacity gate can hold shards for hours). The progress
+        # lease may extend it later; the absolute 23h ceiling is still measured
+        # from this first queue stamp (M8-45 / #307).
         lifecycle.mark_status(attempt, "queued", now)
+        queue_lease.stamp_dispatch_lease(attempt, run=run, settings=settings, now=now)
     session.add(
         _shard_event(
             session,

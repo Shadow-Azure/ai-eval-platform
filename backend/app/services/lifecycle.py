@@ -29,7 +29,7 @@ from sqlalchemy.orm import Session
 
 from ..config import get_settings
 from ..models import EvalCaseAttempt, EvalEvent, EvalRun
-from . import evaluations
+from . import evaluations, queue_lease
 from .evaluations import refresh_run_progress
 
 if TYPE_CHECKING:  # pragma: no cover - typing only (avoids an import cycle)
@@ -301,6 +301,17 @@ def settle_attempt_failure(
     attempt.error_summary = error_summary
     attempt.retry_reason = RETRYABLE if retryable else PERMANENT
     release_runner_binding(session, attempt)
+    if attempt.started_at is not None:
+        # M8-45 (#307): only an attempt that actually ran proves shard
+        # progress. A queue-timeout/cancelled queued attempt must not renew its
+        # siblings, or a completely stuck shard would keep renewing itself.
+        queue_lease.renew_shard_leases(
+            session,
+            attempt=attempt,
+            run=ctx.run,
+            settings=get_settings(),
+            now=now,
+        )
     _add_attempt_event(session, ctx, event_type=event_type, sequence=sequence, payload=payload)
 
     # M8-43 (#304): a cancelled/timed-out runner may have uploaded a partial

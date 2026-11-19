@@ -122,12 +122,15 @@ id, tenant_id, eval_case_run_id, attempt_no,
 status, phase, dispatch_status, shard_id, github_run_id, github_job_id,
 runner_id, resource_pool_id, idempotency_key, dispatch_key,
 started_at, heartbeat_at, ended_at, sequence,
+queue_started_at, queue_deadline,
 short_token_id, sandbox_metadata_json, artifact_manifest_json,
 error_code, error_summary, retry_reason
 UNIQUE(eval_case_run_id, attempt_no)
 UNIQUE(tenant_id, dispatch_key)
 INDEX(status, heartbeat_at)
 ```
+
+`queue_started_at` 是该 attempt 首次进入 `queued` 的时间；分片的 23 小时绝对租约上限从片内最早的该时间起算。`queue_deadline` 是当前进度租约的截止时间，reaper 只读它；分片内任意 attempt `started` 或已运行 attempt 进入终态时批量续期。两列在升级前的行上为 NULL，此时 reaper 回退旧的固定 `eval_queue_timeout_seconds`。
 
 ### 6.4 `eval_event` 与 `outbox`
 
