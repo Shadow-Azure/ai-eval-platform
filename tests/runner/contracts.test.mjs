@@ -69,3 +69,39 @@ for (const [kind, file, pattern] of invalidFixtures) {
     assert.match(result.errors.join("; "), pattern);
   });
 }
+
+test("dispatch accepts the derived execute job timeout and rejects out-of-range values", () => {
+  const dispatch = readFixture("dispatch.valid.json");
+  for (const value of [1, 60, 90, 7200]) {
+    const result = validatePayload("dispatch", { ...dispatch, job_timeout_minutes: value });
+    assert.equal(result.ok, true, `${value}: ${result.errors.join("; ")}`);
+  }
+  for (const value of [0, 7201, -1, "90"]) {
+    const result = validatePayload("dispatch", { ...dispatch, job_timeout_minutes: value });
+    assert.equal(result.ok, false);
+    assert.match(result.errors.join("; "), /job_timeout_minutes/);
+  }
+  // Older dispatches stay valid: the workflow falls back to its static floor.
+  assert.equal(validatePayload("dispatch", dispatch).ok, true);
+});
+
+test("failure accepts runner cancellation codes and a partial trace manifest", () => {
+  const failure = readFixture("failure.valid.json");
+  const completion = readFixture("completion.multitrace.valid.json");
+  for (const code of ["runner_lost", "execution_timeout"]) {
+    const result = validatePayload("failure", { ...failure, error_code: code });
+    assert.equal(result.ok, true, `${code}: ${result.errors.join("; ")}`);
+  }
+  const withTrace = validatePayload("failure", {
+    ...failure,
+    error_code: "runner_lost",
+    trace_manifest: completion.trace_manifest,
+  });
+  assert.equal(withTrace.ok, true, withTrace.errors.join("; "));
+  const invalidTrace = validatePayload("failure", {
+    ...failure,
+    trace_manifest: { objects: [{ artifact_kind: "score" }] },
+  });
+  assert.equal(invalidTrace.ok, false);
+  assert.match(invalidTrace.errors.join("; "), /trace_manifest/);
+});

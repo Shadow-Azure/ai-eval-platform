@@ -919,14 +919,23 @@ def build_retry_dispatch(
     # M8-36: retry manifests must carry every frozen run-wide field. Keep the
     # defaults/source lookups local so this module does not import evaluations
     # at import time (evaluations imports the callback handlers).
+    from ..agent_timeout import dispatch_timeout_seconds, job_timeout_minutes
     from .dataset_images import effective_sources, source_records
     from .evaluations import DEFAULT_MAX_TURNS
 
     run = ctx.run
     retry_shard_id = f"{ctx.attempt.shard_id}-o{ctx.case_run.ordinal}a{new_attempt_no}"[:64]
     dispatch_key = f"{run.id}:{retry_shard_id}:{new_attempt_no}"
-    deadline = now + timedelta(minutes=settings.eval_shard_deadline_minutes)
-    expires_at = now + timedelta(seconds=settings.eval_shard_ttl_seconds)
+    # M8-43 (#304): retries keep the same job/dispatch hierarchy as the first
+    # attempt; the manifest must outlive the execute job.
+    deadline_seconds = max(
+        settings.eval_shard_deadline_minutes * 60,
+        dispatch_timeout_seconds(run.case_timeout_seconds),
+    )
+    deadline = now + timedelta(seconds=deadline_seconds)
+    expires_at = now + timedelta(
+        seconds=max(settings.eval_shard_ttl_seconds, deadline_seconds)
+    )
     runs_on = evaluations.run_runs_on(session, run, settings)
     manifest = {
         "schema_version": "1.0",
@@ -972,6 +981,7 @@ def build_retry_dispatch(
         "manifest_url": manifest_url,
         "manifest_digest": manifest_digest,
         "runs_on": runs_on,
+        "job_timeout_minutes": job_timeout_minutes(run.case_timeout_seconds),
         "expires_at": expires_at.isoformat(timespec="microseconds").replace("+00:00", "Z"),
     }
     validate_payload("dispatch", client_payload)
@@ -1028,6 +1038,27 @@ def handle_failed(
         if _event_exists(ctx, sequence=payload["sequence"], event_id=payload["event_id"]):
             return {"ok": True, "deduped": True, "status": ctx.attempt.status}
         raise StaleAttempt(f"attempt 处于终态 {ctx.attempt.status}，拒绝失败回调")
+
+    # M8-43 (#304): a job cancellation uploads a partial trace before its
+    # terminal failed callback. Attach the manifest to the attempt so the
+    # settlement path can enqueue ingestion; the objects were already checked
+    # by the preceding uploads callback.
+    if payload.get("trace_manifest") is not None:
+        try:
+            trace_manifest = normalize_trace_manifest(payload["trace_manifest"])
+            trace_items = trace_objects(trace_manifest)
+            # The uploads callback normally checks ownership before this
+            # terminal callback. Re-check here so a failure callback alone can
+            # never attach another attempt's objects.
+            _verify_trace_object_ownership(ctx, trace_items)
+            merged = dict(ctx.attempt.artifact_manifest_json or {})
+            merged["trace_manifest"] = trace_manifest
+            merged["objects"] = merge_manifest_objects(
+                merged.get("objects"), trace_items
+            )
+            ctx.attempt.artifact_manifest_json = merged
+        except TraceManifestError as exc:
+            raise _manifest_error(exc) from exc
 
     # A scoring-only fault must never rerun the agent (design 06 §6.3): the
     # runner's retryable flag is ignored for that class and the case settles as

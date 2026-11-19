@@ -6,7 +6,7 @@ English | [中文](m9-per-case-badcase-report.md)
 kind: issue
 milestone: m9
 priority: P0
-status: done
+status: in-progress
 scope:
   - backend/app/**
   - tests/**

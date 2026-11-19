@@ -50,7 +50,7 @@ index -> budgets -> wrap -> pairing -> terminology
 
 M2 把执行与数据集、Agent 解耦：平台经 repository_dispatch 传 eval_run、shard、attempt、manifest 地址与 digest，Runner 校验后执行，再以心跳、上传清单与完成/失败回调回传。`runner-contract/` 保存版本化 Schema，`runner/` 保存 workflow 模板、合成任务与契约测试。
 
-平台为排队、执行、评分、上传与心跳维护五类超时；取消停止新派发，Worker 对账补齐丢失完成事件。资源连接与竞价池按排队缺口扩缩容，价格超阈值只排队。
+平台为排队、执行、评分、上传与心跳维护五类超时；超时按 `dispatch TTL > job > case > agent` 分层：case 比 Agent 预算多 20 分钟评分/上传余量，execute job 比 case 多 10 分钟启动/回调余量，dispatch/manifest 再比 job 多 10 分钟；相等或更短的 case 自动抬高，无法留余量的 Agent 预算被拒绝。execute job 从 dispatch payload 的 `job_timeout_minutes` 读取动态超时；Runner 收到 SIGTERM 时停止 Agent、上传 partial trace 并发送终态 `runner_lost`/`execution_timeout`，平台不再误记为心跳超时或自动全量重试，取消宽限期 60 秒。取消停止新派发，Worker 对账补齐丢失完成。资源连接与竞价池按排队缺口扩缩容，价格超阈值只排队。
 
 竞价池由供给器管理：Worker 解密租户资源连接中的阿里云 AccessKey，查询区域竞价价格与库存，按排队缺口创建 Spot ECS；实例以一次性 JIT 配置注册为 ephemeral Runner 并绑定池标签。价格、实例状态、竞价中断、心跳丢失与创建超时写入资源事件，队列保持可诊断；缩容先注销 Runner 再释放实例。竞争态池的容量按池级 in-flight 预留在评测间分配：一个评测只看到其他评测尚未占用的容量，started 再按池上限硬闸。execute job 在 started 前失败时回调 `runner_bootstrap_failed` 并按普通重试结算；provider 确认停止的回收走 spot 中断，runner 退出或心跳丢失记为 `runner_lost` 并计入 `max_attempts`。手动重试的平台事件使用平台保留的正数序号，started 对序号冲突幂等。
 

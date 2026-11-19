@@ -27,7 +27,9 @@ from ..agent_timeout import (
     DEFAULT_AGENT_TIMEOUT_SECONDS,
     MAX_AGENT_TIMEOUT_SECONDS,
     MIN_AGENT_TIMEOUT_SECONDS,
+    TimeoutHierarchyError,
     effective_agent_timeout,
+    effective_case_timeout,
     is_valid_agent_timeout,
 )
 from ..config import Settings, get_settings
@@ -698,6 +700,21 @@ def build_preparation(
             f"{MIN_AGENT_TIMEOUT_SECONDS}..{MAX_AGENT_TIMEOUT_SECONDS} 之间",
             field="agent_timeout_seconds",
         )
+    # M8-43 (#304): freeze the effective case budget, not the raw request. A
+    # case budget equal to or shorter than the Agent budget would let the
+    # platform reaper kill a healthy attempt; the confirmed summary shows the
+    # adjusted value and the warning explains why.
+    requested_case_timeout = int(execution["case_timeout_seconds"])
+    try:
+        case_timeout = effective_case_timeout(
+            agent_timeout_seconds=agent_timeout,
+            requested_case_timeout_seconds=requested_case_timeout,
+            max_case_timeout_seconds=settings.eval_max_case_timeout_seconds,
+        )
+    except TimeoutHierarchyError as exc:
+        raise PreparationInvalid(str(exc), field="agent_timeout_seconds") from exc
+    if case_timeout != requested_case_timeout:
+        execution = {**execution, "case_timeout_seconds": case_timeout}
 
     case_keys: list[str] = []
     blockers: list[PreflightIssue] = list(result.blockers)
@@ -710,6 +727,22 @@ def build_preparation(
             blockers.append(PreflightIssue(exc.code, str(exc), exc.field))
 
     warnings = [issue.as_dict() for issue in result.warnings]
+    if case_timeout != requested_case_timeout:
+        warnings.append(
+            {
+                "code": "case_timeout_adjusted",
+                "message": (
+                    f"单用例超时已从 {requested_case_timeout} 秒自动调整为 "
+                    f"{case_timeout} 秒，以覆盖 Agent 预算与评分/上传余量"
+                ),
+                "field": "case_timeout_seconds",
+                "details": {
+                    "requested": requested_case_timeout,
+                    "effective": case_timeout,
+                    "agent_timeout_seconds": agent_timeout,
+                },
+            }
+        )
     if blockers:
         return {
             "ready": False,

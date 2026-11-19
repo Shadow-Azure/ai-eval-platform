@@ -20,6 +20,7 @@ it (``CaseContext`` type and ``build_retry_dispatch``) is deliberately lazy.
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -33,6 +34,8 @@ from .evaluations import refresh_run_progress
 
 if TYPE_CHECKING:  # pragma: no cover - typing only (avoids an import cycle)
     from .case_attempts import CaseContext
+
+logger = logging.getLogger(__name__)
 
 # Stable timeout codes (issue #79 acceptance: one diagnosable code per class).
 QUEUE_TIMEOUT = "queue_timeout"
@@ -91,6 +94,7 @@ PERMANENT_FAILURE_CODES = frozenset(
         "validation_error",
         "callback_permanent",
         "dispatch_failed",
+        EXECUTION_TIMEOUT,
     }
 )
 # Scoring-stage faults: fail the case without rerunning the agent.
@@ -298,6 +302,30 @@ def settle_attempt_failure(
     attempt.retry_reason = RETRYABLE if retryable else PERMANENT
     release_runner_binding(session, attempt)
     _add_attempt_event(session, ctx, event_type=event_type, sequence=sequence, payload=payload)
+
+    # M8-43 (#304): a cancelled/timed-out runner may have uploaded a partial
+    # trace just before its terminal callback. Enqueue it in this transaction
+    # so the trace page shows what the Agent did instead of a permanent
+    # ``pending`` badge. Ingestion itself stays asynchronous and must never
+    # fail the settlement. A failure without any trace is explicitly
+    # ``unlinked`` (the UI can then say the timeout happened before upload)
+    # rather than leaving an ambiguous pending state.
+    try:
+        from .trace_ingestion import (
+            enqueue_attempt,
+            has_ingestible_trace_objects,
+            set_case_trace_status,
+        )
+
+        if has_ingestible_trace_objects(attempt):
+            with session.begin_nested():
+                enqueue_attempt(session, attempt, now=now)
+        else:
+            set_case_trace_status(
+                session, case_run=ctx.case_run, attempt=attempt, status="unlinked"
+            )
+    except Exception:  # noqa: BLE001 - trace bookkeeping is post-failure work
+        logger.exception("enqueue trace ingestion failed for attempt %s", attempt.id)
 
     retried = False
     new_attempt_no = attempt.attempt_no + 1

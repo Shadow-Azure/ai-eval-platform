@@ -236,7 +236,10 @@ class Settings(BaseSettings):
     # Cancellation grace period (M4-02 A2). Running/scoring/uploading attempts
     # stay alive so their artifacts can settle; after this window the reconciler
     # force-cancels whatever is left so a cancelled run can never hang forever.
-    eval_cancel_grace_seconds: int = 600
+    # M8-43 (#304): the runner now sends a terminal callback on SIGTERM, so the
+    # grace only needs to cover that callback round-trip, not a full 10-minute
+    # wait after GitHub confirmed the cancel.
+    eval_cancel_grace_seconds: int = 60
     # Budget pause grace period (M4-05, design 06 §8). Interrupted attempts may
     # upload their existing artifacts; after this window the reconciler settles
     # whatever is left as ``budget_paused`` so the run can reach paused_budget.

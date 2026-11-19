@@ -13,7 +13,9 @@ import {
   missingSourceAssets,
 } from "../lib/source-archive.mjs";
 import { verifyToken } from "../lib/auth.mjs";
+import { runAgentExec } from "../lib/agent-exec.mjs";
 import { postCallback } from "../lib/callback-client.mjs";
+import { buildCancellationFailure } from "../lib/cancellation.mjs";
 import { requireValid, validateDispatch, validateManifest, validateStarted } from "../lib/contracts.mjs";
 import { DispatchGuard } from "../lib/dispatch-guard.mjs";
 import { ContractError } from "../lib/errors.mjs";
@@ -848,14 +850,42 @@ async function realCase(
         "-lc",
         runtimeAdapter.agentScript(),
       );
-      agent = dockerRun(execArgs, {
-        allowFailure: true,
+      const agentOutcome = await runAgentExec(execArgs, {
+        agentName,
         // M8-32: the outer container kill must outlive the inner Agent timeout.
         timeout: Number(
           process.env.REAL_TASK_AGENT_TIMEOUT_MS ||
             Math.max(1_900_000, agentTimeoutMs + 120_000),
         ),
       });
+      if (agentOutcome.cancelled) {
+        // M8-43 (#304): a job timeout/cancel sends SIGTERM. Stop the Agent,
+        // keep the partial trace and return it to main so it can upload and
+        // post a terminal callback before GitHub SIGKILLs the step.
+        const message = `Runner 收到 ${agentOutcome.signal}，job 在 Agent 执行阶段被取消`;
+        console.error(message);
+        writeDiagnostic(
+          join(workdir, "trace"),
+          "runner-cancelled.json",
+          `${JSON.stringify({
+            type: "trace.failed",
+            code: "runner_lost",
+            phase: "executing",
+            signal: agentOutcome.signal,
+            message,
+          })}\n`,
+        );
+        return {
+          cancelled: true,
+          errorCode: "runner_lost",
+          errorSummary: message,
+          traceBundle: collectCapture(),
+          executionStatus: "failed",
+          resultStatus: "not_scored",
+          durationMs: Date.now() - startedAt,
+        };
+      }
+      agent = agentOutcome;
       const version = dockerRun(
         ["exec", agentName, "bash", "-lc", "claude --version 2>/dev/null || true"],
         { allowFailure: true, timeout: 15_000 },
@@ -1153,6 +1183,181 @@ async function main() {
     throw lastError ?? new Error("upload-urls 换取失败");
   };
 
+  const uploadFields = (file, bundle) => ({
+    logical_path: file.logical_path,
+    native_format: file.native_format,
+    runtime_version: file.runtime_version ?? bundle.runtime_version ?? "unknown",
+    format_version: file.format_version ?? "1",
+  });
+
+  /** Upload presigned objects and return the platform-reported object list. */
+  const publishCaseObjects = async (item, pendingObjects) => {
+    let reportedObjects = pendingObjects;
+    if (presignUploads) {
+      const uploads = await requestUploadUrls(item, pendingObjects);
+      const keyOf = (kind, digest) => `${kind}\0${digest}`;
+      const pendingByKey = new Map(
+        pendingObjects.map((pending) => [keyOf(pending.artifact_kind, pending.sha256), pending]),
+      );
+      for (const upload of uploads) {
+        const pending = pendingByKey.get(keyOf(upload.artifact_kind, upload.sha256));
+        if (!pending) {
+          throw Object.assign(
+            new Error(`upload-urls 返回未知对象 ${upload.artifact_kind}/${upload.sha256}`),
+            { code: "upload_failed" },
+          );
+        }
+        const bytes = store.get(pending.object_key);
+        let putError = null;
+        for (let attempt = 1; attempt <= 5; attempt += 1) {
+          try {
+            const putResponse = await fetch(upload.upload_url, {
+              method: "PUT",
+              headers: upload.headers ?? {},
+              body: bytes,
+              signal: AbortSignal.timeout(30000),
+            });
+            if (putResponse.ok) {
+              putError = null;
+              break;
+            }
+            putError = Object.assign(new Error(`对象上传失败：HTTP ${putResponse.status}`), {
+              code: "upload_failed",
+            });
+          } catch (error) {
+            putError = error;
+          }
+          if (attempt < 5) await new Promise((resolve) => setTimeout(resolve, 1000 * attempt));
+        }
+        if (putError) throw putError;
+      }
+      reportedObjects = pendingObjects.map((pending) => {
+        const upload = uploads.find(
+          (candidate) =>
+            candidate.artifact_kind === pending.artifact_kind && candidate.sha256 === pending.sha256,
+        );
+        if (!upload) {
+          throw Object.assign(
+            new Error(`upload-urls 缺少对象 ${pending.artifact_kind}/${pending.sha256}`),
+            { code: "upload_failed" },
+          );
+        }
+        return {
+          ...pending,
+          object_key: upload.object_key,
+          sha256: upload.sha256,
+          size: upload.size,
+          content_type: upload.headers?.["content-type"] ?? pending.content_type,
+        };
+      });
+    }
+    return reportedObjects;
+  };
+
+  const postUploads = async (item, reportedObjects) => {
+    const uploadObject = ({ artifact_kind, object_key, sha256: digest, size, content_type, logical_path, native_format, runtime_version, format_version }) => ({
+      artifact_kind,
+      object_key,
+      sha256: digest,
+      size,
+      content_type,
+      ...(logical_path ? { logical_path } : {}),
+      ...(native_format ? { native_format } : {}),
+      ...(runtime_version ? { runtime_version } : {}),
+      ...(format_version ? { format_version } : {}),
+    });
+    const upload = requireValid("upload", {
+      schema_version: "1.0",
+      case_run_id: item.case_run_id,
+      attempt: dispatch.attempt,
+      objects: reportedObjects.map(uploadObject),
+    });
+    return postCallback(
+      `${manifest.callback_base_url}/runner/v1/case-runs/${item.case_run_id}/uploads`,
+      upload,
+      { eventId: `evt_${item.case_run_id}_uploads_${dispatch.attempt}`, token },
+    );
+  };
+
+  /**
+   * M8-43 (#304): upload the partial trace kept from a cancelled Agent and
+   * report a terminal failure before the job is killed. Failures here are
+   * logged only: the platform-side heartbeat/execution reaper still settles
+   * the attempt, but the callback is the fast, diagnosable path.
+   */
+  const reportCancelledCase = async (item, caseResult) => {
+    const failureEventId = `evt_${item.case_run_id}_failed_${dispatch.attempt}`;
+    try {
+      const caseBundle = caseResult.traceBundle ?? { files: [] };
+      const traceFiles = dedupeTraceObjects(caseBundle.files ?? []);
+      let traceManifest = null;
+      if (traceFiles.length > 0) {
+        const pendingObjects = traceFiles.map((file) => ({
+          artifact_kind: file.artifact_kind,
+          ...store.putBytes(file.bytes, { contentType: file.content_type }),
+          ...uploadFields(file, caseBundle),
+        }));
+        // GitHub escalates SIGTERM to SIGKILL in ~7.5s. Spend at most 5s on the
+        // trace upload and still send the terminal failure if it is too slow.
+        const uploaded = await Promise.race([
+          (async () => {
+            const reportedObjects = await publishCaseObjects(item, pendingObjects);
+            const uploadResult = await postUploads(item, reportedObjects);
+            if (!uploadResult.ok) {
+              console.error(
+                `cancelled trace uploads callback failed: HTTP ${uploadResult.status}`,
+              );
+              return null;
+            }
+            return traceManifestFromBundle(caseBundle, reportedObjects);
+          })().catch((error) => {
+            console.error(`cancelled trace upload failed: ${error?.message || error}`);
+            return null;
+          }),
+          new Promise((resolve) =>
+            setTimeout(() => {
+              console.error("cancelled trace upload budget exhausted");
+              resolve(null);
+            }, 3_000).unref?.(),
+          ),
+        ]);
+        traceManifest = uploaded;
+      }
+      const failure = requireValid(
+        "failure",
+        buildCancellationFailure({
+          caseRunId: item.case_run_id,
+          attempt: dispatch.attempt,
+          eventId: failureEventId,
+          sequence: TERMINAL_FAILURE_SEQUENCE,
+          errorCode: caseResult.errorCode || "runner_lost",
+          summary: caseResult.errorSummary,
+          traceManifest,
+        }),
+      );
+      const result = await postCallback(
+        `${manifest.callback_base_url}/runner/v1/case-runs/${item.case_run_id}/failed`,
+        failure,
+        { eventId: failureEventId, token },
+      );
+      console.error(
+        JSON.stringify({
+          status: result.ok ? "terminal_callback_sent" : "terminal_callback_failed",
+          case_run_id: item.case_run_id,
+          attempt: dispatch.attempt,
+          execution_status: "failed",
+          error_code: failure.error_code,
+          phase: "executing",
+          trace_objects: traceManifest?.objects?.length ?? 0,
+          callback_status: result.status,
+          callback_attempts: result.attempts,
+        }),
+      );
+    } catch (error) {
+      console.error(`cancellation callback error: ${error?.message || error}`);
+    }
+  };
+
   try {
     for (const item of cases) {
       const started = requireValid("started", {
@@ -1309,10 +1514,24 @@ async function main() {
       } finally {
         // Stopped on both success and exception: SIGTERM, up to 5s, then SIGKILL.
         try {
-          await stopHeartbeatSidecar(heartbeatSidecar);
+          // GitHub gives ~7.5s after SIGTERM; leave most of it for the partial
+          // trace upload and terminal callback.
+          await stopHeartbeatSidecar(heartbeatSidecar, {
+            timeoutMs: caseResult?.cancelled ? 500 : 5_000,
+          });
         } catch {
           // Best-effort liveness only.
         }
+      }
+      if (caseResult.cancelled) {
+        // The agent was interrupted by SIGTERM. Upload the partial trace and
+        // send a terminal failure before GitHub escalates to SIGKILL.
+        await reportCancelledCase(item, caseResult);
+        fail(
+          caseResult.errorSummary || "job cancelled",
+          caseResult.errorCode || "runner_lost",
+          1,
+        );
       }
       const { score } = caseResult;
       const caseBundle = caseResult.traceBundle ?? {
@@ -1335,105 +1554,18 @@ async function main() {
         ],
       };
       const traceFiles = dedupeTraceObjects(caseBundle.files);
-      const uploadFields = (file) => ({
-        logical_path: file.logical_path,
-        native_format: file.native_format,
-        runtime_version: file.runtime_version ?? caseBundle.runtime_version ?? "unknown",
-        format_version: file.format_version ?? "1",
-      });
       const scoreObject = store.putJson(score);
       const pendingObjects = [
         { artifact_kind: "score", ...scoreObject },
         ...traceFiles.map((file) => ({
           artifact_kind: file.artifact_kind,
           ...store.putBytes(file.bytes, { contentType: file.content_type }),
-          ...uploadFields(file),
+          ...uploadFields(file, caseBundle),
         })),
       ];
-
-      let reportedObjects = pendingObjects;
-      if (presignUploads) {
-        const uploads = await requestUploadUrls(item, pendingObjects);
-        const keyOf = (kind, digest) => `${kind}\0${digest}`;
-        const pendingByKey = new Map(
-          pendingObjects.map((pending) => [keyOf(pending.artifact_kind, pending.sha256), pending]),
-        );
-        for (const upload of uploads) {
-          const pending = pendingByKey.get(keyOf(upload.artifact_kind, upload.sha256));
-          if (!pending) {
-            throw Object.assign(
-              new Error(`upload-urls 返回未知对象 ${upload.artifact_kind}/${upload.sha256}`),
-              { code: "upload_failed" },
-            );
-          }
-          const bytes = store.get(pending.object_key);
-          let putError = null;
-          for (let attempt = 1; attempt <= 5; attempt += 1) {
-            try {
-              const putResponse = await fetch(upload.upload_url, {
-                method: "PUT",
-                headers: upload.headers ?? {},
-                body: bytes,
-                signal: AbortSignal.timeout(30000),
-              });
-              if (putResponse.ok) {
-                putError = null;
-                break;
-              }
-              putError = Object.assign(new Error(`对象上传失败：HTTP ${putResponse.status}`), {
-                code: "upload_failed",
-              });
-            } catch (error) {
-              putError = error;
-            }
-            if (attempt < 5) await new Promise((resolve) => setTimeout(resolve, 1000 * attempt));
-          }
-          if (putError) throw putError;
-        }
-        reportedObjects = pendingObjects.map((pending) => {
-          const upload = uploads.find(
-            (candidate) =>
-              candidate.artifact_kind === pending.artifact_kind && candidate.sha256 === pending.sha256,
-          );
-          if (!upload) {
-            throw Object.assign(
-              new Error(`upload-urls 缺少对象 ${pending.artifact_kind}/${pending.sha256}`),
-              { code: "upload_failed" },
-            );
-          }
-          return {
-            ...pending,
-            object_key: upload.object_key,
-            sha256: upload.sha256,
-            size: upload.size,
-            content_type: upload.headers?.["content-type"] ?? pending.content_type,
-          };
-        });
-      }
+      const reportedObjects = await publishCaseObjects(item, pendingObjects);
       objects.push(...reportedObjects);
-
-      const uploadObject = ({ artifact_kind, object_key, sha256: digest, size, content_type, logical_path, native_format, runtime_version, format_version }) => ({
-        artifact_kind,
-        object_key,
-        sha256: digest,
-        size,
-        content_type,
-        ...(logical_path ? { logical_path } : {}),
-        ...(native_format ? { native_format } : {}),
-        ...(runtime_version ? { runtime_version } : {}),
-        ...(format_version ? { format_version } : {}),
-      });
-      const upload = requireValid("upload", {
-        schema_version: "1.0",
-        case_run_id: item.case_run_id,
-        attempt: dispatch.attempt,
-        objects: reportedObjects.map(uploadObject),
-      });
-      const uploadResult = await postCallback(
-        `${manifest.callback_base_url}/runner/v1/case-runs/${item.case_run_id}/uploads`,
-        upload,
-        { eventId: `evt_${item.case_run_id}_uploads_${dispatch.attempt}`, token },
-      );
+      const uploadResult = await postUploads(item, reportedObjects);
       if (!uploadResult.ok) {
         const retryable = uploadResult.status === 0 || uploadResult.status >= 500 || uploadResult.status === 429;
         await postCallback(`${manifest.callback_base_url}/runner/v1/case-runs/${item.case_run_id}/failed`, requireValid("failure", {
@@ -1444,10 +1576,14 @@ async function main() {
           sequence: TERMINAL_FAILURE_SEQUENCE,
           error_code: retryable ? "callback_retryable" : "upload_failed",
           retryable,
-          error_summary: `上传清单回调失败：HTTP ${uploadResult.status}`,
+          error_summary: `上传清单回调失败：HTTP ${uploadResult.status} ${String(uploadResult.body || "").slice(0, 300)}`,
           phase: "uploading",
         }), { eventId: `evt_${item.case_run_id}_failed_${dispatch.attempt}`, token });
-        fail(`上传清单回调失败：HTTP ${uploadResult.status}`, retryable ? "callback_retryable" : "upload_failed", 1);
+        fail(
+          `上传清单回调失败：HTTP ${uploadResult.status} ${String(uploadResult.body || "").slice(0, 300)}`,
+          retryable ? "callback_retryable" : "upload_failed",
+          1,
+        );
       }
 
       const scoreReport = reportedObjects.find((object) => object.artifact_kind === "score");
