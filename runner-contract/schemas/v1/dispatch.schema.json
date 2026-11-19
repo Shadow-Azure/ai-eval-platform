@@ -69,6 +69,31 @@
       "minimum": 1,
       "maximum": 7200,
       "description": "GitHub execute job timeout derived from the frozen case budget. Optional for dispatches created before #304; the workflow falls back to 60 minutes only when absent."
+    },
+    "scripts_bundle": {
+      "type": "object",
+      "description": "Content-addressed runner scripts bundle frozen for this shard. It lets the workflow locate the image cache without calling the platform scripts endpoint; the workflow still verifies md5/sha256 before extracting.",
+      "additionalProperties": false,
+      "required": ["name", "md5", "sha256", "size"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^eval-runner-scripts-[0-9a-f]{32}\\.tar\\.gz$"
+        },
+        "md5": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
     }
   }
 }

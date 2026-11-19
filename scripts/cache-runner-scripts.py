@@ -17,12 +17,22 @@ from app.services.object_store import object_store_from_settings
 from app.services.runner_scripts_cache import (
     build_scripts_bundle,
     ensure_runner_scripts_bundle,
+    write_runner_scripts_cache,
 )
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo-root", default=".", help="checked-out repository root")
+    parser.add_argument(
+        "--out-dir",
+        default=None,
+        help=(
+            "write eval-runner-scripts-<md5>.tar.gz + manifest.json to this image "
+            "cache directory instead of uploading; the spot image copies the "
+            "directory to /opt/eval/runner-scripts"
+        ),
+    )
     parser.add_argument(
         "--github-output",
         default=None,
@@ -31,6 +41,13 @@ def main() -> int:
     args = parser.parse_args()
 
     artifact = build_scripts_bundle(Path(args.repo_root).resolve())
+    if args.out_dir:
+        target = write_runner_scripts_cache(artifact, args.out_dir)
+        print(
+            f"runner scripts image cache: {target} "
+            f"md5={artifact.md5} sha256={artifact.sha256} size={artifact.size}"
+        )
+        return 0
     store = object_store_from_settings(get_settings())
     if store is None:
         print(
