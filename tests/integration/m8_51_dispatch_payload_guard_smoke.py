@@ -117,7 +117,7 @@ def main() -> int:
             .all()[-1]
         )
 
-    # Scenario 1: complete bundle config → 10-property payload, pin in row only.
+    # Scenario 1: complete bundle config → 8-field Plan C payload, pin in row.
     run1 = create_run("bundle")
     transport1 = FakeTransport([(204, "")])
     outcome1 = dispatcher.dispatch_pending_outbox(session, transport=transport1)
@@ -125,16 +125,21 @@ def main() -> int:
     payload1 = transport1.calls[0]["body"]["client_payload"]
     serialized = json.dumps(payload1, ensure_ascii=False).encode("utf-8")
     assert outcome1.dispatched == 1
-    assert len(payload1) == 10, f"expected 10 properties, got {len(payload1)}"
+    assert len(payload1) == 8, f"expected 8 properties, got {len(payload1)}"
     assert len(serialized) < 60 * 1024
     assert "scripts_bundle" not in payload1
+    assert "manifest_digest" not in payload1
+    assert "expires_at" not in payload1
     assert row1.payload_json["scripts_bundle"]["name"] == BUNDLE_NAME
+    assert row1.payload_json["manifest_digest"].startswith("sha256:")
+    assert row1.payload_json["expires_at"].endswith("Z")
     assert row1.status == "sent"
-    evidence["scenario_1_ten_properties"] = {
+    evidence["scenario_1_eight_properties"] = {
         "client_payload_properties": len(payload1),
         "client_payload_bytes": len(serialized),
         "scripts_bundle_in_payload": "scripts_bundle" in payload1,
         "scripts_bundle_in_outbox_row": row1.payload_json["scripts_bundle"],
+        "manifest_digest_in_outbox_row": row1.payload_json["manifest_digest"],
         "github_status": row1.payload_json["github_status"],
     }
 
@@ -142,7 +147,7 @@ def main() -> int:
     run2 = create_run("eleven")
     row2 = row_for(run2)
     payload2 = dict(row2.payload_json["client_payload"])
-    payload2["extra"] = "boom"
+    payload2.update({"extra_a": 1, "extra_b": 2, "extra_c": 3})
     row2.payload_json = {**row2.payload_json, "client_payload": payload2}
     session.commit()
     transport2 = FakeTransport()

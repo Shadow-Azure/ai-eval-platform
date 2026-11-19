@@ -134,7 +134,7 @@ def test_preflight_rejects_more_than_ten_properties(monkeypatch: pytest.MonkeyPa
     assert "超过 GitHub 上限 10" in excinfo.value.message
 
 
-def test_preflight_rejects_a_payload_at_or_above_the_byte_budget(
+def test_preflight_rejects_a_payload_above_the_byte_budget(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     configure(monkeypatch)
@@ -149,6 +149,26 @@ def test_preflight_rejects_a_payload_at_or_above_the_byte_budget(
     assert transport.calls == []
     assert excinfo.value.retryable is False
     assert "字节" in excinfo.value.message
+
+
+def test_preflight_accepts_a_payload_of_exactly_the_byte_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+
+    configure(monkeypatch)
+    prefix = len(json.dumps({"manifest_url": ""}, ensure_ascii=False).encode("utf-8"))
+    payload = {"manifest_url": "x" * (60 * 1024 - prefix)}
+    serialized = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    assert len(serialized) == 60 * 1024
+
+    transport = FakeTransport([(204, "")])
+    result = post_repository_dispatch(
+        event_type="eval-shard", client_payload=payload, transport=transport
+    )
+
+    assert result["ok"] is True
+    assert len(transport.calls) == 1
 
 
 def test_preflight_rejects_a_non_object_payload(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -178,20 +198,21 @@ def test_preflight_rejects_an_overlong_event_type(monkeypatch: pytest.MonkeyPatc
 
 def test_preflight_accepts_exactly_ten_properties(monkeypatch: pytest.MonkeyPatch) -> None:
     configure(monkeypatch)
-    transport = FakeTransport([(204, "")])
+    transport = FakeTransport([(204, ""), (204, "")])
+    payload = {f"key_{index}": index for index in range(10)}
 
-    validate_dispatch_request(
-        event_type="eval-shard",
-        client_payload={f"key_{index}": index for index in range(10)},
-    )
+    validate_dispatch_request(event_type="eval-shard", client_payload=payload)
     result = post_repository_dispatch(
-        event_type="eval-shard",
-        client_payload={f"key_{index}": index for index in range(10)},
-        transport=transport,
+        event_type="eval-shard", client_payload=payload, transport=transport
+    )
+    # Exactly 100 characters is allowed; 101 is rejected above.
+    result_at_limit = post_repository_dispatch(
+        event_type="e" * 100, client_payload=payload, transport=transport
     )
 
     assert result["ok"] is True
-    assert len(transport.calls) == 1
+    assert result_at_limit["ok"] is True
+    assert len(transport.calls) == 2
 
 
 def test_422_parameter_error_is_not_retryable(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -212,6 +233,25 @@ def test_422_parameter_error_is_not_retryable(monkeypatch: pytest.MonkeyPatch) -
 def test_422_spammed_error_is_retryable(monkeypatch: pytest.MonkeyPatch) -> None:
     configure(monkeypatch)
     transport = FakeTransport([(422, '{"message":"the endpoint has been spammed"}')])
+
+    with pytest.raises(GitHubDispatchError) as excinfo:
+        post_repository_dispatch(
+            event_type="eval-shard", client_payload={"dispatch_key": "k"}, transport=transport
+        )
+
+    assert excinfo.value.status == 422
+    assert excinfo.value.retryable is True
+
+
+def test_unknown_422_message_stays_retryable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Only documented parameter-validation markers are terminal.
+
+    The response wording is not a stable contract, so an unrecognized 422 must
+    not permanently fail a shard that a retry could still dispatch.
+    """
+
+    configure(monkeypatch)
+    transport = FakeTransport([(422, '{"message":"Validation failed"}')])
 
     with pytest.raises(GitHubDispatchError) as excinfo:
         post_repository_dispatch(
@@ -259,6 +299,45 @@ def test_dispatch_schema_caps_top_level_properties() -> None:
 
     assert "最多 10 个属性" in str(excinfo.value)
     assert "不允许的额外字段" in str(excinfo.value)
+
+
+def test_dispatch_schema_accepts_the_plan_c_eight_field_payload() -> None:
+    from app.runner_contracts import ContractInvalid, validate_payload
+
+    payload = {
+        "schema_version": "1.1",
+        "eval_run_id": "run-1",
+        "shard_id": "shard_000",
+        "attempt": 1,
+        "dispatch_key": "run-1:shard_000:1",
+        "manifest_url": "http://127.0.0.1:8000/runner/v1/shards/shard_000/manifest?x=1",
+        "runs_on": ["self-hosted", "linux", "eval"],
+        "job_timeout_minutes": 70,
+    }
+    validate_payload("dispatch", payload)
+
+    # Version 1.1 requires the two job-start fields; the moved descriptor
+    # fields stay optional so the workflow's hydrated dispatch still validates.
+    with pytest.raises(ContractInvalid):
+        validate_payload("dispatch", {**payload, "runs_on": None})
+    validate_payload(
+        "dispatch",
+        {
+            **payload,
+            "manifest_digest": "sha256:" + "a" * 64,
+            "expires_at": "2026-11-19T00:00:00Z",
+        },
+    )
+
+
+def test_python_schema_subset_supports_property_bounds() -> None:
+    from app.runner_contracts import validate
+
+    schema = {"type": "object", "minProperties": 1, "maxProperties": 2}
+
+    assert validate(schema, {"a": 1}) == []
+    assert "至少 1 个属性" in "; ".join(validate(schema, {}))
+    assert "最多 2 个属性" in "; ".join(validate(schema, {"a": 1, "b": 2, "c": 3}))
 
 
 

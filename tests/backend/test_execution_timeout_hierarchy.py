@@ -149,10 +149,13 @@ def test_dispatch_payload_carries_the_derived_job_timeout_and_window(
     assert payload["job_timeout_minutes"] == job_timeout_minutes(4800) == 90
     assert manifest["case_timeout_seconds"] == 4800
     assert manifest["agent_timeout_seconds"] == 3600
+    assert "expires_at" not in payload
+    assert "manifest_digest" not in payload
 
+    row = session.query(Outbox).filter(Outbox.aggregate_id == run.id).one()
     now = datetime.now(UTC)
     deadline = datetime.fromisoformat(manifest["deadline"].replace("Z", "+00:00"))
-    expires_at = datetime.fromisoformat(payload["expires_at"].replace("Z", "+00:00"))
+    expires_at = datetime.fromisoformat(row.payload_json["expires_at"].replace("Z", "+00:00"))
     assert deadline > now + timedelta(seconds=4800)
     assert expires_at >= deadline
 

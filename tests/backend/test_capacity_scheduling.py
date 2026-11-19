@@ -466,16 +466,16 @@ def test_late_shard_gets_a_fresh_dispatch_window(
     manifest = json.loads(text)
     deadline = datetime.fromisoformat(manifest["deadline"].replace("Z", "+00:00"))
     expires_at = datetime.fromisoformat(
-        second.payload_json["client_payload"]["expires_at"].replace("Z", "+00:00")
+        second.payload_json["expires_at"].replace("Z", "+00:00")
     )
     assert deadline > later + timedelta(hours=1)
     assert expires_at > later
     assert second.payload_json["manifest_digest"] == (
         "sha256:" + hashlib.sha256(text.encode()).hexdigest()
     )
-    assert second.payload_json["client_payload"]["manifest_digest"] == (
-        second.payload_json["manifest_digest"]
-    )
+    # Plan C: the moved fields are not copied back onto the wire payload.
+    assert "manifest_digest" not in second.payload_json["client_payload"]
+    assert "expires_at" not in second.payload_json["client_payload"]
 
 
 def test_started_gate_is_atomic_under_concurrency(engine, configure_settings) -> None:

@@ -366,7 +366,11 @@ def _retarget_pending_dispatches(
             digest = "sha256:" + hashlib.sha256(manifest_text.encode()).hexdigest()
             payload["manifest_text"] = manifest_text
             payload["manifest_digest"] = digest
-            client_payload["manifest_digest"] = digest
+            # M8-51 Plan C: a 1.1 wire payload keeps its 8 start fields; the
+            # descriptor serves this digest from the row. Legacy 1.0 rows keep
+            # the field up to date inside the payload.
+            if client_payload.get("schema_version") == "1.0":
+                client_payload["manifest_digest"] = digest
         payload["fallback"] = {
             "from_pool_id": state.get("from_pool_id"),
             "to_pool_id": target.id,

@@ -33,6 +33,17 @@ DISPATCH_MAX_PAYLOAD_BYTES = 60 * 1024
 DISPATCH_MAX_EVENT_TYPE_LENGTH = 100
 DISPATCH_PAYLOAD_INVALID = "dispatch_payload_invalid"
 
+# Documented 422 parameter-validation messages stay terminal; every other 422
+# keeps the retry path. Markers are matched case-insensitively.
+_422_PARAMETER_MARKERS = (
+    "no more than 10 properties",
+    "only 100 characters",
+    "client_payload",
+    "payload too large",
+    "is too large",
+    "is too long",
+)
+
 
 class GitHubDispatchError(Exception):
     """One dispatch attempt failed (HTTP error or transport failure).
@@ -63,21 +74,25 @@ class DispatchPayloadInvalid(GitHubDispatchError):
 
 
 def _422_is_terminal(text: str) -> bool:
-    """A 422 is terminal unless GitHub reports the endpoint as spammed.
+    """A 422 is terminal only for a known parameter-validation message.
 
-    GitHub returns 422 both for parameter validation (property/size caps) and
-    for "the endpoint has been spammed"; only the latter is transient.
+    GitHub uses 422 both for documented parameter validation and for a
+    spammed endpoint, but the response wording is not a stable contract. The
+    allowlist covers the documented validation messages (property count,
+    length, size); anything else keeps the retry path so a transient 422 from
+    GitHub or an intermediary cannot permanently kill a shard. A spammed 422
+    is retryable by construction.
     """
 
-    return "spammed" not in (text or "").lower()
+    body = (text or "").lower()
+    return any(marker in body for marker in _422_PARAMETER_MARKERS)
 
 
-def validate_dispatch_request(*, event_type: str, client_payload: dict) -> bytes:
+def validate_dispatch_request(*, event_type: str, client_payload: dict) -> None:
     """Enforce GitHub's repositories/dispatches limits before any network call.
 
-    Returns the serialized client_payload so the caller reuses the exact bytes
-    it validated. Raises :class:`DispatchPayloadInvalid` with the concrete
-    property count/size so the failure is diagnosable.
+    Raises :class:`DispatchPayloadInvalid` with the concrete property count or
+    byte size so the failure is diagnosable. No transport call is made.
     """
 
     if not isinstance(event_type, str) or not event_type.strip():
@@ -102,7 +117,6 @@ def validate_dispatch_request(*, event_type: str, client_payload: dict) -> bytes
             f"client_payload 序列化 {len(serialized)} 字节，超过本地护栏 "
             f"{DISPATCH_MAX_PAYLOAD_BYTES} 字节（GitHub 硬上限 64KB）"
         )
-    return serialized
 
 
 def _default_transport(

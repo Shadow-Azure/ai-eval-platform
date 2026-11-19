@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from datetime import UTC, datetime, timedelta
+from threading import Lock
 from typing import Annotated, Any, Literal
 from urllib.parse import urlencode
 
@@ -721,6 +723,98 @@ def shard_manifest(
             "X-Shard-Dispatch-Key": dispatch_key,
             **model_headers,
         },
+    )
+
+
+DESCRIPTOR_RATE_LIMIT = 60
+DESCRIPTOR_RATE_WINDOW_SECONDS = 60.0
+_descriptor_hits: dict[str, list[float]] = {}
+_descriptor_lock = Lock()
+
+
+def _descriptor_rate_limited(dispatch_key: str, now: float) -> bool:
+    """Best-effort per-process descriptor limit (multi-replica deployments
+    still rely on the token, shard binding and GitHub's own limits)."""
+
+    with _descriptor_lock:
+        hits = [
+            stamp
+            for stamp in _descriptor_hits.get(dispatch_key, [])
+            if now - stamp < DESCRIPTOR_RATE_WINDOW_SECONDS
+        ]
+        if len(hits) >= DESCRIPTOR_RATE_LIMIT:
+            _descriptor_hits[dispatch_key] = hits
+            return True
+        hits.append(now)
+        _descriptor_hits[dispatch_key] = hits
+        return False
+
+
+@router.get("/runner/v1/shards/{shard_id}/descriptor")
+def shard_descriptor(
+    shard_id: str,
+    eval_run_id: Annotated[str, Query()],
+    attempt: Annotated[int, Query(ge=1)],
+    dispatch_key: Annotated[str, Query()],
+    authorization: Annotated[str | None, Header()] = None,
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> JSONResponse:
+    """Serve the fields kept out of the 8-property wire dispatch (M8-51 C).
+
+    The caller must present the short-lived task token issued by the manifest
+    endpoint; that token is HMAC-signed and bound to this run/shard/attempt, so
+    the descriptor cannot be read cross-shard. The response is also rate
+    limited per dispatch_key.
+    """
+
+    row, _run, _attempts = _load_shard_dispatch(
+        session,
+        shard_id=shard_id,
+        eval_run_id=eval_run_id,
+        attempt=attempt,
+        dispatch_key=dispatch_key,
+    )
+
+    scheme, _, token = (authorization or "").partition(" ")
+    token = token.strip() if scheme.lower() == "bearer" else ""
+    if not token:
+        raise HTTPException(
+            status_code=401,
+            detail=error_detail("descriptor_token_missing", "缺少 descriptor token"),
+        )
+    try:
+        claims = verify_short_token(token, effective_task_secret(settings) or "")
+    except ShortTokenInvalid as exc:
+        raise HTTPException(
+            status_code=401,
+            detail=error_detail("descriptor_token_invalid", "descriptor token 非法或已过期"),
+        ) from exc
+    bindings = {"eval_run_id": eval_run_id, "shard_id": shard_id, "attempt": attempt}
+    if claims.get("scope") != "case" or any(
+        claims.get(key) != value for key, value in bindings.items()
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail=error_detail("descriptor_forbidden", "descriptor token 与分片不匹配"),
+        )
+
+    if _descriptor_rate_limited(dispatch_key, time.monotonic()):
+        raise HTTPException(
+            status_code=429,
+            detail=error_detail("descriptor_rate_limited", "descriptor 请求过于频繁"),
+        )
+
+    payload = row.payload_json
+    manifest = json.loads(payload["manifest_text"])
+    return JSONResponse(
+        content={
+            "schema_version": "1.0",
+            "manifest_digest": payload["manifest_digest"],
+            "expires_at": payload.get("expires_at") or manifest.get("deadline"),
+            "scripts_bundle": payload.get("scripts_bundle"),
+        },
+        headers={"Cache-Control": "no-store"},
     )
 
 

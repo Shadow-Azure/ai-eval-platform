@@ -189,23 +189,31 @@ jobs:
     outputs:
       cases: ${{ steps.plan.outputs.cases }}
       runs_on: ${{ steps.plan.outputs.runs_on }}
+      dispatch: ${{ steps.hydrate.outputs.dispatch }}
     steps:
-      # M8-47 (#312): the image pre-seed is the primary source, direct private
-      # OSS is the secondary source, and GitHub checkout is the last fallback.
-      # The whole acquisition (metadata + download) is bounded by
-      # RUNNER_SCRIPTS_FETCH_BUDGET_MS so a dead endpoint reaches
-      # runner_bootstrap_failed instead of stalling startup.
+      # M8-51 (#323) Plan C: the wire dispatch carries only 8 start-required
+      # fields. The prepare job validates it, then hydrates the manifest digest
+      # and expiry from the shard descriptor and passes the hydrated dispatch
+      # to every execute job.
+      - name: Materialize the dispatch payload
+        env:
+          DISPATCH_PAYLOAD: ${{ toJson(github.event.client_payload) }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/eval-dispatch"
+          printf '%s' "$DISPATCH_PAYLOAD" > "$RUNNER_TEMP/eval-dispatch/dispatch.json"
+      # The dispatch file is the raw 8-field payload for prepare (and the
+      # hydrated digest/expiry file for execute). It carries no bundle pin;
+      # the fetcher reads the pin from /scripts and verifies the pre-seeded
+      # image cache with it before any download.
       - name: Fetch the scripts bundle
         id: bundle
         timeout-minutes: 2
         env:
-          DISPATCH_PAYLOAD: ${{ toJson(github.event.client_payload) }}
           RUNNER_SCRIPTS_IMAGE_DIR: /opt/eval/runner-scripts
           RUNNER_SCRIPTS_FETCH_BUDGET_MS: "60000"
         run: |
           set -uo pipefail
-          mkdir -p "$RUNNER_TEMP/eval-dispatch"
-          printf '%s' "$DISPATCH_PAYLOAD" > "$RUNNER_TEMP/eval-dispatch/dispatch.json"
           rm -rf "$RUNNER_TEMP/eval-scripts"
           mkdir -p "$RUNNER_TEMP/eval-scripts"
           rm -f "$RUNNER_TEMP/eval-scripts.tar.gz"
@@ -257,14 +265,25 @@ jobs:
             if (size && bytes.length !== size) throw new Error(`size ${bytes.length} != ${size}`);
           }
 
-          function readImageCache() {
-            // A dispatch without a pinned digest cannot prove a cached file is
-            // the expected bundle, so only a complete pin may use the image.
-            if (!expected.name || !expected.sha256) return null;
-            const candidate = path.join(imageDir, expected.name);
+          function readImageCache(metadata = null) {
+            // A legacy dispatch may pin the bundle directly; otherwise the
+            // /scripts metadata response identifies the content-addressed
+            // bundle. The cached file is only used when the pin or metadata
+            // provides a digest that verifies it.
+            const name =
+              expected.name ||
+              (metadata &&
+              typeof metadata.name === "string" &&
+              /^eval-runner-scripts-[0-9a-f]{32}\.tar\.gz$/.test(metadata.name)
+                ? metadata.name
+                : "");
+            const sha256 = expected.sha256 || metadata?.sha256 || "";
+            const md5 = expected.md5 || metadata?.md5 || "";
+            if (!name || (!sha256 && !md5)) return null;
+            const candidate = path.join(imageDir, name);
             if (!fs.existsSync(candidate)) return null;
             const bytes = fs.readFileSync(candidate);
-            verify(bytes, null);
+            verify(bytes, metadata);
             return bytes;
           }
 
@@ -295,6 +314,18 @@ jobs:
                 metadata = JSON.parse((await get(metadataUrl.toString(), {}, 10000)).toString("utf8"));
               } catch (error) {
                 console.error(`scripts bundle metadata unavailable: ${error.message}`);
+              }
+            }
+
+            if (!bytes && metadata) {
+              // The spot image may have pre-seeded this exact content-addressed
+              // bundle; metadata now supplies the name and digests needed to
+              // verify it, so try the local cache again before any download.
+              try {
+                bytes = readImageCache(metadata);
+                if (bytes) source = "image";
+              } catch (error) {
+                console.error(`scripts bundle image cache rejected: ${error.message}`);
               }
             }
 
@@ -366,6 +397,22 @@ jobs:
           cd "$EVAL_SCRIPTS_DIR"
           node runner/lib/contracts.mjs dispatch "$RUNNER_TEMP/eval-dispatch/dispatch.json"
 
+      - name: Hydrate the dispatch descriptor
+        id: hydrate
+        env:
+          DISPATCH_FILE: ${{ runner.temp }}/eval-dispatch/dispatch.json
+        run: |
+          set -euo pipefail
+          : "${EVAL_SCRIPTS_DIR:?EVAL_SCRIPTS_DIR is not set}"
+          cd "$EVAL_SCRIPTS_DIR"
+          node runner/scripts/hydrate-dispatch.mjs --dispatch "$DISPATCH_FILE" --out "$DISPATCH_FILE"
+          node runner/lib/contracts.mjs dispatch "$DISPATCH_FILE"
+          {
+            echo "dispatch<<EOF"
+            node -e 'process.stdout.write(JSON.stringify(JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"))))' "$DISPATCH_FILE"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Plan one matrix entry per case
         id: plan
         run: |
@@ -403,22 +450,35 @@ jobs:
       matrix:
         case: ${{ fromJson(needs.prepare.outputs.cases) }}
     steps:
-      # M8-47 (#312): the image pre-seed is the primary source, direct private
-      # OSS is the secondary source, and GitHub checkout is the last fallback.
-      # The whole acquisition (metadata + download) is bounded by
-      # RUNNER_SCRIPTS_FETCH_BUDGET_MS so a dead endpoint reaches
-      # runner_bootstrap_failed instead of stalling startup.
+      # M8-51 (#323) Plan C: reuse the dispatch hydrated by prepare, so the
+      # runner receives manifest_digest/expires_at without another descriptor
+      # call; the bundle pin still comes from the /scripts metadata endpoint.
+      - name: Materialize the prepared dispatch
+        env:
+          PREPARED_DISPATCH: ${{ needs.prepare.outputs.dispatch }}
+          DISPATCH_PAYLOAD: ${{ toJson(github.event.client_payload) }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/eval-dispatch"
+          if [ -n "${PREPARED_DISPATCH:-}" ]; then
+            printf '%s' "$PREPARED_DISPATCH" > "$RUNNER_TEMP/eval-dispatch/dispatch.json"
+          else
+            # Fallback for an abnormal prepare without a dispatch output; a
+            # legacy 1.0 payload already carries the descriptor fields.
+            printf '%s' "$DISPATCH_PAYLOAD" > "$RUNNER_TEMP/eval-dispatch/dispatch.json"
+          fi
+      # The dispatch file is the raw 8-field payload for prepare (and the
+      # hydrated digest/expiry file for execute). It carries no bundle pin;
+      # the fetcher reads the pin from /scripts and verifies the pre-seeded
+      # image cache with it before any download.
       - name: Fetch the scripts bundle
         id: bundle
         timeout-minutes: 2
         env:
-          DISPATCH_PAYLOAD: ${{ toJson(github.event.client_payload) }}
           RUNNER_SCRIPTS_IMAGE_DIR: /opt/eval/runner-scripts
           RUNNER_SCRIPTS_FETCH_BUDGET_MS: "60000"
         run: |
           set -uo pipefail
-          mkdir -p "$RUNNER_TEMP/eval-dispatch"
-          printf '%s' "$DISPATCH_PAYLOAD" > "$RUNNER_TEMP/eval-dispatch/dispatch.json"
           rm -rf "$RUNNER_TEMP/eval-scripts"
           mkdir -p "$RUNNER_TEMP/eval-scripts"
           rm -f "$RUNNER_TEMP/eval-scripts.tar.gz"
@@ -470,14 +530,25 @@ jobs:
             if (size && bytes.length !== size) throw new Error(`size ${bytes.length} != ${size}`);
           }
 
-          function readImageCache() {
-            // A dispatch without a pinned digest cannot prove a cached file is
-            // the expected bundle, so only a complete pin may use the image.
-            if (!expected.name || !expected.sha256) return null;
-            const candidate = path.join(imageDir, expected.name);
+          function readImageCache(metadata = null) {
+            // A legacy dispatch may pin the bundle directly; otherwise the
+            // /scripts metadata response identifies the content-addressed
+            // bundle. The cached file is only used when the pin or metadata
+            // provides a digest that verifies it.
+            const name =
+              expected.name ||
+              (metadata &&
+              typeof metadata.name === "string" &&
+              /^eval-runner-scripts-[0-9a-f]{32}\.tar\.gz$/.test(metadata.name)
+                ? metadata.name
+                : "");
+            const sha256 = expected.sha256 || metadata?.sha256 || "";
+            const md5 = expected.md5 || metadata?.md5 || "";
+            if (!name || (!sha256 && !md5)) return null;
+            const candidate = path.join(imageDir, name);
             if (!fs.existsSync(candidate)) return null;
             const bytes = fs.readFileSync(candidate);
-            verify(bytes, null);
+            verify(bytes, metadata);
             return bytes;
           }
 
@@ -508,6 +579,18 @@ jobs:
                 metadata = JSON.parse((await get(metadataUrl.toString(), {}, 10000)).toString("utf8"));
               } catch (error) {
                 console.error(`scripts bundle metadata unavailable: ${error.message}`);
+              }
+            }
+
+            if (!bytes && metadata) {
+              // The spot image may have pre-seeded this exact content-addressed
+              // bundle; metadata now supplies the name and digests needed to
+              // verify it, so try the local cache again before any download.
+              try {
+                bytes = readImageCache(metadata);
+                if (bytes) source = "image";
+              } catch (error) {
+                console.error(`scripts bundle image cache rejected: ${error.message}`);
               }
             }
 

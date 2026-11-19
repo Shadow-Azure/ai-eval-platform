@@ -308,6 +308,11 @@ def test_pending_dispatch_is_retargeted_without_breaking_runner_contract(eval_en
         assert manifest["runs_on"] == ["self-hosted", "fixed-eval"]
         assert "spot_fallback" not in client_payload
         assert "spot_fallback" not in manifest
+        # M8-51 Plan C: retargeting keeps the wire payload at 8 fields; the
+        # descriptor serves the recomputed digest from the row.
+        assert len(client_payload) == 8
+        assert "manifest_digest" not in client_payload
+        assert row.payload_json["manifest_digest"].startswith("sha256:")
     assert retargeted[0].payload_json["fallback"]["to_pool_id"] == fixed.id
 
 

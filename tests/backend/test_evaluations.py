@@ -152,6 +152,11 @@ def test_create_builds_run_cases_attempts_and_contract_outbox(
         assert client_payload["eval_run_id"] == run.id
         assert client_payload["attempt"] == 1
         assert client_payload["dispatch_key"] == row.dispatch_key
+        # M8-51 (#323) Plan C: only the 8 start-required fields go on the wire;
+        # digest/expiry are served by the shard descriptor and kept on the row.
+        assert len(client_payload) == 8
+        assert "manifest_digest" not in client_payload
+        assert "expires_at" not in client_payload
 
         manifest_text = payload["manifest_text"]
         manifest = json.loads(manifest_text)
@@ -162,11 +167,11 @@ def test_create_builds_run_cases_attempts_and_contract_outbox(
         assert all({"name", "registry"} <= set(source) for source in manifest["image_sources"])
         import hashlib
 
-        assert client_payload["manifest_digest"] == (
+        assert payload["manifest_digest"] == (
             "sha256:" + hashlib.sha256(manifest_text.encode()).hexdigest()
         )
         assert client_payload["manifest_url"].startswith("http://127.0.0.1:8000/runner/v1/shards/")
-        assert client_payload["expires_at"] > datetime.now(UTC).isoformat()
+        assert payload["expires_at"] > datetime.now(UTC).isoformat()
 
         shard_cases = manifest["cases"]
         assert len(shard_cases) >= 1

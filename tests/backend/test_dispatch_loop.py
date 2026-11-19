@@ -122,10 +122,12 @@ def test_dispatch_pins_the_scripts_bundle_for_image_cache_lookup(
 
     assert len(transport.calls) == 1
     payload = transport.calls[0]["body"]["client_payload"]
-    # M8-51 (#323): the pin stays in the outbox row; the workflow fetches it
-    # through the `/scripts` metadata endpoint instead of the dispatch payload.
+    # M8-51 (#323): the pin stays in the outbox row and is served by the
+    # descriptor; the wire payload has only the 8 start-required fields.
     assert "scripts_bundle" not in payload
-    assert len(payload) == 10
+    assert "manifest_digest" not in payload
+    assert "expires_at" not in payload
+    assert len(payload) == 8
     row = outbox_rows(seeded)[0]
     assert row.payload_json["scripts_bundle"] == {
         "name": name,
@@ -292,7 +294,9 @@ def test_dispatch_guard_rejects_eleven_properties_without_calling_transport(
 ) -> None:
     configure_settings(GITHUB_TOKEN="gh-token")
     run = create_run(seeded, key="guard-11")
-    _mutate_client_payload(seeded, lambda payload: payload.update({"extra": "boom"}))
+    _mutate_client_payload(
+        seeded, lambda payload: payload.update({"extra_a": 1, "extra_b": 2, "extra_c": 3})
+    )
     transport = FakeTransport([])
 
     outcome = dispatcher.dispatch_pending_outbox(seeded, transport=transport)
@@ -301,7 +305,7 @@ def test_dispatch_guard_rejects_eleven_properties_without_calling_transport(
     assert outcome.failed == 1
     row = outbox_rows(seeded)[0]
     assert row.status == "failed"
-    assert row.attempts == 1  # terminal: the retry budget is not consumed
+    assert row.attempts == 1  # one claim, then terminal: no retry attempt
     assert "dispatch_payload_invalid" in row.payload_json["last_error"]
     assert "11" in row.payload_json["last_error"]
     assert {a.status for a in seeded.query(EvalCaseAttempt).all()} == {"dispatch_failed"}
@@ -313,12 +317,74 @@ def test_dispatch_guard_rejects_eleven_properties_without_calling_transport(
     assert "eval.dispatch_failed" in events
 
 
+def test_dispatch_rescues_a_legacy_payload_pin_before_the_preflight(
+    seeded: Session, configure_settings
+) -> None:
+    """Rows created by #312 still carry the pin in client_payload.
+
+    The outbox row keeps its pin; dropping the legacy payload copy lets an
+    in-flight shard from the upgrade window dispatch with 10 properties
+    instead of failing a limit that can never be met with 11.
+    """
+
+    name = "eval-runner-scripts-0123456789abcdef0123456789abcdef.tar.gz"
+    configure_settings(
+        GITHUB_TOKEN="gh-token",
+        RUNNER_SCRIPTS_BUNDLE_NAME=name,
+        RUNNER_SCRIPTS_BUNDLE_MD5="0" * 32,
+        RUNNER_SCRIPTS_BUNDLE_SHA256="a" * 64,
+        RUNNER_SCRIPTS_BUNDLE_SIZE="40960",
+    )
+    create_run(seeded, key="legacy-11")
+    pin = {
+        "name": name,
+        "md5": "0" * 32,
+        "sha256": "a" * 64,
+        "size": 40960,
+    }
+    row = outbox_rows(seeded)[0]
+    current = row.payload_json["client_payload"]
+    legacy_payload = {
+        "schema_version": "1.0",
+        "eval_run_id": current["eval_run_id"],
+        "shard_id": current["shard_id"],
+        "attempt": current["attempt"],
+        "dispatch_key": current["dispatch_key"],
+        "manifest_url": current["manifest_url"],
+        "manifest_digest": row.payload_json["manifest_digest"],
+        "runs_on": current["runs_on"],
+        "job_timeout_minutes": current["job_timeout_minutes"],
+        "expires_at": row.payload_json["expires_at"],
+        "scripts_bundle": pin,
+    }
+    assert len(legacy_payload) == 11
+    row.payload_json = {
+        **row.payload_json,
+        "scripts_bundle": pin,
+        "client_payload": legacy_payload,
+    }
+    seeded.commit()
+    transport = FakeTransport([(204, "")])
+
+    outcome = dispatcher.dispatch_pending_outbox(seeded, transport=transport)
+
+    assert outcome.dispatched == 1
+    assert len(transport.calls) == 1
+    payload = transport.calls[0]["body"]["client_payload"]
+    assert "scripts_bundle" not in payload
+    assert payload["schema_version"] == "1.0"
+    assert len(payload) == 10
+    row = outbox_rows(seeded)[0]
+    assert row.status == "sent"
+    assert row.payload_json["scripts_bundle"] == pin
+
+
 def test_dispatch_guard_rejects_oversized_payload_without_calling_transport(
     seeded: Session, configure_settings
 ) -> None:
     configure_settings(GITHUB_TOKEN="gh-token")
     create_run(seeded, key="guard-64k")
-    # Keep the 10 top-level keys and grow one value past the local byte guard.
+    # Keep the 8 top-level keys and grow one value past the local byte guard.
     _mutate_client_payload(
         seeded, lambda payload: payload.update({"manifest_url": "http://x/" + "a" * (61 * 1024)})
     )
@@ -398,6 +464,22 @@ def test_429_rate_limit_is_retried(seeded: Session, configure_settings) -> None:
     outcome = dispatcher.dispatch_pending_outbox(seeded, transport=transport)
 
     assert outcome.retried == 1
+    row = outbox_rows(seeded)[0]
+    assert row.status == "pending"
+    assert row.attempts == 1
+
+
+def test_unknown_422_is_retried_rather_than_failed_permanently(
+    seeded: Session, configure_settings
+) -> None:
+    configure_settings(GITHUB_TOKEN="gh-token", DISPATCH_MAX_ATTEMPTS="5")
+    create_run(seeded, key="422-unknown")
+    transport = FakeTransport([(422, '{"message":"Validation failed"}')])
+
+    outcome = dispatcher.dispatch_pending_outbox(seeded, transport=transport)
+
+    assert outcome.retried == 1
+    assert outcome.failed == 0
     row = outbox_rows(seeded)[0]
     assert row.status == "pending"
     assert row.attempts == 1

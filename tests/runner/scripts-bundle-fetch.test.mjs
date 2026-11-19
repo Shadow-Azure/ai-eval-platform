@@ -142,6 +142,46 @@ test("image cache is used without calling the platform scripts endpoint", async 
   );
 });
 
+test("metadata names the bundle so a pre-seeded cache survives a payload without a pin", async () => {
+  const { dir, bundle, sha256, md5, name } = fixture();
+  const cacheDir = join(dir, "image-cache");
+  mkdirSync(cacheDir);
+  writeFileSync(join(cacheDir, name), bundle);
+  let bundleDownloads = 0;
+  await withServer(
+    (request, response) => {
+      if (request.url.startsWith("/scripts")) {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(
+          JSON.stringify({
+            name,
+            md5,
+            sha256,
+            size: bundle.length,
+            token: "short-lived-scripts-token",
+            url: `http://127.0.0.1:${request.socket.localPort}/proxy`,
+            oss_url: `http://127.0.0.1:${request.socket.localPort}/oss`,
+          }),
+        );
+      } else {
+        bundleDownloads += 1;
+        response.writeHead(200);
+        response.end(bundle);
+      }
+    },
+    async (base) => {
+      // M8-51 (#323): production dispatches no longer carry the pin, so the
+      // /scripts metadata response must unlock the pre-seeded local cache.
+      const dispatch = writeDispatch(dir, `${base}/manifest`, null);
+      const result = await runFetcher({ dispatch, cacheDir });
+      assert.equal(result.ok, true, result.stderr);
+      assert.match(result.stdout, /source=image/);
+      assert.equal(bundleDownloads, 0, "a verified cache hit must not download the bundle");
+      assert.equal(readFileSync(result.archive).length, bundle.length);
+    },
+  );
+});
+
 test("direct private OSS presigned URL is preferred over the platform proxy", async () => {
   const { dir, bundle, sha256, md5, name } = fixture();
   const cacheDir = join(dir, "empty-cache");

@@ -219,16 +219,23 @@ def _refresh_dispatch_window(
     expires_at = now + timedelta(
         seconds=max(settings.eval_shard_ttl_seconds, deadline_seconds)
     )
+    expires_text = expires_at.isoformat(timespec="microseconds").replace("+00:00", "Z")
+    # M8-51 (#323) Plan C: a 1.1 payload carries only the 8 start-required
+    # fields; the descriptor endpoint serves the digest/expiry from the row.
+    # Legacy 1.0 rows keep their fields updated inside client_payload.
+    updated_payload = {
+        **client_payload,
+        "job_timeout_minutes": job_timeout_minutes(run.case_timeout_seconds),
+    }
+    if client_payload.get("schema_version") == "1.0":
+        updated_payload["manifest_digest"] = digest
+        updated_payload["expires_at"] = expires_text
     row.payload_json = {
         **payload,
         "manifest_text": text,
         "manifest_digest": digest,
-        "client_payload": {
-            **client_payload,
-            "manifest_digest": digest,
-            "job_timeout_minutes": job_timeout_minutes(run.case_timeout_seconds),
-            "expires_at": expires_at.isoformat(timespec="microseconds").replace("+00:00", "Z"),
-        },
+        "expires_at": expires_text,
+        "client_payload": updated_payload,
     }
 
 
@@ -331,6 +338,20 @@ def _dispatch_row(
         row.payload_json = {
             **row.payload_json,
             "scripts_bundle": bundle_pin,
+        }
+    # M8-51 (#323): a row created by the pre-fix code still carries a copy of
+    # the pin inside client_payload. Keep the outbox pin and drop the legacy
+    # copy so an in-flight shard from the upgrade window can still dispatch
+    # instead of failing the 10-property preflight.
+    legacy_payload = row.payload_json.get("client_payload") or {}
+    if "scripts_bundle" in legacy_payload:
+        row.payload_json = {
+            **row.payload_json,
+            "client_payload": {
+                key: value
+                for key, value in legacy_payload.items()
+                if key != "scripts_bundle"
+            },
         }
     session.commit()
 

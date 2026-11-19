@@ -64,7 +64,7 @@ python scripts/cache-runner-scripts.py --out-dir /opt/eval/runner-scripts
 
 目录里同时写 `manifest.json`（name/md5/sha256/size）。未烘焙时 cloud-init 用私有 OSS 的短时预签名 GET 预取并校验 sha256；预取失败不影响启动。
 
-prepare/execute 的 `Fetch the scripts bundle` 按 dispatch payload 的 `scripts_bundle` 找镜像缓存，校验 sha256/md5 后解包；缓存缺失时调用平台 scripts 元数据，优先直连 `oss_url`，再走平台代理，最后才 `actions/checkout`。整段获取默认 60 秒预算，失败由 `runner_bootstrap_failed` 结算。
+prepare/execute 的 `Fetch the scripts bundle` 经分片 `/scripts` 元数据端点取回冻结的包名与摘要（1.1 `repository_dispatch` 载荷只有 8 个启动字段），再用它校验镜像缓存 `/opt/eval/runner-scripts/<name>.tar.gz`；缓存缺失时优先直连元数据返回的 `oss_url`，再走平台代理，最后才 `actions/checkout`。prepare 另用 `scripts/hydrate-dispatch.mjs` 从分片 descriptor 取回 manifest digest/expires 并合并进 Runner 使用的 dispatch 文件，1.0 旧载荷原样透传。整段获取默认 60 秒预算，失败由 `runner_bootstrap_failed` 结算。
 
 ## 目录
 
@@ -78,5 +78,6 @@ prepare/execute 的 `Fetch the scripts bundle` 按 dispatch payload 的 `scripts
 - `lib/callback-client.mjs`：带 `Idempotency-Key` 的有界重试回调。
 - `lib/mock-platform.mjs`：契约测试用的平台 stub。
 - `scripts/plan-cases.mjs`：把分片清单展开为用例级 matrix 的 prepare 入口。
+- `scripts/hydrate-dispatch.mjs`：1.1 dispatch 启动后从分片 descriptor 补齐 manifest digest/expires。
 - `scripts/heartbeat-agent.mjs`：长任务心跳 sidecar。
 - `workflows/eval-shard.yml`：私有 Runner 仓 workflow 模板；M2-05 激活，M4-01 起为 prepare + 每用例 matrix。

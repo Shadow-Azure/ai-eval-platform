@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://ai-eval-platform.local/runner-contract/v1/dispatch.schema.json",
   "title": "Eval shard dispatch",
-  "description": "repository_dispatch client_payload for one evaluation shard. It carries opaque IDs, a manifest reference, a digest and the runner labels the shard must run on, never cases, prompts, model keys or cloud credentials. GitHub allows at most 10 top-level properties and 64KB per dispatch, so scripts bundle metadata stays in the outbox row and is fetched by the workflow through the shard scripts metadata endpoint.",
+  "description": "repository_dispatch client_payload for one evaluation shard. It carries opaque IDs, the manifest reference and the runner labels the shard must run on, never cases, prompts, model keys or cloud credentials. Version 1.1 keeps only the 8 fields needed before the workflow starts; manifest digest, expiry and scripts bundle pin come from the shard descriptor endpoint and are merged into the runner-facing dispatch file. Version 1.0 dispatches remain valid for compatibility. GitHub allows at most 10 top-level properties and 64KB per dispatch.",
   "type": "object",
   "maxProperties": 10,
   "additionalProperties": false,
@@ -12,13 +12,29 @@
     "shard_id",
     "attempt",
     "dispatch_key",
-    "manifest_url",
-    "manifest_digest",
-    "expires_at"
+    "manifest_url"
+  ],
+  "oneOf": [
+    {
+      "properties": {
+        "schema_version": {
+          "const": "1.0"
+        }
+      },
+      "required": ["manifest_digest", "expires_at"]
+    },
+    {
+      "properties": {
+        "schema_version": {
+          "const": "1.1"
+        }
+      },
+      "required": ["runs_on", "job_timeout_minutes"]
+    }
   ],
   "properties": {
     "schema_version": {
-      "const": "1.0"
+      "enum": ["1.0", "1.1"]
     },
     "eval_run_id": {
       "type": "string",

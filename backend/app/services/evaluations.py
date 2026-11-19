@@ -544,20 +544,23 @@ def build_case_dispatches(
             f"{settings.runner_callback_base_url.rstrip('/')}"
             f"{MANIFEST_PATH_TEMPLATE.format(shard_id=shard_id)}?{query}"
         )
+        # M8-51 (#323) Plan C: the wire payload carries only the 8 fields the
+        # workflow needs before it starts (job labels, timeout, manifest URL).
+        # manifest_digest/expires_at are fetched from the shard descriptor by
+        # the workflow and merged into the runner-facing dispatch file.
         client_payload = {
-            "schema_version": "1.0",
+            "schema_version": "1.1",
             "eval_run_id": run.id,
             "shard_id": shard_id,
             "attempt": attempt_no,
             "dispatch_key": dispatch_key,
             "manifest_url": manifest_url,
-            "manifest_digest": manifest_digest,
             "runs_on": runs_on,
             # M8-43 (#304): the execute job reads this instead of a static
             # 60-minute timeout. ceil(case + 10m) > case > agent.
             "job_timeout_minutes": job_timeout_minutes(run.case_timeout_seconds),
-            "expires_at": expires_at.isoformat(timespec="microseconds").replace("+00:00", "Z"),
         }
+        expires_at_text = expires_at.isoformat(timespec="microseconds").replace("+00:00", "Z")
         try:
             validate_payload("dispatch", client_payload)
             validate_payload("manifest", manifest)
@@ -576,6 +579,8 @@ def build_case_dispatches(
                     "client_payload": client_payload,
                     "manifest_text": manifest_text,
                     "manifest_digest": manifest_digest,
+                    # The descriptor endpoint serves this to the workflow.
+                    "expires_at": expires_at_text,
                     "attempt": attempt_no,
                     "shard_id": shard_id,
                 },
