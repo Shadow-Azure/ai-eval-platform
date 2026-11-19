@@ -36,12 +36,12 @@ def _seconds(value: datetime, reference: datetime) -> float:
 
 @pytest.fixture
 def lease_settings(configure_settings):
-    """Small clocks: case budget 60s + 10s grace = 70s lease, 300s ceiling."""
+    """Small clocks: case budget + 10s grace, deliberately large ceiling."""
 
     configure_settings(
         EVAL_QUEUE_TIMEOUT_SECONDS=60,
         EVAL_QUEUE_TIMEOUT_GRACE_SECONDS=10,
-        EVAL_QUEUE_TIMEOUT_MAX_SECONDS=300,
+        EVAL_QUEUE_TIMEOUT_MAX_SECONDS=100000,
         EVAL_LIFECYCLE_BATCH_SIZE=50,
     )
 
@@ -59,6 +59,9 @@ def _make_run(
         name="排队租约",
         case_keys=list(case_keys),
         case_timeout_seconds=case_timeout_seconds,
+        # M8-43 (#304) raises the case budget to outlive the Agent; pin a small
+        # Agent budget so the lease stays in seconds, not hours.
+        agent_timeout_seconds=60,
         idempotency_key=key,
         created_by="agent",
         settings=get_settings(),
@@ -144,6 +147,7 @@ def test_started_renews_waiting_siblings(
 ) -> None:
     configure_settings(GITHUB_TOKEN="gh-token")
     run = _make_run(session, key="lease-start-renew")
+    budget = queue_lease.queue_budget_seconds(run, get_settings())
     now = datetime.now(UTC)
     _queue_shard(
         session,
@@ -166,12 +170,12 @@ def test_started_renews_waiting_siblings(
     )
 
     assert result["status"] == "running"
-    # 60s lease from the start; the old 5s deadline must not survive.
+    # A fresh lease from the start; the old 5s deadline must not survive.
     for attempt in _attempt_rows(session, run):
         if attempt.status == "running":
             continue
         assert _seconds(
-            _aware(attempt.queue_deadline), now + timedelta(seconds=70)
+            _aware(attempt.queue_deadline), now + timedelta(seconds=budget)
         ) == pytest.approx(0, abs=1)
 
     # Ten seconds later the old 5s deadline would have killed them; the lease
@@ -186,6 +190,7 @@ def test_terminal_started_attempt_renews_waiting_siblings(
 ) -> None:
     configure_settings(GITHUB_TOKEN="gh-token")
     run = _make_run(session, key="lease-terminal-renew")
+    budget = queue_lease.queue_budget_seconds(run, get_settings())
     now = datetime.now(UTC)
     _queue_shard(
         session,
@@ -225,7 +230,7 @@ def test_terminal_started_attempt_renews_waiting_siblings(
         if attempt.status in evaluations.TERMINAL_ATTEMPT_STATUSES:
             continue
         assert _seconds(
-            _aware(attempt.queue_deadline), end + timedelta(seconds=70)
+            _aware(attempt.queue_deadline), end + timedelta(seconds=budget)
         ) == pytest.approx(0, abs=1)
 
 
@@ -263,16 +268,17 @@ def test_queue_timeout_does_not_renew_the_shard(
 def test_renewal_stops_at_the_absolute_ceiling(
     session: Session, lease_settings, configure_settings
 ) -> None:
-    configure_settings(GITHUB_TOKEN="gh-token")
+    configure_settings(GITHUB_TOKEN="gh-token", EVAL_QUEUE_TIMEOUT_MAX_SECONDS=300)
     run = _make_run(session, key="lease-ceiling")
+    budget = queue_lease.queue_budget_seconds(run, get_settings())
     now = datetime.now(UTC)
     # The shard first entered the queue 295s ago; the 300s ceiling leaves only
-    # five more seconds even though a fresh renewal budget is 60s.
+    # five more seconds even though a fresh renewal budget is 300s.
     _queue_shard(
         session,
         run,
         now=now,
-        deadline=now + timedelta(seconds=70),
+        deadline=now + timedelta(seconds=budget),
         queue_started_at=now - timedelta(seconds=295),
     )
     case_a = _case_for(session, run, "case-a")

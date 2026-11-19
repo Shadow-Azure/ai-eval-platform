@@ -98,6 +98,7 @@ def main() -> int:
                 shard_size=64,
                 requested_concurrency=8,
                 case_timeout_seconds=case_timeout,
+                agent_timeout_seconds=60,
                 idempotency_key=key,
                 created_by="m8-45-smoke",
                 settings=settings,
