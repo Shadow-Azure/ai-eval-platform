@@ -29,7 +29,8 @@ from app.models import (
     ResourceEvent,
     ResourcePool,
 )
-from app.services import capacity_control, case_attempts, spot_fallback, workbench
+from app.runner_contracts import validate_payload
+from app.services import capacity, capacity_control, case_attempts, spot_fallback, workbench
 from app.services.provisioning.fake import FakeProvisioner
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -235,6 +236,81 @@ def test_three_spot_reclaims_switch_run_to_fixed_before_retry(eval_env) -> None:
     assert config["spot_fallback"]["to_pool_name"] == fixed.name
 
 
+def test_default_max_attempts_reserves_an_attempt_for_fallback(eval_env) -> None:
+    env = eval_env
+    session: Session = env["session"]
+    case_run_id = env["cases"]["case-a"]
+    run = session.get(EvalRun, session.get(EvalCaseRun, case_run_id).eval_run_id)
+    assert run is not None
+    fixed = _fixed_pool(session, run)
+    spot = _spot_pool(session, run, fallback_pool_id=fixed.id, fallback_after=3)
+    _bind_run(session, run, spot=spot, max_attempts=2)
+
+    assert case_attempts.handle_spot_interruption(
+        session, case_run_id=case_run_id, now=BASE_NOW
+    ) is True
+
+    session.expire_all()
+    run = session.get(EvalRun, run.id)
+    assert run.resource_pool_id == fixed.id
+    state = run.resource_pool_snapshot_json["spot_fallback"]
+    assert state["active"] is True
+    # Configured 3 is capped at max_attempts-1 so attempt 2 runs on fixed
+    # instead of the run ending as spot_retry_exhausted.
+    assert state["fallback_after"] == 1
+    assert state["configured_fallback_after"] == 3
+    attempts = _attempts(session, case_run_id)
+    assert [attempt.attempt_no for attempt in attempts] == [1, 2]
+    assert attempts[-1].resource_pool_id == fixed.id
+    case = session.get(EvalCaseRun, case_run_id)
+    assert case is not None
+    assert case.execution_status == "queued"
+    assert case.error_code != "spot_retry_exhausted"
+
+
+def test_pending_dispatch_is_retargeted_without_breaking_runner_contract(eval_env) -> None:
+    env = eval_env
+    session: Session = env["session"]
+    case_run_id = env["cases"]["case-a"]
+    run = session.get(EvalRun, session.get(EvalCaseRun, case_run_id).eval_run_id)
+    assert run is not None
+    fixed = _fixed_pool(session, run)
+    spot = _spot_pool(session, run, fallback_pool_id=fixed.id, fallback_after=2)
+    _bind_run(session, run, spot=spot, max_attempts=4)
+
+    for index in range(2):
+        assert case_attempts.handle_spot_interruption(
+            session, case_run_id=case_run_id, now=BASE_NOW + timedelta(minutes=index)
+        ) is True
+
+    rows = list(
+        session.scalars(
+            select(Outbox).where(
+                Outbox.aggregate_id == run.id,
+                Outbox.status == "pending",
+            )
+        )
+    )
+    assert rows
+    retargeted = [row for row in rows if "fallback" in row.payload_json]
+    assert retargeted
+    for row in rows:
+        client_payload = row.payload_json["client_payload"]
+        manifest_text = row.payload_json["manifest_text"]
+        from json import loads
+
+        manifest = loads(manifest_text)
+        # Both contract payloads are validated by the real runner contract;
+        # retargeting must not add extra fields (additionalProperties: false).
+        validate_payload("dispatch", client_payload)
+        validate_payload("manifest", manifest)
+        assert client_payload["runs_on"] == ["self-hosted", "fixed-eval"]
+        assert manifest["runs_on"] == ["self-hosted", "fixed-eval"]
+        assert "spot_fallback" not in client_payload
+        assert "spot_fallback" not in manifest
+    assert retargeted[0].payload_json["fallback"]["to_pool_id"] == fixed.id
+
+
 def test_fallback_cost_cap_keeps_spot_retry(eval_env) -> None:
     env = eval_env
     session: Session = env["session"]
@@ -409,6 +485,55 @@ def test_price_above_threshold_falls_back_with_supply_reason(session: Session) -
     assert run.resource_pool_snapshot_json["spot_fallback"]["reason"] == (
         spot_fallback.REASON_PRICE
     )
+
+
+def test_old_spot_attempts_stay_charged_to_the_spot_pool(session: Session) -> None:
+    from app.seed import ensure_default_scope
+
+    tenant, _workspace, project = ensure_default_scope(session)
+    run = EvalRun(
+        tenant_id=tenant.id,
+        project_id=project.id,
+        name="pool-attribution-run",
+        status="running",
+        requested_concurrency=1,
+        total_cases=1,
+        queued_count=0,
+        idempotency_key="pool-attribution-run",
+        created_by="agent",
+    )
+    session.add(run)
+    session.flush()
+    fixed = _fixed_pool(session, run)
+    spot = _spot_pool(session, run, fallback_pool_id=fixed.id)
+    # The run has already fallen back to the fixed pool, but this attempt was
+    # dispatched to spot and is still running there.
+    run.resource_pool_id = fixed.id
+    case = EvalCaseRun(
+        tenant_id=tenant.id,
+        eval_run_id=run.id,
+        dataset_case_id="attribution-case",
+        case_key="attribution-case",
+        ordinal=1,
+    )
+    session.add(case)
+    session.flush()
+    session.add(
+        EvalCaseAttempt(
+            tenant_id=tenant.id,
+            eval_case_run_id=case.id,
+            attempt_no=1,
+            status="running",
+            dispatch_status="sent",
+            resource_pool_id=spot.id,
+        )
+    )
+    session.commit()
+
+    assert capacity.pool_started_attempts(session, spot) == 1
+    assert capacity.pool_started_attempts(session, fixed) == 0
+    assert capacity.pool_in_flight(session, spot) == 1
+    assert capacity.pool_in_flight(session, fixed) == 0
 
 
 def test_success_resets_the_consecutive_streak(eval_env) -> None:

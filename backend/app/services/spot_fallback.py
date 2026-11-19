@@ -12,7 +12,10 @@ run-level fallback switch:
 * once a configured threshold is reached, move the run to an existing
   fixed/on-demand pool, record the fallback in the run configuration snapshot
   and resource events, and retarget every not-yet-dispatched shard so the next
-  jobs run on the fallback pool.
+  jobs run on the fallback pool. Provider reclaims use
+  ``min(fallback_after, max_attempts - 1)`` so one attempt remains for the
+  fallback pool; supply blocks have no attempt budget and use the configured
+  threshold directly.
 
 The platform does not create a new cloud provider or a new pool: the operator
 configures an existing pool as ``fallback_pool_id`` in the spot pool's
@@ -27,12 +30,12 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from ..config import Settings, get_settings
@@ -295,7 +298,6 @@ def fallback_reference_price(pool: ResourcePool) -> Decimal | None:
         config.get("reference_price_cny"),
         config.get("price_cny"),
         pool.price_cny,
-        pool.price_threshold_cny,
     ):
         price = _positive_price(raw)
         if price is not None:
@@ -350,21 +352,14 @@ def _retarget_pending_dispatches(
         if not client_payload:
             continue
         client_payload["runs_on"] = labels
-        client_payload["spot_fallback"] = {
-            "active": True,
-            "to_pool_id": target.id,
-            "to_pool_name": target.name,
-        }
         payload["client_payload"] = client_payload
         manifest_text = payload.get("manifest_text")
         if isinstance(manifest_text, str) and manifest_text:
             manifest = json.loads(manifest_text)
             manifest["runs_on"] = labels
-            manifest["spot_fallback"] = {
-                "active": True,
-                "to_pool_id": target.id,
-                "to_pool_name": target.name,
-            }
+            # The runner contract is strict (additionalProperties: false), so
+            # only mutate the existing runs_on field. Fallback bookkeeping stays
+            # on the outbox payload, never in the manifest/dispatch contract.
             manifest_text = json.dumps(
                 manifest, ensure_ascii=False, indent=2, sort_keys=True
             )
@@ -394,6 +389,13 @@ def _retarget_pending_attempts(
             .where(
                 EvalCaseRun.eval_run_id == run.id,
                 EvalCaseAttempt.status.in_(PENDING_ATTEMPT_STATUSES),
+                # A dispatcher may already have claimed this attempt while its
+                # outbox row is processing; do not retarget a shard whose job
+                # still targets the old pool.
+                or_(
+                    EvalCaseAttempt.dispatch_status.is_(None),
+                    EvalCaseAttempt.dispatch_status == "pending",
+                ),
             )
         )
     )
@@ -637,6 +639,13 @@ def record_spot_reclaim(
     settings = settings or get_settings()
     if run.resource_pool_id is None:
         return FallbackDecision()
+    # Serialize concurrent reclaims for the same run: two callbacks must not
+    # both observe failures=2 and activate the fallback twice. SQLite ignores
+    # FOR UPDATE; PostgreSQL row locks the run for the duration of the caller's
+    # transaction.
+    locked = session.get(EvalRun, run.id, with_for_update=True)
+    if locked is not None:
+        run = locked
     state = _state(run)
     if state.get("active"):
         return _active_decision(state)
@@ -644,21 +653,27 @@ def record_spot_reclaim(
     config = fallback_config(source, settings=settings)
     if config is None:
         return FallbackDecision()
+    # Reserve one attempt for the fallback pool: with max_attempts=2 and
+    # fallback_after=3 the third reclaim would otherwise never dispatch a fixed
+    # attempt. The effective threshold is min(configured, max_attempts-1).
+    effective_after = max(1, min(config.after, int(run.max_attempts or 1) - 1))
+    effective = replace(config, after=effective_after)
+    state["configured_fallback_after"] = config.after
     failures = int(state.get("consecutive_failures") or 0) + 1
     state["consecutive_failures"] = failures
     state["last_failure_at"] = _now_iso(now)
     state["last_failure_reason"] = f"{REASON_PROVIDER_RECLAIM}:{reason}"
     state["from_pool_id"] = source.id
     state["from_pool_name"] = source.name
-    state["fallback_after"] = config.after
+    state["fallback_after"] = effective.after
     _write_state(run, state)
-    if failures < config.after:
+    if failures < effective.after:
         return FallbackDecision(failures=failures)
     return _try_activate(
         session,
         run=run,
         source=source,
-        config=config,
+        config=effective,
         reason=REASON_PROVIDER_RECLAIM,
         state=state,
         now=now,
@@ -681,6 +696,9 @@ def record_supply_block(
     config = fallback_config(pool, settings=settings)
     if config is None:
         return FallbackDecision()
+    locked = session.get(EvalRun, run.id, with_for_update=True)
+    if locked is not None:
+        run = locked
     state = _state(run)
     if state.get("active"):
         return _active_decision(state)
@@ -749,10 +767,9 @@ def waiting_runs_for_pool(session: Session, pool: ResourcePool) -> list[EvalRun]
         .where(
             EvalRun.status.in_(("queued", "running")),
             EvalCaseAttempt.status.in_(("pending", "dispatching", "queued")),
-            or_(
-                EvalRun.resource_pool_id == pool.id,
-                EvalCaseAttempt.resource_pool_id == pool.id,
-            ),
+            func.coalesce(
+                EvalCaseAttempt.resource_pool_id, EvalRun.resource_pool_id
+            ) == pool.id,
         )
         .distinct()
         .order_by(EvalRun.id)

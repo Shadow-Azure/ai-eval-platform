@@ -293,7 +293,8 @@ Worker 定期调用 Runner 清理：只删除超过 `eval_runner_offline_retenti
 - 回退在重建 retry 之前完成，因此新 attempt 的 `resource_pool_id`、dispatch `runs_on` 与 manifest 都指向兜底池；
   尚未 dispatch 的 outbox 行会一起改写。已经发送到 GitHub 的旧 spot Job 保持原样，其后续 retry 使用新池。
 - 已回退的 run 不再消耗 spot 重试预算，只受 run 的 `max_attempts` 约束；这避免了回退阈值达到后仍直接记为
-  `spot_retry_exhausted`。一个用例成功完成会重置连续失败计数。
+  `spot_retry_exhausted`。provider 回收路径的实际阈值取 `min(fallback_after, max_attempts-1)`，确保至少留一次 attempt
+  在兜底池执行；库存/价格阻塞路径没有 attempt 消耗，直接使用 `fallback_after`。一个用例成功完成会重置连续失败计数。
 - 启用 `fallback_max_price_cny` 时，兜底池必须通过 `instance_config.reference_price_cny`（或已有价格）声明小时成本；
   成本未知或超过上限时不回退，记录 `resource.spot.fallback_suppressed` 与 `suppressed_reason`，继续既有 spot 重试。
 - 评测详情「执行组合」新增“资源回退”行：未触发、已回退（来源 → 目标、连续次数）或被成本策略拦截。资源池详情展示

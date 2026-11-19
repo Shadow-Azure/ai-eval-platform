@@ -1658,7 +1658,7 @@ function PoolModal({
               <Form.Item
                 name="fallback_after"
                 label="连续失败阈值"
-                extra="连续 provider 回收或容量阻塞次数，达到后回退。"
+                extra="连续 provider 回收或容量阻塞次数；回收路径会保留最后一次 attempt 给兜底池。"
               >
                 <InputNumber min={1} max={20} style={{ width: "100%" }} />
               </Form.Item>

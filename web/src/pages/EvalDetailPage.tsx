@@ -2237,7 +2237,8 @@ function FallbackSummary({
           {fallback.from_pool_name ?? "spot"} → {fallback.to_pool_name ?? "固定/按量"}
         </span>
         <span className="small muted">
-          {fallbackReasonLabel(fallback.reason)} · 连续 {fallback.failures} 次
+          {fallbackReasonLabel(fallback.reason)} · 连续{" "}
+          {fallback.failures || fallback.supply_blocks} 次
         </span>
       </Space>
     );

@@ -30,7 +30,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
 from ..config import Settings
@@ -174,7 +174,9 @@ def required_spot_duration_hours(session: Session, pool: ResourcePool) -> int:
             ),
         )
         .where(
-            EvalRun.resource_pool_id == pool.id,
+            func.coalesce(
+                EvalCaseAttempt.resource_pool_id, EvalRun.resource_pool_id
+            ) == pool.id,
             EvalCaseAttempt.status.in_(
                 ("pending", "dispatching", "queued", "leased", "running", "scoring", "uploading")
             ),
@@ -228,14 +230,14 @@ def _queued_attempts(session: Session, pool: ResourcePool) -> int:
             ),
         )
         .where(
-            # M8-46 (#311): a run that moved to a fallback pool can still have
-            # shards already dispatched to this spot pool. Counting the
-            # attempt's own pool keeps those jobs alive instead of letting the
-            # controller scale their runners away after the switch.
-            or_(
-                EvalRun.resource_pool_id == pool.id,
-                EvalCaseAttempt.resource_pool_id == pool.id,
-            ),
+            # M8-46 (#311): attribute a waiting attempt to the pool it will
+            # actually run in. A run that moved to a fallback pool can still
+            # have shards already dispatched to this spot pool; counting the
+            # attempt's own pool keeps those jobs alive without also counting
+            # them as fixed-pool demand.
+            func.coalesce(
+                EvalCaseAttempt.resource_pool_id, EvalRun.resource_pool_id
+            ) == pool.id,
             EvalCaseAttempt.status.in_(WAITING_ATTEMPT_STATUSES),
         )
     )
