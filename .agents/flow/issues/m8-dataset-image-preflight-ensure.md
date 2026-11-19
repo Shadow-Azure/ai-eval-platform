@@ -6,7 +6,7 @@
 kind: issue
 milestone: m8
 priority: P2
-status: done
+status: in-progress
 scope:
   - .agents/flow/**
   - backend/**
