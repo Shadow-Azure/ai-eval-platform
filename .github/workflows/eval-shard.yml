@@ -414,6 +414,7 @@ jobs:
 
       # runner.temp is per job: never read the prepare job's dispatch file.
       - name: Materialize and validate the dispatch payload
+        id: validate_dispatch
         env:
           DISPATCH_PAYLOAD: ${{ toJson(github.event.client_payload) }}
         run: |
@@ -423,6 +424,7 @@ jobs:
           node runner/lib/contracts.mjs dispatch "$RUNNER_TEMP/eval-dispatch/dispatch.json"
 
       - name: Execute exactly one case
+        id: execute_case
         env:
           RUNNER_PRESIGN_UPLOADS: "1"
           RUNNER_STATE_DIR: ${{ runner.temp }}/eval-state
@@ -436,3 +438,95 @@ jobs:
             --case "${{ matrix.case.id }}" \
             --state-dir "$RUNNER_STATE_DIR" \
             --object-store-root "$RUNNER_OBJECT_ROOT"
+
+      # M8-44 (#306): a job that dies before real-task reaches `started` used to
+      # leave the platform waiting for the 3600s queue timeout. Settle the
+      # attempt now with a retryable bootstrap failure. The manifest endpoint
+      # (not the scripts bundle) issues the short token, so this works even when
+      # `Fetch the scripts bundle` or the checkout fallback already failed.
+      - name: Report bootstrap failure
+        if: failure() || cancelled()
+        continue-on-error: true
+        env:
+          DISPATCH_FILE: ${{ runner.temp }}/eval-dispatch/dispatch.json
+          CASE_RUN_ID: ${{ matrix.case.id }}
+          RUNNER_NAME: ${{ runner.name }}
+          BUNDLE_OUTCOME: ${{ steps.bundle.outcome }}
+          CHECKOUT_OUTCOME: ${{ steps.fallback_checkout.outcome }}
+          CHECKOUT_RETRY_OUTCOME: ${{ steps.fallback_retry.outcome }}
+          VALIDATE_OUTCOME: ${{ steps.validate_dispatch.outcome }}
+          EXECUTE_OUTCOME: ${{ steps.execute_case.outcome }}
+        run: |
+          set -uo pipefail
+          node - <<'NODE'
+          const fs = require("node:fs");
+
+          const dispatch = JSON.parse(fs.readFileSync(process.env.DISPATCH_FILE, "utf8"));
+          const caseRunId = process.env.CASE_RUN_ID;
+          const timeoutMs = 15000;
+
+          async function get(url, headers = {}) {
+            const response = await fetch(url, {
+              headers,
+              signal: AbortSignal.timeout(timeoutMs),
+            });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            return response;
+          }
+
+          (async () => {
+            const response = await get(dispatch.manifest_url);
+            const token = response.headers.get("x-runner-task-token");
+            const manifest = JSON.parse(await response.text());
+            if (!token) throw new Error("manifest response missing X-Runner-Task-Token");
+            const item = (manifest.cases || []).find(
+              (candidate) => candidate.case_run_id === caseRunId,
+            );
+            if (!item) throw new Error(`case ${caseRunId} missing from manifest`);
+            const summary = (
+              "execute job 启动阶段失败：" +
+              `bundle=${process.env.BUNDLE_OUTCOME || "unknown"} ` +
+              `checkout=${process.env.CHECKOUT_OUTCOME || "unknown"} ` +
+              `checkout_retry=${process.env.CHECKOUT_RETRY_OUTCOME || "unknown"} ` +
+              `validate=${process.env.VALIDATE_OUTCOME || "unknown"} ` +
+              `execute=${process.env.EXECUTE_OUTCOME || "unknown"}`
+            ).slice(0, 1000);
+            const payload = {
+              schema_version: "1.0",
+              event_id: `evt_${caseRunId}_bootstrap_failed_${dispatch.attempt}`,
+              case_run_id: caseRunId,
+              attempt: dispatch.attempt,
+              sequence: 1000002,
+              error_code: "runner_bootstrap_failed",
+              retryable: true,
+              error_summary: summary,
+              phase: "bootstrap",
+            };
+            const callback = await fetch(
+              `${manifest.callback_base_url}/runner/v1/case-runs/${caseRunId}/failed`,
+              {
+                method: "POST",
+                headers: {
+                  authorization: `Bearer ${token}`,
+                  "content-type": "application/json",
+                  ...(process.env.RUNNER_NAME
+                    ? { "x-runner-id": process.env.RUNNER_NAME }
+                    : {}),
+                },
+                body: JSON.stringify(payload),
+                signal: AbortSignal.timeout(timeoutMs),
+              },
+            );
+            const text = await callback.text();
+            if (callback.ok) {
+              console.log(`bootstrap failure settled: HTTP ${callback.status} ${text}`);
+            } else if (callback.status === 409) {
+              console.log(`bootstrap failure already settled: HTTP 409 ${text}`);
+            } else {
+              throw new Error(`failure callback HTTP ${callback.status}: ${text}`);
+            }
+          })().catch((error) => {
+            console.error(`bootstrap failure callback failed: ${error.message}`);
+            process.exitCode = 1;
+          });
+          NODE

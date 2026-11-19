@@ -23,6 +23,7 @@
         "image_unavailable",
         "callback_retryable",
         "callback_permanent",
+        "runner_bootstrap_failed",
         "runtime_error"
       ]
     },
