@@ -395,8 +395,22 @@ def attempt_trace(
             select(
                 TraceSpan.session_id,
                 func.count(TraceSpan.id),
-                func.sum(TraceSpan.input_tokens),
-                func.sum(TraceSpan.output_tokens),
+                # M8-53 (#332): Claude Code writes the session total on the root
+                # AGENT span and per-message usage on every LLM span. Summing
+                # both double counts; token totals must use non-AGENT spans.
+                # Cost stays on the AGENT span, so it still sums every span.
+                func.sum(
+                    case(
+                        (TraceSpan.kind != "AGENT", TraceSpan.input_tokens),
+                        else_=None,
+                    )
+                ),
+                func.sum(
+                    case(
+                        (TraceSpan.kind != "AGENT", TraceSpan.output_tokens),
+                        else_=None,
+                    )
+                ),
                 func.sum(TraceSpan.cost),
                 func.min(TraceSpan.started_at),
                 func.max(TraceSpan.ended_at),

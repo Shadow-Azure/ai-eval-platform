@@ -320,6 +320,10 @@ def test_version_detail_includes_metrics(seeded: Session, client: TestClient) ->
         "resolved_rate",
         "resolved_rate_scored",
         "execution_failure_rate",
+        "total_tokens",
+        "tokens_per_case",
+        "total_cost_usd",
+        "cost_per_case_usd",
     }
     resolved_rate = next(m for m in detail["metrics"] if m["metric_key"] == "resolved_rate")
     assert resolved_rate["aggregator_key"] == "ratio"
@@ -510,7 +514,16 @@ def test_version_metrics_endpoint(seeded: Session, client: TestClient) -> None:
     response = client.get(f"/api/v1/dataset-versions/{body['version']['id']}/metrics")
     assert response.status_code == 200
     metrics = response.json()["items"]
-    assert len(metrics) == 4
+    assert {metric["metric_key"] for metric in metrics} == {
+        "resolved_count",
+        "resolved_rate",
+        "resolved_rate_scored",
+        "execution_failure_rate",
+        "total_tokens",
+        "tokens_per_case",
+        "total_cost_usd",
+        "cost_per_case_usd",
+    }
     for metric in metrics:
-        assert metric["aggregator_key"] in ("ratio", "sum")
+        assert metric["aggregator_key"] in ("ratio", "sum", "mean")
         assert metric["formula_text"]

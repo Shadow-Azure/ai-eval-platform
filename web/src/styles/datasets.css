@@ -1020,3 +1020,33 @@
   gap: 8px;
   margin-bottom: 8px;
 }
+
+/* Dataset-level token aggregate (M8-53 / issue #332). */
+
+.dataset-token-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: -2px 0 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.dataset-token-row strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.dataset-token-row span:last-child {
+  margin-left: auto;
+}
+
+.token-metric-note {
+  margin: 2px 0 14px;
+  color: var(--muted);
+  font-size: 11px;
+}

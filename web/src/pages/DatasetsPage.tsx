@@ -9,12 +9,14 @@ import {
   type DatasetAdapterMetadata,
   type DatasetCatalogEntry,
   type DatasetImportRecord,
+  type DatasetTokenStats,
 } from "../api/datasets";
 import { EmptyState } from "../components/EmptyState";
 import { Icon } from "../components/Icon";
 import { PageHeading } from "../components/PageHeading";
 import { QueryError } from "../components/QueryError";
 import { StatusCard } from "../components/StatusCard";
+import { formatTokenAmount } from "../utils/tokens";
 
 type CatalogStatus = "ready" | "draft" | "planned";
 
@@ -33,6 +35,8 @@ interface CatalogCard {
   metricLabel: string;
   status: CatalogStatus;
   updatedAt: string | null;
+  /** Dataset-level trace aggregate; null when the API has no token data. */
+  tokenStats: DatasetTokenStats | null;
 }
 
 const PAGE_SIZE_OPTIONS = [6, 9, 12];
@@ -130,6 +134,7 @@ function datasetCards(
       metricLabel: metric,
       status,
       updatedAt: entry.updated_at || entry.created_at,
+      tokenStats: entry.token_stats ?? null,
     };
   });
 
@@ -156,6 +161,7 @@ function datasetCards(
         : "—",
       status: "planned",
       updatedAt: null,
+      tokenStats: null,
     });
   }
   return cards;
@@ -562,6 +568,21 @@ export function DatasetsPage() {
                     <div className="dataset-meta-value">{card.metricLabel}</div>
                   </div>
                 </div>
+                {card.tokenStats ? (
+                  <div className="dataset-token-row">
+                    <span>累计 Token</span>
+                    <strong>
+                      {formatTokenAmount(
+                        card.tokenStats.total_tokens > 0
+                          ? card.tokenStats.total_tokens
+                          : card.tokenStats.input_tokens + card.tokenStats.output_tokens,
+                      )}
+                    </strong>
+                    <span className="muted">
+                      均 {formatTokenAmount(card.tokenStats.average_eval_tokens)} / 次评测
+                    </span>
+                  </div>
+                ) : null}
                 <div className="dataset-footer">
                   <span className="small muted">
                     {card.status === "planned" ? "仅注册 · 等待导入" : relativeTime(card.updatedAt)}

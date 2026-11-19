@@ -83,6 +83,66 @@ METRIC_CONFIGS: dict[str, dict[str, Any]] = {
         "description": "质量告警：基础设施失败分类是附加信息，不从总数扣除。",
         "formula_text": ("execution_failure_rate = 执行失败/超时/取消用例数 / total_instances"),
     },
+    # M8-53 (#332): token/cost cards. Values come from the trace tree, not from
+    # a MetricResult row: the usage definition is registered so new dataset
+    # versions expose the card in 指标口径, while /results always computes the
+    # live value (traces arrive after the completion transaction).
+    "total_tokens": {
+        "version": 1,
+        "aggregator_key": "sum",
+        "numerator": None,
+        "denominator": None,
+        "display_kind": "number",
+        "unit": "tokens",
+        "direction": "lower_is_better",
+        "display_name": "总 Token",
+        "description": "每个用例所有 attempt 的 input_tokens + output_tokens 合计。",
+        "formula_text": (
+            "total_tokens = Σ(每个用例所有 attempt 的 input_tokens + output_tokens)；"
+            "AGENT 汇总节点不计入，缓存读写单独展示。"
+        ),
+    },
+    "tokens_per_case": {
+        "version": 1,
+        "aggregator_key": "mean",
+        "numerator": None,
+        "denominator": None,
+        "display_kind": "number",
+        "unit": "tokens",
+        "direction": "lower_is_better",
+        "display_name": "平均 Token / 用例",
+        "description": "按有轨迹数据的用例数取平均。",
+        "formula_text": (
+            "tokens_per_case = total_tokens / cases_with_tokens；"
+            "cases_with_tokens 为至少有一个已解析 attempt 轨迹的用例数。"
+        ),
+        "denominator_policy": "cases_with_tokens",
+    },
+    "total_cost_usd": {
+        "version": 1,
+        "aggregator_key": "sum",
+        "numerator": None,
+        "denominator": None,
+        "display_kind": "number",
+        "unit": "USD",
+        "direction": "lower_is_better",
+        "display_name": "累计成本（USD）",
+        "description": "trace cost-state 上报的成本，单位 USD。",
+        "formula_text": "total_cost_usd = Σ 所有 attempt 的 TraceSpan.cost（USD）",
+    },
+    "cost_per_case_usd": {
+        "version": 1,
+        "aggregator_key": "mean",
+        "numerator": None,
+        "denominator": None,
+        "display_kind": "number",
+        "unit": "USD",
+        "direction": "lower_is_better",
+        "display_name": "平均成本（USD / 用例）",
+        "description": "按有轨迹数据的用例数取平均，单位 USD。",
+        "formula_text": "cost_per_case_usd = total_cost_usd / cases_with_tokens",
+        "denominator_policy": "cases_with_tokens",
+    },
 }
 
 

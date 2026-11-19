@@ -12,6 +12,10 @@
   padding: 12px 19px 0;
 }
 
+.case-browser-summary {
+  padding: 14px 19px 0;
+}
+
 .case-browser-toolbar {
   display: flex;
   flex-wrap: wrap;

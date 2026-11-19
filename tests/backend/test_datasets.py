@@ -319,6 +319,10 @@ def test_swebench_official_metrics_registered_on_import(seeded: Session) -> None
         "resolved_rate",
         "resolved_rate_scored",
         "execution_failure_rate",
+        "total_tokens",
+        "tokens_per_case",
+        "total_cost_usd",
+        "cost_per_case_usd",
     }
     resolved_rate = next(m for m in metrics if m.metric_key == "resolved_rate")
     # SWE-bench 主指标官方口径：% Resolved = resolved / total

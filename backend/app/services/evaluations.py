@@ -17,7 +17,8 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from urllib.parse import urlencode
 
-from sqlalchemy import case, func, or_, select
+from sqlalchemy import case as sql_case
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from ..agent_timeout import (
@@ -49,6 +50,7 @@ from ..models import (
 )
 from ..money import money_str
 from ..runner_contracts import ContractInvalid, validate_payload
+from . import token_usage
 from .dataset_images import effective_sources, source_records
 from .runner_labels import DEFAULT_RUNS_ON, pool_runner_labels
 
@@ -748,11 +750,11 @@ def evaluation_case_totals(
         select(
             EvalCaseRun.eval_run_id,
             func.coalesce(
-                func.sum(case((EvalCaseRun.result_status == "resolved", 1), else_=0)), 0
+                func.sum(sql_case((EvalCaseRun.result_status == "resolved", 1), else_=0)), 0
             ),
             func.coalesce(
                 func.sum(
-                    case((EvalCaseRun.result_status.in_(SCORED_RESULT_STATUSES), 1), else_=0)
+                    sql_case((EvalCaseRun.result_status.in_(SCORED_RESULT_STATUSES), 1), else_=0)
                 ),
                 0,
             ),
@@ -801,11 +803,11 @@ def evaluation_list_stats(
     case_statement = (
         select(
             func.coalesce(
-                func.sum(case((EvalCaseRun.result_status == "resolved", 1), else_=0)), 0
+                func.sum(sql_case((EvalCaseRun.result_status == "resolved", 1), else_=0)), 0
             ),
             func.coalesce(
                 func.sum(
-                    case((EvalCaseRun.result_status.in_(SCORED_RESULT_STATUSES), 1), else_=0)
+                    sql_case((EvalCaseRun.result_status.in_(SCORED_RESULT_STATUSES), 1), else_=0)
                 ),
                 0,
             ),
@@ -1003,6 +1005,11 @@ def evaluation_detail(
 
     total = int(run.total_cases or len(cases))
     finished = max(0, total - case_counts["queued"] - case_counts["running"])
+    # M8-53 (#332): token/cost summary comes from the trace tree (all attempts
+    # per case), never from the runner's hardcoded completion summary.
+    token_summary = token_usage.summarize_case_usage(
+        token_usage.case_usage(session, [case.id for case in cases]).values()
+    )
     # Never round up to "100%" while a case is still queued/running.
     percent = (
         100
@@ -1041,6 +1048,7 @@ def evaluation_detail(
         "case_counts": case_counts,
         "trace_counts": trace_counts,
         "retryable_count": retryable_count,
+        "token_summary": token_summary,
         "progress": {
             "total": total,
             "finished": finished,

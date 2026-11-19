@@ -38,7 +38,7 @@ import { Icon } from "../components/Icon";
 import { PageHeading } from "../components/PageHeading";
 import { QueryError } from "../components/QueryError";
 import { copyText } from "../utils/clipboard";
-import { formatMoney } from "../utils/money";
+import { formatUsd } from "../utils/money";
 import {
   buildArchiveTree,
   formatBytes,
@@ -164,8 +164,13 @@ function compactNumber(value: number | null | undefined): string {
   }).format(value);
 }
 
+/**
+ * Trace costs come from Claude Code's ``cost-state`` record, whose
+ * ``totalCostUSD`` is USD. They must not be rendered with the platform CNY
+ * formatter; budget/model-gateway amounts keep using ``formatMoney``.
+ */
 function formatCost(value: number | string | null | undefined): string {
-  return formatMoney(value);
+  return formatUsd(value);
 }
 
 function textValue(value: unknown): string {
@@ -1458,7 +1463,7 @@ function InspectorOverview({
         value: `${compactNumber(step.inputTokens)} in · ${compactNumber(step.outputTokens)} out`,
       });
     }
-    if (step.cost) facts.push({ key: "成本", value: formatCost(step.cost) });
+    if (step.cost) facts.push({ key: "成本（USD）", value: formatCost(step.cost) });
     if (step.exitCode !== null)
       facts.push({ key: "退出码", value: step.exitCode });
   } else {
@@ -2577,7 +2582,7 @@ export function TracePage() {
               <strong>{compactNumber(totalTokens)}</strong> tokens
             </span>
             <span>
-              <strong>{formatCost(model.cost ?? selectedSession?.cost)}</strong> 成本
+              <strong>{formatCost(model.cost ?? selectedSession?.cost)}</strong> 成本（USD）
             </span>
             <span>
               <strong>{sessionSpanTotal || trace.stats.spanCount}</strong> spans

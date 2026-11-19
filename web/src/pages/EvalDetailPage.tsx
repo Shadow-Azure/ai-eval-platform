@@ -41,6 +41,7 @@ import {
   type EvaluationDetail,
   type EvaluationEvent,
   type EvaluationShard,
+  type EvalTokenSummary,
   type MetricDelta,
   type MetricResult,
 } from "../api/evaluations";
@@ -66,7 +67,8 @@ import { QueryError } from "../components/QueryError";
 import { StatusCard } from "../components/StatusCard";
 import { copyText } from "../utils/clipboard";
 import { EVAL_STATUS_META } from "../utils/evalStatus";
-import { formatMoney } from "../utils/money";
+import { formatMoney, formatUsd } from "../utils/money";
+import { formatTokenAmount, readTokenNumber } from "../utils/tokens";
 
 const TAB_KEYS = ["overview", "cases", "results", "config", "events"] as const;
 type TabKey = (typeof TAB_KEYS)[number];
@@ -217,6 +219,17 @@ function formatMetricDisplay(
   unit: string | null | undefined,
 ): string {
   if (value === null || value === undefined) return "N/A";
+  const unitKey = (unit ?? "").trim().toLowerCase();
+  const isTokenMetric = kind === "tokens" || (kind === "number" && unitKey === "tokens");
+  const isUsdMetric = kind === "usd" || (kind === "number" && unitKey === "usd");
+  if (isTokenMetric) {
+    const tokens = readTokenNumber(value);
+    if (tokens !== null) return formatTokenAmount(tokens);
+  }
+  if (isUsdMetric) {
+    const amount = readTokenNumber(value);
+    if (amount !== null) return formatUsd(amount);
+  }
   if (kind === "percentage" && typeof value === "number") {
     return `${(value * 100).toFixed(1)}%`;
   }
@@ -248,6 +261,21 @@ function formatMetricValue(metric: MetricResult): string {
   return formatMetricDisplay(metric.display_kind, metric.value, metric.unit);
 }
 
+/** Numerator/denominator line keeps token and USD counters in the same unit. */
+function formatMetricCounter(metric: MetricResult, value: string | null): string {
+  if (value === null || value === "") return "—";
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return value;
+  const unitKey = (metric.unit ?? "").trim().toLowerCase();
+  if (metric.display_kind === "tokens" || (metric.display_kind === "number" && unitKey === "tokens")) {
+    return formatTokenAmount(numeric);
+  }
+  if (metric.display_kind === "usd" || (metric.display_kind === "number" && unitKey === "usd")) {
+    return formatUsd(numeric);
+  }
+  return formatDecimal(value);
+}
+
 function formatDecimal(value: string | number | null | undefined): string {
   if (value === null || value === undefined || value === "") return "—";
   const parsed = Number(value);
@@ -272,6 +300,8 @@ const displayKindLabels: Record<string, string> = {
   percentage: "百分比",
   ms: "耗时",
   cny: "人民币",
+  usd: "美元",
+  tokens: "Token",
   histogram: "直方图",
 };
 
@@ -289,9 +319,12 @@ const METRIC_CARD_PRIORITY: Record<string, number> = {
   resolved_rate_scored: 1,
   resolved_count: 2,
   execution_failure_rate: 3,
-  tokens_per_case: 4,
-  cost_per_case: 5,
-  duration_percentiles: 6,
+  total_tokens: 4,
+  tokens_per_case: 5,
+  total_cost_usd: 6,
+  cost_per_case_usd: 7,
+  cost_per_case: 7,
+  duration_percentiles: 8,
 };
 
 function metricCardPriority(key: string): number {
@@ -299,7 +332,9 @@ function metricCardPriority(key: string): number {
 }
 
 function isKnownMetricKind(kind: string): boolean {
-  return ["number", "percentage", "ms", "cny", "histogram"].includes(kind);
+  return ["number", "percentage", "ms", "cny", "usd", "tokens", "histogram"].includes(
+    kind,
+  );
 }
 
 function SummaryList({ items }: { items: Array<[string, React.ReactNode]> }) {
@@ -487,6 +522,8 @@ export function EvalDetailPage() {
   const executionFilter = searchParams.get("execution_status") ?? "";
   const resultFilter = searchParams.get("result_status") ?? "";
   const traceFilter = searchParams.get("trace_status") ?? "";
+  const sortParam = searchParams.get("sort") ?? "ordinal";
+  const orderParam = searchParams.get("order") === "desc" ? "desc" : "asc";
   const page = Math.max(1, Number(searchParams.get("page") ?? "1") || 1);
   const pageSizeRaw = Number(searchParams.get("pageSize") ?? "20");
   const pageSize = [20, 50, 100].includes(pageSizeRaw) ? pageSizeRaw : 20;
@@ -501,6 +538,7 @@ export function EvalDetailPage() {
   const [additionalBudget, setAdditionalBudget] = useState(10);
   const [compareOpen, setCompareOpen] = useState(false);
   const [baselineRunId, setBaselineRunId] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
 
   const updateParams = (patch: Record<string, string | null>) => {
     setSearchParams(
@@ -544,7 +582,7 @@ export function EvalDetailPage() {
     enabled: Boolean(runId),
   });
   const cases = useQuery({
-    queryKey: ["evaluation", runId, "cases", { status, q, executionFilter, resultFilter, traceFilter, page, pageSize }],
+    queryKey: ["evaluation", runId, "cases", { status, q, executionFilter, resultFilter, traceFilter, sortParam, orderParam, page, pageSize }],
     queryFn: ({ signal }) =>
       fetchEvaluationCases(
         runId,
@@ -554,6 +592,8 @@ export function EvalDetailPage() {
           execution_status: executionFilter || undefined,
           result_status: resultFilter || undefined,
           trace_status: traceFilter || undefined,
+          sort: sortParam,
+          order: orderParam,
           limit: pageSize,
           offset: (page - 1) * pageSize,
         },
@@ -573,6 +613,84 @@ export function EvalDetailPage() {
       fetchCaseTests(selectedCaseId as string, selectedAttempt, signal),
     enabled: Boolean(selectedCaseId) && selectedAttempt !== null,
   });
+
+  const exportCasesCsv = async () => {
+    if (!runId) return;
+    setExporting(true);
+    try {
+      const all: EvalCaseRow[] = [];
+      let offset = 0;
+      let total = Number.POSITIVE_INFINITY;
+      while (all.length < total) {
+        const pageData = await fetchEvaluationCases(runId, {
+          status,
+          q,
+          execution_status: executionFilter || undefined,
+          result_status: resultFilter || undefined,
+          trace_status: traceFilter || undefined,
+          sort: sortParam,
+          order: orderParam,
+          limit: 200,
+          offset,
+        });
+        all.push(...pageData.items);
+        total = pageData.total;
+        offset += pageData.items.length;
+        if (pageData.items.length === 0) break;
+      }
+      const escapeCell = (value: unknown) =>
+        `"${String(value ?? "").replaceAll('"', '""')}"`;
+      const header = [
+        "用例",
+        "仓库",
+        "执行",
+        "结果",
+        "轨迹",
+        "耗时(ms)",
+        "输入tokens",
+        "输出tokens",
+        "总tokens",
+        "成本USD",
+        "错误码",
+        "错误摘要",
+      ];
+      const rows = all.map((row) => {
+        const input = readTokenNumber(row.metrics.input_tokens);
+        const output = readTokenNumber(row.metrics.output_tokens);
+        const totalTokens = caseTotalTokens(row);
+        return [
+          row.case_key,
+          row.repo,
+          row.execution_status,
+          row.result_status,
+          row.trace_status,
+          row.duration_ms,
+          input,
+          output,
+          totalTokens,
+          caseCostUsd(row),
+          row.error_code,
+          row.error_summary,
+        ];
+      });
+      const csv =
+        "\uFEFF" +
+        [header, ...rows].map((row) => row.map(escapeCell).join(",")).join("\n");
+      const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `eval-${runId.slice(0, 8)}-cases.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      message.success(`已导出 ${all.length} 个用例`);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "导出失败");
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const terminal = TERMINAL_EVAL_STATUSES.includes(detail.data?.status ?? "");
   const eventState = useEvalEvents(runId, terminal);
@@ -830,7 +948,7 @@ export function EvalDetailPage() {
           </Tag>
         </span>
         <span className="eval-status-item">
-          <span className="eval-status-label">已用成本</span>
+          <span className="eval-status-label">已用成本（CNY）</span>
           <span className="mono">{formatMoney(data.budget_spent_cny)}</span>
         </span>
       </div>
@@ -887,10 +1005,25 @@ export function EvalDetailPage() {
           tableClassName="eval-case-table"
           title="用例明细"
           subtitle={`共 ${availableCounts.all} 个用例 · 状态计数不受当前页影响 · 点击行查看 attempt 与测试打点`}
-          actions={<LiveBadge state={eventState} terminal={terminal} />}
+          actions={
+            <Space wrap>
+              <Button
+                size="small"
+                icon={<Icon name="file" size={14} />}
+                loading={exporting}
+                onClick={() => void exportCasesCsv()}
+              >
+                导出 CSV
+              </Button>
+              <LiveBadge state={eventState} terminal={terminal} />
+            </Space>
+          }
           searchValue={searchDraft}
           onSearchChange={setSearchDraft}
           searchPlaceholder="搜索实例 ID 或仓库"
+          summary={
+            data.token_summary ? <CaseTokenSummary summary={data.token_summary} /> : undefined
+          }
           leading={
             <Segmented
               value={status}
@@ -933,6 +1066,20 @@ export function EvalDetailPage() {
                 options={TRACE_OPTIONS}
                 onChange={(value) => updateParams({ trace_status: value ?? null, page: null })}
                 style={{ width: 116 }}
+              />
+              <Select
+                value={`${sortParam}:${orderParam}`}
+                options={[
+                  { value: "ordinal:asc", label: "默认顺序" },
+                  { value: "total_tokens:desc", label: "Token 高→低" },
+                  { value: "cost_usd:desc", label: "成本 高→低" },
+                ]}
+                onChange={(value) => {
+                  const [nextSort, nextOrder] = value.split(":");
+                  updateParams({ sort: nextSort, order: nextOrder, page: null });
+                }}
+                style={{ width: 132 }}
+                aria-label="用例排序"
               />
             </>
           }
@@ -1152,6 +1299,60 @@ function shortSessionId(value: string): string {
   return value.length <= 16 ? value : `${value.slice(0, 8)}…${value.slice(-4)}`;
 }
 
+/**
+ * Latest-attempt token total from the case row's ``metrics`` block.
+ *
+ * The API may omit the whole block (queued/not-yet-ingested cases) or only
+ * expose the input/output split; never invent a zero for missing data.
+ */
+function caseTotalTokens(record: EvalCaseRow): number | null {
+  const explicit = readTokenNumber(record.metrics.total_tokens);
+  if (explicit !== null) return explicit;
+  const input = readTokenNumber(record.metrics.input_tokens);
+  const output = readTokenNumber(record.metrics.output_tokens);
+  if (input === null && output === null) return null;
+  return (input ?? 0) + (output ?? 0);
+}
+
+function caseCostUsd(record: EvalCaseRow): number | null {
+  return readTokenNumber(record.metrics.cost_usd);
+}
+
+function CaseTokenSummary({ summary }: { summary: EvalTokenSummary | null | undefined }) {
+  if (!summary) return null;
+  const summed = summary.input_tokens + summary.output_tokens;
+  const total = summary.total_tokens > 0 ? summary.total_tokens : summed > 0 ? summed : null;
+  return (
+    <div className="token-summary-bar" aria-label="用例集 Token 汇总">
+      <div className="token-summary-primary">
+        <div className="token-summary-eyebrow">用例集 TOKEN 总消耗</div>
+        <div className="token-summary-total">{formatTokenAmount(total)}</div>
+        <div className="token-summary-split">
+          输入 {formatTokenAmount(summary.input_tokens)} · 输出{" "}
+          {formatTokenAmount(summary.output_tokens)}
+        </div>
+      </div>
+      <div className="token-summary-stat">
+        <span>平均 / 用例</span>
+        <strong>{formatTokenAmount(summary.average_tokens)}</strong>
+        <small>
+          覆盖 {summary.cases_with_tokens} / {summary.case_count} 个用例
+        </small>
+      </div>
+      <div className="token-summary-stat">
+        <span>累计成本（USD）</span>
+        <strong>{formatUsd(summary.cost_usd)}</strong>
+        <small>trace cost-state</small>
+      </div>
+      <div className="token-summary-stat">
+        <span>平均成本 / 用例</span>
+        <strong>{formatUsd(summary.average_cost_usd)}</strong>
+        <small>按有用例数据的用例</small>
+      </div>
+    </div>
+  );
+}
+
 function caseColumns(
   runId: string,
   navigate: NavigateFunction,
@@ -1177,7 +1378,7 @@ function caseColumns(
     title: "主 Agent session id",
     dataIndex: "main_session_id",
     key: "main_session_id",
-    width: 170,
+    width: 150,
     render: (value: string | null) =>
       value ? (
         <span className="eval-session-cell">
@@ -1213,36 +1414,40 @@ function caseColumns(
     title: "执行",
     dataIndex: "execution_status",
     key: "execution_status",
-    width: 96,
+    width: 82,
     render: (value: string) => statusTag(value, executionStatusMeta),
   },
   {
     title: "结果",
     dataIndex: "result_status",
     key: "result_status",
-    width: 96,
+    width: 82,
     render: (value: string) => statusTag(value, resultStatusMeta),
   },
   {
     title: "轨迹",
     dataIndex: "trace_status",
     key: "trace_status",
-    width: 96,
+    width: 82,
     render: (value: string) => statusTag(value, traceStatusMeta),
   },
   {
     title: "测试打点",
     dataIndex: "test_summary",
     key: "test_summary",
+    width: 124,
     render: (_value, record) => {
       const summary = record.test_summary;
       const total = summary.passed + summary.failed + summary.skipped + summary.error;
       if (!total) return <span className="muted small">—</span>;
       return (
-        <span className="test-inline">
-          <span className="test-pass">P {summary.passed}</span>
-          {summary.failed ? <span className="test-fail">F {summary.failed}</span> : null}
-          {summary.f2p_failed ? <span className="test-fail">F2P {summary.f2p_failed}</span> : null}
+        <span
+          className="test-inline"
+          title={`通过 ${summary.passed} · 失败 ${summary.failed} · F2P 失败 ${summary.f2p_failed}`}
+        >
+          <span className="test-pass">P{summary.passed}</span>
+          {summary.failed ? <span className="test-fail">F{summary.failed}</span> : null}
+          {summary.f2p_failed ? <span className="test-fail">F2P{summary.f2p_failed}</span> : null}
         </span>
       );
     },
@@ -1251,13 +1456,50 @@ function caseColumns(
     title: "耗时",
     dataIndex: "duration_ms",
     key: "duration_ms",
-    width: 96,
+    width: 82,
     render: (value: number | null) => formatDuration(value),
+  },
+  {
+    title: "Token",
+    dataIndex: "metrics",
+    key: "token_total",
+    width: 90,
+    render: (_value, record) => {
+      const total = caseTotalTokens(record);
+      if (total === null) return <span className="muted small">—</span>;
+      const input = readTokenNumber(record.metrics.input_tokens);
+      const output = readTokenNumber(record.metrics.output_tokens);
+      return (
+        <Tooltip
+          title={
+            input !== null || output !== null
+              ? `输入 ${formatTokenAmount(input)} · 输出 ${formatTokenAmount(output)}（所有 attempt）`
+              : "所有 attempt trace 聚合"
+          }
+        >
+          <span className="mono small">{formatTokenAmount(total)}</span>
+        </Tooltip>
+      );
+    },
+  },
+  {
+    title: "成本（USD）",
+    dataIndex: "metrics",
+    key: "cost_usd",
+    width: 90,
+    render: (_value, record) => {
+      const cost = caseCostUsd(record);
+      return cost === null ? (
+        <span className="muted small">—</span>
+      ) : (
+        <span className="mono small">{formatUsd(cost)}</span>
+      );
+    },
   },
   {
     title: "",
     key: "open",
-    width: 132,
+    width: 100,
     render: (_value, record) => (
       <span className="eval-row-actions">
         <span className="eval-row-link">
@@ -1447,7 +1689,7 @@ function OverviewPanel(props: OverviewPanelProps) {
               </div>
             </div>
             <div className="eval-context-item">
-              <div className="eval-context-label">已用成本</div>
+              <div className="eval-context-label">已用成本（CNY）</div>
               <div className="eval-context-value">{formatMoney(detail.budget_spent_cny)}</div>
             </div>
             <div className="eval-context-item">
@@ -1667,7 +1909,7 @@ function ResultsPanel(props: ResultsPanelProps) {
               </div>
               <MetricDeltaLine delta={deltaByKey.get(metric.metric_key)} />
               <div className="eval-metric-meta">
-                {formatDecimal(metric.numerator)} / {formatDecimal(metric.denominator)} · 分母：
+                {formatMetricCounter(metric, metric.numerator)} / {formatDecimal(metric.denominator)} · 分母：
                 {denominatorPolicyLabel(metric.denominator_policy)}
               </div>
               {metric.formula_text ? (
@@ -1779,6 +2021,14 @@ function formatSignedNumber(value: number, digits: number): string {
 }
 
 function formatSignedMetric(kind: string, delta: number, unit: string | null): string {
+  const sign = delta > 0 ? "+" : delta < 0 ? "−" : "";
+  const unitKey = (unit ?? "").trim().toLowerCase();
+  if (kind === "tokens" || (kind === "number" && unitKey === "tokens")) {
+    return `${sign}${Math.abs(delta) === 0 ? "0" : formatTokenAmount(Math.abs(delta))}`;
+  }
+  if (kind === "usd" || (kind === "number" && unitKey === "usd")) {
+    return `${sign}${formatUsd(Math.abs(delta))}`;
+  }
   if (kind === "percentage") return `${formatSignedNumber(delta * 100, 1)} pp`;
   if (kind === "number") return formatSignedNumber(delta, 2).replace(/\.00$/, "");
   if (kind === "cny") {
