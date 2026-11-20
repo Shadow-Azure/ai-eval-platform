@@ -228,7 +228,7 @@ def test_bootstrap_enables_reboot_audit_and_persistent_journal() -> None:
     bootstrap = _files(document)["/etc/eval/bootstrap.sh"]
     # auditd records the execve of systemctl/reboot/shutdown so the next
     # SIGTERM can name the reboot initiator even when it is automated.
-    assert "apt-get install -y --no-install-recommends auditd" in bootstrap
+    assert "apt-get install -y --no-install-recommends --no-upgrade auditd" in bootstrap
     assert "/etc/audit/rules.d/eval-reboot.rules" in bootstrap
     assert "-S execve" in bootstrap
     assert "eval_systemctl_exec" in bootstrap
@@ -237,3 +237,79 @@ def test_bootstrap_enables_reboot_audit_and_persistent_journal() -> None:
     # Persistent journal keeps the lines before the stop across a restart.
     assert "Storage=persistent" in bootstrap
     assert "/var/log/journal" in bootstrap
+
+
+def test_bootstrap_disables_runtime_auto_upgrades_and_needrestart() -> None:
+    document = yaml.safe_load(
+        render_cloud_init(
+            platform_base_url="http://platform.example",
+            runner_name="spot-abc",
+            resource_pool_id="pool-1",
+            labels=["self-hosted"],
+            encoded_jit="single-use-jit-value",
+            heartbeat_token="heartbeat-token",
+            runner_tarball_url="https://oss.example/actions-runner.tar.gz",
+        )
+    )
+    bootstrap = _files(document)["/etc/eval/bootstrap.sh"]
+    # The 2026-11-20 SIGTERM came from apt-daily-upgrade/unattended-upgrades
+    # randomly firing inside the 60-minute job window. Both the periodic policy
+    # and the units that run it must be disabled before any package operation.
+    assert "APT::Periodic::Update-Package-Lists \"0\";" in bootstrap
+    assert "APT::Periodic::Unattended-Upgrade \"0\";" in bootstrap
+    assert "/etc/apt/apt.conf.d/99-eval-no-auto-upgrade" in bootstrap
+    assert "20auto-upgrades" in bootstrap
+    for unit in (
+        "apt-daily.timer",
+        "apt-daily-upgrade.timer",
+        "apt-daily.service",
+        "apt-daily-upgrade.service",
+        "unattended-upgrades.service",
+        "ua-timer.timer",
+    ):
+        assert unit in bootstrap
+    assert "systemctl mask apt-daily.timer" in bootstrap
+    assert "systemctl stop apt-daily.timer" in bootstrap
+    # needrestart may restart services after package changes; list-only mode
+    # keeps it from touching the runner.
+    assert "/etc/needrestart/conf.d/99-eval-no-restart.conf" in bootstrap
+    assert "$nrconf{restart} = 'l';" in bootstrap
+    # Legacy installs must not upgrade packages already present on the image.
+    assert "--no-upgrade" in bootstrap
+    assert bootstrap.index("systemctl mask apt-daily.timer") < bootstrap.index("apt-get update -y")
+
+
+def test_bootstrap_prefers_the_baked_runner_image_and_refuses_pending_reboot() -> None:
+    document = yaml.safe_load(
+        render_cloud_init(
+            platform_base_url="http://platform.example",
+            runner_name="spot-abc",
+            resource_pool_id="pool-1",
+            labels=["self-hosted"],
+            encoded_jit="single-use-jit-value",
+            heartbeat_token="heartbeat-token",
+            runner_tarball_url="https://oss.example/actions-runner.tar.gz",
+        )
+    )
+    bootstrap = _files(document)["/etc/eval/bootstrap.sh"]
+    # A baked image carries docker/node/auditd; cloud-init must not apt-install
+    # or re-download Node on those hosts.
+    assert "RUNNER_IMAGE_MARKER=/etc/eval/runner-image-baked" in bootstrap
+    assert 'if [ -f "$RUNNER_IMAGE_MARKER" ]; then' in bootstrap
+    assert "baked runner image detected; skipping package installation" in bootstrap
+    assert "baked runner image is missing $tool; rebuild the image" in bootstrap
+    # The guard must run both before dependency setup and before the runner
+    # starts, so a pending reboot can never land in the middle of a job.
+    assert bootstrap.count("/var/run/reboot-required") >= 2
+    assert "reboot-required at boot; refusing to start" in bootstrap
+    assert "reboot-required before runner start; refusing to start" in bootstrap
+    assert bootstrap.index("reboot-required before runner start") < bootstrap.index(
+        "systemctl enable --now github-runner.service"
+    )
+    # A job-scoped inhibitor blocks shutdown/sleep while the runner is alive;
+    # it is released before ExecStopPost powers the instance off.
+    runner_unit = bootstrap.split("<<'RUNNER_UNIT'\n", 1)[1].split("\nRUNNER_UNIT", 1)[0]
+    assert "ExecStart=/usr/bin/systemd-inhibit --what=shutdown:sleep" in runner_unit
+    assert "--mode=block" in runner_unit
+    assert "run.sh --jitconfig \"$JIT_CONFIG\"" in runner_unit
+    assert runner_unit.count("ExecStart=") == 1

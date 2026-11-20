@@ -80,18 +80,65 @@ RUNNER_TARBALL_TOKEN={shlex.quote(runner_tarball_token or "")}
 RUNNER_SCRIPTS_BUNDLE_NAME={shlex.quote(scripts_name)}
 RUNNER_SCRIPTS_BUNDLE_SHA256={shlex.quote(scripts_sha256)}
 RUNNER_SCRIPTS_BUNDLE_URL={shlex.quote(scripts_bundle_url or "")}
-apt-get update -y
-apt-get install -y --no-install-recommends ca-certificates curl git jq docker.io libicu-dev xz-utils
+# M8 #348: a cold spot instance must not patch itself while a job runs. Ubuntu
+# cloud images enable apt-daily/unattended-upgrades with a random timer that can
+# fire inside a 60-minute evaluation window and restart services through
+# needrestart/systemd, sending SIGTERM to the one-job runner. Disable periodic
+# package work before any package operation and never restart services from
+# needrestart. A baked host image already carries docker/node/auditd; the apt
+# path below is only the compatibility fallback for a stock cloud image.
+RUNNER_IMAGE_MARKER=/etc/eval/runner-image-baked
+cat > /etc/apt/apt.conf.d/99-eval-no-auto-upgrade <<'APT_NO_AUTO_UPGRADE'
+APT::Periodic::Update-Package-Lists "0";
+APT::Periodic::Download-Upgradeable-Packages "0";
+APT::Periodic::AutocleanInterval "0";
+APT::Periodic::Unattended-Upgrade "0";
+APT_NO_AUTO_UPGRADE
+cp /etc/apt/apt.conf.d/99-eval-no-auto-upgrade /etc/apt/apt.conf.d/20auto-upgrades
+mkdir -p /etc/needrestart/conf.d
+cat > /etc/needrestart/conf.d/99-eval-no-restart.conf <<'NEEDRESTART_NO_RESTART'
+# A one-job evaluation runner may not restart a service behind a running job.
+$nrconf{{restart}} = 'l';
+NEEDRESTART_NO_RESTART
+systemctl stop apt-daily.timer apt-daily-upgrade.timer apt-daily.service \\
+  apt-daily-upgrade.service unattended-upgrades.service ua-timer.timer >/dev/null 2>&1 || true
+systemctl mask apt-daily.timer apt-daily-upgrade.timer apt-daily.service \\
+  apt-daily-upgrade.service unattended-upgrades.service ua-timer.timer >/dev/null 2>&1 || true
+
+# Refuse to accept a job when the image still carries a pending reboot; a
+# package change could otherwise reboot the host in the middle of execution.
+if [ -f /var/run/reboot-required ]; then
+  echo "reboot-required at boot; refusing to start the ephemeral runner" >&2
+  cat /var/run/reboot-required >&2 || true
+  exit 1
+fi
+
+if [ -f "$RUNNER_IMAGE_MARKER" ]; then
+  echo "baked runner image detected; skipping package installation"
+  for tool in docker node auditd curl git jq xz; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+      echo "baked runner image is missing $tool; rebuild the image" >&2
+      exit 1
+    fi
+  done
+else
+  # Legacy stock cloud image: install the dependencies once without upgrading
+  # packages already present, then clear the package lists so a later apt call
+  # cannot silently patch the host.
+  apt-get update -y
+  apt-get install -y --no-install-recommends --no-upgrade \\
+    ca-certificates curl git jq docker.io libicu-dev xz-utils
+  if ! apt-get install -y --no-install-recommends --no-upgrade auditd; then
+    echo "auditd unavailable; reboot audit disabled" >&2
+  fi
+  rm -rf /var/lib/apt/lists/*
+fi
 systemctl enable --now docker
 
 # M8 #345: keep the evidence needed to name whoever rebooted a cold spot
 # instance. auditd records execve of systemctl/reboot/shutdown and writes to
 # /var/run/reboot-required; a persistent journal keeps the lines before the
-# stop across a userspace or kernel restart. Both steps are best-effort: a
-# missing auditd package must not fail the bootstrap and lose the runner.
-if ! apt-get install -y --no-install-recommends auditd; then
-  echo "auditd unavailable; reboot audit disabled" >&2
-fi
+# stop across a userspace or kernel restart.
 mkdir -p /etc/audit/rules.d
 cat > /etc/audit/rules.d/eval-reboot.rules <<'AUDIT_RULES'
 -w /var/run/reboot-required -p wa -k eval_reboot_required
@@ -114,18 +161,23 @@ systemctl restart systemd-journald >/dev/null 2>&1 || true
 
 # The eval-shard workflow runs Node on the runner host: the prepare job
 # validates the dispatch contract and plans the matrix (contracts.mjs,
-# plan-cases.mjs) and every execute job runs real-task.mjs. Install Node 22
-# from the npmmirror CDN: NodeSource/apt rate-limits a burst of five fresh
-# instances sharing one NAT, which left most boots without Node. Keep the
-# download bounded so a slow mirror cannot hang cloud-init past the runner
-# registration timeout; a bootstrap failure leaves a diagnosable
-# register_timeout instead of a silently idle instance.
-NODE_VERSION=22.11.0
-curl -fsSL --max-time 300 --retry 3 --retry-delay 5 -o /tmp/node.tar.xz \\
-  "https://npmmirror.com/mirrors/node/v${{NODE_VERSION}}/node-v${{NODE_VERSION}}-linux-x64.tar.xz"
-tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1
-rm -f /tmp/node.tar.xz
-node --version
+# plan-cases.mjs) and every execute job runs real-task.mjs. The runner image
+# bakes Node 22; a stock cloud image still downloads it from the npmmirror CDN
+# because NodeSource/apt rate-limits a burst of five fresh instances sharing
+# one NAT, which left most boots without Node. Keep the download bounded so a
+# slow mirror cannot hang cloud-init past the runner registration timeout; a
+# bootstrap failure leaves a diagnosable register_timeout instead of a silently
+# idle instance.
+if [ -f "$RUNNER_IMAGE_MARKER" ]; then
+  node --version
+else
+  NODE_VERSION=22.11.0
+  curl -fsSL --max-time 300 --retry 3 --retry-delay 5 -o /tmp/node.tar.xz \\
+    "https://npmmirror.com/mirrors/node/v${{NODE_VERSION}}/node-v${{NODE_VERSION}}-linux-x64.tar.xz"
+  tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1
+  rm -f /tmp/node.tar.xz
+  node --version
+fi
 
 # M8-47 (#312): pre-seed the platform runner scripts bundle before the GitHub
 # runner can pick a job. An image may already carry the content-addressed file
@@ -190,7 +242,12 @@ Type=simple
 EnvironmentFile=/etc/eval/runner-jit.env
 Environment=RUNNER_ALLOW_RUNASROOT=1
 WorkingDirectory=/opt/actions-runner
-ExecStart=/bin/bash -lc 'exec ./run.sh --jitconfig "$JIT_CONFIG"'
+# M8 #348: hold a shutdown/sleep inhibitor for the lifetime of the one job so a
+# package script or an operator command cannot reboot/suspend the host behind
+# the runner. The inhibitor is released as soon as the runner exits, before
+# ExecStopPost powers the instance off.
+ExecStart=/usr/bin/systemd-inhibit --what=shutdown:sleep --who=eval --why=job \\
+  --mode=block /bin/bash -lc 'exec ./run.sh --jitconfig "$JIT_CONFIG"'
 Restart=no
 # M8-34 zero-resident spot pool: the runner is one-job and exits as soon as the
 # job completes. ExecStopPost runs only after the unit stops (never on a normal
@@ -233,6 +290,14 @@ ExecStart=/bin/bash /etc/eval/cleanup.sh
 CLEANUP_UNIT
 
 systemctl daemon-reload
+# The reboot-required file can also appear during the legacy dependency
+# install. Never hand such a host a job: the platform will register a runner
+# timeout instead of losing a running Agent to an unrelated reboot.
+if [ -f /var/run/reboot-required ]; then
+  echo "reboot-required before runner start; refusing to start the ephemeral runner" >&2
+  cat /var/run/reboot-required >&2 || true
+  exit 1
+fi
 # Start the runner first: the heartbeat unit is bound to it and must not linger
 # after the ephemeral runner exits.
 systemctl enable --now github-runner.service

@@ -156,6 +156,31 @@ export function buildSigtermDiagnostics({
     250,
   );
   const cloudInitLogResult = run(exec, "tail", ["-n", "80", "/var/log/cloud-init.log"], 250);
+  // M8 #348: name the auto-update path that can stop a runner. The masked
+  // units and APT periodic policy prove whether this instance was booted from
+  // a hardened image; needrestart and the image record show the rest.
+  const autoUpdateUnitsResult = run(
+    exec,
+    "systemctl",
+    [
+      "is-enabled",
+      "apt-daily.timer",
+      "apt-daily-upgrade.timer",
+      "apt-daily.service",
+      "apt-daily-upgrade.service",
+      "unattended-upgrades.service",
+      "ua-timer.timer",
+    ],
+    250,
+  );
+  const aptPeriodicResult = run(exec, "apt-config", ["dump"], 250);
+  const needrestartResult = run(
+    exec,
+    "cat",
+    ["/etc/needrestart/conf.d/99-eval-no-restart.conf"],
+    150,
+  );
+  const runnerImageResult = run(exec, "cat", ["/etc/eval/runner-image.json"], 150);
 
   const instanceId = metadata(exec, "instance-id");
   // Aliyun exposes the spot termination time under instance/spot/...; the
@@ -200,6 +225,16 @@ export function buildSigtermDiagnostics({
     unattended_upgrades_tail: lines(unattendedResult.stdout).slice(-40),
     audit_log_tail: lines(auditResult.stdout).slice(-60),
     reboot_required: lines(rebootRequiredResult.stdout).slice(-5),
+    auto_update_units: lines(autoUpdateUnitsResult.stdout).slice(-10),
+    apt_periodic: lines(aptPeriodicResult.stdout)
+      .filter((line) =>
+        /^APT::Periodic::(Update-Package-Lists|Download-Upgradeable-Packages|AutocleanInterval|Unattended-Upgrade)/.test(
+          line,
+        ),
+      )
+      .slice(-10),
+    needrestart: lines(needrestartResult.stdout).slice(-10),
+    runner_image: lines(runnerImageResult.stdout).slice(-20),
     commands: {
       systemd: commandSummary(systemdResult),
       journal: commandSummary(journalResult),
@@ -217,6 +252,10 @@ export function buildSigtermDiagnostics({
       unattended_upgrades: commandSummary(unattendedResult),
       audit_log: commandSummary(auditResult),
       reboot_required: commandSummary(rebootRequiredResult),
+      auto_update_units: commandSummary(autoUpdateUnitsResult),
+      apt_periodic: commandSummary(aptPeriodicResult),
+      needrestart: commandSummary(needrestartResult),
+      runner_image: commandSummary(runnerImageResult),
       cloud_init_output: commandSummary(cloudInitOutputResult),
       cloud_init_log: commandSummary(cloudInitLogResult),
       metadata_instance_id: { value: instanceId || null },

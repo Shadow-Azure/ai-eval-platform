@@ -275,6 +275,13 @@ echo '== cloud-init log tail =='; tail -n 80 /var/log/cloud-init.log 2>&1
 echo '== github-runner unit =='; systemctl status github-runner.service --no-pager 2>&1 | tail -n 60
 echo '== github-runner journal =='; journalctl -u github-runner.service -n 80 --no-pager 2>&1
 echo '== docker unit =='; systemctl status docker --no-pager 2>&1 | tail -n 30
+echo '== auto-update hardening =='
+systemctl is-enabled apt-daily.timer apt-daily-upgrade.timer apt-daily.service \\
+  apt-daily-upgrade.service unattended-upgrades.service ua-timer.timer 2>&1
+apt-config dump 2>&1 | grep -E 'APT::Periodic::(Update-Package-Lists|Unattended-Upgrade)'
+cat /etc/needrestart/conf.d/99-eval-no-restart.conf 2>&1
+cat /etc/eval/runner-image.json 2>&1
+systemctl show github-runner -p ExecStart 2>&1
 """
     try:
         invoke = client.run_shell_command(region, instance_id, script)

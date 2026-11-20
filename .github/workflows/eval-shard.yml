@@ -82,6 +82,37 @@ jobs:
           test -n "${RUNNER_NAME:-}"
           docker version
           echo "runner smoke job completed"
+      - name: Verify cold spot auto-upgrade hardening
+        run: |
+          set -euo pipefail
+          # runner-smoke also runs on the fixed runner; the hardening contract
+          # belongs to provisioner-created spot instances only.
+          if [[ "${RUNNER_NAME:-}" != spot-* ]]; then
+            echo "not a cold spot runner (${RUNNER_NAME:-unknown}); skipping hardening check"
+            exit 0
+          fi
+          units=(
+            apt-daily.timer apt-daily-upgrade.timer apt-daily.service
+            apt-daily-upgrade.service unattended-upgrades.service ua-timer.timer
+          )
+          statuses="$(systemctl is-enabled "${units[@]}" || true)"
+          echo "$statuses"
+          masked=0
+          for status in $statuses; do
+            [ "$status" = "masked" ] && masked=$((masked + 1))
+          done
+          test "$masked" -eq 6
+          apt-config dump | grep -q 'APT::Periodic::Update-Package-Lists "0";'
+          apt-config dump | grep -q 'APT::Periodic::Unattended-Upgrade "0";'
+          grep -q "nrconf{restart} = 'l';" /etc/needrestart/conf.d/99-eval-no-restart.conf
+          test ! -f /var/run/reboot-required
+          systemctl show github-runner -p ExecStart | grep -q 'systemd-inhibit'
+          if [ -f /etc/eval/runner-image-baked ]; then
+            echo "runner image: baked and immutable"
+          else
+            echo "runner image: stock cloud image (legacy cloud-init fallback)"
+          fi
+          echo "auto-upgrade hardening verified"
 
   trace-e2e:
     if: github.event_name == 'workflow_dispatch' && inputs.mode == 'trace-e2e'
