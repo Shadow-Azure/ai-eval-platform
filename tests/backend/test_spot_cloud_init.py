@@ -90,9 +90,10 @@ def test_bootstrap_powers_off_after_the_runner_exits() -> None:
     # Zero-resident lifecycle: a one-job runner exiting powers the spot instance
     # off. ExecStopPost is a stop hook, not a boot/start command, so a freshly
     # started runner never triggers it.
-    assert "ExecStopPost=/sbin/shutdown -h now" in runner_unit
+    assert "ExecStopPost=/bin/sh -c" in runner_unit
+    assert "systemctl poweroff" in runner_unit
     assert "ExecStartPre" not in runner_unit
-    assert bootstrap.count("ExecStopPost=/sbin/shutdown -h now") == 1
+    assert runner_unit.count("ExecStopPost=") == 1
 
 
 def test_cleanup_removes_jit_env_and_cloud_init_user_data() -> None:
@@ -210,3 +211,29 @@ def test_bootstrap_preloads_the_scripts_bundle_from_private_oss() -> None:
     # The image cache is root-readable so the runner service can read it.
     assert "chmod 0644" in bootstrap
     assert len(text.encode()) < 16 * 1024
+
+
+def test_bootstrap_enables_reboot_audit_and_persistent_journal() -> None:
+    document = yaml.safe_load(
+        render_cloud_init(
+            platform_base_url="http://platform.example",
+            runner_name="spot-abc",
+            resource_pool_id="pool-1",
+            labels=["self-hosted"],
+            encoded_jit="single-use-jit-value",
+            heartbeat_token="heartbeat-token",
+            runner_tarball_url="https://oss.example/actions-runner.tar.gz",
+        )
+    )
+    bootstrap = _files(document)["/etc/eval/bootstrap.sh"]
+    # auditd records the execve of systemctl/reboot/shutdown so the next
+    # SIGTERM can name the reboot initiator even when it is automated.
+    assert "apt-get install -y --no-install-recommends auditd" in bootstrap
+    assert "/etc/audit/rules.d/eval-reboot.rules" in bootstrap
+    assert "-S execve" in bootstrap
+    assert "eval_systemctl_exec" in bootstrap
+    assert "augenrules --load" in bootstrap
+    assert "systemctl enable --now auditd" in bootstrap
+    # Persistent journal keeps the lines before the stop across a restart.
+    assert "Storage=persistent" in bootstrap
+    assert "/var/log/journal" in bootstrap
