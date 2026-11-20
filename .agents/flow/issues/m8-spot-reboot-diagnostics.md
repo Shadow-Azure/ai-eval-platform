@@ -6,7 +6,7 @@
 kind: issue
 milestone: m8
 priority: P2
-status: ready
+status: done
 scope:
   - runner/lib/diagnostics.mjs
   - backend/app/services/provisioning/spot_cloud_init.py

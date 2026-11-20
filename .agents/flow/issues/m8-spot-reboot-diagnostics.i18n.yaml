@@ -1,5 +1,5 @@
 # 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
 # git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
 #   pnpm run record:i18n -- .agents/flow/issues/m8-spot-reboot-diagnostics.md
-m8-spot-reboot-diagnostics.md: c4dc2a3c68688e585f34c89dbbdae1054ba684e4
-m8-spot-reboot-diagnostics.en.md: dd24d49e842c462e88d0330aabe43c3ec8c60aae
+m8-spot-reboot-diagnostics.md: 6de8e42c57f8ce6cbb55951e393c8bddf1af5340
+m8-spot-reboot-diagnostics.en.md: 42c180d2f8b91d7d72b18022f0f0f352ddd32a69
