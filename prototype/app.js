@@ -664,6 +664,7 @@ const ui = {
     promptSuffix: "",
     maxTurns: "",
     agentTimeout: "30",
+    attemptRetry: { enabled: false, count: 1 },
     selfEvolution: { enabled: false, baseUrl: "", workspaceId: "", token: "" },
   },
   imagePrep: imagePrepSeed(),
@@ -1995,6 +1996,20 @@ function evalsPage() {
   );
 }
 
+function attemptRetryState() {
+  const config = ui.newEval.attemptRetry;
+  const maxAttempts = config.enabled ? config.count + 1 : 1;
+  return {
+    enabled: config.enabled,
+    count: config.count,
+    maxAttempts,
+    short: config.enabled ? `开启 · 最多 ${config.count} 次` : "关闭 · 每用例 1 次 attempt",
+    review: config.enabled
+      ? `开启 · 最多 ${config.count} 次（每用例最多 ${maxAttempts} 次 attempt）`
+      : "关闭 · 每用例 1 次 attempt",
+  };
+}
+
 function evalSummaryAside() {
   const dataset = ui.newEval.dataset === "lite" ? "SWE-bench Lite" : "SWE-bench Verified";
   const agent = { codex: "Codex CLI", claude: "Claude Code", opencode: "OpenCode", pi: "pi" }[ui.newEval.agent];
@@ -2018,6 +2033,7 @@ function evalSummaryAside() {
         <div class="summary-item"><span class="summary-label">附加指令</span><span class="summary-value">${ui.newEval.promptSuffix ? `已配置 · ${ui.newEval.promptSuffix.length} 字符` : "未设置"}</span></div>
         <div class="summary-item"><span class="summary-label">最大轮次</span><span class="summary-value">${ui.newEval.maxTurns ? `${esc(ui.newEval.maxTurns)} 轮` : "默认 200 轮"}</span></div>
         <div class="summary-item"><span class="summary-label">Agent 超时</span><span class="summary-value">${ui.newEval.agentTimeout ? `${esc(ui.newEval.agentTimeout)} 分钟` : `数据集默认 ${esc(ui.datasetAgentTimeout)} 分钟`}</span></div>
+        <div class="summary-item"><span class="summary-label">失败重试</span><span class="summary-value">${attemptRetryState().short}</span></div>
         <div class="summary-item"><span class="summary-label">自进化上报</span><span class="summary-value">${selfEvolutionSummary()}</span></div>
       </div>
       <div style="padding:0 19px 19px">
@@ -2406,6 +2422,24 @@ function newEvalPage() {
         <input class="input" id="agent-timeout" type="number" min="1" max="1440" step="1" value="${esc(ui.newEval.agentTimeout)}" placeholder="默认来自数据集" />
         <span class="hint">默认来自数据集配置（示例 30 分钟）；本次可覆盖。超时会终止该用例的 Agent，并标记失败。</span>
       </div>
+      <div class="card-header" style="padding:20px 0 10px;border:0"><div><h3 class="card-title">失败 attempt 重试</h3><p class="card-subtitle">控制失败或超时用例是否自动创建新的 attempt</p></div><span class="tag ${attemptRetryState().enabled ? "tag-primary" : "tag-neutral"}">${attemptRetryState().enabled ? "已开启" : "默认关闭"}</span></div>
+      <div class="switch-row">
+        <div><strong>允许失败 attempt 重试</strong><div class="small muted">关闭时每个用例只运行 1 次 attempt；失败或超时直接计入结果。</div></div>
+        <button class="switch ${attemptRetryState().enabled ? "on" : ""}" data-action="toggle-attempt-retry" aria-label="切换失败 attempt 重试"></button>
+      </div>
+      ${
+        attemptRetryState().enabled
+          ? `
+        <div class="field" style="margin-top:12px;max-width:420px">
+          <label>最多重试次数</label>
+          <select class="select" id="retry-count">
+            ${[1, 2, 3, 4].map((value) => `<option value="${value}" ${attemptRetryState().count === value ? "selected" : ""}>重试 ${value} 次（每用例最多 ${value + 1} 次 attempt）</option>`).join("")}
+          </select>
+          <span class="hint">总 attempt 数 = 1 + 重试次数；自动重试与详情页人工重试共用该预算，旧 attempt 轨迹保留。</span>
+        </div>
+      `
+          : `<div class="banner" style="margin-top:12px">${icon("shield", 15)}<div><strong>重试已关闭（默认）。</strong> 每个用例只产生 1 次 attempt；失败或超时后不自动重试，详情页也没有剩余 attempt 预算可手动重试。</div></div>`
+      }
       <div class="card-header" style="padding:20px 0 10px;border:0"><div><h3 class="card-title">自进化上报（可选）</h3><p class="card-subtitle">评测结束后，把未通过的 SWE-bench 用例作为 bad case 上报到 harness-evolution 工作区</p></div><span class="tag tag-neutral">可选</span></div>
       <div class="switch-row">
         <div><strong>启用自进化上报</strong><div class="small muted">运行终态后按最终执行结果上报，失败自动重试，不影响评测主流程</div></div>
@@ -2447,7 +2481,8 @@ function newEvalPage() {
         <div class="summary-item"><span class="summary-label">Agent 资产</span><span class="summary-value">${ui.newEval.selectedAssets.length} 项 · ${selectedAssetSource.scanPath}</span></div>
         <div class="summary-item"><span class="summary-label">Agent 版本</span><span class="summary-value mono">${ui.newEval.assetRef} @ ${ui.newEval.assetCommit}</span></div>
         <div class="summary-item"><span class="summary-label">资源池</span><span class="summary-value">Linux Spot Pool</span></div>
-        <div class="summary-item"><span class="summary-label">超时策略</span><span class="summary-value">单用例 30 分钟 · 失败重试 1 次</span></div>
+        <div class="summary-item"><span class="summary-label">超时策略</span><span class="summary-value">单用例 30 分钟</span></div>
+        <div class="summary-item"><span class="summary-label">失败重试</span><span class="summary-value">${attemptRetryState().review}</span></div>
         <div class="summary-item"><span class="summary-label">附加指令</span><span class="summary-value" style="white-space:pre-wrap">${ui.newEval.promptSuffix ? esc(ui.newEval.promptSuffix) : "未设置"}</span></div>
         <div class="summary-item"><span class="summary-label">最大轮次</span><span class="summary-value">${ui.newEval.maxTurns ? `${esc(ui.newEval.maxTurns)} 轮` : "默认 200 轮"}</span></div>
         <div class="summary-item"><span class="summary-label">Agent 超时</span><span class="summary-value">${ui.newEval.agentTimeout ? `${esc(ui.newEval.agentTimeout)} 分钟` : `数据集默认 ${esc(ui.datasetAgentTimeout)} 分钟`}</span></div>
@@ -4341,6 +4376,11 @@ function handleAction(action, target) {
     render();
     return;
   }
+  if (action === "toggle-attempt-retry") {
+    ui.newEval.attemptRetry.enabled = !ui.newEval.attemptRetry.enabled;
+    render({ preserveScroll: true });
+    return;
+  }
   if (action === "eval-next") {
     if (ui.newEvalStep === 2 && ui.newEval.assetRef !== ui.newEval.assetVerifiedRef) {
       toast("请先读取并确认当前 Agent 版本下的资产", true);
@@ -4383,7 +4423,7 @@ function handleAction(action, target) {
     modal({
       title: "启动这次评测？",
       subtitle: "将占用 Linux Spot Pool 并产生模型费用",
-      body: `<div class="review-box"><div class="summary-item"><span class="summary-label">用例数量</span><span class="summary-value">500</span></div><div class="summary-item"><span class="summary-label">预计费用</span><span class="summary-value">¥126–158</span></div><div class="summary-item"><span class="summary-label">预计耗时</span><span class="summary-value">2h 30m</span></div><div class="summary-item"><span class="summary-label">失败重试</span><span class="summary-value">1 次</span></div></div><div class="banner warning" style="margin-top:14px">${icon("alert", 15)}<div>如果没有空闲 Runner，任务会先在 GitHub Actions 侧排队，最长等待 24 小时。</div></div>`,
+      body: `<div class="review-box"><div class="summary-item"><span class="summary-label">用例数量</span><span class="summary-value">500</span></div><div class="summary-item"><span class="summary-label">预计费用</span><span class="summary-value">¥126–158</span></div><div class="summary-item"><span class="summary-label">预计耗时</span><span class="summary-value">2h 30m</span></div><div class="summary-item"><span class="summary-label">失败重试</span><span class="summary-value">${attemptRetryState().short}</span></div></div><div class="banner warning" style="margin-top:14px">${icon("alert", 15)}<div>如果没有空闲 Runner，任务会先在 GitHub Actions 侧排队，最长等待 24 小时。${attemptRetryState().enabled ? "" : " 重试已关闭，失败或超时的用例不会自动重试。"}</div></div>`,
       footer: `<button class="btn" data-action="close-modal">再检查一下</button><button class="btn btn-primary" data-action="confirm-start-eval">${icon("play", 13)} 确认启动</button>`,
     });
     return;
@@ -4747,6 +4787,10 @@ document.addEventListener("change", (event) => {
   if (event.target.id === "asset-page-size") {
     ui.newEval.assetPageSize = Number(event.target.value);
     ui.newEval.assetPage = 1;
+    render({ preserveScroll: true });
+  }
+  if (event.target.id === "retry-count") {
+    ui.newEval.attemptRetry.count = Number(event.target.value);
     render({ preserveScroll: true });
   }
   if (event.target.id === "pool-connection-select") {
