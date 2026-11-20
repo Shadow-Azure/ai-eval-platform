@@ -11,6 +11,9 @@ test("buildSigtermDiagnostics captures systemd, journal, reboot evidence, metada
       if (args.includes("list-timers")) {
         return { status: 0, stdout: "apt-daily.timer timer-a\napt-daily-upgrade.timer timer-b\n", stderr: "" };
       }
+      if (args[0] === "is-enabled") {
+        return { status: 0, stdout: "masked\nmasked\nmasked\nmasked\nmasked\nmasked\n", stderr: "" };
+      }
       return {
         status: 0,
         stdout:
@@ -63,6 +66,26 @@ test("buildSigtermDiagnostics captures systemd, journal, reboot evidence, metada
       }
       return { status: 0, stdout: "cloud-a\n", stderr: "" };
     }
+    if (command === "cat") {
+      const path = args[args.length - 1];
+      if (path.endsWith("/etc/needrestart/conf.d/99-eval-no-restart.conf")) {
+        return { status: 0, stdout: "$nrconf{restart} = 'l';\n", stderr: "" };
+      }
+      if (path.endsWith("/etc/eval/runner-image.json")) {
+        return { status: 0, stdout: '{"baked": true, "version": "2026-11-21"}\n', stderr: "" };
+      }
+      return { status: 0, stdout: "", stderr: "" };
+    }
+    if (command === "apt-config") {
+      return {
+        status: 0,
+        stdout:
+          'APT::Periodic::Update-Package-Lists "0";\n' +
+          'APT::Periodic::Unattended-Upgrade "0";\n' +
+          'APT::Periodic::Enable "1";\n',
+        stderr: "",
+      };
+    }
     if (command === "curl") {
       const url = args[args.length - 1];
       if (url.endsWith("/instance-id")) return { status: 0, stdout: "i-bp1test\n", stderr: "" };
@@ -111,6 +134,21 @@ test("buildSigtermDiagnostics captures systemd, journal, reboot evidence, metada
   assert.deepEqual(diagnostics.unattended_upgrades_tail, ["unattended-a"]);
   assert.deepEqual(diagnostics.audit_log_tail, ["audit-a"]);
   assert.deepEqual(diagnostics.reboot_required, ["*** reboot required ***"]);
+  // M8 #348: the snapshot distinguishes a hardened image from a stock one.
+  assert.deepEqual(diagnostics.auto_update_units, [
+    "masked",
+    "masked",
+    "masked",
+    "masked",
+    "masked",
+    "masked",
+  ]);
+  assert.deepEqual(diagnostics.apt_periodic, [
+    'APT::Periodic::Update-Package-Lists "0";',
+    'APT::Periodic::Unattended-Upgrade "0";',
+  ]);
+  assert.deepEqual(diagnostics.needrestart, ["$nrconf{restart} = 'l';"]);
+  assert.deepEqual(diagnostics.runner_image, ['{"baked": true, "version": "2026-11-21"}']);
 
   // Aliyun spot termination time lives under instance/spot/...; the bare
   // spot/... path only returns the metadata 404 page.

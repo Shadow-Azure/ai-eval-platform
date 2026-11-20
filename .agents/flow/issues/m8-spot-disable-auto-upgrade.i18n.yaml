@@ -1,0 +1,5 @@
+# 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
+# git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
+#   pnpm run record:i18n -- .agents/flow/issues/m8-spot-disable-auto-upgrade.md
+m8-spot-disable-auto-upgrade.md: 4838c15f8a43a928e5900402fa9f468358d8372b
+m8-spot-disable-auto-upgrade.en.md: d32af719e9a9f73449812b336e88ced7ea5fd429
