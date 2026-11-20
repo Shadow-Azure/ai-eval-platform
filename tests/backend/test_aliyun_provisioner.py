@@ -11,12 +11,15 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import io
 import json
+import tarfile
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from urllib.parse import parse_qs, quote
 
 import pytest
+import yaml
 from app.config import Settings, get_settings
 from app.models import (
     Connection,
@@ -316,12 +319,18 @@ def test_credential_json_is_required(session: Session, scope: dict[str, str]) ->
 
 
 def _write_file_content(cloud_init: str, path: str) -> str:
-    lines = cloud_init.splitlines()
-    for index, line in enumerate(lines):
-        if line.strip().endswith(f"path: {path}"):
-            for candidate in lines[index:]:
-                if "content:" in candidate:
-                    return base64.b64decode(candidate.split("content:", 1)[1].strip()).decode()
+    document = yaml.safe_load(cloud_init)
+    for item in document.get("write_files", []):
+        if item["path"] == path:
+            return base64.b64decode(item["content"]).decode()
+    for item in document.get("write_files", []):
+        if item["path"] != "/etc/eval/scripts.tar.gz":
+            continue
+        archive = base64.b64decode(item["content"])
+        with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
+            for member in tar.getmembers():
+                if member.isfile() and f"/etc/eval/{member.name}" == path:
+                    return tar.extractfile(member).read().decode()
     raise AssertionError(f"{path} not found in cloud-config")
 
 
@@ -352,7 +361,9 @@ def test_create_embeds_jit_in_user_data_only(
     run_call = next(call for call in transport.calls if call[0] == "RunInstances")
     user_data = base64.b64decode(run_call[1]["UserData"][0]).decode()
     bootstrap = _write_file_content(user_data, "/etc/eval/bootstrap.sh")
-    assert SECRET_JIT in bootstrap
+    jit_env = _write_file_content(user_data, "/etc/eval/runner-jit.env")
+    assert SECRET_JIT in jit_env
+    assert SECRET_JIT not in bootstrap
     assert SECRET_AK_SECRET not in user_data
     assert SECRET_JIT not in json.dumps(instance.cost_json)
     assert SECRET_AK_SECRET not in json.dumps(instance.cost_json)

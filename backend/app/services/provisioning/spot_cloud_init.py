@@ -13,8 +13,10 @@ env file plus ``/var/lib/cloud/instance/user-data.txt`` after boot.
 from __future__ import annotations
 
 import base64
+import io
 import json
 import shlex
+import tarfile
 from collections.abc import Mapping, Sequence
 
 
@@ -59,7 +61,6 @@ done
 
 def _bootstrap_script(
     *,
-    encoded_jit: str,
     runner_tarball_url: str,
     runner_tarball_token: str | None,
     scripts_bundle: Mapping[str, object] | None = None,
@@ -226,11 +227,6 @@ unset RUNNER_TARBALL_TOKEN
 tar -xzf runner.tar.gz
 rm -f runner.tar.gz
 
-cat > /etc/eval/runner-jit.env <<'JIT_ENV'
-JIT_CONFIG={encoded_jit}
-JIT_ENV
-chmod 600 /etc/eval/runner-jit.env
-
 cat > /etc/systemd/system/github-runner.service <<'RUNNER_UNIT'
 [Unit]
 Description=GitHub Actions ephemeral runner
@@ -344,7 +340,6 @@ def render_cloud_init(
         heartbeat_token=heartbeat_token,
     )
     bootstrap = _bootstrap_script(
-        encoded_jit=encoded_jit,
         runner_tarball_url=runner_tarball_url,
         runner_tarball_token=runner_tarball_token,
         scripts_bundle=scripts_bundle,
@@ -352,21 +347,44 @@ def render_cloud_init(
     )
     cleanup = _cleanup_script()
     # Cloud-init write_files runs as a single document; keep each file in a
-    # base64 block so shell quoting and YAML never collide.
+    # base64 block so shell quoting and YAML never collide. The three scripts
+    # travel as one gzipped tar so the UserData 16 KiB limit survives a real
+    # GitHub JIT config; the blob is extracted once by runcmd.
+    scripts = {
+        "heartbeat.sh": heartbeat,
+        "bootstrap.sh": bootstrap,
+        "cleanup.sh": cleanup,
+    }
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as archive:
+        for name, content in scripts.items():
+            data = content.encode()
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            info.mode = 0o700
+            info.mtime = 0
+            info.uid = 0
+            info.gid = 0
+            info.uname = ""
+            info.gname = ""
+            archive.addfile(info, io.BytesIO(data))
+    jit_env = f"JIT_CONFIG={encoded_jit}\n"
+    extract = (
+        "tar -xzf /etc/eval/scripts.tar.gz -C /etc/eval && "
+        "rm -f /etc/eval/scripts.tar.gz && "
+        "chmod 0700 /etc/eval/heartbeat.sh /etc/eval/bootstrap.sh /etc/eval/cleanup.sh && "
+        "bash /etc/eval/bootstrap.sh"
+    )
     return f"""#cloud-config
 write_files:
-  - path: /etc/eval/heartbeat.sh
-    permissions: '0700'
+  - path: /etc/eval/scripts.tar.gz
+    permissions: '0600'
     encoding: b64
-    content: {base64.b64encode(heartbeat.encode()).decode()}
-  - path: /etc/eval/bootstrap.sh
-    permissions: '0700'
+    content: {base64.b64encode(buf.getvalue()).decode()}
+  - path: /etc/eval/runner-jit.env
+    permissions: '0600'
     encoding: b64
-    content: {base64.b64encode(bootstrap.encode()).decode()}
-  - path: /etc/eval/cleanup.sh
-    permissions: '0700'
-    encoding: b64
-    content: {base64.b64encode(cleanup.encode()).decode()}
+    content: {base64.b64encode(jit_env.encode()).decode()}
 runcmd:
-  - [bash, /etc/eval/bootstrap.sh]
+  - [bash, -c, "{extract}"]
 """

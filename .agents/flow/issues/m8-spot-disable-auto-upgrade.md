@@ -11,9 +11,11 @@ scope:
   - backend/app/services/provisioning/spot_cloud_init.py
   - runner/lib/diagnostics.mjs
   - tests/backend/test_spot_cloud_init.py
+  - tests/backend/test_aliyun_provisioner.py
   - tests/sigterm-diagnostics.test.mjs
   - tests/integration/m4_04_spot_smoke.py
   - tests/runner-image.test.mjs
+  - plans/2026-11-20-pr349-review.md
   - infra/runner-image/**
   - .github/workflows/eval-shard.yml
   - docs/architecture.md
