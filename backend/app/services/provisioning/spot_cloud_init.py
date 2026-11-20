@@ -84,6 +84,34 @@ apt-get update -y
 apt-get install -y --no-install-recommends ca-certificates curl git jq docker.io libicu-dev xz-utils
 systemctl enable --now docker
 
+# M8 #345: keep the evidence needed to name whoever rebooted a cold spot
+# instance. auditd records execve of systemctl/reboot/shutdown and writes to
+# /var/run/reboot-required; a persistent journal keeps the lines before the
+# stop across a userspace or kernel restart. Both steps are best-effort: a
+# missing auditd package must not fail the bootstrap and lose the runner.
+if ! apt-get install -y --no-install-recommends auditd; then
+  echo "auditd unavailable; reboot audit disabled" >&2
+fi
+mkdir -p /etc/audit/rules.d
+cat > /etc/audit/rules.d/eval-reboot.rules <<'AUDIT_RULES'
+-w /var/run/reboot-required -p wa -k eval_reboot_required
+-a always,exit -F arch=b64 -S execve -F exe=/usr/bin/systemctl -k eval_systemctl_exec
+-a always,exit -F arch=b64 -S execve -F exe=/usr/sbin/reboot -k eval_reboot_exec
+-a always,exit -F arch=b64 -S execve -F exe=/usr/sbin/shutdown -k eval_shutdown_exec
+AUDIT_RULES
+if command -v augenrules >/dev/null 2>&1; then
+  augenrules --load >/dev/null 2>&1 || true
+fi
+systemctl enable --now auditd >/dev/null 2>&1 || true
+mkdir -p /var/log/journal
+if [ -f /etc/systemd/journald.conf ]; then
+  sed -i 's/^#*Storage=.*/Storage=persistent/' /etc/systemd/journald.conf
+  if ! grep -q '^Storage=' /etc/systemd/journald.conf; then
+    printf '\n[Journal]\nStorage=persistent\n' >> /etc/systemd/journald.conf
+  fi
+fi
+systemctl restart systemd-journald >/dev/null 2>&1 || true
+
 # The eval-shard workflow runs Node on the runner host: the prepare job
 # validates the dispatch contract and plans the matrix (contracts.mjs,
 # plan-cases.mjs) and every execute job runs real-task.mjs. Install Node 22
@@ -168,7 +196,7 @@ Restart=no
 # job completes. ExecStopPost runs only after the unit stops (never on a normal
 # start), so powering the instance off here leaves no online/offline orphan for
 # the capacity controller to wait on.
-ExecStopPost=/sbin/shutdown -h now
+ExecStopPost=/bin/sh -c 'shutdown -h now 2>/dev/null || systemctl poweroff'
 
 [Install]
 WantedBy=multi-user.target
