@@ -6,7 +6,7 @@ English | [中文](m8-53-cache-token-accounting.md)
 kind: issue
 milestone: m8
 priority: P2
-status: in-progress
+status: done
 scope:
   - .agents/flow/issues/m8-53-cache-token-accounting.*
   - .agents/flow/issues/m9-self-evolution-session-addressing.*
