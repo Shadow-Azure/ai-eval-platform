@@ -1,0 +1,5 @@
+# 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
+# git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
+#   pnpm run record:i18n -- .agents/flow/issues/m8-spot-auto-update-sigterm.md
+m8-spot-auto-update-sigterm.md: cbfb21b06a019616f2abb1ad554810991865cfff
+m8-spot-auto-update-sigterm.en.md: a4c03dcd4027e416651d4a75076a1ba1d5ccb87a
