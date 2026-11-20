@@ -102,11 +102,15 @@ jobs:
             [ "$status" = "masked" ] && masked=$((masked + 1))
           done
           test "$masked" -eq 6
-          apt-config dump | grep -q 'APT::Periodic::Update-Package-Lists "0";'
-          apt-config dump | grep -q 'APT::Periodic::Unattended-Upgrade "0";'
+          # Capture first: pipefail turns `producer | grep -q` into SIGPIPE
+          # when grep exits on the first match.
+          apt_config="$(apt-config dump)"
+          grep -q 'APT::Periodic::Update-Package-Lists "0";' <<<"$apt_config"
+          grep -q 'APT::Periodic::Unattended-Upgrade "0";' <<<"$apt_config"
           grep -q "nrconf{restart} = 'l';" /etc/needrestart/conf.d/99-eval-no-restart.conf
           test ! -f /var/run/reboot-required
-          systemctl show github-runner -p ExecStart | grep -q 'systemd-inhibit'
+          exec_start="$(systemctl show github-runner -p ExecStart)"
+          grep -q 'systemd-inhibit' <<<"$exec_start"
           if [ -f /etc/eval/runner-image-baked ]; then
             echo "runner image: baked and immutable"
           else
