@@ -101,6 +101,7 @@ def case_summary(
     case: DatasetCase,
     *,
     token_avg: int | None = None,
+    token_avg_with_cache: int | None = None,
     token_run_count: int = 0,
 ) -> dict:
     # M5-14: the adapter's raw difficulty label is preserved, and the display
@@ -121,6 +122,7 @@ def case_summary(
         # M8-53 (#332): mean tokens per run for this case_key across the
         # dataset's runs. ``None`` when no run has parsed trace data.
         "token_avg": token_avg,
+        "token_avg_with_cache": token_avg_with_cache,
         "token_run_count": token_run_count,
         "created_at": case.created_at.isoformat(timespec="microseconds"),
     }
@@ -641,6 +643,9 @@ def list_version_cases(
             case_summary(
                 case,
                 token_avg=(token_averages.get(case.case_key) or {}).get("token_avg"),
+                token_avg_with_cache=(token_averages.get(case.case_key) or {}).get(
+                    "token_avg_with_cache"
+                ),
                 token_run_count=(token_averages.get(case.case_key) or {}).get(
                     "token_run_count", 0
                 ),

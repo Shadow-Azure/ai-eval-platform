@@ -27,7 +27,14 @@ CASE_SET_KEYS = ("selected_total", "submitted", "graded", "resolved", "execution
 # (all attempts per case per design 07 §3.2), not from a case-result set, so
 # their numerator/denominator are descriptive rather than registry references.
 USAGE_METRIC_KEYS = frozenset(
-    {"total_tokens", "tokens_per_case", "total_cost_usd", "cost_per_case_usd"}
+    {
+        "total_tokens",
+        "tokens_per_case",
+        "total_tokens_with_cache",
+        "tokens_with_cache_per_case",
+        "total_cost_usd",
+        "cost_per_case_usd",
+    }
 )
 
 # 需要分母的聚合器；sum/mean 只看分子。

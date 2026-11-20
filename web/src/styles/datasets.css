@@ -1050,3 +1050,10 @@
   color: var(--muted);
   font-size: 11px;
 }
+
+/* #339: cache/non-cache/output breakdown under a dataset card's token row. */
+.dataset-token-detail {
+  margin: 2px 0 12px;
+  color: var(--muted);
+  font-size: 10px;
+}

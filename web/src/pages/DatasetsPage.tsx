@@ -569,19 +569,24 @@ export function DatasetsPage() {
                   </div>
                 </div>
                 {card.tokenStats ? (
-                  <div className="dataset-token-row">
-                    <span>累计 Token</span>
-                    <strong>
-                      {formatTokenAmount(
-                        card.tokenStats.total_tokens > 0
-                          ? card.tokenStats.total_tokens
-                          : card.tokenStats.input_tokens + card.tokenStats.output_tokens,
-                      )}
-                    </strong>
-                    <span className="muted">
-                      均 {formatTokenAmount(card.tokenStats.average_eval_tokens)} / 次评测
-                    </span>
-                  </div>
+                  <>
+                    <div className="dataset-token-row">
+                      <span>累计 Token（含缓存）</span>
+                      <strong>
+                        {formatTokenAmount(card.tokenStats.total_tokens_with_cache)}
+                      </strong>
+                      <span className="muted">
+                        均 {formatTokenAmount(card.tokenStats.average_eval_tokens_with_cache)} / 次评测
+                      </span>
+                    </div>
+                    <div className="dataset-token-detail">
+                      缓存 {formatTokenAmount(card.tokenStats.cache_input_tokens)} · 非缓存输入{" "}
+                      {formatTokenAmount(card.tokenStats.input_tokens)} · 输出{" "}
+                      {formatTokenAmount(card.tokenStats.output_tokens)} · 覆盖{" "}
+                      {card.tokenStats.eval_count_with_tokens}/
+                      {card.tokenStats.eval_count} 次评测
+                    </div>
+                  </>
                 ) : null}
                 <div className="dataset-footer">
                   <span className="small muted">

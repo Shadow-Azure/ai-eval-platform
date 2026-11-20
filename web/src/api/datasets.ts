@@ -6,15 +6,23 @@ import { request } from "./evaluations";
  * planes omit ``token_stats`` and the cards simply do not render.
  */
 export interface DatasetTokenStats {
+  /** #332 semantics: non-cache input + output, kept unchanged. */
   input_tokens: number;
   output_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+  cache_input_tokens: number;
   total_tokens: number;
+  /** #339 user-facing total: non-cache input + cache input + output. */
+  total_tokens_with_cache: number;
   cost_usd: number | null;
   case_count: number;
   eval_count: number;
   eval_count_with_tokens: number;
   average_tokens: number | null;
+  average_tokens_with_cache: number | null;
   average_eval_tokens: number | null;
+  average_eval_tokens_with_cache: number | null;
   average_cost_usd: number | null;
 }
 
@@ -110,6 +118,8 @@ export interface DatasetCaseSummary {
   created_at: string;
   /** Average trace tokens per run for this case across the version. */
   token_avg?: number | null;
+  /** #339 average including cache input; UI shows this total. */
+  token_avg_with_cache?: number | null;
   /** Number of measured eval runs behind ``token_avg``. */
   token_run_count?: number;
 }
@@ -188,16 +198,35 @@ function optionalNumber(value: unknown): number | null {
 
 function parseTokenStats(value: unknown): DatasetTokenStats | null {
   if (!isRecord(value)) return null;
+  const input = optionalNumber(value.input_tokens) ?? 0;
+  const output = optionalNumber(value.output_tokens) ?? 0;
+  const cacheRead = optionalNumber(value.cache_read_tokens) ?? 0;
+  const cacheCreation = optionalNumber(value.cache_creation_tokens) ?? 0;
+  const cacheInput =
+    optionalNumber(value.cache_input_tokens) ?? cacheRead + cacheCreation;
+  const total = optionalNumber(value.total_tokens) ?? 0;
+  const totalWithCache =
+    optionalNumber(value.total_tokens_with_cache) ?? total + cacheInput;
+  const casesWithTokens = optionalNumber(value.eval_count_with_tokens) ?? 0;
   return {
-    input_tokens: optionalNumber(value.input_tokens) ?? 0,
-    output_tokens: optionalNumber(value.output_tokens) ?? 0,
-    total_tokens: optionalNumber(value.total_tokens) ?? 0,
+    input_tokens: input,
+    output_tokens: output,
+    cache_read_tokens: cacheRead,
+    cache_creation_tokens: cacheCreation,
+    cache_input_tokens: cacheInput,
+    total_tokens: total,
+    total_tokens_with_cache: totalWithCache,
     cost_usd: optionalNumber(value.cost_usd),
     case_count: number(value.case_count),
     eval_count: number(value.eval_count),
-    eval_count_with_tokens: optionalNumber(value.eval_count_with_tokens) ?? 0,
+    eval_count_with_tokens: casesWithTokens,
     average_tokens: optionalNumber(value.average_tokens),
+    average_tokens_with_cache:
+      optionalNumber(value.average_tokens_with_cache) ??
+      (casesWithTokens ? Math.round(totalWithCache / casesWithTokens) : null),
     average_eval_tokens: optionalNumber(value.average_eval_tokens),
+    average_eval_tokens_with_cache:
+      optionalNumber(value.average_eval_tokens_with_cache),
     average_cost_usd: optionalNumber(value.average_cost_usd),
   };
 }
@@ -263,6 +292,7 @@ function parseCase(item: Record<string, unknown>): DatasetCaseSummary {
     expected_test_count: number(item.expected_test_count),
     created_at: text(item.created_at),
     token_avg: optionalNumber(item.token_avg),
+    token_avg_with_cache: optionalNumber(item.token_avg_with_cache),
     token_run_count: number(item.token_run_count),
   };
 }

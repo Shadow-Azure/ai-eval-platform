@@ -811,7 +811,8 @@ function SubagentNested({
         <span className="trace-kv-key">用量</span>
         <span className="trace-kv-value">
           {session.span_count} spans · {compactNumber(session.input_tokens)} in
-          · {compactNumber(session.output_tokens)} out
+          · {compactNumber(session.output_tokens)} out · cache{" "}
+          {compactNumber(session.cache_input_tokens)}
           {session.cost ? ` · ${formatCost(session.cost)}` : ""}
         </span>
       </div>
@@ -1568,7 +1569,8 @@ function InspectorOverview({
                   <span className="trace-kv-value">
                     {step.childSession.span_count} spans ·{" "}
                     {compactNumber(step.childSession.input_tokens)} in ·{" "}
-                    {compactNumber(step.childSession.output_tokens)} out
+                    {compactNumber(step.childSession.output_tokens)} out · cache{" "}
+                    {compactNumber(step.childSession.cache_input_tokens)}
                   </span>
                 </div>
               ) : (
@@ -2414,7 +2416,9 @@ export function TracePage() {
     )?.test_summary ??
     caseQuery.data?.case.test_summary ??
     null;
-  const totalTokens = trace.stats.inputTokens + trace.stats.outputTokens;
+  // #339: the user-facing total includes cache read/creation, which the
+  // backend aggregates from LLM span attributes (AGENT summaries excluded).
+  const totalTokens = trace.stats.totalTokensWithCache;
   const counts = (() => {
     const result: Record<string, number> = { all: model.spans.length };
     for (const item of model.spans) result[item.kind] = (result[item.kind] ?? 0) + 1;
@@ -2579,7 +2583,7 @@ export function TracePage() {
               <strong>{durationLabel(totalDuration)}</strong> 总耗时
             </span>
             <span>
-              <strong>{compactNumber(totalTokens)}</strong> tokens
+              <strong>{compactNumber(totalTokens)}</strong> tokens（含缓存）
             </span>
             <span>
               <strong>{formatCost(model.cost ?? selectedSession?.cost)}</strong> 成本（USD）
@@ -2593,6 +2597,19 @@ export function TracePage() {
               <strong>{testSummaryLabel(attemptTests)}</strong> 测试
             </span>
           </div>
+        </div>
+        <div className="trace-token-breakdown">
+          <span>
+            缓存输入 <strong>{compactNumber(trace.stats.cacheInputTokens)}</strong>（read{" "}
+            {compactNumber(trace.stats.cacheReadTokens)} / creation{" "}
+            {compactNumber(trace.stats.cacheCreationTokens)}）
+          </span>
+          <span>
+            非缓存输入 <strong>{compactNumber(trace.stats.inputTokens)}</strong>
+          </span>
+          <span>
+            输出 <strong>{compactNumber(trace.stats.outputTokens)}</strong>
+          </span>
         </div>
 
         <div className="trace-mobile-session-picker">
