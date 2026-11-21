@@ -6,7 +6,7 @@
 kind: issue
 milestone: m9
 priority: P0
-status: in-progress
+status: done
 scope:
   - backend/app/**
   - tests/**

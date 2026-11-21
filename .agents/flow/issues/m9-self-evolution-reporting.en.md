@@ -6,7 +6,7 @@ English | [中文](m9-self-evolution-reporting.md)
 kind: issue
 milestone: m9
 priority: P0
-status: in-progress
+status: done
 scope:
   - .gitignore
   - .github/**
