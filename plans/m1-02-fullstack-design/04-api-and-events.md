@@ -187,15 +187,18 @@ data: {"run_id":"eval_01...","case_run_id":"ecr_01...","attempt":1,"sequence":18
 
 ## 7. 模型网关内部契约
 
-Runner 的 OpenAI 兼容 `base_url` 指向平台，`Authorization` 使用 case-scoped 短期 token。网关根据 token 绑定模型配置、允许模型名、预算、租户和 attempt，解密真实 Key 后转发流式请求。
+Runner 的 OpenAI 兼容 `base_url` 指向平台，`Authorization` 使用 case attempt 级短期 token。token claims 至少包含 `tenant_id`、`model_config_id`、`allowed_models`、`eval_run_id`、`shard_id`、`case_run_id`、`case_attempt_id`（或唯一 attempt id）、`budget_cny` 与 `exp`；execute job 在启动 Agent 前按自己的 case 向 manifest 端点换取该 token，端点校验 case 属于该 shard/attempt。网关按 `case_attempt_id`（或 `eval_case_run_id` 加 attempt）精确查询该 case 的 attempt，只在该 attempt 终态时返回 `409 stale_attempt`；run 级 `cancelling/cancelled` 与预算暂停仍全局拒绝。旧 token 没有 case 维度时，兼容期按 shard 的全部 attempt 终态判断；新 token 必须带 case 维度，缺失时 fail closed。
 
 网关必须：
 
 - 覆盖 Authorization、不记录请求/响应头中的凭据；
+- 授权与撤销均以 case attempt 为单位，同一 shard 的不同 case 不共享终态判断；
+- 查询必须唯一命中目标 case attempt，不使用 `.first()` 之类的非唯一回退；
 - 对流式响应统计或回填用量，执行超时与取消传播；
 - 限制最大上下文、输出、请求速率和累计预算；
 - 将模型用量关联到 case_run/attempt，而不是由 Runner 自报作为唯一依据；
-- 供应商错误归一化为 `provider_unavailable/rate_limited/authentication_failed/budget_exceeded`，保留脱敏 request ID。
+- 供应商错误归一化为 `provider_unavailable/rate_limited/authentication_failed/budget_exceeded`，保留脱敏 request ID；
+- 兼容期结束时间可配置并记录，旧 token 到期后移除 shard 级回退。
 
 ## 8. 自进化上报与会话包下载
 
