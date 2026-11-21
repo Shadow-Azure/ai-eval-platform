@@ -186,7 +186,14 @@ case "$*" in
 esac
 exit 0
 `;
-  const git = "#!/bin/sh\nexit 0\n";
+  const git = `#!/bin/sh
+if [ -n "\${FAKE_GIT_CHECKOUT_SLEEP:-}" ]; then
+  case "$*" in
+    *checkout*) sleep "$FAKE_GIT_CHECKOUT_SLEEP" ;;
+  esac
+fi
+exit 0
+`;
   for (const [name, body] of [["docker", docker], ["git", git]]) {
     const file = join(dir, name);
     writeFileSync(file, body, { mode: 0o755 });
@@ -751,6 +758,85 @@ test("model token is refreshed per case after image pull, just before the agent 
       !agent.includes("CLAUDE_GATEWAY_TOKEN=model-token-shard"),
       "agent must not receive the shard-level token",
     );
+  } finally {
+    rmSync(fakeBin, { recursive: true, force: true });
+    await ctx.close();
+  }
+});
+
+test("the case refresh survives a server idle close after a slow checkout", async () => {
+  const fakeBin = installFakeBin();
+  const logPath = join(fakeBin, "docker.log");
+  const ctx = await createScenario({
+    cases,
+    behavior: {
+      tasks: tasksPayload(),
+      modelToken: (requestUrl) =>
+        requestUrl.includes(`case_run_id=${CASE_RUN_ID}`)
+          ? "model-token-case"
+          : "model-token-shard",
+      // uvicorn closes idle keep-alive connections after five seconds; shrink
+      // the window while the fake checkout blocks the runner's event loop.
+      keepAliveTimeout: 100,
+    },
+  });
+  try {
+    const result = await runCase(ctx, fakeBin, logPath, { FAKE_GIT_CHECKOUT_SLEEP: "1" });
+    assert.equal(result.code, 0, result.stderr);
+
+    assert.ok(
+      stderrEvents(result).some((event) => event.status === "model_token_refreshed"),
+      `the refresh after the blocked checkout must succeed\n${result.stderr}`,
+    );
+    const agent = invocations(logPath).find((line) => line.includes("claude-code-smoke.mjs"));
+    assert.ok(agent, `agent never started\n${result.stderr}`);
+    assert.ok(agent.includes("CLAUDE_GATEWAY_TOKEN=model-token-case"));
+  } finally {
+    rmSync(fakeBin, { recursive: true, force: true });
+    await ctx.close();
+  }
+});
+
+test("a transport failure during the case refresh fails closed and reports its cause", async () => {
+  const fakeBin = installFakeBin();
+  const logPath = join(fakeBin, "docker.log");
+  const ctx = await createScenario({
+    cases,
+    behavior: {
+      tasks: tasksPayload(),
+      modelToken: "model-token-test",
+      uploadUrls: true,
+      // The early shard manifest succeeds; the per-case refresh is reset to
+      // reproduce the stale keep-alive transport failure from production.
+      manifestReset: (requestUrl) => requestUrl.includes("case_run_id="),
+    },
+  });
+  try {
+    const result = await runCase(ctx, fakeBin, logPath, { RUNNER_PRESIGN_UPLOADS: "1" });
+    assert.equal(result.code, 0, result.stderr);
+
+    const lines = invocations(logPath);
+    assert.equal(
+      lines.find((line) => line.includes("claude-code-smoke.mjs")),
+      undefined,
+      `agent must not start after a failed refresh\n${lines.join("\n")}`,
+    );
+
+    const refreshFailure = stderrEvents(result).find(
+      (event) => event.status === "model_token_refresh_failed",
+    );
+    assert.ok(refreshFailure, `missing model_token_refresh_failed event\n${result.stderr}`);
+    assert.equal(refreshFailure.case_run_id, CASE_RUN_ID);
+    assert.equal(refreshFailure.cause_code, "ECONNRESET");
+
+    const completed = requestsFor(ctx, "completed");
+    assert.equal(completed.length, 1);
+    assert.equal(completed[0].body.execution_status, "failed");
+    const score = JSON.parse(
+      ctx.platform.objects.get(completed[0].body.score_manifest.object_key).toString("utf8"),
+    );
+    assert.equal(score["case-real"].error, "model_token_unavailable");
+    assert.match(score["case-real"].message, /ECONNRESET/);
   } finally {
     rmSync(fakeBin, { recursive: true, force: true });
     await ctx.close();
