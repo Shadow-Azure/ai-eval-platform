@@ -1,5 +1,5 @@
 # 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
 # git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
 #   pnpm run record:i18n -- .agents/flow/issues/m8-runner-async-io.md
-m8-runner-async-io.md: 749b45713a40848b7a18fa97bb54bdfa3460aad5
-m8-runner-async-io.en.md: e84f96a0067155b050e26e7c6423ca59d0da944f
+m8-runner-async-io.md: 5ec50bf7c2b0e5a68e6fcc27810d62123480f3f3
+m8-runner-async-io.en.md: 9641a87f48b10cd8e0fd9587b9446542318279c4
