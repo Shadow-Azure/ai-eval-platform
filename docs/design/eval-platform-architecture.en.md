@@ -95,7 +95,7 @@ A dataset version also records the execution and scoring image digests: an impor
 
 ### 5.3 Model and Credential Management
 
-A model configuration records the provider, endpoint URL, and model name, all integrated through the OpenAI-compatible protocol; API keys are stored encrypted and are only decrypted when dispatching tasks. When launching an evaluation, the user can reference an existing credential or enter a new one temporarily; temporary credentials bind only to that evaluation. Tasks sent to runners carry short-lived credentials issued by the platform, never written to the runner machine.
+A model configuration records the provider, endpoint URL, and model name, all integrated through the OpenAI-compatible protocol; API keys are stored encrypted and are only decrypted when dispatching tasks. When launching an evaluation, the user can reference an existing credential or enter a new one temporarily; temporary credentials bind only to that evaluation. Tasks sent to runners carry short-lived credentials issued by the platform, never written to the runner machine. Model tokens are issued per case attempt, and gateway authorization and revocation checks are both scoped to that attempt; cases in the same shard do not affect each other, while run-level cancellation and budget pause still apply to every case.
 
 ### 5.4 Agent Runtimes and Assets
 
