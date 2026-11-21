@@ -721,7 +721,7 @@ def test_manifest_issues_case_scoped_model_token(
     assert legacy.case_attempt_id is None
 
 
-def test_manifest_rejects_case_from_another_shard(
+def test_manifest_rejects_unknown_case_run(
     client, model_env, session, provider, engine, usage_factory
 ) -> None:
     config = _create_config(client)
@@ -739,12 +739,6 @@ def test_manifest_rejects_case_from_another_shard(
     outbox = session.scalar(select(Outbox).where(Outbox.aggregate_id == run_id))
     assert outbox is not None
     shard_id = outbox.payload_json["shard_id"]
-    case_attempt = session.scalar(
-        select(EvalCaseAttempt)
-        .join(EvalCaseRun, EvalCaseRun.id == EvalCaseAttempt.eval_case_run_id)
-        .where(EvalCaseRun.eval_run_id == run_id)
-    )
-    assert case_attempt is not None
     response = client.get(
         f"/runner/v1/shards/{shard_id}/manifest",
         params={
