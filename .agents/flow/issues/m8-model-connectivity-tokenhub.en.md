@@ -12,6 +12,7 @@ scope:
   - tests/backend/test_model_gateway.py
   - web/src/pages/ModelsPage.tsx
   - .agents/flow/issues/m8-model-connectivity-tokenhub.*
+  - .agents/flow/issues/m8-runner-async-io.*
   - reports/2026-11-21/m8-model-connectivity-tokenhub/*
 adr: []
 github:

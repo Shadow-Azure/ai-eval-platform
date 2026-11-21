@@ -1,5 +1,5 @@
 # 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
 # git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
 #   pnpm run record:i18n -- .agents/flow/issues/m8-model-connectivity-tokenhub.md
-m8-model-connectivity-tokenhub.md: ad3161d79ff4d4544afcb2f223210bff34921e73
-m8-model-connectivity-tokenhub.en.md: 3873e2c47c263d5ca53560ae924a1e6e3b8f05d8
+m8-model-connectivity-tokenhub.md: 3090397a10696b6044fd18e378122a22fdae25c0
+m8-model-connectivity-tokenhub.en.md: 60c1c73d9785dbe5290253d281bd915df1401f3d
