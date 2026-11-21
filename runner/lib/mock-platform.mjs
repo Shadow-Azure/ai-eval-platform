@@ -15,6 +15,11 @@ import { createServer } from "node:http";
  * - behavior.startedCapacityFailures answers POST .../started with 429
  *   capacity_waiting that many times, so the runner's per-evaluation cap wait
  *   is exercised without failing the attempt.
+ *
+ * M8 (#362) addition:
+ * - behavior.manifestReset(url) destroys the socket before answering, so a
+ *   test can make the per-case manifest refresh fail at the transport layer
+ *   while the early shard fetch still succeeds.
  */
 export async function startMockPlatform({
   manifestText,
@@ -25,6 +30,10 @@ export async function startMockPlatform({
   manifestDigestHeader = null,
 }) {
   const getManifest = typeof manifestText === "function" ? manifestText : () => manifestText;
+  const resetManifest =
+    typeof behavior.manifestReset === "function"
+      ? behavior.manifestReset
+      : () => behavior.manifestReset === true;
   const expiresAtHeader =
     typeof manifestExpiresAt === "function" ? manifestExpiresAt : () => manifestExpiresAt;
   const digestHeader =
@@ -46,6 +55,15 @@ export async function startMockPlatform({
   };
 
   const server = createServer(async (request, response) => {
+    if (
+      request.method === "GET" &&
+      request.url?.startsWith("/manifest") &&
+      resetManifest(request.url)
+    ) {
+      requests.push({ method: request.method, path: request.url, headers: request.headers, body: null });
+      request.socket.destroy();
+      return;
+    }
     const chunks = [];
     for await (const chunk of request) chunks.push(chunk);
     const rawBody = Buffer.concat(chunks).toString("utf8");

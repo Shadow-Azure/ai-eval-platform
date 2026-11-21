@@ -25,7 +25,7 @@ import {
   isExpired,
 } from "../lib/dispatch-descriptor.mjs";
 import { ContractError } from "../lib/errors.mjs";
-import { fetchManifest, sha256 } from "../lib/manifest-source.mjs";
+import { fetchManifest, manifestErrorDetail, sha256 } from "../lib/manifest-source.mjs";
 import { LocalObjectStore } from "../lib/object-store.mjs";
 import { getDatasetAdapter, getRuntimeAdapter } from "../lib/adapters.mjs";
 import { composePrompt } from "../lib/prompt.mjs";
@@ -561,23 +561,36 @@ async function realCase(
     // M8 (#358): the refresh asks for this case's token. A missing case token
     // is fail-closed; the shard-level token from the early fetch is never a
     // fallback, otherwise a stale sibling could still run against the shard.
+    let refreshError = null;
     const refreshedManifest = await fetchManifest(dispatch.manifest_url, {
       caseRunId: item.case_run_id,
     }).catch((error) => {
+      refreshError = error;
+      const detail = manifestErrorDetail(error);
       console.error(
         JSON.stringify({
           status: "model_token_refresh_failed",
           case_run_id: item.case_run_id,
           message: String(error?.message ?? error).slice(0, 300),
+          cause_code: detail.causeCode,
+          cause_message: detail.causeMessage,
         }),
       );
       return null;
     });
     const agentModelToken = refreshedManifest?.modelToken;
     if (!agentModelToken) {
+      // M8 (#362): keep the transport cause in the case summary too, so the
+      // failure is diagnosable from the case row without the runner log.
+      const detail = refreshError ? manifestErrorDetail(refreshError) : null;
+      const reason = refreshError
+        ? [detail?.causeCode, String(refreshError.message ?? refreshError)]
+            .filter(Boolean)
+            .join(": ")
+        : null;
       return failCase(
         "model_token_unavailable",
-        "manifest 未签发 case 级 model token，拒绝启动 Agent",
+        `manifest 未签发 case 级 model token，拒绝启动 Agent${reason ? `（${reason.slice(0, 200)}）` : ""}`,
         { phase: "executing" },
       );
     }
