@@ -1,5 +1,5 @@
 # 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
 # git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
 #   pnpm run record:i18n -- .agents/flow/issues/m8-eval-attempt-retry-toggle.md
-m8-eval-attempt-retry-toggle.md: 28c10f33630474be7813ad7c99d14b9b879c5319
-m8-eval-attempt-retry-toggle.en.md: f96ad8b6b0d039dfda59fcd477a92b79d24b2a94
+m8-eval-attempt-retry-toggle.md: cef6656cd864fb6d8459b61144c73d5bf7de5f42
+m8-eval-attempt-retry-toggle.en.md: 03227a1877586d8031bb82c6ada63d26bbdc0db7
