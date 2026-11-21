@@ -370,7 +370,7 @@ function ModelConfigDrawer({
             { required: true, message: "请输入 Base URL" },
             { pattern: /^https?:\/\//, message: "必须以 http:// 或 https:// 开头" },
           ]}
-          extra="平台会在该地址后追加 /models 做连通性测试，并按所选协议拼接模型请求。"
+          extra="平台会按所选协议向该地址发送一条最小模型请求做连通性测试。"
         >
           <Input className="mono" placeholder="https://api.deepseek.com/v1" maxLength={500} />
         </Form.Item>
