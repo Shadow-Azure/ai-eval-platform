@@ -7,8 +7,12 @@ two token families apart: a task token must never be accepted by the model
 gateway and a model token must never be accepted by a case callback.
 
 Runners receive a token bound to (tenant, model configuration, eval run,
-shard, attempt) and exchange it for the provider key inside the platform
-gateway. The provider key itself never enters the runner.
+shard, attempt, case run, case attempt) and exchange it for the provider key
+inside the platform gateway. The provider key itself never enters the runner.
+
+M8 (#358): the case dimensions are the revocation unit. A shard-level token
+from before the switch stays readable for the compatibility window, but every
+newly issued token carries both the case run and the exact attempt id.
 """
 
 from __future__ import annotations
@@ -43,6 +47,11 @@ class GatewayClaims:
     eval_run_id: str | None = None
     shard_id: str | None = None
     attempt: int | None = None
+    # M8 (#358): case-level revocation unit. ``case_attempt_id`` is the primary
+    # key of ``eval_case_attempt`` so two cases with the same attempt_no never
+    # resolve to the same row.
+    case_run_id: str | None = None
+    case_attempt_id: str | None = None
     budget_cny: float | None = None
 
 
@@ -67,6 +76,10 @@ def issue_gateway_token(
         payload["shard_id"] = claims.shard_id
     if claims.attempt is not None:
         payload["attempt"] = claims.attempt
+    if claims.case_run_id is not None:
+        payload["case_run_id"] = claims.case_run_id
+    if claims.case_attempt_id is not None:
+        payload["case_attempt_id"] = claims.case_attempt_id
     if claims.budget_cny is not None:
         payload["budget_cny"] = claims.budget_cny
     return issue_short_token(payload, secret, ttl_seconds=ttl_seconds, now=now)
@@ -102,6 +115,8 @@ def verify_gateway_token(
     eval_run_id = payload.get("eval_run_id")
     shard_id = payload.get("shard_id")
     attempt = payload.get("attempt")
+    case_run_id = payload.get("case_run_id")
+    case_attempt_id = payload.get("case_attempt_id")
     budget = payload.get("budget_cny")
     if eval_run_id is not None and not isinstance(eval_run_id, str):
         raise GatewayTokenError("invalid_token", "eval_run_id 无效")
@@ -109,6 +124,10 @@ def verify_gateway_token(
         raise GatewayTokenError("invalid_token", "shard_id 无效")
     if attempt is not None and not isinstance(attempt, int):
         raise GatewayTokenError("invalid_token", "attempt 无效")
+    if case_run_id is not None and not isinstance(case_run_id, str):
+        raise GatewayTokenError("invalid_token", "case_run_id 无效")
+    if case_attempt_id is not None and not isinstance(case_attempt_id, str):
+        raise GatewayTokenError("invalid_token", "case_attempt_id 无效")
     if budget is not None and not isinstance(budget, (int, float)):
         raise GatewayTokenError("invalid_token", "budget_cny 无效")
 
@@ -119,6 +138,8 @@ def verify_gateway_token(
         eval_run_id=eval_run_id,
         shard_id=shard_id,
         attempt=attempt,
+        case_run_id=case_run_id,
+        case_attempt_id=case_attempt_id,
         budget_cny=float(budget) if budget is not None else None,
     )
 

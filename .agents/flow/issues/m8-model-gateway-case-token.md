@@ -11,6 +11,7 @@ scope:
   - .agents/flow/**
   - backend/app/**
   - backend/migrations/**
+  - deploy/**
   - docs/**
   - plans/**
   - runner/**

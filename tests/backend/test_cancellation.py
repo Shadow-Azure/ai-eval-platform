@@ -401,6 +401,8 @@ def test_model_gateway_rejects_token_for_cancelling_run(
             eval_run_id=run.id,
             shard_id=attempt.shard_id,
             attempt=1,
+            case_run_id=running_case.id,
+            case_attempt_id=attempt.id,
         ),
         "test-gateway-secret",
     )

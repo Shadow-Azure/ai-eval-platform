@@ -426,7 +426,7 @@ async function realCase(
   dispatch,
   item,
   task,
-  { modelToken, runnerRoot, callbackBaseUrl, maxTurns, agentTimeoutSeconds },
+  { runnerRoot, callbackBaseUrl, maxTurns, agentTimeoutSeconds },
 ) {
   const datasetAdapter = getDatasetAdapter(task.adapter_key);
   const runtimeAdapter = getRuntimeAdapter(task.runtime_key);
@@ -447,7 +447,6 @@ async function realCase(
     if (!task.prompt) throw new Error("真实用例缺少 problem_statement");
     const environmentImage = datasetAdapter.environmentImage(task);
     if (!environmentImage) throw new Error("真实用例缺少 dataset environment image");
-    if (!modelToken) throw new Error("manifest 未签发 model token");
     if (!task.model?.anthropic_base_url) throw new Error("tasks 未返回模型网关地址");
 
     // M8-33: create the trace dir before resolving the image so the attempt
@@ -555,22 +554,39 @@ async function realCase(
     });
     if (checkout.status !== 0) throw new Error(`checkout 失败：${(checkout.stderr || "").slice(-500)}`);
 
-    // M8-41: the manifest (and its model token) was fetched before the image
-    // pull. Re-fetch it now, after the image is ready and just before the
-    // agent starts, so a slow SWE-bench image cannot consume the token TTL.
-    const refreshedManifest = await fetchManifest(dispatch.manifest_url).catch((error) => {
+    // M8-41: the manifest was fetched before the image pull. Re-fetch it now,
+    // after the image is ready and just before the agent starts, so a slow
+    // SWE-bench image cannot consume the token TTL.
+    //
+    // M8 (#358): the refresh asks for this case's token. A missing case token
+    // is fail-closed; the shard-level token from the early fetch is never a
+    // fallback, otherwise a stale sibling could still run against the shard.
+    const refreshedManifest = await fetchManifest(dispatch.manifest_url, {
+      caseRunId: item.case_run_id,
+    }).catch((error) => {
       console.error(
         JSON.stringify({
           status: "model_token_refresh_failed",
+          case_run_id: item.case_run_id,
           message: String(error?.message ?? error).slice(0, 300),
         }),
       );
       return null;
     });
-    const agentModelToken = refreshedManifest?.modelToken || modelToken;
-    if (refreshedManifest?.modelToken) {
-      console.error(JSON.stringify({ status: "model_token_refreshed" }));
+    const agentModelToken = refreshedManifest?.modelToken;
+    if (!agentModelToken) {
+      return failCase(
+        "model_token_unavailable",
+        "manifest 未签发 case 级 model token，拒绝启动 Agent",
+        { phase: "executing" },
+      );
     }
+    console.error(
+      JSON.stringify({
+        status: "model_token_refreshed",
+        case_run_id: item.case_run_id,
+      }),
+    );
 
     const env = {
       WORKSPACE: "/testbed",
@@ -1060,7 +1076,7 @@ async function main() {
   const manifestResponse = await fetchManifest(dispatch.manifest_url).catch((error) =>
     fail(error.message, "manifest_invalid")
   );
-  const { bytes: manifestBytes, tokenHeader, tasksUrl, modelToken } = manifestResponse;
+  const { bytes: manifestBytes, tokenHeader, tasksUrl } = manifestResponse;
   // M8-51 (#323) option C: a 1.1 dispatch omits digest/expiry; the manifest
   // response is the server descriptor for both.
   if (isExpired(dispatchExpiresAt(dispatch, manifestResponse))) {
@@ -1496,7 +1512,6 @@ async function main() {
       try {
         caseResult = task?.repo
           ? await realCase(dispatch, item, task, {
-              modelToken,
               runnerRoot,
               callbackBaseUrl: manifest.callback_base_url,
               maxTurns: manifest.max_turns,

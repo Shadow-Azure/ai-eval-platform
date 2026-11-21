@@ -640,17 +640,75 @@ def _model_token_ttl(run: EvalRun, settings: Settings) -> int:
     )
 
 
+def _load_case_attempt_for_token(
+    session: Session,
+    *,
+    run: EvalRun,
+    eval_run_id: str,
+    shard_id: str,
+    attempt: int,
+    case_run_id: str,
+) -> EvalCaseAttempt:
+    """Resolve the exact case attempt a per-case model token is minted for.
+
+    M8 (#358): the runner asks for the token with its own ``case_run_id``.
+    The endpoint validates that the case belongs to this run and that the
+    case attempt lives in this shard/attempt, so a token can never be minted
+    for a sibling case just because it shares the shard.
+    """
+
+    case_run = session.scalar(
+        select(EvalCaseRun).where(
+            EvalCaseRun.id == case_run_id,
+            EvalCaseRun.tenant_id == run.tenant_id,
+            EvalCaseRun.eval_run_id == eval_run_id,
+        )
+    )
+    if case_run is None:
+        raise HTTPException(
+            status_code=404,
+            detail=error_detail("case_run_not_found", "用例不属于当前评测"),
+        )
+    case_attempt = session.scalar(
+        select(EvalCaseAttempt).where(
+            EvalCaseAttempt.eval_case_run_id == case_run_id,
+            EvalCaseAttempt.tenant_id == run.tenant_id,
+            EvalCaseAttempt.shard_id == shard_id,
+            EvalCaseAttempt.attempt_no == attempt,
+        )
+    )
+    if case_attempt is None:
+        raise HTTPException(
+            status_code=404,
+            detail=error_detail("case_attempt_not_found", "用例不属于当前分片/attempt"),
+        )
+    if case_attempt.status not in case_attempts.ACTIVE_ATTEMPT_STATUSES:
+        # Fail closed instead of handing out a token the gateway would reject
+        # on first use. A retry mints a token for the new attempt row.
+        raise HTTPException(
+            status_code=409,
+            detail=error_detail("stale_attempt", "case attempt 已结束，拒绝签发模型 token"),
+        )
+    return case_attempt
+
+
 @router.get("/runner/v1/shards/{shard_id}/manifest")
 def shard_manifest(
     shard_id: str,
     eval_run_id: Annotated[str, Query()],
     attempt: Annotated[int, Query(ge=1)],
     dispatch_key: Annotated[str, Query()],
+    case_run_id: Annotated[str | None, Query(max_length=36)] = None,
     session: Session = Depends(get_session),
     settings: Settings = Depends(get_settings),
 ) -> Response:
     """Serve the byte-stable manifest recorded in the dispatch outbox and
-    issue the attempt-bound short-term token (X-Runner-Task-Token)."""
+    issue the attempt-bound short-term token (X-Runner-Task-Token).
+
+    M8 (#358): when the runner passes ``case_run_id`` the model token is
+    scoped to that case attempt. Without it the endpoint keeps issuing the
+    legacy shard-level token only while the compatibility window is open.
+    """
 
     row, run, _attempts = _load_shard_dispatch(
         session,
@@ -658,6 +716,18 @@ def shard_manifest(
         eval_run_id=eval_run_id,
         attempt=attempt,
         dispatch_key=dispatch_key,
+    )
+    case_attempt = (
+        _load_case_attempt_for_token(
+            session,
+            run=run,
+            eval_run_id=eval_run_id,
+            shard_id=shard_id,
+            attempt=attempt,
+            case_run_id=case_run_id,
+        )
+        if case_run_id
+        else None
     )
 
     claims = {
@@ -669,7 +739,22 @@ def shard_manifest(
     }
     token = issue_short_token(claims, effective_task_secret(settings), ttl_seconds=_case_token_ttl(run))
     model_headers: dict[str, str] = {}
-    if run.model_config_id:
+    model_issuable = run.model_config_id is not None
+    if model_issuable:
+        legacy_deadline = settings.gateway_legacy_token_deadline
+        if legacy_deadline is not None and legacy_deadline.tzinfo is None:
+            legacy_deadline = legacy_deadline.replace(tzinfo=UTC)
+        if (
+            case_attempt is None
+            and legacy_deadline is not None
+            and datetime_now_utc() >= legacy_deadline
+        ):
+            # The compatibility window is over. Keep serving the manifest (new
+            # runners still need it before their per-case fetch) but stop
+            # minting a shard-level model token, so an old runner fails closed
+            # at agent start instead of spending through a stale grant.
+            model_issuable = False
+    if model_issuable:
         config = session.get(ModelConfig, run.model_config_id)
         if (
             config is None
@@ -690,6 +775,8 @@ def shard_manifest(
             eval_run_id=run.id,
             shard_id=shard_id,
             attempt=attempt,
+            case_run_id=case_attempt.eval_case_run_id if case_attempt else None,
+            case_attempt_id=case_attempt.id if case_attempt else None,
             budget_cny=float(run.model_budget_cny) if run.model_budget_cny is not None else None,
         )
         model_token = issue_gateway_token(
