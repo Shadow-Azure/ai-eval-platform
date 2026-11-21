@@ -98,6 +98,9 @@ services:
       SECRET_BOX_KEY: ${SECRET_BOX_KEY:-}
       GATEWAY_TOKEN_SECRET: ${GATEWAY_TOKEN_SECRET:-}
       GATEWAY_TOKEN_TTL_SECONDS: ${GATEWAY_TOKEN_TTL_SECONDS:-900}
+      # M8 (#358): optional ISO-8601 cutoff for shard-level model tokens from
+      # old runner scripts. Empty keeps the compatibility branch open.
+      GATEWAY_LEGACY_TOKEN_DEADLINE: ${GATEWAY_LEGACY_TOKEN_DEADLINE:-}
       GATEWAY_TIMEOUT_SECONDS: ${GATEWAY_TIMEOUT_SECONDS:-120}
       # M5-15: upload staging and the isolated validation subprocess. Files
       # are temporary; completed imports keep only metadata and cases.

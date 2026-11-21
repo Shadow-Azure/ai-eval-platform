@@ -7,6 +7,7 @@ is the authority on model spend.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import httpx
@@ -73,23 +74,103 @@ def read_secret(session: Session, config: ModelConfig, secret_box) -> str:
         raise GatewayError(503, "credential_unreadable", str(error)) from error
 
 
-def validate_claims_binding(session: Session, claims: GatewayClaims) -> None:
-    """Reject tokens issued for another run/shard/attempt.
+def _check_run_state(run: EvalRun) -> None:
+    """Reject every token of a cancelled or budget-paused run.
 
-    A token minted at manifest time always carries ``eval_run_id`` +
-    ``shard_id`` + ``attempt``; the gateway re-checks the trio against the
-    persisted attempt so a token cannot be replayed for a different shard.
+    M4-02 A2 / M4-05: tokens are stateless and cannot be revoked one by one,
+    so the run row is the global revocation point for cancellation and budget
+    pause. This check intentionally stays run-wide (issue #358, requirement 3).
+    """
 
-    This is also the stateless-token revocation point (M4-02 A2): tokens are
-    signed with an expiry and cannot be revoked individually, so a cancelling/
-    cancelled run is refused here — no extra token store is needed.
+    if run.status in ("cancelling", "cancelled"):
+        raise GatewayError(409, "run_cancelled", "评测已取消，拒绝模型调用")
+    if run.status in ("pausing_budget", "paused_budget"):
+        raise GatewayError(409, "budget_paused", "模型预算已暂停，拒绝模型调用")
+
+
+def _legacy_tokens_retired(
+    deadline: datetime | None, now: datetime | None = None
+) -> bool:
+    """Whether the compatibility window for shard-level model tokens closed."""
+
+    if deadline is None:
+        return False
+    current = now or datetime.now(UTC)
+    if deadline.tzinfo is None:
+        deadline = deadline.replace(tzinfo=UTC)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=UTC)
+    return current >= deadline
+
+
+def validate_claims_binding(
+    session: Session,
+    claims: GatewayClaims,
+    *,
+    legacy_token_deadline: datetime | None = None,
+    now: datetime | None = None,
+) -> None:
+    """Reject tokens issued for another run/shard/case attempt.
+
+    M8 (#358): a freshly issued token carries ``case_run_id`` and
+    ``case_attempt_id``. The gateway resolves exactly that attempt row and
+    revokes only when *its* status is terminal, so a terminal sibling case in
+    the same shard cannot block a running case. Run-level cancellation and
+    budget pause remain global.
+
+    Tokens minted before the switch carry no case dimensions. During the
+    compatibility window they use the legacy shard-wide rule: revoke only when
+    every attempt of that shard/attempt is terminal. After
+    ``legacy_token_deadline`` they fail closed. A partially specified case
+    binding, or a fully unbound token, is never treated as legacy.
     """
 
     if claims.eval_run_id is None:
-        return
+        raise GatewayError(403, "token_binding_mismatch", "模型 token 缺少评测绑定")
     if claims.shard_id is None or claims.attempt is None:
         raise GatewayError(403, "token_binding_mismatch", "token 缺少分片或 attempt 绑定")
-    row = session.execute(
+
+    has_case_run = claims.case_run_id is not None
+    has_case_attempt = claims.case_attempt_id is not None
+    if has_case_run != has_case_attempt:
+        raise GatewayError(403, "token_binding_mismatch", "token 的 case 维度不完整")
+
+    if has_case_run:
+        row = session.execute(
+            select(EvalCaseAttempt, EvalRun)
+            .join(EvalCaseRun, EvalCaseRun.id == EvalCaseAttempt.eval_case_run_id)
+            .join(EvalRun, EvalRun.id == EvalCaseRun.eval_run_id)
+            .where(
+                EvalCaseAttempt.id == claims.case_attempt_id,
+                EvalCaseAttempt.eval_case_run_id == claims.case_run_id,
+                EvalCaseAttempt.tenant_id == claims.tenant_id,
+                EvalCaseAttempt.shard_id == claims.shard_id,
+                EvalCaseAttempt.attempt_no == claims.attempt,
+                EvalCaseRun.tenant_id == claims.tenant_id,
+                EvalCaseRun.id == claims.case_run_id,
+                EvalCaseRun.eval_run_id == claims.eval_run_id,
+            )
+        ).one_or_none()
+        if row is None:
+            raise GatewayError(
+                403, "token_binding_mismatch", "token 与评测/分片/case attempt 不一致"
+            )
+        attempt, run = row
+        _check_run_state(run)
+        if attempt.status in TERMINAL_ATTEMPT_STATUSES:
+            # Only this case attempt is revoked. The retry creates a new
+            # attempt row, so the old token cannot become valid again.
+            raise GatewayError(409, "stale_attempt", "attempt 已结束，拒绝模型调用")
+        return
+
+    # Legacy shard-level token (compatibility window only).
+    if _legacy_tokens_retired(legacy_token_deadline, now):
+        raise GatewayError(
+            409,
+            "legacy_token_retired",
+            "shard 级模型 token 已超过兼容期，拒绝模型调用",
+        )
+    rows = session.execute(
         select(EvalCaseAttempt, EvalRun)
         .join(EvalCaseRun, EvalCaseRun.id == EvalCaseAttempt.eval_case_run_id)
         .join(EvalRun, EvalRun.id == EvalCaseRun.eval_run_id)
@@ -99,21 +180,13 @@ def validate_claims_binding(session: Session, claims: GatewayClaims) -> None:
             EvalCaseAttempt.shard_id == claims.shard_id,
             EvalCaseAttempt.attempt_no == claims.attempt,
         )
-    ).first()
-    if row is None:
+    ).all()
+    if not rows:
         raise GatewayError(403, "token_binding_mismatch", "token 与评测/分片/attempt 不一致")
-    attempt, run = row
-    if run.status in ("cancelling", "cancelled"):
-        raise GatewayError(409, "run_cancelled", "评测已取消，拒绝模型调用")
-    if run.status in ("pausing_budget", "paused_budget"):
-        # M4-05: a budget pause is the platform-level revocation point. Tokens
-        # cannot be revoked individually, so reject by run state.
-        raise GatewayError(409, "budget_paused", "模型预算已暂停，拒绝模型调用")
-    if attempt.status in TERMINAL_ATTEMPT_STATUSES:
-        # A paused/resumed run keeps old attempt tokens cryptographically valid
-        # for their TTL. The terminal attempt is the revocation point: an
-        # interrupted agent must not keep spending through a stale token while
-        # the resumed attempt runs.
+    # Every row of this shard/attempt shares the run, so one state check is
+    # enough. Do not use .first(): the terminal check must see all cases.
+    _check_run_state(rows[0][1])
+    if all(attempt.status in TERMINAL_ATTEMPT_STATUSES for attempt, _ in rows):
         raise GatewayError(409, "stale_attempt", "attempt 已结束，拒绝模型调用")
 
 
@@ -195,6 +268,7 @@ def record_usage(
         model_config_id=config.id,
         eval_run_id=claims.eval_run_id,
         shard_id=claims.shard_id,
+        case_run_id=claims.case_run_id,
         attempt=claims.attempt,
         request_id=request_id,
         status=status,

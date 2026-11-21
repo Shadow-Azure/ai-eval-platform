@@ -74,7 +74,11 @@ def _authorize(
 ) -> tuple[GatewayClaims, ModelConfig, str]:
     settings = get_settings()
     claims = verify_gateway_token(_request_token(request), settings.gateway_secret)
-    service.validate_claims_binding(session, claims)
+    service.validate_claims_binding(
+        session,
+        claims,
+        legacy_token_deadline=settings.gateway_legacy_token_deadline,
+    )
     config = service.resolve_config(session, claims)
     try:
         service.ensure_budget(session, claims)

@@ -708,24 +708,33 @@ test("source mode rebuilds .claude from the pinned archive and skips the frozen 
   }
 });
 
-test("model token is refreshed after image pull, just before the agent starts", async () => {
+test("model token is refreshed per case after image pull, just before the agent starts", async () => {
   const fakeBin = installFakeBin();
   const logPath = join(fakeBin, "docker.log");
-  let manifestFetches = 0;
-  const tokens = ["model-token-initial", "model-token-refreshed"];
   const ctx = await createScenario({
     cases,
     behavior: {
       tasks: tasksPayload(),
-      modelToken: () => tokens[Math.min(manifestFetches++, tokens.length - 1)],
+      modelToken: (requestUrl) =>
+        requestUrl.includes(`case_run_id=${CASE_RUN_ID}`)
+          ? "model-token-case"
+          : "model-token-shard",
     },
   });
   try {
     const result = await runCase(ctx, fakeBin, logPath);
     assert.equal(result.code, 0, result.stderr);
 
-    const manifestRequests = ctx.platform.requests.filter((request) => request.path === "/manifest");
+    const manifestRequests = ctx.platform.requests.filter((request) =>
+      request.path.startsWith("/manifest"),
+    );
     assert.ok(manifestRequests.length >= 2, "manifest must be fetched again before the agent");
+    assert.ok(
+      manifestRequests.some((request) =>
+        request.path.includes(`case_run_id=${CASE_RUN_ID}`),
+      ),
+      "the pre-agent refresh must request this case's token",
+    );
     assert.ok(
       stderrEvents(result).some((event) => event.status === "model_token_refreshed"),
       `missing model_token_refreshed event\n${result.stderr}`,
@@ -735,12 +744,52 @@ test("model token is refreshed after image pull, just before the agent starts", 
     const agent = lines.find((line) => line.includes("claude-code-smoke.mjs"));
     assert.ok(agent, `agent never started\n${lines.join("\n")}`);
     assert.ok(
-      agent.includes("CLAUDE_GATEWAY_TOKEN=model-token-refreshed"),
-      `agent did not receive the refreshed token\n${agent}`,
+      agent.includes("CLAUDE_GATEWAY_TOKEN=model-token-case"),
+      `agent did not receive the case token\n${agent}`,
     );
     assert.ok(
-      !agent.includes("CLAUDE_GATEWAY_TOKEN=model-token-initial"),
-      "agent must not receive the pre-image-pull token",
+      !agent.includes("CLAUDE_GATEWAY_TOKEN=model-token-shard"),
+      "agent must not receive the shard-level token",
+    );
+  } finally {
+    rmSync(fakeBin, { recursive: true, force: true });
+    await ctx.close();
+  }
+});
+
+test("a missing case model token fails closed before the agent starts", async () => {
+  const fakeBin = installFakeBin();
+  const logPath = join(fakeBin, "docker.log");
+  const ctx = await createScenario({
+    cases,
+    behavior: {
+      tasks: tasksPayload(),
+      // Simulate an old platform: it only mints the shard-level token. The
+      // new runner must not fall back to it.
+      modelToken: (requestUrl) =>
+        requestUrl.includes("case_run_id=") ? null : "model-token-shard",
+    },
+  });
+  try {
+    const result = await runCase(ctx, fakeBin, logPath);
+    assert.equal(result.code, 0, result.stderr);
+
+    const lines = invocations(logPath);
+    assert.equal(
+      lines.find((line) => line.includes("claude-code-smoke.mjs")),
+      undefined,
+      `agent must not start without a case token\n${lines.join("\n")}`,
+    );
+    const completed = requestsFor(ctx, "completed");
+    assert.equal(completed.length, 1);
+    assert.equal(completed[0].body.execution_status, "failed");
+    assert.ok(
+      stderrEvents(result).some(
+        (event) =>
+          event.status === "case_failed" &&
+          event.error_code === "model_token_unavailable",
+      ),
+      `missing model_token_unavailable diagnostic\n${result.stderr}`,
     );
   } finally {
     rmSync(fakeBin, { recursive: true, force: true });

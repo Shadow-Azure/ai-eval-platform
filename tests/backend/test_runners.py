@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 from app.config import Settings, get_settings
 from app.defaults import DEFAULT_PROJECT_ID, DEFAULT_TENANT_ID
+from app.model_gateway.tokens import verify_gateway_token
 from app.models import (
     EvalCaseAttempt,
     EvalCaseRun,
@@ -1247,6 +1248,7 @@ def test_manifest_model_token_ttl_covers_agent_timeout(
                 "eval_run_id": run.id,
                 "attempt": 1,
                 "dispatch_key": outbox.dispatch_key,
+                "case_run_id": eval_env["cases"]["case-a"],
             },
             headers=auth(eval_env),
         )
@@ -1267,5 +1269,77 @@ def test_manifest_model_token_ttl_covers_agent_timeout(
     run.agent_timeout_seconds = 600
     session.commit()
     assert _token_exp(model_token()) - int(datetime.now(UTC).timestamp()) >= 59
+
+
+def test_manifest_case_token_binding_and_legacy_retirement(
+    eval_env: dict,
+    session: Session,
+    client: TestClient,
+    configure_settings,
+) -> None:
+    """M8 (#358): per-case issuance, terminal case rejection, legacy cutoff."""
+
+    run = session.get(EvalRun, eval_env["run_id"])
+    assert run is not None
+    outbox = session.scalar(select(Outbox).where(Outbox.aggregate_id == run.id))
+    assert outbox is not None
+    config = ModelConfig(
+        tenant_id=run.tenant_id,
+        project_id=str(DEFAULT_PROJECT_ID),
+        provider="anthropic",
+        display_name="case token model",
+        base_url="https://example.invalid",
+        model_name="claude-test",
+    )
+    session.add(config)
+    session.flush()
+    run.model_config_id = config.id
+    run.model_name = "claude-test"
+    session.commit()
+    case_run_id = eval_env["cases"]["case-a"]
+
+    def manifest(case_id: str | None = None):
+        params = {
+            "eval_run_id": run.id,
+            "attempt": 1,
+            "dispatch_key": outbox.dispatch_key,
+        }
+        if case_id:
+            params["case_run_id"] = case_id
+        return client.get(
+            f"/runner/v1/shards/{eval_env['shard']}/manifest",
+            params=params,
+            headers=auth(eval_env),
+        )
+
+    case_response = manifest(case_run_id)
+    assert case_response.status_code == 200, case_response.text
+    claims = verify_gateway_token(
+        case_response.headers["X-Runner-Model-Token"],
+        get_settings().gateway_secret,
+    )
+    assert claims.case_run_id == case_run_id
+    assert claims.case_attempt_id is not None
+
+    # A terminal case attempt is not handed a token it cannot use.
+    attempt = session.scalar(
+        select(EvalCaseAttempt).where(
+            EvalCaseAttempt.eval_case_run_id == case_run_id
+        )
+    )
+    assert attempt is not None
+    attempt.status = "failed"
+    attempt.ended_at = datetime.now(UTC)
+    session.commit()
+    stale = manifest(case_run_id)
+    assert stale.status_code == 409
+    assert stale.json()["detail"]["error"]["code"] == "stale_attempt"
+
+    # After the compatibility deadline, a manifest call without case_run_id
+    # still serves the manifest but stops minting the shard-level model token.
+    configure_settings(GATEWAY_LEGACY_TOKEN_DEADLINE="2020-01-01T00:00:00Z")
+    legacy = manifest()
+    assert legacy.status_code == 200
+    assert "X-Runner-Model-Token" not in legacy.headers
 
 

@@ -1,3 +1,4 @@
+from datetime import datetime
 from decimal import Decimal
 from functools import lru_cache
 from urllib.parse import urlparse
@@ -309,6 +310,11 @@ class Settings(BaseSettings):
     secret_box_key: str = ""
     gateway_token_secret: str | None = None
     gateway_token_ttl_seconds: int = 900
+    # M8 (#358): shard-level model tokens exist only while old runner scripts
+    # drain. Set an ISO-8601 instant to retire them; empty keeps the
+    # compatibility branch (all-terminal shard rule) enabled. New tokens are
+    # always case-scoped.
+    gateway_legacy_token_deadline: datetime | None = None
     gateway_timeout_seconds: float = 120.0
     # Connection-level retries for provider calls (bounded; never retries a
     # stream that has already started).
@@ -335,6 +341,17 @@ class Settings(BaseSettings):
     )
 
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173,http://localhost:8080"
+
+    @field_validator("gateway_legacy_token_deadline", mode="before")
+    @classmethod
+    def _empty_legacy_deadline(cls, value):
+        """Treat an empty deploy env value as "compatibility still open"."""
+
+        if value is None:
+            return None
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
     @field_validator("runner_egress_proxy")
     @classmethod

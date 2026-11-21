@@ -16,6 +16,7 @@ Covers the acceptance surface:
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import httpx
@@ -129,11 +130,22 @@ def bound_eval(client, session, model_env):
     outbox = session.scalar(select(Outbox).where(Outbox.aggregate_id == run_id))
     assert outbox is not None
     shard_id = outbox.payload_json["shard_id"]
+    case_attempt = session.scalar(
+        select(EvalCaseAttempt)
+        .join(EvalCaseRun, EvalCaseRun.id == EvalCaseAttempt.eval_case_run_id)
+        .where(
+            EvalCaseRun.eval_run_id == run_id,
+            EvalCaseAttempt.shard_id == shard_id,
+        )
+    )
+    assert case_attempt is not None
     return {
         "config": config,
         "run_id": run_id,
         "shard_id": shard_id,
         "attempt": 1,
+        "case_run_id": case_attempt.eval_case_run_id,
+        "case_attempt_id": case_attempt.id,
     }
 
 
@@ -291,9 +303,19 @@ def test_gateway_rejects_missing_and_expired_tokens(client, model_env) -> None:
     assert response.json()["error"]["code"] == "token_expired"
 
 
-def test_gateway_rejects_model_outside_token_scope(client, model_env, provider, engine, usage_factory) -> None:
-    config = _create_config(client)
-    token = _mint(config["id"], allowed_models=("another-model",))
+def test_gateway_rejects_model_outside_token_scope(
+    client, model_env, provider, engine, usage_factory, bound_eval
+) -> None:
+    config = bound_eval["config"]
+    token = _mint(
+        config["id"],
+        allowed_models=("another-model",),
+        eval_run_id=bound_eval["run_id"],
+        shard_id=bound_eval["shard_id"],
+        attempt=bound_eval["attempt"],
+        case_run_id=bound_eval["case_run_id"],
+        case_attempt_id=bound_eval["case_attempt_id"],
+    )
     response = _gateway(client, token)
     assert response.status_code == 403
     assert response.json()["error"]["code"] == "model_forbidden"
@@ -619,7 +641,7 @@ def test_gateway_rejects_token_bound_to_another_shard(
     assert provider.calls == []
 
 
-def test_manifest_issues_model_token_bound_to_shard(
+def test_manifest_issues_case_scoped_model_token(
     client, model_env, session, provider, engine, usage_factory
 ) -> None:
     config = _create_config(client, model_name="gpt-test", base_url="https://provider.test/v1")
@@ -640,12 +662,22 @@ def test_manifest_issues_model_token_bound_to_shard(
     )
     assert outbox is not None
     shard_id = outbox.payload_json["shard_id"]
+    case_attempt = session.scalar(
+        select(EvalCaseAttempt)
+        .join(EvalCaseRun, EvalCaseRun.id == EvalCaseAttempt.eval_case_run_id)
+        .where(
+            EvalCaseRun.eval_run_id == run_id,
+            EvalCaseAttempt.shard_id == shard_id,
+        )
+    )
+    assert case_attempt is not None
     response = client.get(
         f"/runner/v1/shards/{shard_id}/manifest",
         params={
             "eval_run_id": run_id,
             "attempt": 1,
             "dispatch_key": outbox.dispatch_key,
+            "case_run_id": case_attempt.eval_case_run_id,
         },
     )
     assert response.status_code == 200, response.text
@@ -656,32 +688,260 @@ def test_manifest_issues_model_token_bound_to_shard(
         "/model-gateway/anthropic"
     )
 
-    # The manifest token is accepted and records usage against this run/shard.
+    claims = verify_gateway_token(token, "test-gateway-secret")
+    assert claims.eval_run_id == run_id
+    assert claims.shard_id == shard_id
+    assert claims.attempt == 1
+    assert claims.case_run_id == case_attempt.eval_case_run_id
+    assert claims.case_attempt_id == case_attempt.id
+
+    # The case token is accepted and attributes usage to the case.
     forwarded = _gateway(client, token)
     assert forwarded.status_code == 200, forwarded.text
     rows = _usage_rows(engine)
     assert rows[0].eval_run_id == run_id
     assert rows[0].shard_id == shard_id
+    assert rows[0].case_run_id == case_attempt.eval_case_run_id
 
-    # Reject the same token when the shard claim is tampered with.
-    claims = verify_gateway_token(token, "test-gateway-secret")
-    assert claims.eval_run_id == run_id
-    assert claims.shard_id == shard_id
-    attempt = session.scalar(
+    # A manifest call without case_run_id keeps issuing the legacy shard token
+    # while the compatibility window is open.
+    legacy_response = client.get(
+        f"/runner/v1/shards/{shard_id}/manifest",
+        params={
+            "eval_run_id": run_id,
+            "attempt": 1,
+            "dispatch_key": outbox.dispatch_key,
+        },
+    )
+    assert legacy_response.status_code == 200
+    legacy = verify_gateway_token(
+        legacy_response.headers["x-runner-model-token"], "test-gateway-secret"
+    )
+    assert legacy.case_run_id is None
+    assert legacy.case_attempt_id is None
+
+
+def test_manifest_rejects_case_from_another_shard(
+    client, model_env, session, provider, engine, usage_factory
+) -> None:
+    config = _create_config(client)
+    created = client.post(
+        "/api/v1/evaluations",
+        json={
+            "name": "模型 manifest 绑定",
+            "case_keys": ["case-a"],
+            "idempotency_key": "model-manifest-binding",
+            "model_config_id": config["id"],
+            "model_name": "gpt-test",
+        },
+    )
+    run_id = created.json()["id"]
+    outbox = session.scalar(select(Outbox).where(Outbox.aggregate_id == run_id))
+    assert outbox is not None
+    shard_id = outbox.payload_json["shard_id"]
+    case_attempt = session.scalar(
         select(EvalCaseAttempt)
         .join(EvalCaseRun, EvalCaseRun.id == EvalCaseAttempt.eval_case_run_id)
-        .where(
-            EvalCaseRun.eval_run_id == run_id,
-            EvalCaseAttempt.shard_id == shard_id,
+        .where(EvalCaseRun.eval_run_id == run_id)
+    )
+    assert case_attempt is not None
+    response = client.get(
+        f"/runner/v1/shards/{shard_id}/manifest",
+        params={
+            "eval_run_id": run_id,
+            "attempt": 1,
+            "dispatch_key": outbox.dispatch_key,
+            "case_run_id": "missing-case-run",
+        },
+    )
+    assert response.status_code == 404
+    assert response.json()["detail"]["error"]["code"] == "case_run_not_found"
+    assert "x-runner-model-token" not in response.headers
+
+
+def test_gateway_stale_case_token_does_not_affect_running_sibling(
+    client, model_env, session, provider, engine, usage_factory, eval_env
+) -> None:
+    """#358: one terminal case in a shard must not revoke a sibling's token."""
+
+    config = _create_config(client)
+    run = session.get(EvalRun, eval_env["run_id"])
+    assert run is not None
+    run.model_config_id = config["id"]
+    run.model_name = "gpt-test"
+    session.commit()
+    cases = eval_env["cases"]
+    attempts = {}
+    tokens = {}
+    for case_key, case_run_id in cases.items():
+        attempt = session.scalar(
+            select(EvalCaseAttempt).where(
+                EvalCaseAttempt.eval_case_run_id == case_run_id
+            )
+        )
+        assert attempt is not None
+        attempts[case_key] = attempt
+        tokens[case_key] = _mint(
+            config["id"],
+            eval_run_id=eval_env["run_id"],
+            shard_id=eval_env["shard"],
+            attempt=1,
+            case_run_id=case_run_id,
+            case_attempt_id=attempt.id,
+        )
+    # case-a ends first; case-b keeps running in the same shard.
+    attempts["case-a"].status = "failed"
+    attempts["case-a"].ended_at = datetime.now(UTC)
+    session.commit()
+
+    failed = _gateway(client, tokens["case-a"])
+    assert failed.status_code == 409
+    assert failed.json()["error"]["code"] == "stale_attempt"
+
+    running = _gateway(client, tokens["case-b"])
+    assert running.status_code == 200, running.text
+    rows = [
+        row for row in _usage_rows(engine) if row.case_run_id == cases["case-b"]
+    ]
+    assert len(rows) == 1
+
+
+def test_gateway_retry_rejects_old_attempt_and_accepts_new_attempt(
+    client, model_env, session, provider, engine, usage_factory, bound_eval
+) -> None:
+    old_attempt = session.get(EvalCaseAttempt, bound_eval["case_attempt_id"])
+    assert old_attempt is not None
+    old_attempt.status = "failed"
+    old_attempt.ended_at = datetime.now(UTC)
+    new_attempt = EvalCaseAttempt(
+        tenant_id=old_attempt.tenant_id,
+        eval_case_run_id=bound_eval["case_run_id"],
+        attempt_no=2,
+        status="running",
+        shard_id=bound_eval["shard_id"],
+    )
+    session.add(new_attempt)
+    session.commit()
+    base = {
+        "eval_run_id": bound_eval["run_id"],
+        "shard_id": bound_eval["shard_id"],
+        "case_run_id": bound_eval["case_run_id"],
+    }
+    old_token = _mint(
+        bound_eval["config"]["id"],
+        attempt=1,
+        case_attempt_id=bound_eval["case_attempt_id"],
+        **base,
+    )
+    new_token = _mint(
+        bound_eval["config"]["id"],
+        attempt=2,
+        case_attempt_id=new_attempt.id,
+        **base,
+    )
+    stale = _gateway(client, old_token)
+    assert stale.status_code == 409
+    assert stale.json()["error"]["code"] == "stale_attempt"
+    fresh = _gateway(client, new_token)
+    assert fresh.status_code == 200, fresh.text
+
+
+def test_gateway_rejects_partial_or_unbound_case_claims(
+    client, model_env, provider, engine, usage_factory, bound_eval
+) -> None:
+    config = bound_eval["config"]
+    partial = _mint(
+        config["id"],
+        eval_run_id=bound_eval["run_id"],
+        shard_id=bound_eval["shard_id"],
+        attempt=1,
+        case_run_id=bound_eval["case_run_id"],
+    )
+    response = _gateway(client, partial)
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "token_binding_mismatch"
+
+    unbound = _mint(config["id"])
+    response = _gateway(client, unbound)
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "token_binding_mismatch"
+    assert provider.calls == []
+
+
+def test_gateway_legacy_token_waits_for_every_case_to_finish(
+    client, model_env, session, provider, engine, usage_factory, eval_env
+) -> None:
+    config = _create_config(client)
+    run = session.get(EvalRun, eval_env["run_id"])
+    assert run is not None
+    run.model_config_id = config["id"]
+    run.model_name = "gpt-test"
+    session.commit()
+    token = _mint(
+        config["id"],
+        eval_run_id=eval_env["run_id"],
+        shard_id=eval_env["shard"],
+        attempt=1,
+    )
+    attempts = list(
+        session.scalars(
+            select(EvalCaseAttempt).where(
+                EvalCaseAttempt.shard_id == eval_env["shard"]
+            )
         )
     )
-    assert attempt is not None
-    assert attempt.attempt_no == 1
-    assert claims.attempt == 1
+    assert len(attempts) == 2
+
+    attempts[0].status = "failed"
+    attempts[0].ended_at = datetime.now(UTC)
+    session.commit()
+    assert _gateway(client, token).status_code == 200
+
+    attempts[1].status = "failed"
+    attempts[1].ended_at = datetime.now(UTC)
+    session.commit()
+    stale = _gateway(client, token)
+    assert stale.status_code == 409
+    assert stale.json()["error"]["code"] == "stale_attempt"
 
 
-def test_anthropic_alias_is_rewritten_to_configured_model(client, provider, bound_eval) -> None:
-    token = _mint(bound_eval["config"]["id"])
+def test_gateway_legacy_token_fails_closed_after_deadline(
+    client, model_env, provider, engine, usage_factory, bound_eval, configure_settings
+) -> None:
+    configure_settings(GATEWAY_LEGACY_TOKEN_DEADLINE="2020-01-01T00:00:00Z")
+    config = bound_eval["config"]
+    legacy = _mint(
+        config["id"],
+        eval_run_id=bound_eval["run_id"],
+        shard_id=bound_eval["shard_id"],
+        attempt=1,
+    )
+    response = _gateway(client, legacy)
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "legacy_token_retired"
+
+    case_token = _mint(
+        config["id"],
+        eval_run_id=bound_eval["run_id"],
+        shard_id=bound_eval["shard_id"],
+        attempt=1,
+        case_run_id=bound_eval["case_run_id"],
+        case_attempt_id=bound_eval["case_attempt_id"],
+    )
+    assert _gateway(client, case_token).status_code == 200
+
+
+def test_anthropic_alias_is_rewritten_to_configured_model(
+    client, provider, bound_eval
+) -> None:
+    token = _mint(
+        bound_eval["config"]["id"],
+        eval_run_id=bound_eval["run_id"],
+        shard_id=bound_eval["shard_id"],
+        attempt=1,
+        case_run_id=bound_eval["case_run_id"],
+        case_attempt_id=bound_eval["case_attempt_id"],
+    )
     response = _gateway(
         client,
         token,

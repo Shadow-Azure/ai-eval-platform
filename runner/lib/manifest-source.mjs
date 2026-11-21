@@ -15,12 +15,18 @@ import { readFileSync } from "node:fs";
  * descriptor for both (X-Manifest-Digest / X-Manifest-Expires-At), so this
  * helper forwards them and callers fall back to them when the dispatch lacks
  * the legacy fields.
+ *
+ * M8 (#358): passing `caseRunId` asks the platform for a model token scoped to
+ * that case attempt. The query parameter does not change the manifest body or
+ * its digest; it only changes the minted token.
  */
-export async function fetchManifest(manifestUrl) {
+export async function fetchManifest(manifestUrl, { caseRunId = null } = {}) {
   if (manifestUrl.startsWith("file://")) {
     return { bytes: readFileSync(new URL(manifestUrl)), tokenHeader: null };
   }
-  const response = await fetch(manifestUrl, { signal: AbortSignal.timeout(10000) });
+  const requestUrl = new URL(manifestUrl);
+  if (caseRunId) requestUrl.searchParams.set("case_run_id", caseRunId);
+  const response = await fetch(requestUrl, { signal: AbortSignal.timeout(10000) });
   if (!response.ok) throw new Error(`manifest 拉取失败：HTTP ${response.status}`);
   const bytes = Buffer.from(await response.arrayBuffer());
   return {

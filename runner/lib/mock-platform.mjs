@@ -62,7 +62,7 @@ export async function startMockPlatform({
       response.end(JSON.stringify(payload));
     };
 
-    if (request.method === "GET" && request.url === "/manifest") {
+    if (request.method === "GET" && new URL(request.url, state.baseUrl).pathname === "/manifest") {
       const manifest = getManifest();
       const headers = { "content-type": manifestContentType };
       // M8-51 (#323) option C: the real manifest endpoint serves the server
@@ -76,9 +76,11 @@ export async function startMockPlatform({
       // M4-02: an opt-in tasks endpoint lets a test drive the real-repo path
       // (real-task only runs the agent when /tasks returns a task with repo).
       if (behavior.tasks) headers["x-runner-tasks-url"] = `${state.baseUrl}/tasks`;
+      // M8 (#358): the callback receives the request URL so a test can return
+      // a token only for the per-case fetch (?case_run_id=...).
       const modelToken =
         typeof behavior.modelToken === "function"
-          ? behavior.modelToken()
+          ? behavior.modelToken(request.url)
           : behavior.modelToken;
       if (modelToken) headers["x-runner-model-token"] = modelToken;
       response.writeHead(200, headers);
