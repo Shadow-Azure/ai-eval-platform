@@ -12,10 +12,11 @@
  * and host are kept.
  */
 
-import { spawnSync as nodeSpawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import { runCommand } from "./run-command.mjs";
 
 const DEFAULT_DOWNLOAD_TIMEOUT_MS = 900_000;
 const DEFAULT_LOAD_TIMEOUT_MS = 900_000;
@@ -51,15 +52,20 @@ function recordResult(traceDir, result) {
 /**
  * Download, load and verify one image tarball.
  *
+ * #363: the download and `docker load` run through async `spawn` so a cold
+ * runner keeps processing network I/O while a multi-GB tarball loads. The
+ * failure stages, diagnostics file and fallback contract are unchanged.
+ *
  * @param {{url?: string, key?: string, image?: string, format?: string}} tarball
  * @param {{traceDir?: string|null, spawn?: Function, downloadTimeoutMs?: number, loadTimeoutMs?: number}} options
- * @returns {{ok: boolean, image: string|null, key: string|null, stage: string, elapsed_ms: number, error: string|null}}
+ * @returns {Promise<{ok: boolean, image: string|null, key: string|null, stage: string, elapsed_ms: number, error: string|null}>}
  */
-export function loadImageTarball(tarball, options = {}) {
-  const spawn = options.spawn ?? nodeSpawnSync;
+export async function loadImageTarball(tarball, options = {}) {
+  const spawn = options.spawn;
   const downloadTimeoutMs = options.downloadTimeoutMs ?? DEFAULT_DOWNLOAD_TIMEOUT_MS;
   const loadTimeoutMs = options.loadTimeoutMs ?? DEFAULT_LOAD_TIMEOUT_MS;
   const traceDir = options.traceDir ?? null;
+  const run = (command, args, runOptions) => runCommand(command, args, { spawn, ...runOptions });
   const startedAt = Date.now();
   const result = {
     ok: false,
@@ -87,12 +93,11 @@ export function loadImageTarball(tarball, options = {}) {
   // download the tarball just to load an identical image. The fixed pool is
   // the common case and must stay on its local cache.
   try {
-    const cached = spawn("docker", ["image", "inspect", tarball.image], {
-      encoding: "utf8",
+    const cached = await run("docker", ["image", "inspect", tarball.image], {
       timeout: INSPECT_TIMEOUT_MS,
       maxBuffer: 8 * 1024 * 1024,
     });
-    if (cached?.status === 0) {
+    if (cached?.status === 0 && !cached.error) {
       result.ok = true;
       result.image = tarball.image;
       return finish("cached");
@@ -105,7 +110,7 @@ export function loadImageTarball(tarball, options = {}) {
   const tarPath = join(dir, "image.tar.gz");
   try {
     result.stage = "download";
-    const download = spawn(
+    const download = await run(
       "curl",
       [
         "-fsSL",
@@ -115,7 +120,7 @@ export function loadImageTarball(tarball, options = {}) {
         tarPath,
         tarball.url,
       ],
-      { encoding: "utf8", timeout: downloadTimeoutMs },
+      { timeout: downloadTimeoutMs },
     );
     if (download?.error || download?.status !== 0) {
       return finish(
@@ -125,8 +130,7 @@ export function loadImageTarball(tarball, options = {}) {
     }
 
     result.stage = "load";
-    const load = spawn("docker", ["load", "-i", tarPath], {
-      encoding: "utf8",
+    const load = await run("docker", ["load", "-i", tarPath], {
       timeout: loadTimeoutMs,
       maxBuffer: 64 * 1024 * 1024,
     });
@@ -138,8 +142,7 @@ export function loadImageTarball(tarball, options = {}) {
     }
 
     result.stage = "verify";
-    const inspect = spawn("docker", ["image", "inspect", tarball.image], {
-      encoding: "utf8",
+    const inspect = await run("docker", ["image", "inspect", tarball.image], {
       timeout: INSPECT_TIMEOUT_MS,
       maxBuffer: 8 * 1024 * 1024,
     });

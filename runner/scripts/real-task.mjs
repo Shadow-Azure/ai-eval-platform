@@ -33,6 +33,7 @@ import { startHeartbeatSidecar, stopHeartbeatSidecar } from "./heartbeat-agent.m
 import { buildCaseTasks } from "../lib/task-payload.mjs";
 import { imageCandidates, sourceLabel } from "../lib/image-sources.mjs";
 import { loadImageTarball } from "../lib/image-tarball.mjs";
+import { runCommand } from "../lib/run-command.mjs";
 import {
   collectTraceBundle,
   dedupeTraceObjects,
@@ -148,6 +149,10 @@ function deterministicCase(dispatch, item) {
   return { score, trace };
 }
 
+// #363 converts the image-tarball commands and checkout; dockerRun stays a
+// synchronous wrapper. The registry-pull fallback can still block the loop, so
+// #362's non-pooled manifest refresh is still required as the deterministic
+// guarantee until the whole case orchestration is migrated.
 function dockerRun(args, { allowFailure = false, timeout = 1_200_000 } = {}) {
   const result = spawnSync("docker", args, {
     encoding: "utf8",
@@ -458,7 +463,7 @@ async function realCase(
     // registry chain with the same diagnostics directory.
     let tarballImage = null;
     if (task.image_tarball?.url) {
-      const loaded = loadImageTarball(task.image_tarball, { traceDir: imageTraceDir });
+      const loaded = await loadImageTarball(task.image_tarball, { traceDir: imageTraceDir });
       if (loaded.ok) {
         tarballImage = environmentImage;
         console.error(
@@ -500,7 +505,7 @@ async function realCase(
     // not write the agent trace/diagnostics.
     mkdirSync(join(workdir, ".runtime-home"), { recursive: true, mode: 0o777 });
     mkdirSync(join(workdir, "trace"), { recursive: true, mode: 0o777 });
-    spawnSync("chmod", ["-R", "a+rwX", workdir], { encoding: "utf8", timeout: 120_000 });
+    await runCommand("chmod", ["-R", "a+rwX", workdir], { timeout: 120_000 });
     let runtimeVersion = runtimeAdapter.runtimeVersion ?? null;
     const collectCapture = (fallbackText = null) => {
       const capture = () =>
@@ -548,11 +553,14 @@ async function realCase(
         durationMs: Date.now() - startedAt,
       };
     };
-    const checkout = spawnSync("git", ["-C", workdir, "checkout", task.base_commit], {
-      encoding: "utf8",
+    const checkout = await runCommand("git", ["-C", workdir, "checkout", task.base_commit], {
       timeout: 120_000,
     });
-    if (checkout.status !== 0) throw new Error(`checkout 失败：${(checkout.stderr || "").slice(-500)}`);
+    if (checkout.error || checkout.status !== 0) {
+      throw new Error(
+        `checkout 失败：${(checkout.stderr || checkout.error?.message || "").slice(-500)}`,
+      );
+    }
 
     // M8-41: the manifest was fetched before the image pull. Re-fetch it now,
     // after the image is ready and just before the agent starts, so a slow
@@ -628,10 +636,7 @@ async function realCase(
         const bytes = await downloadSourceArchive(task.asset_snapshot);
         sourceDir = mkdtempSync(join(tmpdir(), "eval-source-"));
         sourceRoot = extractSourceArchive(bytes, join(sourceDir, "repo"));
-        spawnSync("chmod", ["-R", "a+rwX", sourceRoot], {
-          encoding: "utf8",
-          timeout: 120_000,
-        });
+        await runCommand("chmod", ["-R", "a+rwX", sourceRoot], { timeout: 120_000 });
         // M8-22: init owns the generated `.claude` tree. Remove the dataset
         // repository's own copy so the agent only sees assets built from the
         // selected ref.
