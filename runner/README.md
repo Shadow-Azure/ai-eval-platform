@@ -52,7 +52,7 @@ node runner/scripts/real-task.mjs \
 
 ## 数据集镜像 tar（M8 #273）
 
-冷启动 Runner 在公开镜像源之前先尝试任务下发的 OSS 镜像 tar（`image_tarball`）：`curl` 下载到临时文件、`docker load -i`、`docker image inspect` 校验，任何一步失败都回退 `image_sources`，并写 `trace/image-tarball.json`（只含 key/host，不含签名 URL）。`lib/image-tarball.mjs` 负责这段逻辑，`scripts/real-task.mjs` 在解析镜像时调用。发布在固定主机用 `scripts/publish-dataset-image.sh`，与后端 `python -m app.manage dataset-image` 共用确定性 key。平台在启动前自动补齐缺失的数据集镜像 tar（#290）；Runner 侧的 tar 优先/公开源回退契约不变。
+冷启动 Runner 在公开镜像源之前先尝试任务下发的 OSS 镜像 tar（`image_tarball`）：`curl` 下载到临时文件、`docker load -i`、`docker image inspect` 校验，任何一步失败都回退 `image_sources`，并写 `trace/image-tarball.json`（只含 key/host，不含签名 URL）。`lib/image-tarball.mjs` 用 `lib/run-command.mjs` 异步执行这些命令，下载/加载期间不阻塞事件循环；`scripts/real-task.mjs` 在解析镜像时调用，并以同样方式异步执行 `git checkout`。发布在固定主机用 `scripts/publish-dataset-image.sh`，与后端 `python -m app.manage dataset-image` 共用确定性 key。平台在启动前自动补齐缺失的数据集镜像 tar（#290）；Runner 侧的 tar 优先/公开源回退契约不变。
 
 ## 脚本包预置（M8-47）
 
@@ -74,7 +74,8 @@ prepare/execute 的 `Fetch the scripts bundle` 按 dispatch payload 的 `scripts
 - `lib/dispatch-guard.mjs`：`dispatch_key` 原子 claim；平台数据库唯一约束是最终底线。
 - `lib/manifest-source.mjs`：manifest 拉取与 digest 计算，供 `real-task` 与 `plan-cases` 共用。
 - `lib/object-store.mjs`：content-addressed 本地对象存储；生产替换为 OSS。
-- `lib/image-tarball.mjs`：冷启动 OSS 镜像 tar 的下载、load、校验与回退诊断。
+- `lib/image-tarball.mjs`：冷启动 OSS 镜像 tar 的异步下载、load、校验与回退诊断。
+- `lib/run-command.mjs`：异步 `spawn` 封装，保留超时、输出上限、取消与退出码语义。
 - `lib/callback-client.mjs`：带 `Idempotency-Key` 的有界重试回调。
 - `lib/mock-platform.mjs`：契约测试用的平台 stub。
 - `scripts/plan-cases.mjs`：把分片清单展开为用例级 matrix 的 prepare 入口。
