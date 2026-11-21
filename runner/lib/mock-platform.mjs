@@ -20,6 +20,8 @@ import { createServer } from "node:http";
  * - behavior.manifestReset(url) destroys the socket before answering, so a
  *   test can make the per-case manifest refresh fail at the transport layer
  *   while the early shard fetch still succeeds.
+ * - behavior.keepAliveTimeout sets the server idle-close window, so a test can
+ *   shrink uvicorn's five-second default around a synchronous runner block.
  */
 export async function startMockPlatform({
   manifestText,
@@ -194,6 +196,9 @@ export async function startMockPlatform({
   });
 
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  if (Number.isInteger(behavior.keepAliveTimeout)) {
+    server.keepAliveTimeout = behavior.keepAliveTimeout;
+  }
   const address = server.address();
   const baseUrl = `http://127.0.0.1:${address.port}`;
   state.baseUrl = baseUrl;
