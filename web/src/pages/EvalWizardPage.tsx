@@ -74,6 +74,8 @@ const MAX_TURNS = 1000;
 const DEFAULT_AGENT_TIMEOUT_SECONDS = 1800;
 const MIN_AGENT_TIMEOUT_MINUTES = 1;
 const MAX_AGENT_TIMEOUT_MINUTES = 1440;
+/** #353: the retry toggle can request 1–4 retries; off freezes max_attempts at 1. */
+const MAX_ATTEMPT_RETRIES = 4;
 const PROMPT_SUFFIX_PLACEHOLDER =
   "例如：这是非交互评测。请使用 superpowers 技能完成任务；不要向用户提问，自主决策并继续。";
 /** M9 #263: harness-evolution reporting token format (whk_ + URL-safe chars). */
@@ -132,6 +134,18 @@ function selfEvolutionSummaryText(config: SelfEvolutionDraft): string {
   return `已启用 · ${host || "未填地址"} · 工作区 ${config.workspaceId || "未填"}`;
 }
 
+/**
+ * #353: one label for the aside and Step 4, derived from the attempt limit that
+ * the request freezes. max_attempts=1 means retry is off, not "0 retries".
+ */
+function attemptRetrySummary(maxAttempts: number): string {
+  if (!Number.isFinite(maxAttempts) || maxAttempts <= 1) {
+    return "关闭 · 每用例 1 次 attempt";
+  }
+  const retries = Math.max(1, Math.round(maxAttempts) - 1);
+  return `开启 · 最多 ${retries} 次（每用例最多 ${retries + 1} 次 attempt）`;
+}
+
 const STEP_ITEMS: { title: string; meta: string }[] = [
   { title: "数据集与用例", meta: "版本与子集" },
   { title: "Agent / 资产", meta: "Runtime 必选 · 资产可选" },
@@ -162,7 +176,9 @@ interface WizardDraft {
   poolId: string | null;
   concurrency: number;
   caseTimeoutSeconds: number;
-  maxAttempts: number;
+  /** #353: off keeps every case at one attempt; the count survives toggling. */
+  attemptRetryEnabled: boolean;
+  attemptRetryCount: number;
   budgetCny: number | null;
   executionDigest: string;
   scoringDigest: string;
@@ -191,7 +207,8 @@ function defaultDraft(): WizardDraft {
     poolId: null,
     concurrency: 8,
     caseTimeoutSeconds: 3600,
-    maxAttempts: 2,
+    attemptRetryEnabled: false,
+    attemptRetryCount: 1,
     budgetCny: null,
     executionDigest: "",
     scoringDigest: "",
@@ -265,6 +282,18 @@ function readDraft(): WizardDraft | null {
     const it = parsed as Record<string, unknown>;
     const base = defaultDraft();
     const mode = it.selectionMode;
+    // #353 migration: older drafts only stored maxAttempts. Keep the user's
+    // retry intent when it was explicit, while a fresh draft still starts off.
+    const legacyMaxAttempts = numberOr(it.maxAttempts, 1);
+    const legacyRetryCount = Math.max(1, Math.round(legacyMaxAttempts) - 1);
+    const attemptRetryEnabled =
+      typeof it.attemptRetryEnabled === "boolean"
+        ? it.attemptRetryEnabled
+        : legacyMaxAttempts > 1;
+    const attemptRetryCount = Math.min(
+      MAX_ATTEMPT_RETRIES,
+      Math.max(1, Math.round(numberOr(it.attemptRetryCount, legacyRetryCount))),
+    );
     return {
       ...base,
       datasetId: stringOrNull(it.datasetId),
@@ -288,7 +317,8 @@ function readDraft(): WizardDraft | null {
       poolId: stringOrNull(it.poolId),
       concurrency: Math.max(1, numberOr(it.concurrency, base.concurrency)),
       caseTimeoutSeconds: Math.max(60, numberOr(it.caseTimeoutSeconds, base.caseTimeoutSeconds)),
-      maxAttempts: Math.max(1, numberOr(it.maxAttempts, base.maxAttempts)),
+      attemptRetryEnabled,
+      attemptRetryCount,
       budgetCny:
         typeof it.budgetCny === "number" && Number.isFinite(it.budgetCny) ? it.budgetCny : null,
       executionDigest: typeof it.executionDigest === "string" ? it.executionDigest : "",
@@ -1004,7 +1034,7 @@ export function EvalWizardPage() {
     return {
       concurrency: draft.concurrency,
       case_timeout_seconds: draft.caseTimeoutSeconds,
-      max_attempts: draft.maxAttempts,
+      max_attempts: draft.attemptRetryEnabled ? draft.attemptRetryCount + 1 : 1,
       model_budget_cny: draft.budgetCny ?? undefined,
     };
   }
@@ -1257,6 +1287,14 @@ export function EvalWizardPage() {
                 : `${formatAgentTimeout(effectiveAgentTimeoutSeconds)}（${
                     agentTimeout.seconds !== null ? "本次覆盖" : "数据集默认"
                   }）`}
+            </span>
+          </div>
+          <div className="summary-item">
+            <span className="summary-label">失败重试</span>
+            <span className="summary-value">
+              {attemptRetrySummary(
+                draft.attemptRetryEnabled ? draft.attemptRetryCount + 1 : 1,
+              )}
             </span>
           </div>
           <div className="summary-item">
@@ -2075,6 +2113,71 @@ export function EvalWizardPage() {
         >
           <div>
             <h3 style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "var(--ink)" }}>
+              失败 attempt 重试
+            </h3>
+            <p className="small muted" style={{ margin: "2px 0 0" }}>
+              控制失败或超时用例是否自动创建新的 attempt
+            </p>
+          </div>
+          <Tag
+            color={draft.attemptRetryEnabled ? "blue" : undefined}
+            style={{ marginInlineEnd: 0 }}
+          >
+            {draft.attemptRetryEnabled ? "已开启" : "默认关闭"}
+          </Tag>
+        </div>
+        <div className="field" style={{ marginTop: 12 }}>
+          <div className="row-between">
+            <div>
+              <strong>允许失败 attempt 重试</strong>
+              <div className="small muted">
+                关闭时每个用例只运行 1 次 attempt；失败或超时直接计入结果。
+              </div>
+            </div>
+            <Switch
+              checked={draft.attemptRetryEnabled}
+              onChange={(checked) => update({ attemptRetryEnabled: checked })}
+              aria-label="切换失败 attempt 重试"
+            />
+          </div>
+        </div>
+        {draft.attemptRetryEnabled ? (
+          <div className="field" style={{ marginTop: 12, maxWidth: 420 }}>
+            <label>最多重试次数</label>
+            <Select
+              id="wizard-retry-count"
+              value={draft.attemptRetryCount}
+              onChange={(value) => update({ attemptRetryCount: value })}
+              options={Array.from({ length: MAX_ATTEMPT_RETRIES }, (_, index) => index + 1).map(
+                (value) => ({
+                  value,
+                  label: `重试 ${value} 次（每用例最多 ${value + 1} 次 attempt）`,
+                }),
+              )}
+            />
+            <span className="hint">
+              总 attempt 数 = 1 + 重试次数；自动重试与详情页人工重试共用该预算，旧 attempt
+              轨迹保留。
+            </span>
+            {blockerFor("max_attempts") ? (
+              <span className="field-error">{blockerFor("max_attempts")?.message}</span>
+            ) : null}
+          </div>
+        ) : (
+          <div className="banner" style={{ marginTop: 12 }}>
+            <Icon name="shield" size={15} />
+            <div>
+              <strong>重试已关闭（默认）。</strong> 每个用例只执行 1 次 attempt；失败或超时后不自动重试，详情页也没有剩余
+              attempt 预算可手动重试；如需重试请开启开关或重新发起评测。
+            </div>
+          </div>
+        )}
+        <div
+          className="row-between"
+          style={{ marginTop: 18, paddingTop: 14, borderTop: "1px solid var(--line)" }}
+        >
+          <div>
+            <h3 style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "var(--ink)" }}>
               自进化上报（可选）
             </h3>
             <p className="small muted" style={{ margin: "2px 0 0" }}>
@@ -2191,22 +2294,6 @@ export function EvalWizardPage() {
             <span className="hint">超时按失败处理并受重试策略约束。</span>
             {blockerFor("case_timeout_seconds") ? (
               <span className="field-error">{blockerFor("case_timeout_seconds")?.message}</span>
-            ) : null}
-          </div>
-          <div className="field">
-            <label className="required">失败重试次数</label>
-            <Select
-              id="wizard-retries"
-              value={draft.maxAttempts - 1}
-              onChange={(value) => update({ maxAttempts: value + 1 })}
-              options={[0, 1, 2, 3, 4].map((value) => ({
-                value,
-                label: value === 0 ? "不重试" : `重试 ${value} 次`,
-              }))}
-            />
-            <span className="hint">总尝试次数 = 1 + 重试次数，旧 attempt 轨迹保留。</span>
-            {blockerFor("max_attempts") ? (
-              <span className="field-error">{blockerFor("max_attempts")?.message}</span>
             ) : null}
           </div>
           <div className="field">
@@ -2350,11 +2437,16 @@ export function EvalWizardPage() {
             <span className="summary-label">执行策略</span>
             <span className="summary-value">
               并发 {summary.execution.concurrency} · 超时{" "}
-              {formatMinutes(summary.execution.case_timeout_seconds)} · 重试{" "}
-              {summary.execution.max_attempts - 1} 次
+              {formatMinutes(summary.execution.case_timeout_seconds)}
               {summary.execution.model_budget_cny !== null
                 ? ` · 预算 ${formatMoney(summary.execution.model_budget_cny)}`
                 : ""}
+            </span>
+          </div>
+          <div className="summary-item">
+            <span className="summary-label">失败重试</span>
+            <span className="summary-value">
+              {attemptRetrySummary(summary.execution.max_attempts)}
             </span>
           </div>
           <div className="summary-item">

@@ -175,7 +175,7 @@ const eventTypeLabels: Record<string, string> = {
 const retryBlockedLabels: Record<string, string> = {
   run_not_running: "评测不在运行中，不能重试用例",
   case_not_failed: "只有失败或超时的用例可以重试",
-  attempts_exhausted: "该用例已达到最大 attempts 次数",
+  attempts_exhausted: "已达到 attempt 上限，没有剩余预算可手动重试；如需继续请重新发起评测",
   attempt_missing: "该用例没有可追溯的 attempt",
   attempt_active: "该用例仍有进行中的 attempt",
 };
