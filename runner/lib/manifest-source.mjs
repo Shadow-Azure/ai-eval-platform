@@ -59,8 +59,20 @@ function fetchOnce(url, { timeoutMs = MANIFEST_TIMEOUT_MS } = {}) {
         });
       },
     );
+    // The socket timeout only starts once a socket exists, so keep a total
+    // deadline as well: a host that never completes the TCP handshake must not
+    // hang the case (the previous AbortSignal.timeout covered connect too).
+    const deadline = setTimeout(
+      () => req.destroy(new Error(`manifest 拉取超时（${timeoutMs}ms）`)),
+      timeoutMs,
+    );
+    deadline.unref?.();
     req.on("timeout", () => req.destroy(new Error(`manifest 拉取超时（${timeoutMs}ms）`)));
-    req.on("error", reject);
+    req.on("error", (error) => {
+      clearTimeout(deadline);
+      reject(error);
+    });
+    req.on("close", () => clearTimeout(deadline));
     req.end();
   });
 }
