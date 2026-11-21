@@ -17,6 +17,8 @@ from ..model_gateway.service import (
     model_config_payload,
     normalize_upstream_error,
     read_secret,
+    upstream_messages_url,
+    upstream_url,
     usage_payload,
     usage_totals,
 )
@@ -504,14 +506,23 @@ async def test_model_config(
             error.message,
             fields=_connectivity_fields(error.code, error.message),
         ) from error
+    # Probe the endpoint the gateway will actually call. Model listing is
+    # optional for Anthropic-compatible gateways (Tencent Cloud TokenHub plan
+    # endpoints answer GET /v1/models with 404), so a missing listing must not
+    # surface as a broken credential.
+    probe = {
+        "model": config.model_name,
+        "max_tokens": 1,
+        "messages": [{"role": "user", "content": "ping"}],
+    }
     if config.api_style == "anthropic":
-        url = f"{config.base_url.rstrip('/')}/v1/models"
+        url = upstream_messages_url(config.base_url)
         headers = {"x-api-key": secret, "anthropic-version": "2023-06-01"}
     else:
-        url = f"{config.base_url.rstrip('/')}/models"
+        url = upstream_url(config.base_url)
         headers = {"Authorization": f"Bearer {secret}"}
     try:
-        response = await client.get(url, headers=headers)
+        response = await client.post(url, headers=headers, json=probe)
     except httpx.HTTPError as error:
         message = f"模型端点不可达：{error}"
         raise _error(
@@ -528,16 +539,10 @@ async def test_model_config(
             mapped.message,
             fields=_connectivity_fields(mapped.code, mapped.message),
         )
-    try:
-        payload = response.json()
-    except ValueError:
-        payload = {}
-    models = payload.get("data") if isinstance(payload, dict) else None
-    count = len(models) if isinstance(models, list) else None
     return {
         "status": "ok",
         "status_code": response.status_code,
-        "model_count": count,
+        "model_count": None,
     }
 
 

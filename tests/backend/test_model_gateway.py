@@ -257,7 +257,37 @@ def test_model_config_connectivity_test(client, model_env, provider) -> None:
     response = client.post(f"/api/v1/model-configs/{config['id']}/test")
     assert response.status_code == 200, response.text
     assert response.json()["status"] == "ok"
-    assert provider.calls[0].headers["authorization"] == "Bearer sk-test-1234567890"
+    assert response.json()["model_count"] is None
+    call = provider.calls[0]
+    assert call.method == "POST"
+    assert call.url.path == "/v1/chat/completions"
+    assert call.headers["authorization"] == "Bearer sk-test-1234567890"
+
+
+def test_connectivity_test_probes_messages_for_anthropic_gateway(
+    client, model_env, provider
+) -> None:
+    """Tencent Cloud TokenHub plan endpoints have no GET /v1/models."""
+
+    config = _create_config(
+        client,
+        provider="deepseek",
+        display_name="DeepSeek TokenHub",
+        base_url="https://tokenhub.test/plan/anthropic",
+        model_name="deepseek/deepseek-flash",
+        api_style="anthropic",
+    )
+    response = client.post(f"/api/v1/model-configs/{config['id']}/test")
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "ok"
+    assert len(provider.calls) == 1
+    call = provider.calls[0]
+    assert call.method == "POST"
+    assert str(call.url) == "https://tokenhub.test/plan/anthropic/v1/messages"
+    assert call.headers["x-api-key"] == "sk-test-1234567890"
+    payload = json.loads(call.content)
+    assert payload["model"] == "deepseek/deepseek-flash"
+    assert payload["max_tokens"] == 1
 
 
 def test_console_endpoints_require_session(anonymous_client, model_env) -> None:
