@@ -282,18 +282,6 @@ function readDraft(): WizardDraft | null {
     const it = parsed as Record<string, unknown>;
     const base = defaultDraft();
     const mode = it.selectionMode;
-    // #353 migration: older drafts only stored maxAttempts. Keep the user's
-    // retry intent when it was explicit, while a fresh draft still starts off.
-    const legacyMaxAttempts = numberOr(it.maxAttempts, 1);
-    const legacyRetryCount = Math.max(1, Math.round(legacyMaxAttempts) - 1);
-    const attemptRetryEnabled =
-      typeof it.attemptRetryEnabled === "boolean"
-        ? it.attemptRetryEnabled
-        : legacyMaxAttempts > 1;
-    const attemptRetryCount = Math.min(
-      MAX_ATTEMPT_RETRIES,
-      Math.max(1, Math.round(numberOr(it.attemptRetryCount, legacyRetryCount))),
-    );
     return {
       ...base,
       datasetId: stringOrNull(it.datasetId),
@@ -317,8 +305,6 @@ function readDraft(): WizardDraft | null {
       poolId: stringOrNull(it.poolId),
       concurrency: Math.max(1, numberOr(it.concurrency, base.concurrency)),
       caseTimeoutSeconds: Math.max(60, numberOr(it.caseTimeoutSeconds, base.caseTimeoutSeconds)),
-      attemptRetryEnabled,
-      attemptRetryCount,
       budgetCny:
         typeof it.budgetCny === "number" && Number.isFinite(it.budgetCny) ? it.budgetCny : null,
       executionDigest: typeof it.executionDigest === "string" ? it.executionDigest : "",
@@ -339,8 +325,12 @@ function saveDraft(draft: WizardDraft): void {
     // The reporting token is a credential: it never enters browser storage
     // (same policy as the wizard's no-temporary-key rule); the user must
     // re-enter it after a refresh.
+    // #353: retry is a per-launch cost decision, so a restored draft never
+    // re-enables it. Only the current wizard session keeps the toggle/count.
     const persistable = {
       ...draft,
+      attemptRetryEnabled: false,
+      attemptRetryCount: 1,
       selfEvolution: { ...draft.selfEvolution, token: "" },
     };
     window.localStorage.setItem(DRAFT_KEY, JSON.stringify(persistable));
