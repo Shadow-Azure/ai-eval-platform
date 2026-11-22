@@ -184,7 +184,9 @@ An evaluation template (`eval_template`) is a project-level reusable launch pres
 
 The template lifecycle is create, edit, disable, and delete; a template that is disabled or whose references were deleted cannot launch, and the platform validates the dataset version, model credential, resource pool, and asset source before creating a run. A template launch accepts no configuration overrides, preserving the one-click semantics and reproducibility; use a copied and edited template, or the existing custom launch flow, for a different combination.
 
-The evaluations page shows template cards above the run list; each card shows the four fixed selections and the latest run and offers one-click launch, APIs, and details, while the confirmation dialog shows only cost, capacity, and the fixed configuration instead of the four-step wizard. Step 4 of the launch wizard can select "save as an evaluation template", and template mode saves without launching. The template detail page shows the fixed configuration, execution policy, recent runs, and three API examples.
+As templates grow, the evaluations page keeps only the three most recently used templates as quick-launch entries, each retaining one-click launch and details; the confirmation dialog shows only cost, capacity, and the fixed configuration instead of the four-step wizard. Full template management moves to a dedicated evaluation templates page that uses a list rather than cards: it supports search by name, dataset, agent, and model, filtering by enabled state, and pagination ordered by most recent launch. Step 4 of the launch wizard can select "save as an evaluation template", and template mode saves without launching. The template detail page shows the fixed configuration, execution policy, recent runs, and API examples.
+
+The template list uses the console management read API `GET /api/v1/eval-templates?q=&status=&dataset_version_id=&limit=&offset=`, returning `items`, `total`, `limit`, and `offset`. `q` matches the template name, description, dataset, agent, model, resource pool, and creator; `status` is enabled or disabled; the default order is most recent launch first; `limit` defaults to 20 and is capped at 100. This API serves only the console list and is not one of the three execution APIs. The template table is indexed by tenant, status, and last launch time, with trigram or full-text search added later if the data keeps growing.
 
 Table 12 lists the three stable APIs. All three reuse console session authentication: launching requires administrator permission, while status and results are read-only for signed-in users; the first release does not provide a separate machine token.
 
@@ -217,7 +219,7 @@ Table 2 Core data model
 | agent_asset_source | Git asset sources | Repository, source connection, default ref, scan paths, selection mode, asset types |
 | agent_asset_snapshot / agent_asset | Immutable asset snapshots and assets | Resolved commit, tree digest, OSS address, content hash |
 | resource_pool / runner | Resource pool registry | Connection ID, provisioning mode, labels, status, last heartbeat |
-| eval_template | Evaluation templates (reusable launch presets) | Fixed fields and references, execution policy, enabled state, version, creator |
+| eval_template | Evaluation templates (reusable launch presets) | Fixed fields and references, execution policy, enabled state, version, last launch time, creator |
 | eval_run / eval_case_run | Evaluations and case executions | State machine, metric snapshots, asset snapshot, template ID and launch snapshot, session ID, timeout |
 | session / span | Normalized traces | Parent session, span kind, attribute JSONB, tokens and cost |
 

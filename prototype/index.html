@@ -4596,6 +4596,174 @@ tbody tr.clickable {
   }
 }
 
+.template-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 19px;
+  border-bottom: 1px solid var(--line);
+}
+
+.template-list-table {
+  table-layout: fixed;
+}
+
+.template-list-table th:nth-child(1) {
+  width: 24%;
+}
+
+.template-list-table th:nth-child(2) {
+  width: 27%;
+}
+
+.template-list-table th:nth-child(3) {
+  width: 8%;
+}
+
+.template-list-table th:nth-child(4) {
+  width: 11%;
+}
+
+.template-list-table th:nth-child(5) {
+  width: 8%;
+}
+
+.template-list-table th:nth-child(6) {
+  width: 8%;
+}
+
+.template-list-table th:nth-child(7) {
+  width: 14%;
+}
+
+.template-list-table td {
+  height: 54px;
+  padding-top: 6px;
+  padding-bottom: 6px;
+  vertical-align: top;
+}
+
+.template-list-table .template-name {
+  width: 100%;
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.template-list-desc {
+  overflow: hidden;
+  margin-top: 3px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.template-combo-line {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.template-combo-line strong {
+  color: var(--ink);
+  font-size: 11px;
+}
+
+.template-list-actions {
+  gap: 5px;
+}
+
+.template-list-actions .btn {
+  padding-right: 8px;
+  padding-left: 8px;
+}
+
+.template-list-pagination {
+  padding: 12px 19px;
+  border-top: 1px solid var(--line);
+}
+
+.quick-template-list {
+  display: flex;
+  flex-direction: column;
+  padding: 0 19px 14px;
+}
+
+.quick-template-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 0;
+  border-bottom: 1px dashed var(--line);
+}
+
+.quick-template-row:last-child {
+  border-bottom: 0;
+}
+
+.quick-template-glyph {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.quick-template-main {
+  min-width: 0;
+  flex: 1;
+}
+
+.quick-template-combo {
+  overflow: hidden;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quick-template-last {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.quick-template-actions {
+  display: flex;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+@media (max-width: 1240px) {
+  .template-list-table th:nth-child(1),
+  .template-list-table th:nth-child(2) {
+    width: 28%;
+  }
+
+  .template-list-table th:nth-child(6) {
+    display: none;
+  }
+
+  .quick-template-last {
+    display: none;
+  }
+}
+
     </style>
   </head>
   <body>
@@ -5241,6 +5409,120 @@ const mock = {
   ],
 };
 
+function buildTemplateCatalog() {
+  const seeds = mock.evalTemplates.map((template) => ({
+    ...template,
+    recentRuns: (template.recentRuns || []).map((run) => ({ ...run })),
+  }));
+  const names = [
+    "GLM 对比 · Lite",
+    "夜间全量 · Verified",
+    "Mac 冒烟 · Lite",
+    "pi 探索 · Verified",
+    "团队资产回归 · Lite",
+    "Codex 全量 · Verified",
+    "Claude 发版 · Verified",
+    "OpenCode 对比 · Lite",
+    "Kimi 夜间 · Verified",
+    "DeepSeek 冒烟 · Lite",
+    "GLM 发版 · Verified",
+    "团队资产 · Verified",
+    "Mac 全量 · Verified",
+    "Codex Lite 回归",
+    "Claude 夜间 · Lite",
+    "OpenCode 发版 · Verified",
+    "Kimi 冒烟 · Lite",
+    "pi 发版 · Verified",
+    "GLM 夜间 · Lite",
+    "团队资产夜间 · Verified",
+  ];
+  const datasets = [
+    { dataset: "SWE-bench Verified", version: "v2026.10", count: 500 },
+    { dataset: "SWE-bench Lite", version: "v2026.09", count: 300 },
+  ];
+  const agents = [
+    { agent: "Codex CLI", version: "0.114.0", key: "codex" },
+    { agent: "Claude Code", version: "2.1.4", key: "claude" },
+    { agent: "OpenCode", version: "1.8.2", key: "opencode" },
+    { agent: "pi", version: "0.62.1", key: "pi" },
+  ];
+  const models = [
+    { provider: "DeepSeek", model: "deepseek-v4.1-flash", credential: "DeepSeek · sk-ds-••••8c21" },
+    { provider: "智谱 GLM", model: "glm-5", credential: "GLM · sk-gl-••••c731" },
+    { provider: "Kimi", model: "kimi-k2.5", credential: "Kimi · sk-km-••••7f02" },
+    { provider: "MiniMax", model: "MiniMax-M2.1", credential: "MiniMax · sk-mm-••••4a90" },
+  ];
+  const pools = [
+    { pool: "Linux Spot Pool", meta: "6 在线 / 8 上限", concurrency: 8 },
+    { pool: "Mac mini · M4", meta: "4 在线 / 4 上限", concurrency: 4 },
+  ];
+  const assets = [
+    { source: "superpowers", name: "Superpowers", ref: "main", commit: "a8e7c31", count: 3, meta: "main · 3 项 · 提交 a8e7c31" },
+    { source: "team-assets", name: "Platform Team Assets", ref: "release/2026.11", commit: "91b2ac0", count: 4, meta: "release/2026.11 · 4 项 · 提交 91b2ac0" },
+    { source: null, name: "Runtime 内置能力", ref: "—", commit: null, count: 0, meta: "未选择资产源" },
+  ];
+  const variants = names.map((name, index) => {
+    const dataset = datasets[index % datasets.length];
+    const agent = agents[index % agents.length];
+    const model = models[index % models.length];
+    const pool = pools[index % pools.length];
+    const source = assets[index % assets.length];
+    const status = index % 5 === 0 ? "running" : index % 4 === 0 ? "partial" : "completed";
+    const day = 22 - (index % 12);
+    const clock = `${String(8 + (index % 10)).padStart(2, "0")}:${String((index * 7) % 60).padStart(2, "0")}`;
+    return {
+      id: `tpl-${String(index + 4).padStart(3, "0")}`,
+      name,
+      description: `固定 ${dataset.dataset} 与 ${agent.agent}，用于${index % 2 ? "日常回归" : "发版验收"}的复用组合。`,
+      enabled: index % 7 !== 6,
+      dataset: dataset.dataset,
+      datasetVersion: dataset.version,
+      datasetCount: dataset.count,
+      agent: agent.agent,
+      agentVersion: agent.version,
+      runtimeKey: agent.key,
+      assetSource: source.source,
+      assetSourceName: source.name,
+      assetRef: source.ref,
+      assetCommit: source.commit,
+      assetCount: source.count,
+      assetMeta: source.meta,
+      model: model.model,
+      provider: model.provider,
+      credential: model.credential,
+      pool: pool.pool,
+      poolMeta: pool.meta,
+      caseSelection: `全部 ${dataset.count} 个用例`,
+      concurrency: pool.concurrency,
+      timeout: "单用例 30 分钟",
+      retries: index % 3 === 0 ? "开启 · 最多 1 次" : "关闭 · 每用例 1 次 attempt",
+      maxTurns: "默认 200 轮",
+      agentTimeout: "30 分钟",
+      promptSuffix: "",
+      updated: `11 月 ${day} 日 ${clock}`,
+      createdBy: index % 5 === 0 ? "李雷" : "张宁",
+      launches: Math.max(1, 18 - index),
+      lastRun: {
+        id: `eval-${100 + index}`,
+        status,
+        at: `11 月 ${day} 日 ${String(9 + (index % 8)).padStart(2, "0")}:12`,
+        progress: status === "running" ? 42 : 100,
+      },
+      recentRuns: [
+        {
+          id: `eval-${100 + index}`,
+          status,
+          progress: status === "running" ? 42 : 100,
+          result: status === "running" ? "94 / 231 已解决" : `${120 + index} / ${dataset.count} · ${(30 + (index % 12)).toFixed(1)}%`,
+          at: `11 月 ${day} 日`,
+          duration: "2h 30m",
+        },
+      ],
+    };
+  });
+  return [...seeds, ...variants];
+}
+
 function sidebarPreference() {
   const requested = new URLSearchParams(location.search).get("sidebar");
   if (requested === "collapsed") return true;
@@ -5370,7 +5652,7 @@ const ui = {
   importProgress: 0,
   importTimer: null,
   newEvalStep: 1,
-  templates: mock.evalTemplates.map((template) => ({ ...template })),
+  templates: buildTemplateCatalog(),
   newEval: {
     dataset: "verified",
     agent: "codex",
@@ -5403,6 +5685,10 @@ const ui = {
   caseSearch: "",
   casePage: 1,
   casePageSize: 20,
+  templateSearch: "",
+  templateStatus: "all",
+  templatePage: 1,
+  templatePageSize: 10,
   showLoginError: false,
 };
 
@@ -5414,6 +5700,7 @@ const navItems = [
     section: "评测",
     items: [
       { id: "evals", label: "评测任务", icon: "play", path: "/evals", badge: "3" },
+      { id: "eval-templates", label: "评测模板", icon: "list", path: "/evals/templates" },
       { id: "datasets", label: "数据集", icon: "database", path: "/datasets" },
     ],
   },
@@ -5741,37 +6028,58 @@ function createTemplateFromWizard() {
   return template;
 }
 
-function templateCard(template) {
+function quickTemplateRow(template) {
   const last = template.lastRun;
+  const launchButton = template.enabled
+    ? `<button class="btn btn-primary btn-sm" data-action="template-launch" data-template="${template.id}">${icon("play", 13)} 启动</button>`
+    : `<button class="btn btn-primary btn-sm" disabled title="模板已停用">启动</button>`;
   return `
-    <article class="template-card">
-      <div class="template-card-head">
-        <div class="template-glyph">${icon("boxes", 17)}</div>
-        <div class="template-title-wrap">
-          <button class="template-name" data-action="template-detail" data-template="${template.id}">${esc(template.name)}</button>
-          <div class="template-desc">${esc(template.description)}</div>
-        </div>
-        ${templateStatusTag(template)}
+    <div class="quick-template-row">
+      <div class="quick-template-glyph">${icon("boxes", 16)}</div>
+      <div class="quick-template-main">
+        <button class="template-name" data-action="template-detail" data-template="${template.id}">${esc(template.name)}</button>
+        <div class="quick-template-combo">${esc(template.dataset)} · ${esc(template.agent)} · ${esc(template.provider)} ${esc(template.model)} · ${esc(template.pool)}</div>
       </div>
-      <div class="template-spec">
-        <div><span>数据集</span><strong>${esc(template.dataset)}</strong><small>${esc(template.datasetVersion)} · ${template.datasetCount} 用例</small></div>
-        <div><span>Agent 资产</span><strong>${esc(template.assetSourceName)}</strong><small>${esc(template.assetMeta)}</small></div>
-        <div><span>模型</span><strong>${esc(template.provider)}</strong><small class="mono">${esc(template.model)}</small></div>
-        <div><span>资源池</span><strong>${esc(template.pool)}</strong><small>${esc(template.poolMeta)}</small></div>
-      </div>
-      <div class="template-last">
-        ${templateLastRunTag(last)}
-        <span>最近 ${esc(last.at)}</span>
-        <span class="template-launch-count">已启动 ${template.launches} 次</span>
-      </div>
-      <div class="template-actions">
+      <div class="quick-template-last">${templateLastRunTag(last)}<span>${esc(last.at)}</span></div>
+      <div class="quick-template-actions">
         <button class="btn btn-sm" data-action="template-detail" data-template="${template.id}">详情</button>
-        <button class="btn btn-sm" data-action="template-api" data-template="${template.id}">接口</button>
-        <button class="btn btn-primary btn-sm" data-action="template-launch" data-template="${template.id}">${icon("play", 13)} 一键启动</button>
+        ${launchButton}
       </div>
-    </article>
+    </div>
   `;
 }
+
+function templateListRow(template) {
+  const last = template.lastRun;
+  const launchButton = template.enabled
+    ? `<button class="btn btn-primary btn-sm" data-action="template-launch" data-template="${template.id}">${icon("play", 13)} 启动</button>`
+    : `<button class="btn btn-primary btn-sm" disabled title="模板已停用">启动</button>`;
+  return `
+    <tr>
+      <td>
+        <button class="template-name" data-action="template-detail" data-template="${template.id}">${esc(template.name)}</button>
+        <div class="table-secondary template-list-desc">${esc(template.description)}</div>
+      </td>
+      <td>
+        <div class="template-combo-line"><strong>${esc(template.dataset)}</strong><span>${esc(template.datasetVersion)} · ${template.datasetCount} 用例</span></div>
+        <div class="template-combo-line"><span>${esc(template.agent)} · ${esc(template.provider)} ${esc(template.model)}</span></div>
+        <div class="template-combo-line"><span>${esc(template.pool)} · ${esc(template.assetSourceName)}</span></div>
+      </td>
+      <td>${templateStatusTag(template)}</td>
+      <td>${templateLastRunTag(last)}<div class="table-secondary">${esc(last.at)}</div></td>
+      <td>${template.launches} 次</td>
+      <td class="small muted">${esc(template.updated)}</td>
+      <td>
+        <div class="row template-list-actions">
+          <button class="btn btn-sm" data-action="template-detail" data-template="${template.id}">详情</button>
+          <button class="btn btn-sm" data-action="template-api" data-template="${template.id}">接口</button>
+          ${launchButton}
+        </div>
+      </td>
+    </tr>
+  `;
+}
+
 
 function templateFixedRows(template) {
   return `
@@ -5790,6 +6098,10 @@ function templateApiBody(template) {
       <div><span>鉴权</span><span>控制台会话 Cookie；启动需管理员权限</span></div>
     </div>
     <div class="api-list">
+      <div class="api-item">
+        <div class="api-item-head"><span class="api-method get">GET</span><code>/api/v1/eval-templates?q=&amp;status=&amp;limit=&amp;offset=</code></div>
+        <p>控制台管理列表：按名称、数据集、Agent、模型搜索，按启用状态筛选，服务端分页返回 total；不属于三个执行接口。</p>
+      </div>
       <div class="api-item">
         <div class="api-item-head"><span class="api-method post">POST</span><code>/api/v1/eval-templates/${template.id}/launch</code></div>
         <p>按模板触发一次评测，返回 run_id 与状态/结果地址；固定字段不可在启动时覆盖，幂等键重放返回同一 run。</p>
@@ -5819,7 +6131,7 @@ function openTemplateApi(templateId) {
   const template = evalTemplateById(templateId);
   modal({
     title: "模板接口",
-    subtitle: `${template.name} · 触发、状态与结果三个稳定接口`,
+    subtitle: `${template.name} · 列表查询与触发、状态、结果三个执行接口`,
     wide: true,
     body: templateApiBody(template),
     footer: `<button class="btn" data-action="close-modal">关闭</button><button class="btn btn-primary" data-action="template-launch" data-template="${template.id}">${icon("play", 13)} 一键启动</button>`,
@@ -5845,46 +6157,18 @@ function openTemplateLaunch(templateId) {
   });
 }
 
-function openTemplateManage() {
-  modal({
-    title: "评测模板",
-    subtitle: "固定组合可复用；停用或编辑不会影响已启动的评测",
-    wide: true,
-    body: `
-      <div class="template-manage-list">
-        ${ui.templates
-          .map(
-            (template) => `
-              <div class="template-manage-row">
-                <div class="template-manage-main">
-                  <div class="row" style="gap:8px"><strong>${esc(template.name)}</strong>${templateStatusTag(template)}</div>
-                  <div class="small muted">${esc(template.dataset)} · ${esc(template.agent)} · ${esc(template.model)} · ${esc(template.pool)}</div>
-                </div>
-                <div class="template-manage-meta"><span>已启动 ${template.launches} 次</span><span>${esc(template.updated)}</span></div>
-                <div class="row">
-                  <button class="btn btn-sm" data-action="template-api" data-template="${template.id}">接口</button>
-                  <button class="btn btn-primary btn-sm" data-action="template-launch" data-template="${template.id}">启动</button>
-                </div>
-              </div>
-            `,
-          )
-          .join("")}
-      </div>
-      <div class="banner" style="margin-top:14px">${icon("help", 15)}<div>编辑沿用发起评测向导；原型只展示模板的保存、查看与启动路径。</div></div>
-    `,
-    footer: `<button class="btn" data-action="close-modal">关闭</button><button class="btn btn-primary" data-action="new-template">${icon("plus", 13)} 新建模板</button>`,
-  });
-}
 
 function navActive(path) {
+  if (path.startsWith("/evals/templates")) return "eval-templates";
   const first = path.split("/")[1];
   return first || "overview";
 }
 
 function breadcrumbFor(path) {
-  if (path.startsWith("/evals/templates/")) return ["评测任务", "评测模板", "模板详情"];
-  if (path === "/evals/new") return ["评测任务", currentRoute().query.get("mode") === "template" ? "新建模板" : "发起评测"];
-  if (path.startsWith("/evals/")) return ["评测任务", "评测详情"];
+  if (path === "/evals/templates") return ["评测", "评测模板"];
+  if (path.startsWith("/evals/templates/")) return ["评测", "评测模板", "模板详情"];
+  if (path === "/evals/new") return ["评测", currentRoute().query.get("mode") === "template" ? "新建模板" : "发起评测"];
+  if (path.startsWith("/evals/")) return ["评测", "评测详情"];
   if (path === "/evals") return ["评测", "评测任务"];
   if (path === "/datasets/import") return ["数据集", "导入数据集"];
   if (path.startsWith("/datasets/")) return ["数据集", "数据集详情"];
@@ -6901,14 +7185,13 @@ function resourcesPage() {
 }
 
 function evalsPage() {
-  const launches = ui.templates.reduce((total, template) => total + template.launches, 0);
   return shell(
     `<div class="page">
       ${pageHeading({
         eyebrow: "Evaluation runs",
         title: "评测任务",
         description: "把数据集版本、Agent 运行时与资产、模型凭据与资源池固化为模板，一键创建可复现的评测。",
-        actions: `<button class="btn" data-action="open-filter">${icon("filter", 14)} 筛选</button><button class="btn" data-route="/evals/new">${icon("play", 14)} 发起评测</button><button class="btn btn-primary" data-action="new-template">${icon("boxes", 14)} 新建模板</button>`,
+        actions: `<button class="btn" data-route="/evals/new">${icon("play", 14)} 发起评测</button><button class="btn btn-primary" data-action="new-template">${icon("boxes", 14)} 新建模板</button>`,
       })}
       <div class="grid grid-4">
         ${metricCard("全部任务", "18", "<span>本月创建</span>", "play")}
@@ -6916,18 +7199,18 @@ function evalsPage() {
         ${metricCard("平均解决率", "38.7%", '<span class="trend-up">↑ 2.4%</span><span>较上月</span>', "sparkles", "violet")}
         ${metricCard("平均耗时", "2h 47m", "<span>Verified · 500 用例</span>", "clock", "warning")}
       </div>
-      <section class="card template-section section-gap">
+      <section class="card quick-template-section section-gap">
         <div class="card-header">
           <div>
-            <h2 class="card-title">评测模板</h2>
-            <p class="card-subtitle">固定组合无需重复选择；一键启动只确认费用，随后创建新的评测运行。</p>
+            <h2 class="card-title">快速启动</h2>
+            <p class="card-subtitle">只展示最近使用的 3 个模板；模板数量增长后，完整列表支持搜索、筛选与分页。</p>
           </div>
           <div class="card-actions">
-            <span class="small muted">${ui.templates.length} 个模板 · 累计启动 ${launches} 次</span>
-            <button class="btn btn-sm" data-action="template-manage">管理模板</button>
+            <span class="small muted">共 ${ui.templates.length} 个模板</span>
+            <button class="btn btn-sm" data-route="/evals/templates">全部模板 ${icon("arrowRight", 12)}</button>
           </div>
         </div>
-        <div class="template-grid">${ui.templates.map(templateCard).join("")}</div>
+        <div class="quick-template-list">${ui.templates.slice(0, 3).map(quickTemplateRow).join("")}</div>
       </section>
       <section class="card section-gap">
         <div class="filter-bar">
@@ -6970,7 +7253,7 @@ function evalSummaryAside(templateMode = false) {
   const source = assetSourceById(ui.newEval.assetSource);
   return `
     <aside class="card wizard-aside">
-      <div class="card-header"><div><h2 class="card-title">${templateMode ? "模板摘要" : "评测摘要"}</h2><p class="card-subtitle">${templateMode ? "保存后可在评测任务页一键启动" : "提交后仍可取消排队任务"}</p></div>${icon("shield", 15, "muted")}</div>
+      <div class="card-header"><div><h2 class="card-title">${templateMode ? "模板摘要" : "评测摘要"}</h2><p class="card-subtitle">${templateMode ? "保存后可在模板列表一键启动" : "提交后仍可取消排队任务"}</p></div>${icon("shield", 15, "muted")}</div>
       <div class="card-body summary-list">
         ${templateMode ? `<div class="summary-item"><span class="summary-label">模板名称</span><span class="summary-value">${esc(ui.newEval.templateName || "未命名模板")}</span></div>` : ""}
         <div class="summary-item"><span class="summary-label">数据集</span><span class="summary-value">${dataset}<br /><span class="muted">v2026.10 · 500 用例</span></span></div>
@@ -7423,7 +7706,7 @@ function newEvalPage() {
     content = `
       <div class="eyebrow">Step 4 · Review</div>
       <h2 style="font-size:19px;margin-bottom:6px">${templateMode ? "核对并保存模板" : "确认并启动评测"}</h2>
-      <p class="small muted" style="margin-bottom:18px">${templateMode ? "保存后不会立即启动；模板会出现在评测任务页的快速启动区。" : "启动后平台会创建评测记录并拆分为多个 GitHub Actions 分片。"}</p>
+      <p class="small muted" style="margin-bottom:18px">${templateMode ? "保存后不会立即启动；模板会出现在评测模板列表；最近使用的 3 个还会出现在评测任务页的快速启动区。" : "启动后平台会创建评测记录并拆分为多个 GitHub Actions 分片。"}</p>
       <div class="save-template-card ${saveAsTemplate ? "is-on" : ""}">
         <div class="switch-row">
           <div>
@@ -7439,7 +7722,7 @@ function newEvalPage() {
             <div class="field"><label class="required">模板名称</label><input class="input" id="template-name" value="${esc(ui.newEval.templateName)}" placeholder="例如：日常回归 · Verified" /></div>
             <div class="field"><label>模板说明</label><input class="input" id="template-description" value="${esc(ui.newEval.templateDescription)}" placeholder="说明使用场景与适用批次" /></div>
           </div>
-          <div class="banner success" style="margin-top:10px">${icon("check", 15)}<div>保存后固定组合会出现在评测任务页；启动时仍会重新解析资产 Ref、检查镜像并冻结新的快照。</div></div>
+          <div class="banner success" style="margin-top:10px">${icon("check", 15)}<div>保存后固定组合会出现在模板列表；启动时仍会重新解析资产 Ref、检查镜像并冻结新的快照。</div></div>
         `
             : `<div class="small muted" style="margin-top:8px">不保存模板时，本次选择只对这一次评测生效。</div>`
         }
@@ -7474,11 +7757,11 @@ function newEvalPage() {
         eyebrow: templateMode ? "New template" : "New evaluation",
         title: templateMode ? "新建评测模板" : "发起评测",
         description: templateMode
-          ? "固化数据集、Agent 资产、模型、资源池与执行策略；保存后可在评测任务页一键启动。"
+          ? "固化数据集、Agent 资产、模型、资源池与执行策略；保存后可在模板列表一键启动。"
           : "组合数据集、Agent 运行时、Git 资产源、模型与资源池，创建可复现的评测任务。",
         actions: `<button class="btn" data-route="/evals">取消</button>`,
       })}
-      ${templateMode ? `<div class="banner template-mode-banner" style="margin-bottom:16px">${icon("boxes", 15)}<div><strong>模板模式：只保存配置，不创建评测。</strong> 保存后固定组合出现在评测任务页；每次启动都会重新解析资产 Ref 并冻结新的快照。</div></div>` : ""}
+      ${templateMode ? `<div class="banner template-mode-banner" style="margin-bottom:16px">${icon("boxes", 15)}<div><strong>模板模式：只保存配置，不创建评测。</strong> 保存后固定组合出现在模板列表；每次启动都会重新解析资产 Ref 并冻结新的快照。</div></div>` : ""}
       <div class="step-bar">
         ${[
           ["选择数据集", "数据集版本"],
@@ -7894,12 +8177,95 @@ function evalEvents(run) {
   `;
 }
 
+function filteredTemplates() {
+  const query = ui.templateSearch.trim().toLowerCase();
+  return ui.templates.filter((template) => {
+    if (ui.templateStatus === "enabled" && !template.enabled) return false;
+    if (ui.templateStatus === "disabled" && template.enabled) return false;
+    if (!query) return true;
+    return [
+      template.name,
+      template.description,
+      template.dataset,
+      template.datasetVersion,
+      template.agent,
+      template.model,
+      template.provider,
+      template.pool,
+      template.assetSourceName,
+      template.createdBy,
+    ]
+      .join(" ")
+      .toLowerCase()
+      .includes(query);
+  });
+}
+
+function evalTemplatesPage() {
+  const filtered = filteredTemplates();
+  const total = filtered.length;
+  const pageCount = Math.max(1, Math.ceil(total / ui.templatePageSize));
+  ui.templatePage = Math.min(Math.max(1, ui.templatePage), pageCount);
+  const start = (ui.templatePage - 1) * ui.templatePageSize;
+  const rows = filtered.slice(start, start + ui.templatePageSize);
+  const pageItems = paginationWindow(ui.templatePage, pageCount);
+  const hasFilters = Boolean(ui.templateSearch.trim()) || ui.templateStatus !== "all";
+  return shell(
+    `<div class="page">
+      ${pageHeading({
+        eyebrow: "Evaluation templates",
+        title: "评测模板",
+        description: "按名称、数据集、Agent 或模型搜索固定组合；列表分页读取，任意模板都可一键启动。",
+        actions: `<button class="btn btn-primary" data-action="new-template">${icon("plus", 14)} 新建模板</button>`,
+      })}
+      <section class="card template-list-card">
+        <div class="template-toolbar">
+          <div class="input-with-icon"><span>${icon("search", 14)}</span><input class="input" id="template-search" style="width:340px" value="${esc(ui.templateSearch)}" placeholder="搜索模板、数据集、Agent 或模型" /></div>
+          <select class="select" id="template-status-filter" style="width:150px">
+            <option value="all" ${ui.templateStatus === "all" ? "selected" : ""}>状态：全部</option>
+            <option value="enabled" ${ui.templateStatus === "enabled" ? "selected" : ""}>状态：启用</option>
+            <option value="disabled" ${ui.templateStatus === "disabled" ? "selected" : ""}>状态：停用</option>
+          </select>
+          ${hasFilters ? `<button class="btn btn-sm" data-action="template-clear-filters">清除筛选</button>` : ""}
+          <span class="small muted" style="margin-left:auto">共 ${ui.templates.length} 个模板 · 匹配 ${total} 个</span>
+        </div>
+        ${
+          rows.length
+            ? `<div class="table-wrap"><table class="template-list-table">
+                <thead><tr><th>模板</th><th>固定组合</th><th>状态</th><th>最近启动</th><th>累计启动</th><th>更新</th><th>操作</th></tr></thead>
+                <tbody>${rows.map(templateListRow).join("")}</tbody>
+              </table></div>`
+            : `<div class="table-empty"><div class="empty-mark">${icon("search", 20)}</div><strong>没有匹配的评测模板</strong><div class="small muted">调整搜索词或状态筛选，或清空条件查看全部模板。</div><button class="btn btn-primary btn-sm" style="margin-top:14px" data-action="template-clear-filters">清除筛选</button></div>`
+        }
+        <div class="table-pagination template-list-pagination">
+          <div class="row small muted">
+            <span>显示 ${total ? start + 1 : 0}–${Math.min(start + ui.templatePageSize, total)} / ${total}</span>
+            <span>·</span><span>共 ${pageCount} 页</span>
+            <label class="row" style="gap:6px">每页
+              <select class="select table-page-size" id="template-page-size">
+                ${[10, 20, 50].map((size) => `<option value="${size}" ${ui.templatePageSize === size ? "selected" : ""}>${size}</option>`).join("")}
+              </select>
+            </label>
+          </div>
+          <div class="pagination-buttons">
+            <button class="page-button" data-action="template-page" data-page="${ui.templatePage - 1}" ${ui.templatePage === 1 ? "disabled" : ""}>${icon("arrowLeft", 12)}</button>
+            ${pageItems.map((page) => page === null ? '<span class="pagination-ellipsis">…</span>' : `<button class="page-button ${ui.templatePage === page ? "active" : ""}" data-action="template-page" data-page="${page}">${page}</button>`).join("")}
+            <button class="page-button" data-action="template-page" data-page="${ui.templatePage + 1}" ${ui.templatePage === pageCount ? "disabled" : ""}>${icon("arrowRight", 12)}</button>
+          </div>
+        </div>
+      </section>
+    </div>`,
+    "/evals/templates",
+  );
+}
+
+
 function evalTemplateDetailPage(id) {
   const template = evalTemplateById(id);
   const recentRuns = template.recentRuns || [];
   return shell(
     `<div class="page">
-      <div class="row small muted" style="margin-bottom:14px"><button class="btn btn-ghost btn-sm" data-route="/evals">${icon("arrowLeft", 13)} 返回评测任务</button></div>
+      <div class="row small muted" style="margin-bottom:14px"><button class="btn btn-ghost btn-sm" data-route="/evals/templates">${icon("arrowLeft", 13)} 返回模板列表</button></div>
       ${pageHeading({
         eyebrow: `Template · ${template.id}`,
         title: `<span class="eval-title-row">${esc(template.name)} ${templateStatusTag(template)}</span>`,
@@ -7964,8 +8330,9 @@ function evalTemplateDetailPage(id) {
             </div>
           </section>
           <section class="card">
-            <div class="card-header"><div><h2 class="card-title">接口</h2><p class="card-subtitle">触发、状态与结果</p></div><span class="tag tag-neutral">3 个</span></div>
+            <div class="card-header"><div><h2 class="card-title">接口</h2><p class="card-subtitle">列表查询与三个执行接口</p></div><span class="tag tag-neutral">3 + 列表</span></div>
             <div class="card-body api-mini-list">
+              <div class="api-mini"><span class="api-method get">GET</span><code>/eval-templates?q=&amp;status=&amp;limit=&amp;offset=</code></div>
               <div class="api-mini"><span class="api-method post">POST</span><code>/eval-templates/${template.id}/launch</code></div>
               <div class="api-mini"><span class="api-method get">GET</span><code>/eval-runs/{run_id}/status</code></div>
               <div class="api-mini"><span class="api-method get">GET</span><code>/eval-runs/{run_id}/results</code></div>
@@ -8270,6 +8637,8 @@ function render(options = {}) {
     html = evalsPage();
   } else if (path === "/evals/new") {
     html = newEvalPage();
+  } else if (path === "/evals/templates") {
+    html = evalTemplatesPage();
   } else if (path.startsWith("/evals/templates/")) {
     html = evalTemplateDetailPage(parts[2]);
   } else if (path.startsWith("/evals/")) {
@@ -9443,8 +9812,16 @@ function handleAction(action, target) {
     openTemplateLaunch(target.dataset.template);
     return;
   }
-  if (action === "template-manage") {
-    openTemplateManage();
+  if (action === "template-page") {
+    ui.templatePage = Number(target.dataset.page) || 1;
+    render({ preserveScroll: true });
+    return;
+  }
+  if (action === "template-clear-filters") {
+    ui.templateSearch = "";
+    ui.templateStatus = "all";
+    ui.templatePage = 1;
+    render();
     return;
   }
   if (action === "confirm-template-launch") {
@@ -9482,8 +9859,11 @@ function handleAction(action, target) {
     const template = createTemplateFromWizard();
     ui.newEval.saveAsTemplate = false;
     ui.newEvalStep = 1;
-    toast(`模板「${template.name}」已保存，可在评测任务页一键启动`);
-    go("/evals");
+    ui.templateSearch = "";
+    ui.templateStatus = "all";
+    ui.templatePage = 1;
+    toast(`模板「${template.name}」已保存，可在模板列表一键启动`);
+    go("/evals/templates");
     return;
   }
 
@@ -9838,6 +10218,17 @@ document.addEventListener("input", (event) => {
       nextInput.setSelectionRange(selection, selection);
     }
   }
+  if (event.target.id === "template-search") {
+    ui.templateSearch = event.target.value;
+    ui.templatePage = 1;
+    const selection = event.target.selectionStart;
+    render({ preserveScroll: true });
+    const nextInput = document.querySelector("#template-search");
+    if (nextInput) {
+      nextInput.focus();
+      nextInput.setSelectionRange(selection, selection);
+    }
+  }
   if (event.target.id === "max-turns") {
     ui.newEval.maxTurns = event.target.value.replace(/[^0-9]/g, "").slice(0, 4);
     return;
@@ -9944,6 +10335,16 @@ document.addEventListener("change", (event) => {
     ui.casePageSize = Number(event.target.value);
     ui.casePage = 1;
     render();
+  }
+  if (event.target.id === "template-status-filter") {
+    ui.templateStatus = event.target.value;
+    ui.templatePage = 1;
+    render({ preserveScroll: true });
+  }
+  if (event.target.id === "template-page-size") {
+    ui.templatePageSize = Number(event.target.value);
+    ui.templatePage = 1;
+    render({ preserveScroll: true });
   }
   if (event.target.id === "asset-page-size") {
     ui.newEval.assetPageSize = Number(event.target.value);

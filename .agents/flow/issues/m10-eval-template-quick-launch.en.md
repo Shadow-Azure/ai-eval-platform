@@ -30,8 +30,9 @@ Launching an evaluation currently takes a four-step wizard that reselects the da
 ## Goals
 
 - Add a project-level eval_template that fixes the dataset version, agent runtime, agent asset source/ref/asset selection, model credential, resource pool, case scope, execution policy, prompt suffix, max turns, and agent timeout; templates can be enabled, disabled, and edited.
-- Add a quick-launch template area to the evaluations page: each card shows the fixed combination, the latest run, and a launch button; one-click launch only asks for confirmation and never re-enters the four-step wizard.
-- Support saving as an evaluation template in step 4 of the launch wizard; the template appears in the quick-launch area after saving. Also provide a new-template entry that saves a template without launching.
+- Keep only the three most recently used templates as quick-launch entries on the evaluations page, each retaining one-click launch and details; full template management moves to a dedicated evaluation templates list page.
+- The evaluation templates list supports search by name, dataset, agent, and model, filtering by enabled state, and pagination ordered by most recent launch; the list API supports q, status, dataset_version_id, limit, offset, and total and is not one of the three execution APIs.
+- Support saving as an evaluation template in step 4 of the launch wizard; a saved template enters the template list. Also provide a new-template entry that saves a template without launching.
 - Three stable APIs:
   - POST /api/v1/eval-templates/{template_id}/launch: trigger an evaluation from a template and return run_id, status, and status/result URLs; supports an idempotency key.
   - GET /api/v1/eval-runs/{run_id}/status: poll execution status, progress, and whether the run is terminal.
@@ -49,7 +50,8 @@ Launching an evaluation currently takes a four-step wizard that reselects the da
 
 ## Acceptance
 
-- The template list shows the fixed combination, latest launch, and status; one-click confirmation creates an evaluation and opens its detail, which names the source template.
+- The template list shows the fixed combination, latest launch, and status and supports search, status filtering, and server-side pagination; one-click confirmation creates an evaluation and opens its detail, which names the source template.
+- The evaluations page always shows only the three most recently used templates and never grows with the total; an empty list result can clear the search and filters.
 - A template can be saved from step 4 of the launch wizard or created from the new-template entry without launching; an empty name, an unresolved asset ref, or an invalid reference blocks saving or launching.
 - The three APIs return stable fields at the paths above; status returns terminal=true at a terminal state, results returns is_final=false while running and complete metrics after the terminal state.
 - Replaying an idempotency key returns the same run_id; a disabled template returns 409; a missing template or evaluation returns 404; an unauthorized launch returns 403.
