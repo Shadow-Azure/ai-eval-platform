@@ -11,9 +11,11 @@ scope:
   - .agents/flow/issues/m8-54-image-tarball-lazy-presign.*
   - .agents/notes/adr-0003-image-tarball-lazy-presign.*
   - docs/design/eval-platform-architecture.*
+  - docs/architecture.*
   - runner/scripts/real-task.mjs
   - runner/lib/task-payload.mjs
   - runner/lib/image-tarball.mjs
+  - backend/app/config.py
   - backend/app/services/dataset_image_tarballs.py
   - backend/app/api/runners.py
   - tests/runner/**

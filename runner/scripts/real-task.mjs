@@ -32,7 +32,7 @@ import { composePrompt } from "../lib/prompt.mjs";
 import { startHeartbeatSidecar, stopHeartbeatSidecar } from "./heartbeat-agent.mjs";
 import { buildCaseTasks } from "../lib/task-payload.mjs";
 import { imageCandidates, sourceLabel } from "../lib/image-sources.mjs";
-import { loadImageTarball } from "../lib/image-tarball.mjs";
+import { loadImageTarballWithRefresh } from "../lib/image-tarball.mjs";
 import { runCommand } from "../lib/run-command.mjs";
 import {
   collectTraceBundle,
@@ -431,7 +431,7 @@ async function realCase(
   dispatch,
   item,
   task,
-  { runnerRoot, callbackBaseUrl, maxTurns, agentTimeoutSeconds },
+  { runnerRoot, callbackBaseUrl, maxTurns, agentTimeoutSeconds, refreshTask = null },
 ) {
   const datasetAdapter = getDatasetAdapter(task.adapter_key);
   const runtimeAdapter = getRuntimeAdapter(task.runtime_key);
@@ -461,16 +461,26 @@ async function realCase(
     // M8 (#273): a cold spot runner tries the OSS tarball first. A miss,
     // timeout, corrupt tar or load failure falls back to the frozen public
     // registry chain with the same diagnostics directory.
+    //
+    // M8-54 (#371): the descriptor was fetched after capacity admission, so a
+    // 401/403 means the URL still aged past its download-only TTL (clock skew,
+    // slow queue handoff). Refresh `/tasks` and retry exactly once before
+    // treating the tarball as unavailable.
     let tarballImage = null;
     if (task.image_tarball?.url) {
-      const loaded = await loadImageTarball(task.image_tarball, { traceDir: imageTraceDir });
+      const loaded = await loadImageTarballWithRefresh(
+        task.image_tarball,
+        refreshTask ? async () => (await refreshTask())?.image_tarball ?? null : null,
+        { traceDir: imageTraceDir },
+      );
       if (loaded.ok) {
-        tarballImage = environmentImage;
+        tarballImage = loaded.image || environmentImage;
         console.error(
           JSON.stringify({
             status: "image_tarball_loaded",
             key: task.image_tarball.key,
             elapsed_ms: loaded.elapsed_ms,
+            refreshed: Boolean(loaded.refreshed),
           }),
         );
       } else {
@@ -479,6 +489,17 @@ async function realCase(
             status: "image_tarball_fallback",
             key: task.image_tarball.key,
             stage: loaded.stage,
+            http_status: loaded.httpStatus ?? null,
+            cause:
+              loaded.httpStatus === 404
+                ? "object_missing"
+                : loaded.httpStatus === 401 || loaded.httpStatus === 403
+                  ? "auth_failed"
+                  : loaded.stage === "download"
+                    ? "download_failed"
+                    : "load_failed",
+            retried: Boolean(loaded.refreshed),
+            refresh_error: loaded.refreshError ?? null,
             error: loaded.error,
           }),
         );
@@ -1146,17 +1167,30 @@ async function main() {
   }
   if (Date.parse(manifest.deadline) < Date.now()) fail("manifest 已过 deadline", "token_invalid");
 
-  let taskByCase = new Map();
-  if (tasksUrl) {
-    const tasksResponse = await fetch(tasksUrl, {
+  // M8-54 (#371): `/tasks` is NOT fetched here. The platform signs a
+  // per-case image tarball URL when it serves that response, and this job may
+  // still wait a long time on the `started` capacity callback. Fetching early
+  // aged the URL out of its download-only TTL. The case loop fetches it after
+  // `started` returns 2xx; the manifest (and its shard token) still arrives
+  // early because the token and deadline checks need it.
+  const fetchTasks = async () => {
+    if (!tasksUrl) return new Map();
+    const response = await fetch(tasksUrl, {
       headers: { authorization: `Bearer ${token}` },
       signal: AbortSignal.timeout(10000),
-    }).catch(() => null);
-    if (tasksResponse?.ok) {
-      const taskPayload = await tasksResponse.json().catch(() => null);
-      taskByCase = buildCaseTasks(taskPayload);
+    });
+    if (!response.ok) {
+      throw Object.assign(new Error(`tasks 拉取失败：HTTP ${response.status}`), {
+        code: response.status === 0 || response.status >= 500 ? "callback_retryable" : "runtime_error",
+        httpStatus: response.status,
+      });
     }
-  }
+    const taskPayload = await response.json().catch(() => null);
+    if (!taskPayload) {
+      throw Object.assign(new Error("tasks 响应不是 JSON"), { code: "runtime_error" });
+    }
+    return buildCaseTasks(taskPayload);
+  };
   const runnerRoot = resolve(process.env.RUNNER_ROOT || "runner");
 
   let cases = manifest.cases;
@@ -1510,30 +1544,49 @@ async function main() {
         token,
       });
 
-      const task = taskByCase.get(item.case_run_id);
-      // M4-02: `realCase` blocks this process inside spawnSync("docker", …) for
-      // the whole agent execution, so keep proving liveness from a sidecar
-      // process. Only the real-repo path needs it; the deterministic synthetic
-      // path stays exactly as before. The token travels via env only and a
-      // sidecar failure must never change the case result.
-      const heartbeatSidecar = task?.repo
-        ? startHeartbeatSidecar({
-            callbackBaseUrl: manifest.callback_base_url,
-            token,
-            caseRunId: item.case_run_id,
-            attempt: dispatch.attempt,
-            shardId: dispatch.shard_id,
-            runnerRoot,
-          })
-        : null;
+      let task = null;
+      let heartbeatSidecar = null;
       let caseResult;
       try {
+        // M8-54 (#371): capacity has been admitted (started 2xx), so this is
+        // the first moment the platform may sign the per-case image tarball
+        // URL. Fetch `/tasks` here — after the queue wait and immediately
+        // before the image pull — so the URL only has to cover the download.
+        const taskByCase = await fetchTasks();
+        task = taskByCase.get(item.case_run_id) ?? null;
+        if (tasksUrl && !task) {
+          throw Object.assign(new Error("tasks 未返回当前用例"), { code: "runtime_error" });
+        }
+        // M4-02: `realCase` blocks this process inside spawnSync("docker", …)
+        // for the whole agent execution, so keep proving liveness from a
+        // sidecar process. Only the real-repo path needs it; the deterministic
+        // synthetic path stays exactly as before. The token travels via env
+        // only and a sidecar failure must never change the case result.
+        heartbeatSidecar = task?.repo
+          ? startHeartbeatSidecar({
+              callbackBaseUrl: manifest.callback_base_url,
+              token,
+              caseRunId: item.case_run_id,
+              attempt: dispatch.attempt,
+              shardId: dispatch.shard_id,
+              runnerRoot,
+            })
+          : null;
         caseResult = task?.repo
           ? await realCase(dispatch, item, task, {
               runnerRoot,
               callbackBaseUrl: manifest.callback_base_url,
               maxTurns: manifest.max_turns,
               agentTimeoutSeconds: manifest.agent_timeout_seconds,
+              // M8-54 (#371): a 401/403 on the first tarball GET refreshes the
+              // descriptor once; only this callback asks the platform to sign
+              // a fresh URL, and only after capacity admission.
+              refreshTask: async () => {
+                const refreshed = await fetchTasks();
+                const refreshedTask = refreshed.get(item.case_run_id) ?? null;
+                if (!refreshedTask) throw new Error("刷新 tasks 后缺少当前用例");
+                return refreshedTask;
+              },
             })
           : { ...deterministicCase(dispatch, item), executionStatus: "succeeded", resultStatus: "resolved", durationMs: 0 };
       } catch (error) {

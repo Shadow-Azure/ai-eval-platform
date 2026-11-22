@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { loadImageTarball } from "../../runner/lib/image-tarball.mjs";
+import { loadImageTarball, loadImageTarballWithRefresh } from "../../runner/lib/image-tarball.mjs";
 
 const TARBALL = {
   url: "https://bucket.oss-cn-hangzhou-internal.aliyuncs.com/dataset-images/x.tar.gz?X-Amz-Signature=secret",
@@ -159,4 +159,84 @@ test("image loading keeps timers responsive while a command runs", async () => {
   const [result] = await Promise.all([loading, timer]);
   assert.equal(result.ok, true);
   assert.deepEqual(order, ["timer", "load"]);
+});
+
+const REFRESHED = {
+  ...TARBALL,
+  url: "https://bucket.oss-cn-hangzhou-internal.aliyuncs.com/dataset-images/x.tar.gz?X-Amz-Signature=fresh",
+};
+
+test("a 403 redownloads once with the refreshed presigned URL", async () => {
+  const { spawn, calls } = fakeSpawn([
+    { status: 1 },
+    { status: 22, stdout: "403", stderr: "curl: (22) The requested URL returned error: 403" },
+    { status: 1 },
+    { status: 0, stdout: "200" },
+    { status: 0 },
+    { status: 0 },
+  ]);
+  let refreshCalls = 0;
+  const result = await loadImageTarballWithRefresh(TARBALL, async () => {
+    refreshCalls += 1;
+    return REFRESHED;
+  }, { spawn });
+  assert.equal(result.ok, true);
+  assert.equal(result.stage, "loaded");
+  assert.equal(result.refreshed, true);
+  assert.equal(result.httpStatus, 200);
+  assert.equal(refreshCalls, 1);
+  const urls = calls.filter((call) => call.command === "curl").map((call) => call.args.at(-1));
+  assert.deepEqual(urls, [TARBALL.url, REFRESHED.url]);
+  const curlArgs = calls.find((call) => call.command === "curl").args;
+  assert.ok(curlArgs.includes("--write-out"), "curl must report the HTTP status");
+  assert.ok(curlArgs.includes("%{http_code}"));
+});
+
+test("a second 403 falls back after exactly one refresh", async () => {
+  const { spawn, calls } = fakeSpawn([
+    { status: 1 },
+    { status: 22, stdout: "403" },
+    { status: 1 },
+    { status: 22, stdout: "403" },
+  ]);
+  let refreshCalls = 0;
+  const result = await loadImageTarballWithRefresh(TARBALL, async () => {
+    refreshCalls += 1;
+    return REFRESHED;
+  }, { spawn });
+  assert.equal(result.ok, false);
+  assert.equal(result.stage, "download");
+  assert.equal(result.httpStatus, 403);
+  assert.equal(result.refreshed, true);
+  assert.equal(refreshCalls, 1);
+  assert.equal(calls.filter((call) => call.command === "curl").length, 2);
+});
+
+test("a 404 is object-missing and never refreshes", async () => {
+  const { spawn } = fakeSpawn([
+    { status: 1 },
+    { status: 22, stdout: "404" },
+  ]);
+  let refreshCalls = 0;
+  const result = await loadImageTarballWithRefresh(TARBALL, async () => {
+    refreshCalls += 1;
+    return REFRESHED;
+  }, { spawn });
+  assert.equal(result.ok, false);
+  assert.equal(result.httpStatus, 404);
+  assert.equal(refreshCalls, 0);
+});
+
+test("a failed refresh keeps the original download error", async () => {
+  const { spawn } = fakeSpawn([
+    { status: 1 },
+    { status: 22, stdout: "403" },
+  ]);
+  const result = await loadImageTarballWithRefresh(TARBALL, async () => {
+    throw new Error("tasks unavailable");
+  }, { spawn });
+  assert.equal(result.ok, false);
+  assert.equal(result.httpStatus, 403);
+  assert.equal(result.refreshed, false);
+  assert.match(result.refreshError, /tasks unavailable/);
 });

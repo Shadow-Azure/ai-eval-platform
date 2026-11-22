@@ -5,6 +5,10 @@ slow for multi-GB SWE-bench images. Operators publish a compressed
 ``docker save`` tarball to OSS once; this module derives the deterministic
 object key and presigns a short-lived internal GET URL for each case. The
 runner tries that tarball before falling back to the public registry chain.
+
+Issue #371: the URL is issued after capacity admission and only has to outlive
+one download. Its TTL is therefore derived from the runner's download budget,
+never from the case timeout or the capacity queue length.
 """
 
 from __future__ import annotations
@@ -16,6 +20,24 @@ from .object_store import object_store_from_settings
 
 TARBALL_SUFFIX = ".tar.gz"
 TARBALL_FORMAT = "tar.gz"
+
+# The runner's curl budget for one tarball GET (runner/lib/image-tarball.mjs
+# DEFAULT_DOWNLOAD_TIMEOUT_MS) plus a margin for scheduling the request and
+# starting `docker load`. Deliberately independent of scheduling parameters:
+# the runner fetches `/tasks` after `started` 2xx, so queue time is not part of
+# the URL's lifetime. Keep config.dataset_image_tarball_ttl_seconds in sync.
+DOWNLOAD_BUDGET_SECONDS = 900
+DOWNLOAD_MARGIN_SECONDS = 300
+PRESIGN_TTL_SECONDS = DOWNLOAD_BUDGET_SECONDS + DOWNLOAD_MARGIN_SECONDS
+MIN_PRESIGN_TTL_SECONDS = 60
+
+
+def presign_ttl_seconds(configured: int | None = None) -> int:
+    """TTL for one presigned tarball URL, covering the download window only."""
+
+    if configured is None:
+        return PRESIGN_TTL_SECONDS
+    return max(MIN_PRESIGN_TTL_SECONDS, int(configured))
 
 
 def tarball_key(image: str, *, prefix: str = "dataset-images/") -> str:
@@ -49,7 +71,7 @@ def task_image_tarball(settings: Settings, image: str | None) -> dict | None:
     if store is None:
         return None
     key = tarball_key(normalized, prefix=settings.dataset_image_tarball_prefix)
-    ttl = max(60, int(settings.dataset_image_tarball_ttl_seconds))
+    ttl = presign_ttl_seconds(settings.dataset_image_tarball_ttl_seconds)
     return {
         "url": store.presign_get_url(key, expires=ttl),
         "key": key,

@@ -37,8 +37,11 @@ class Settings(BaseSettings):
     s3_internal_endpoint: str | None = None
     # Dataset image tarballs (issue #273): compressed ``docker save`` objects
     # are published under this prefix and presigned per case when present.
+    # M8-54 (#371): the URL is signed after capacity admission, so this TTL
+    # covers one download only (15 min curl budget + 5 min margin) and must
+    # not be raised to cover queueing.
     dataset_image_tarball_prefix: str = "dataset-images/"
-    dataset_image_tarball_ttl_seconds: int = 3600
+    dataset_image_tarball_ttl_seconds: int = 1200
 
     default_tenant_slug: str = "default"
     default_workspace_slug: str = "default"
