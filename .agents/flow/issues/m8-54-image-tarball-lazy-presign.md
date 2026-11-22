@@ -6,7 +6,7 @@
 kind: issue
 milestone: m8
 priority: P2
-status: in-progress
+status: done
 scope:
   - .agents/flow/issues/m8-54-image-tarball-lazy-presign.*
   - .agents/notes/adr-0003-image-tarball-lazy-presign.*
