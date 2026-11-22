@@ -562,16 +562,6 @@ def list_templates(
     return [row[0] for row in rows], total
 
 
-def effective_case_count(template: EvalTemplate) -> int:
-    selection = template.case_selection_json or {}
-    mode = selection.get("mode") or "all"
-    if mode == "count":
-        return int(selection.get("count") or 0)
-    if mode == "cases":
-        return len(selection.get("case_keys") or [])
-    return 0
-
-
 def _case_count(
     template: EvalTemplate, version: DatasetVersion | None
 ) -> tuple[int, int]:
@@ -813,8 +803,9 @@ def launch_template(
         raise TemplateInvalid("启动必须提供幂等键", field="idempotency_key")
     key = key[:128]
     template = get_template(session, template_id)
-    if not template.enabled:
-        raise TemplateDisabled("模板已停用，不能启动")
+    # Replay wins over the enabled check: a client that retries the same
+    # idempotent launch after the template was disabled must still receive the
+    # original run instead of a conflicting 409.
     existing = session.scalar(
         select(EvalRun).where(
             EvalRun.tenant_id == str(DEFAULT_TENANT_ID),
@@ -830,6 +821,8 @@ def launch_template(
                 code="idempotency_conflict",
             )
         return existing, False
+    if not template.enabled:
+        raise TemplateDisabled("模板已停用，不能启动")
 
     asset_snapshot_id = _resolve_template_assets(
         session, template, created_by=created_by, settings=settings

@@ -476,6 +476,9 @@ export function EvalWizardPage() {
         setImagePrepError(null);
         setImagePrepAction(null);
         setImagePollNonce((value) => value + 1);
+        // The next launch is a new intent: its current draft must be saved
+        // again instead of reusing the previous template.
+        templateSavedRef.current = false;
         imageEnsureStartedRef.current = null;
         // Invalidate any request still in flight for the old configuration.
         imageActionTokenRef.current += 1;
@@ -691,7 +694,7 @@ export function EvalWizardPage() {
 
   const create = useMutation({
     mutationFn: async () => {
-      if (saveAsTemplate) {
+      if (saveAsTemplate && !templateSavedRef.current) {
         await createEvalTemplate(buildTemplatePayload());
         templateSavedRef.current = true;
       }
@@ -715,7 +718,6 @@ export function EvalWizardPage() {
     onError: (error) => {
       if (templateSavedRef.current) {
         message.info("模板已保存，可在评测模板列表中查看");
-        templateSavedRef.current = false;
       }
       const api = error instanceof ApiError ? error : null;
       if (api && api.code === "image_not_ready") {

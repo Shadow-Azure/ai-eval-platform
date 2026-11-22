@@ -1,4 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useRef } from "react";
 import { Alert, Button, Descriptions, Modal, message } from "antd";
 import { useNavigate } from "react-router-dom";
 import type { EvalTemplate } from "../api/evalTemplates";
@@ -30,11 +31,19 @@ export function TemplateLaunchModal({ template, open, onClose }: TemplateLaunchM
   const queryClient = useQueryClient();
   const { session } = useAuth();
   const canLaunch = session?.role === "admin";
+  // One key per template intent: a retried request reuses it, so a lost
+  // response returns the original run instead of creating a second one.
+  const launchKeyRef = useRef<{ templateId: string; key: string } | null>(null);
 
   const launch = useMutation({
-    mutationFn: async (target: EvalTemplate) =>
-      launchEvalTemplate(target.id, {}, newIdempotencyKey()),
+    mutationFn: async (target: EvalTemplate) => {
+      if (!launchKeyRef.current || launchKeyRef.current.templateId !== target.id) {
+        launchKeyRef.current = { templateId: target.id, key: newIdempotencyKey() };
+      }
+      return launchEvalTemplate(target.id, {}, launchKeyRef.current.key);
+    },
     onSuccess: (response) => {
+      launchKeyRef.current = null;
       void queryClient.invalidateQueries({ queryKey: ["eval-templates"] });
       void queryClient.invalidateQueries({ queryKey: ["evaluations"] });
       message.success("评测已创建，正在打开详情");

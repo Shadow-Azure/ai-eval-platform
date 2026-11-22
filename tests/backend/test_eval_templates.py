@@ -358,6 +358,22 @@ def test_launch_creates_run_with_template_provenance_and_replays(
     assert replay.json()["run_id"] == body["run_id"]
     assert replay.json()["created"] is False
 
+    # Replay still wins after the template is disabled: a lost response must
+    # never turn into a second run or a misleading 409.
+    disabled = client.patch(
+        f"/api/v1/eval-templates/{template['id']}",
+        json={"enabled": False},
+    )
+    assert disabled.status_code == 200, disabled.text
+    after_disable = client.post(
+        f"/api/v1/eval-templates/{template['id']}/launch",
+        headers={"Idempotency-Key": "nightly-20261122"},
+        json={"name": "夜间回归"},
+    )
+    assert after_disable.status_code == 202, after_disable.text
+    assert after_disable.json()["run_id"] == body["run_id"]
+    client.patch(f"/api/v1/eval-templates/{template['id']}", json={"enabled": True})
+
     refreshed = client.get(f"/api/v1/eval-templates/{template['id']}").json()["template"]
     assert refreshed["launch_count"] == 1
     assert refreshed["last_launched_at"] is not None
