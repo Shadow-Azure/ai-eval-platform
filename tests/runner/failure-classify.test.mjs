@@ -78,6 +78,18 @@ test("an unknown non-zero exit stays agent_crashed with the stderr tail", () => 
   assert.match(failure.message, /segmentation fault/);
 });
 
+test("a later auth failure is not masked by an earlier retried 429", () => {
+  const traceText =
+    streamEvent({ type: "system", subtype: "api_error", message: "429 rate limited" }) +
+    streamEvent({
+      type: "system",
+      subtype: "api_error",
+      error: { type: "authentication_error", message: "invalid api key" },
+    });
+  const failure = classifyAgentFailure({ traceText, exitStatus: 1 });
+  assert.equal(failure.code, "model_authentication_failed");
+});
+
 test("terminalErrorText reads system/api_error but ignores unrelated records", () => {
   const traceText =
     streamEvent({ type: "assistant", message: { content: [{ type: "text", text: "hello" }] } }) +

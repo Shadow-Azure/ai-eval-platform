@@ -91,9 +91,20 @@ export function terminalErrorText(traceText, stderr = "") {
     }
   }
   const stderrText = oneLine(stderr, 4000);
-  if (stderrText) candidates.push(stderrText);
-  const combined = candidates.filter(Boolean).join("\n");
-  return oneLine(combined, 8000);
+  // Only the newest terminal event is authoritative: an early 429 that Claude
+  // Code retried successfully must not mask a later auth/exit failure. The
+  // stderr tail is a fallback when the stream recorded no usable cause.
+  let text = candidates.filter(Boolean).at(-1) || "";
+  const hasSignal =
+    HTTP_STATUS_RE.test(text) ||
+    QUOTA_RE.test(text) ||
+    RATE_RE.test(text) ||
+    AUTH_RE.test(text) ||
+    TIMEOUT_RE.test(text);
+  if (!text || (!hasSignal && stderrText)) {
+    text = [text, stderrText].filter(Boolean).join(" ");
+  }
+  return oneLine(text, 8000);
 }
 
 function requestIdFrom(text) {

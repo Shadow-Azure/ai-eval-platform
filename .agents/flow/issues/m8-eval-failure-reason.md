@@ -40,6 +40,7 @@ scope:
   - web/src/pages/EvalDetailPage.tsx
   - web/src/styles/eval-detail.css
   - web/src/utils/failure.ts
+  - plans/2026-11-22-pr376-review.md
   - .agents/flow/issues/m8-eval-failure-reason.md
   - .agents/flow/issues/m8-eval-failure-reason.en.md
   - .agents/flow/issues/m8-eval-failure-reason.i18n.yaml

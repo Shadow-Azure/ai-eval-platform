@@ -36,8 +36,6 @@ interface CaseBrowserProps<Row extends object> {
   empty: ReactNode;
   className?: string;
   tableClassName?: string;
-  /** Horizontal scroll for wide eval tables; omitted for the compact dataset view. */
-  tableScroll?: TableProps<Row>["scroll"];
   errorTitle?: string;
   /** Endpoint shown in the error card; differs for dataset vs eval cases. */
   errorEndpoint?: string;
@@ -76,7 +74,6 @@ export function CaseBrowser<Row extends object>({
   empty,
   className,
   tableClassName,
-  tableScroll,
   errorTitle = "无法加载用例",
   errorEndpoint = "GET /api/v1/dataset-versions/:id/cases",
   skeletonRows = 6,
@@ -153,7 +150,6 @@ export function CaseBrowser<Row extends object>({
             columns={columns}
             dataSource={rows}
             loading={loading}
-            scroll={tableScroll}
             onRow={onRow}
             pagination={
               total > 0
