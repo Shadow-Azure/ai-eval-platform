@@ -1,0 +1,5 @@
+# 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
+# git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
+#   pnpm run record:i18n -- .agents/flow/issues/m8-eval-template-badcase-reporting.md
+m8-eval-template-badcase-reporting.md: 9f12655adc6762ff34f18399dab75bef654aa340
+m8-eval-template-badcase-reporting.en.md: 2e0ae5344b8355882dec6442dd9d7957743755ea

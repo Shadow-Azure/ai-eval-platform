@@ -158,6 +158,12 @@ const mock = {
       maxTurns: "默认 200 轮",
       agentTimeout: "30 分钟",
       promptSuffix: "非交互评测，请自主决策后继续。",
+      selfEvolution: {
+        enabled: true,
+        baseUrl: "https://harness-evolution.example.com",
+        workspaceId: "ws-eval-prod",
+        tokenConfigured: true,
+      },
       updated: "今天 09:12",
       createdBy: "张宁",
       launches: 12,
@@ -1200,6 +1206,28 @@ function templateLastRunTag(lastRun) {
   return statusTag(lastRun.status);
 }
 
+function templateSelfEvolution(template) {
+  const config = template && template.selfEvolution ? template.selfEvolution : {};
+  return {
+    enabled: config.enabled === true,
+    baseUrl: typeof config.baseUrl === "string" ? config.baseUrl : "",
+    workspaceId: typeof config.workspaceId === "string" ? config.workspaceId : "",
+    tokenConfigured: config.tokenConfigured === true,
+  };
+}
+
+function templateSelfEvolutionSummary(template) {
+  const config = templateSelfEvolution(template);
+  if (!config.enabled) return "未启用";
+  const host = config.baseUrl.replace(/^https?:\/\//, "").replace(/\/+$/, "");
+  return `已启用 · ${host || "未填地址"} · 工作区 ${config.workspaceId || "未填"}`;
+}
+
+function templateSelfEvolutionTag(template) {
+  if (!templateSelfEvolution(template).enabled) return "";
+  return '<span class="tag tag-violet" style="margin-left:6px" title="自进化上报已启用">上报</span>';
+}
+
 function createTemplateFromWizard() {
   const isLite = ui.newEval.dataset === "lite";
   const dataset = isLite ? "SWE-bench Lite" : "SWE-bench Verified";
@@ -1213,6 +1241,7 @@ function createTemplateFromWizard() {
       ? { provider: "DeepSeek", model: "deepseek-v4.1-flash", credential: "DeepSeek · sk-ds-••••8c21" }
       : { provider: "智谱 GLM", model: "glm-5", credential: "GLM · sk-gl-••••c731" };
   const isMac = ui.newEval.pool === "mac";
+  const reporting = ui.newEval.selfEvolution;
   const template = {
     id: `tpl-${String(ui.templates.length + 1).padStart(3, "0")}`,
     name: ui.newEval.templateName.trim() || `新建模板 · ${dataset}`,
@@ -1242,6 +1271,12 @@ function createTemplateFromWizard() {
     maxTurns: ui.newEval.maxTurns ? `${ui.newEval.maxTurns} 轮` : "默认 200 轮",
     agentTimeout: `${ui.newEval.agentTimeout || ui.datasetAgentTimeout} 分钟`,
     promptSuffix: ui.newEval.promptSuffix,
+    selfEvolution: {
+      enabled: reporting.enabled === true,
+      baseUrl: reporting.enabled ? reporting.baseUrl.trim() : "",
+      workspaceId: reporting.enabled ? reporting.workspaceId.trim() : "",
+      tokenConfigured: reporting.enabled ? Boolean(reporting.token.trim()) : false,
+    },
     updated: "刚刚",
     createdBy: "张宁",
     launches: 0,
@@ -1291,7 +1326,7 @@ function templateListRow(template) {
         <div class="template-combo-line"><span>${esc(template.agent)} · ${esc(template.provider)} ${esc(template.model)}</span></div>
         <div class="template-combo-line"><span>${esc(template.pool)} · ${esc(template.assetSourceName)}</span></div>
       </td>
-      <td>${templateStatusTag(template)}</td>
+      <td>${templateStatusTag(template)}${templateSelfEvolutionTag(template)}</td>
       <td>${templateLastRunTag(last)}<div class="table-secondary">${esc(last.at)}</div></td>
       <td>${template.launches} 次</td>
       <td class="small muted">${esc(template.updated)}</td>
@@ -1308,11 +1343,13 @@ function templateListRow(template) {
 
 
 function templateFixedRows(template) {
+  const reporting = templateSelfEvolution(template);
   return `
     <div class="template-fixed-row"><span>数据集</span><strong>${esc(template.dataset)}</strong><small>${esc(template.datasetVersion)} · ${template.datasetCount} 用例</small></div>
     <div class="template-fixed-row"><span>Agent 资产</span><strong>${esc(template.agent)} ${esc(template.agentVersion)}</strong><small>${esc(template.assetSourceName)} · ${esc(template.assetMeta)}</small></div>
     <div class="template-fixed-row"><span>模型</span><strong>${esc(template.provider)} · ${esc(template.model)}</strong><small>${esc(template.credential)} · 启动时换发短期凭据</small></div>
     <div class="template-fixed-row"><span>资源池</span><strong>${esc(template.pool)}</strong><small>${esc(template.poolMeta)} · 最大并发 ${template.concurrency}</small></div>
+    <div class="template-fixed-row"><span>自进化上报</span><strong>${esc(templateSelfEvolutionSummary(template))}</strong><small>${reporting.enabled ? "终态上报未通过用例 · 令牌加密保存，不回显" : "未启用：评测行为与现状一致"}</small></div>
   `;
 }
 
@@ -1349,6 +1386,7 @@ function templateApiBody(template) {
 {"status":"completed","is_final":true,"items":[{"metric_key":"resolve_rate","value":0.412}]}</pre>
       </div>
     </div>
+    <div class="banner">${icon("share", 15)}<div><strong>自进化上报随模板保存。</strong> 创建/更新模板时传 <code>self_evolution</code>（<code>base_url</code>、<code>workspace_id</code>、<code>token</code>）；令牌加密存储、任何响应不回显。一键启动沿用模板配置，不在启动请求里覆盖。</div></div>
     <div class="banner">${icon("shield", 15)}<div><strong>模板只固化选择，不固化执行结果。</strong> 每次启动都会重新解析资产 Ref 并冻结新的快照；模板后续编辑不会改变已启动的评测。</div></div>
   `;
 }
@@ -2937,7 +2975,7 @@ function newEvalPage() {
         <div class="switch-row">
           <div>
             <strong>保存为评测模板</strong>
-            <div class="small muted">把本次数据集、Agent 资产、模型、资源池与执行策略固化，之后只需确认费用即可启动。</div>
+            <div class="small muted">把本次数据集、Agent 资产、模型、资源池、执行策略与自进化上报固化，之后只需确认费用即可启动。</div>
           </div>
           <button class="switch ${saveAsTemplate ? "on" : ""}" data-action="toggle-save-template" aria-label="切换保存为评测模板" aria-pressed="${saveAsTemplate}" ${templateMode ? "disabled" : ""}></button>
         </div>
@@ -2948,7 +2986,7 @@ function newEvalPage() {
             <div class="field"><label class="required">模板名称</label><input class="input" id="template-name" value="${esc(ui.newEval.templateName)}" placeholder="例如：日常回归 · Verified" /></div>
             <div class="field"><label>模板说明</label><input class="input" id="template-description" value="${esc(ui.newEval.templateDescription)}" placeholder="说明使用场景与适用批次" /></div>
           </div>
-          <div class="banner success" style="margin-top:10px">${icon("check", 15)}<div>保存后固定组合会出现在模板列表；启动时仍会重新解析资产 Ref、检查镜像并冻结新的快照。</div></div>
+          <div class="banner success" style="margin-top:10px">${icon("check", 15)}<div>保存后固定组合与上报目标会出现在模板列表；启动时仍会重新解析资产 Ref、检查镜像并冻结新的快照。</div></div>
         `
             : `<div class="small muted" style="margin-top:8px">不保存模板时，本次选择只对这一次评测生效。</div>`
         }
@@ -2983,7 +3021,7 @@ function newEvalPage() {
         eyebrow: templateMode ? "New template" : "New evaluation",
         title: templateMode ? "新建评测模板" : "发起评测",
         description: templateMode
-          ? "固化数据集、Agent 资产、模型、资源池与执行策略；保存后可在模板列表一键启动。"
+          ? "固化数据集、Agent 资产、模型、资源池、执行策略与自进化上报；保存后可在模板列表一键启动。"
           : "组合数据集、Agent 运行时、Git 资产源、模型与资源池，创建可复现的评测任务。",
         actions: `<button class="btn" data-route="/evals">取消</button>`,
       })}
@@ -3508,6 +3546,7 @@ function evalTemplateDetailPage(id) {
               <div class="summary-item"><span class="summary-label">Agent 资产</span><span class="summary-value">${esc(template.assetSourceName)}<br /><span class="muted mono">${esc(template.assetMeta)}</span></span></div>
               <div class="summary-item"><span class="summary-label">模型</span><span class="summary-value">${esc(template.provider)} · ${esc(template.model)}<br /><span class="muted">${esc(template.credential)}</span></span></div>
               <div class="summary-item"><span class="summary-label">资源池</span><span class="summary-value">${esc(template.pool)}<br /><span class="muted">${esc(template.poolMeta)}</span></span></div>
+              <div class="summary-item"><span class="summary-label">自进化上报</span><span class="summary-value">${esc(templateSelfEvolutionSummary(template))}<br /><span class="muted">${templateSelfEvolution(template).enabled ? "未通过用例在终态上报；令牌加密保存，不回显" : "未启用：评测行为与现状一致"}</span></span></div>
             </div>
           </section>
           <section class="card">
