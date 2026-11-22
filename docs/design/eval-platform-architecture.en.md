@@ -67,7 +67,7 @@ Figure 1 Overall architecture
 
 ## 4. Evaluation Execution Flow
 
-1. The user selects a dataset version, agent runtime, model credential, and resource pool in the platform, optionally an agent asset source with an editable ref; submitting creates an evaluation (eval_run), and cases are written to the case table in batches of at most 256.
+1. The user launches from an evaluation template with one click, or selects a dataset version, agent runtime, model credential, and resource pool in the platform, optionally an agent asset source with an editable ref; submitting creates an evaluation (eval_run), and cases are written to the case table in batches of at most 256.
 2. For each batch the dispatcher calls the GitHub REST API to send a repository_dispatch event whose payload carries the evaluation ID, the case list of the batch, the callback address, and the timeout.
 3. Once a runner picks up the task, the in-job runner script starts: after capacity admission it fetches the case and environment definition (including the per-case presigned image tarball URL), prepares the code repository inside the sandbox, drives the agent runtime in headless mode (Claude Code first, using stream-json output), and then collects the patch and session files produced by the model.
 4. The official SWE-bench scoring image runs inside the sandbox to decide whether the case is resolved and to produce test output; the in-job script uploads the scoring report, the artifact bundle, and the raw session files to OSS, and calls the platform callback API to report the case status and summary metrics.
@@ -178,6 +178,30 @@ A new benchmark falls into one of three cases by similarity to existing adapters
 
 Existing adapter code changes only when the upstream data format changes or the adapter has a defect; that is maintenance, handled by bumping the adapter version and re-running validation. The extension rule stays constant: the contract layer (five-file task package) is stable, the adapter layer only grows, and the execution layer is unaffected.
 
+### 5.14 Evaluation Templates and One-Click Launch
+
+An evaluation template (`eval_template`) is a project-level reusable launch preset that stores the dataset version, agent runtime, agent asset source and ref, asset selection, model credential, resource pool, case scope, execution policy, prompt suffix, max turns, and agent timeout as one fixed selection. A template fixes the selection, not the execution outcome: on every launch the API service re-resolves the template's asset ref, validates the references, and generates a fresh immutable snapshot, while the evaluation records `template_id`, the template version, and the launch snapshot, so later template edits never change an evaluation that has started. Set the ref to a commit to pin the content; otherwise each launch resolves the branch or tag as it exists at that moment.
+
+The template lifecycle is create, edit, disable, and delete; a template that is disabled or whose references were deleted cannot launch, and the platform validates the dataset version, model credential, resource pool, and asset source before creating a run. A template launch accepts no configuration overrides, preserving the one-click semantics and reproducibility; use a copied and edited template, or the existing custom launch flow, for a different combination.
+
+As templates grow, the evaluations page keeps only the three most recently used templates as quick-launch entries, each retaining one-click launch and details; the confirmation dialog shows only cost, capacity, and the fixed configuration instead of the four-step wizard. Full template management moves to a dedicated evaluation templates page that uses a list rather than cards: it supports search by name, dataset, agent, and model, filtering by enabled state, and pagination ordered by most recent launch. Step 4 of the launch wizard can select "save as an evaluation template", and template mode saves without launching. The template detail page shows the fixed configuration, execution policy, recent runs, and API examples.
+
+The template list uses the console management read API `GET /api/v1/eval-templates?q=&status=&dataset_version_id=&limit=&offset=`, returning `items`, `total`, `limit`, and `offset`. `q` matches the template name, description, dataset, agent, model, resource pool, and creator; `status` is enabled or disabled; the default order is most recent launch first; `limit` defaults to 20 and is capped at 100. This API serves only the console list and is not one of the three execution APIs. The template table is indexed by tenant, status, and last launch time, with trigram or full-text search added later if the data keeps growing.
+
+Table 12 lists the three stable APIs. All three reuse console session authentication: launching requires administrator permission, while status and results are read-only for signed-in users; the first release does not provide a separate machine token.
+
+Table 12 The three execution APIs of an evaluation template
+
+| API | Method and path | Request | Response |
+|---|---|---|---|
+| Trigger launch | POST /api/v1/eval-templates/{template_id}/launch | `Idempotency-Key` or `idempotency_key` in the body, optional `name` | 202 with `run_id`, `template_id`, `status`, `status_url`, and `result_url`; a repeated key returns the same run |
+| Query status | GET /api/v1/eval-runs/{run_id}/status | none | `run_id`, `template_id`, `status`, `terminal`, progress counts, start and finish times, and resolve rate |
+| Query results | GET /api/v1/eval-runs/{run_id}/results | none | `run_id`, `status`, `is_final`, metric items, and token summary; a running run returns a partial snapshot |
+
+The launch API first verifies that the template exists and is enabled and that its references are still available, then runs the existing prepare/create flow; 404 means the template or evaluation does not exist, 409 means the template is disabled or the idempotency key conflicts, 422 means a reference is invalid or a field is unavailable, and 403 means the current account lacks launch permission. The status API returns `terminal=true` in a terminal state; the results API returns `is_final=false` before the terminal state, so clients can decide whether to keep polling.
+
+A template launch does not change the scheduling or execution chain: the server simply turns the fixed selection into a normal prepare and create call, and the subsequent sharding, runners, scoring, traces, and result aggregation are identical to a custom launch. A template therefore cannot bypass capacity admission, budget, image preflight, or permission checks; failures happen before a run is created and never leave a half-created task.
+
 ## 6. Core Data Model
 
 Table 2 lists the core tables; every business table carries a tenant ID, and the evaluation case table is the hub for session drill-down.
@@ -195,7 +219,8 @@ Table 2 Core data model
 | agent_asset_source | Git asset sources | Repository, source connection, default ref, scan paths, selection mode, asset types |
 | agent_asset_snapshot / agent_asset | Immutable asset snapshots and assets | Resolved commit, tree digest, OSS address, content hash |
 | resource_pool / runner | Resource pool registry | Connection ID, provisioning mode, labels, status, last heartbeat |
-| eval_run / eval_case_run | Evaluations and case executions | State machine, metric snapshots, asset snapshot, session ID, timeout |
+| eval_template | Evaluation templates (reusable launch presets) | Fixed fields and references, execution policy, enabled state, version, last launch time, creator |
+| eval_run / eval_case_run | Evaluations and case executions | State machine, metric snapshots, asset snapshot, template ID and launch snapshot, session ID, timeout |
 | session / span | Normalized traces | Parent session, span kind, attribute JSONB, tokens and cost |
 
 ## 7. Concurrency Capacity
@@ -368,7 +393,7 @@ After logging in, an administrator enters model credentials, imports datasets, a
 
 ### 11.2 Launching an Evaluation Scenario
 
-An evaluation owner selects a dataset version, agent runtime, model credential, and resource pool on the launch page, optionally selecting an agent asset source and Git ref. After submission, the API service resolves the ref and commit, generates an immutable asset snapshot (none when assets are not selected), creates an evaluation, and writes cases into the case table in batches; the dispatcher calls the dispatch API batch by batch, and GitHub assigns tasks to runners with the requested labels. The script on the runner pulls the task package (case definition, short-lived credentials, asset snapshot) and drives the agent inside the sandbox until a patch is produced.
+An evaluation owner clicks one-click launch on a template card, or selects a dataset version, agent runtime, model credential, and resource pool on the launch page, optionally selecting an agent asset source and Git ref. On a template launch the API service re-resolves the ref and commit from the template's fixed selection, generates a fresh immutable asset snapshot (none when assets are not selected), creates an evaluation, and writes cases into the case table in batches; a custom launch uses the same preparation and creation logic. The dispatcher calls the dispatch API batch by batch, and GitHub assigns tasks to runners with the requested labels. The script on the runner pulls the task package (case definition, short-lived credentials, asset snapshot) and drives the agent inside the sandbox until a patch is produced.
 
 ### 11.3 Watching Progress Scenario
 

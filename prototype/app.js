@@ -61,6 +61,7 @@ const mock = {
     {
       id: "eval-001",
       name: "Codex × DeepSeek · SWE-bench Verified",
+      templateId: "tpl-001",
       dataset: "SWE-bench Verified",
       datasetVersion: "v2026.10",
       agent: "Codex CLI",
@@ -83,6 +84,7 @@ const mock = {
     {
       id: "eval-002",
       name: "Claude Code × GLM · SWE-bench Lite",
+      templateId: "tpl-002",
       dataset: "SWE-bench Lite",
       datasetVersion: "v2026.09",
       agent: "Claude Code",
@@ -105,6 +107,7 @@ const mock = {
     {
       id: "eval-003",
       name: "OpenCode × Kimi · SWE-bench Verified",
+      templateId: "tpl-003",
       dataset: "SWE-bench Verified",
       datasetVersion: "v2026.10",
       agent: "OpenCode",
@@ -123,6 +126,122 @@ const mock = {
       started: "11 月 6 日 09:31",
       duration: "2 小时 47 分",
       cost: "¥91.20",
+    },
+  ],
+  evalTemplates: [
+    {
+      id: "tpl-001",
+      name: "日常回归 · Codex × DeepSeek",
+      description: "工作日下午的固定回归组合，覆盖 Verified 全量并保留最近一次对比。",
+      enabled: true,
+      dataset: "SWE-bench Verified",
+      datasetVersion: "v2026.10",
+      datasetCount: 500,
+      agent: "Codex CLI",
+      agentVersion: "0.114.0",
+      runtimeKey: "codex",
+      assetSource: "superpowers",
+      assetSourceName: "Superpowers",
+      assetRef: "main",
+      assetCommit: "a8e7c31",
+      assetCount: 3,
+      assetMeta: "main · 3 项 · 提交 a8e7c31",
+      model: "deepseek-v4.1-flash",
+      provider: "DeepSeek",
+      credential: "DeepSeek · sk-ds-••••8c21",
+      pool: "Linux Spot Pool",
+      poolMeta: "6 在线 / 8 上限",
+      caseSelection: "全部 500 个用例",
+      concurrency: 8,
+      timeout: "单用例 30 分钟",
+      retries: "关闭 · 每用例 1 次 attempt",
+      maxTurns: "默认 200 轮",
+      agentTimeout: "30 分钟",
+      promptSuffix: "非交互评测，请自主决策后继续。",
+      updated: "今天 09:12",
+      createdBy: "张宁",
+      launches: 12,
+      lastRun: { id: "eval-001", status: "running", at: "今天 14:18", progress: 46 },
+      recentRuns: [
+        { id: "eval-001", status: "running", progress: 46, result: "94 / 231 已解决", at: "今天 14:18", duration: "1h 26m" },
+        { id: "eval-004", status: "completed", progress: 100, result: "206 / 500 · 41.2%", at: "昨天 14:02", duration: "2h 51m" },
+        { id: "eval-006", status: "partial", progress: 100, result: "188 / 500 · 37.6%", at: "11 月 20 日 14:05", duration: "3h 04m" },
+      ],
+    },
+    {
+      id: "tpl-002",
+      name: "发版验收 · Claude Code × GLM",
+      description: "面向发版的小规模验收集，使用团队混合资产源与 Mac mini 执行机。",
+      enabled: true,
+      dataset: "SWE-bench Lite",
+      datasetVersion: "v2026.09",
+      datasetCount: 300,
+      agent: "Claude Code",
+      agentVersion: "2.1.4",
+      runtimeKey: "claude",
+      assetSource: "team-assets",
+      assetSourceName: "Platform Team Assets",
+      assetRef: "release/2026.11",
+      assetCommit: "91b2ac0",
+      assetCount: 4,
+      assetMeta: "release/2026.11 · 4 项 · 提交 91b2ac0",
+      model: "glm-5",
+      provider: "智谱 GLM",
+      credential: "GLM · sk-gl-••••c731",
+      pool: "Mac mini · M4",
+      poolMeta: "4 在线 / 4 上限",
+      caseSelection: "全部 300 个用例",
+      concurrency: 4,
+      timeout: "单用例 30 分钟",
+      retries: "开启 · 最多 1 次",
+      maxTurns: "默认 200 轮",
+      agentTimeout: "30 分钟",
+      promptSuffix: "",
+      updated: "昨天 18:40",
+      createdBy: "张宁",
+      launches: 6,
+      lastRun: { id: "eval-002", status: "completed", at: "昨天 20:04", progress: 100 },
+      recentRuns: [
+        { id: "eval-002", status: "completed", progress: 100, result: "116 / 300 · 38.7%", at: "昨天 20:04", duration: "3h 12m" },
+        { id: "eval-007", status: "completed", progress: 100, result: "109 / 300 · 36.3%", at: "11 月 18 日 20:11", duration: "3h 01m" },
+      ],
+    },
+    {
+      id: "tpl-003",
+      name: "夜间探索 · OpenCode × Kimi",
+      description: "夜间低峰运行的探索性组合，使用 Runtime 内置能力，不绑定 Agent 资产。",
+      enabled: true,
+      dataset: "SWE-bench Verified",
+      datasetVersion: "v2026.10",
+      datasetCount: 500,
+      agent: "OpenCode",
+      agentVersion: "1.8.2",
+      runtimeKey: "opencode",
+      assetSource: null,
+      assetSourceName: "Runtime 内置能力",
+      assetRef: "—",
+      assetCommit: null,
+      assetCount: 0,
+      assetMeta: "未选择资产源",
+      model: "kimi-k2.5",
+      provider: "Kimi",
+      credential: "Kimi · sk-km-••••7f02",
+      pool: "Linux Spot Pool",
+      poolMeta: "6 在线 / 8 上限",
+      caseSelection: "全部 500 个用例",
+      concurrency: 6,
+      timeout: "单用例 30 分钟",
+      retries: "关闭 · 每用例 1 次 attempt",
+      maxTurns: "默认 200 轮",
+      agentTimeout: "30 分钟",
+      promptSuffix: "",
+      updated: "11 月 19 日 22:05",
+      createdBy: "张宁",
+      launches: 4,
+      lastRun: { id: "eval-003", status: "partial", at: "11 月 6 日 09:31", progress: 100 },
+      recentRuns: [
+        { id: "eval-003", status: "partial", progress: 100, result: "151 / 500 · 30.2%", at: "11 月 6 日 09:31", duration: "2h 47m" },
+      ],
     },
   ],
   datasets: [
@@ -516,6 +635,120 @@ const mock = {
   ],
 };
 
+function buildTemplateCatalog() {
+  const seeds = mock.evalTemplates.map((template) => ({
+    ...template,
+    recentRuns: (template.recentRuns || []).map((run) => ({ ...run })),
+  }));
+  const names = [
+    "GLM 对比 · Lite",
+    "夜间全量 · Verified",
+    "Mac 冒烟 · Lite",
+    "pi 探索 · Verified",
+    "团队资产回归 · Lite",
+    "Codex 全量 · Verified",
+    "Claude 发版 · Verified",
+    "OpenCode 对比 · Lite",
+    "Kimi 夜间 · Verified",
+    "DeepSeek 冒烟 · Lite",
+    "GLM 发版 · Verified",
+    "团队资产 · Verified",
+    "Mac 全量 · Verified",
+    "Codex Lite 回归",
+    "Claude 夜间 · Lite",
+    "OpenCode 发版 · Verified",
+    "Kimi 冒烟 · Lite",
+    "pi 发版 · Verified",
+    "GLM 夜间 · Lite",
+    "团队资产夜间 · Verified",
+  ];
+  const datasets = [
+    { dataset: "SWE-bench Verified", version: "v2026.10", count: 500 },
+    { dataset: "SWE-bench Lite", version: "v2026.09", count: 300 },
+  ];
+  const agents = [
+    { agent: "Codex CLI", version: "0.114.0", key: "codex" },
+    { agent: "Claude Code", version: "2.1.4", key: "claude" },
+    { agent: "OpenCode", version: "1.8.2", key: "opencode" },
+    { agent: "pi", version: "0.62.1", key: "pi" },
+  ];
+  const models = [
+    { provider: "DeepSeek", model: "deepseek-v4.1-flash", credential: "DeepSeek · sk-ds-••••8c21" },
+    { provider: "智谱 GLM", model: "glm-5", credential: "GLM · sk-gl-••••c731" },
+    { provider: "Kimi", model: "kimi-k2.5", credential: "Kimi · sk-km-••••7f02" },
+    { provider: "MiniMax", model: "MiniMax-M2.1", credential: "MiniMax · sk-mm-••••4a90" },
+  ];
+  const pools = [
+    { pool: "Linux Spot Pool", meta: "6 在线 / 8 上限", concurrency: 8 },
+    { pool: "Mac mini · M4", meta: "4 在线 / 4 上限", concurrency: 4 },
+  ];
+  const assets = [
+    { source: "superpowers", name: "Superpowers", ref: "main", commit: "a8e7c31", count: 3, meta: "main · 3 项 · 提交 a8e7c31" },
+    { source: "team-assets", name: "Platform Team Assets", ref: "release/2026.11", commit: "91b2ac0", count: 4, meta: "release/2026.11 · 4 项 · 提交 91b2ac0" },
+    { source: null, name: "Runtime 内置能力", ref: "—", commit: null, count: 0, meta: "未选择资产源" },
+  ];
+  const variants = names.map((name, index) => {
+    const dataset = datasets[index % datasets.length];
+    const agent = agents[index % agents.length];
+    const model = models[index % models.length];
+    const pool = pools[index % pools.length];
+    const source = assets[index % assets.length];
+    const status = index % 5 === 0 ? "running" : index % 4 === 0 ? "partial" : "completed";
+    const day = 22 - (index % 12);
+    const clock = `${String(8 + (index % 10)).padStart(2, "0")}:${String((index * 7) % 60).padStart(2, "0")}`;
+    return {
+      id: `tpl-${String(index + 4).padStart(3, "0")}`,
+      name,
+      description: `固定 ${dataset.dataset} 与 ${agent.agent}，用于${index % 2 ? "日常回归" : "发版验收"}的复用组合。`,
+      enabled: index % 7 !== 6,
+      dataset: dataset.dataset,
+      datasetVersion: dataset.version,
+      datasetCount: dataset.count,
+      agent: agent.agent,
+      agentVersion: agent.version,
+      runtimeKey: agent.key,
+      assetSource: source.source,
+      assetSourceName: source.name,
+      assetRef: source.ref,
+      assetCommit: source.commit,
+      assetCount: source.count,
+      assetMeta: source.meta,
+      model: model.model,
+      provider: model.provider,
+      credential: model.credential,
+      pool: pool.pool,
+      poolMeta: pool.meta,
+      caseSelection: `全部 ${dataset.count} 个用例`,
+      concurrency: pool.concurrency,
+      timeout: "单用例 30 分钟",
+      retries: index % 3 === 0 ? "开启 · 最多 1 次" : "关闭 · 每用例 1 次 attempt",
+      maxTurns: "默认 200 轮",
+      agentTimeout: "30 分钟",
+      promptSuffix: "",
+      updated: `11 月 ${day} 日 ${clock}`,
+      createdBy: index % 5 === 0 ? "李雷" : "张宁",
+      launches: Math.max(1, 18 - index),
+      lastRun: {
+        id: `eval-${100 + index}`,
+        status,
+        at: `11 月 ${day} 日 ${String(9 + (index % 8)).padStart(2, "0")}:12`,
+        progress: status === "running" ? 42 : 100,
+      },
+      recentRuns: [
+        {
+          id: `eval-${100 + index}`,
+          status,
+          progress: status === "running" ? 42 : 100,
+          result: status === "running" ? "94 / 231 已解决" : `${120 + index} / ${dataset.count} · ${(30 + (index % 12)).toFixed(1)}%`,
+          at: `11 月 ${day} 日`,
+          duration: "2h 30m",
+        },
+      ],
+    };
+  });
+  return [...seeds, ...variants];
+}
+
 function sidebarPreference() {
   const requested = new URLSearchParams(location.search).get("sidebar");
   if (requested === "collapsed") return true;
@@ -645,6 +878,7 @@ const ui = {
   importProgress: 0,
   importTimer: null,
   newEvalStep: 1,
+  templates: buildTemplateCatalog(),
   newEval: {
     dataset: "verified",
     agent: "codex",
@@ -664,6 +898,9 @@ const ui = {
     promptSuffix: "",
     maxTurns: "",
     agentTimeout: "30",
+    saveAsTemplate: false,
+    templateName: "日常回归 · Verified",
+    templateDescription: "固定数据集、Agent 资产、模型与资源池，供后续一键启动。",
     attemptRetry: { enabled: false, count: 1 },
     selfEvolution: { enabled: false, baseUrl: "", workspaceId: "", token: "" },
   },
@@ -674,6 +911,10 @@ const ui = {
   caseSearch: "",
   casePage: 1,
   casePageSize: 20,
+  templateSearch: "",
+  templateStatus: "all",
+  templatePage: 1,
+  templatePageSize: 10,
   showLoginError: false,
 };
 
@@ -685,6 +926,7 @@ const navItems = [
     section: "评测",
     items: [
       { id: "evals", label: "评测任务", icon: "play", path: "/evals", badge: "3" },
+      { id: "eval-templates", label: "评测模板", icon: "list", path: "/evals/templates" },
       { id: "datasets", label: "数据集", icon: "database", path: "/datasets" },
     ],
   },
@@ -944,14 +1186,215 @@ function assetTypeTone(type) {
   return { skill: "tag-primary", command: "tag-violet", subagent: "tag-success" }[type] || "tag-neutral";
 }
 
+function evalTemplateById(id) {
+  return ui.templates.find((template) => template.id === id) || ui.templates[0];
+}
+
+function templateStatusTag(template) {
+  if (!template.enabled) return '<span class="tag tag-neutral">已停用</span>';
+  return '<span class="tag tag-success"><span class="status-dot pulse"></span>启用</span>';
+}
+
+function templateLastRunTag(lastRun) {
+  if (!lastRun || lastRun.status === "draft") return '<span class="tag tag-neutral">尚未启动</span>';
+  return statusTag(lastRun.status);
+}
+
+function createTemplateFromWizard() {
+  const isLite = ui.newEval.dataset === "lite";
+  const dataset = isLite ? "SWE-bench Lite" : "SWE-bench Verified";
+  const datasetVersion = isLite ? "v2026.09" : "v2026.10";
+  const datasetCount = isLite ? 300 : 500;
+  const agent = { codex: "Codex CLI", claude: "Claude Code", opencode: "OpenCode", pi: "pi" }[ui.newEval.agent];
+  const agentVersion = { codex: "0.114.0", claude: "2.1.4", opencode: "1.8.2", pi: "0.62.1" }[ui.newEval.agent];
+  const source = assetSourceById(ui.newEval.assetSource);
+  const model =
+    ui.newEval.credential === "deepseek"
+      ? { provider: "DeepSeek", model: "deepseek-v4.1-flash", credential: "DeepSeek · sk-ds-••••8c21" }
+      : { provider: "智谱 GLM", model: "glm-5", credential: "GLM · sk-gl-••••c731" };
+  const isMac = ui.newEval.pool === "mac";
+  const template = {
+    id: `tpl-${String(ui.templates.length + 1).padStart(3, "0")}`,
+    name: ui.newEval.templateName.trim() || `新建模板 · ${dataset}`,
+    description: ui.newEval.templateDescription.trim() || "由发起评测向导保存的固定组合。",
+    enabled: true,
+    dataset,
+    datasetVersion,
+    datasetCount,
+    agent,
+    agentVersion,
+    runtimeKey: ui.newEval.agent,
+    assetSource: source.id,
+    assetSourceName: source.name,
+    assetRef: ui.newEval.assetRef,
+    assetCommit: ui.newEval.assetCommit,
+    assetCount: ui.newEval.selectedAssets.length,
+    assetMeta: `${ui.newEval.assetRef} · ${ui.newEval.selectedAssets.length} 项 · 提交 ${ui.newEval.assetCommit}`,
+    model: model.model,
+    provider: model.provider,
+    credential: model.credential,
+    pool: isMac ? "Mac mini · M4" : "Linux Spot Pool",
+    poolMeta: isMac ? "4 在线 / 4 上限" : "6 在线 / 8 上限",
+    caseSelection: `全部 ${datasetCount} 个用例`,
+    concurrency: isMac ? 4 : 8,
+    timeout: `单用例 ${ui.newEval.agentTimeout || ui.datasetAgentTimeout} 分钟`,
+    retries: attemptRetryState().enabled ? `开启 · 最多 ${attemptRetryState().count} 次` : "关闭 · 每用例 1 次 attempt",
+    maxTurns: ui.newEval.maxTurns ? `${ui.newEval.maxTurns} 轮` : "默认 200 轮",
+    agentTimeout: `${ui.newEval.agentTimeout || ui.datasetAgentTimeout} 分钟`,
+    promptSuffix: ui.newEval.promptSuffix,
+    updated: "刚刚",
+    createdBy: "张宁",
+    launches: 0,
+    lastRun: { id: null, status: "draft", at: "尚未启动", progress: 0 },
+    recentRuns: [],
+  };
+  ui.templates.unshift(template);
+  ui.newEval.templateName = template.name;
+  ui.newEval.templateDescription = template.description;
+  return template;
+}
+
+function quickTemplateRow(template) {
+  const last = template.lastRun;
+  const launchButton = template.enabled
+    ? `<button class="btn btn-primary btn-sm" data-action="template-launch" data-template="${template.id}">${icon("play", 13)} 启动</button>`
+    : `<button class="btn btn-primary btn-sm" disabled title="模板已停用">启动</button>`;
+  return `
+    <div class="quick-template-row">
+      <div class="quick-template-glyph">${icon("boxes", 16)}</div>
+      <div class="quick-template-main">
+        <button class="template-name" data-action="template-detail" data-template="${template.id}">${esc(template.name)}</button>
+        <div class="quick-template-combo">${esc(template.dataset)} · ${esc(template.agent)} · ${esc(template.provider)} ${esc(template.model)} · ${esc(template.pool)}</div>
+      </div>
+      <div class="quick-template-last">${templateLastRunTag(last)}<span>${esc(last.at)}</span></div>
+      <div class="quick-template-actions">
+        <button class="btn btn-sm" data-action="template-detail" data-template="${template.id}">详情</button>
+        ${launchButton}
+      </div>
+    </div>
+  `;
+}
+
+function templateListRow(template) {
+  const last = template.lastRun;
+  const launchButton = template.enabled
+    ? `<button class="btn btn-primary btn-sm" data-action="template-launch" data-template="${template.id}">${icon("play", 13)} 启动</button>`
+    : `<button class="btn btn-primary btn-sm" disabled title="模板已停用">启动</button>`;
+  return `
+    <tr>
+      <td>
+        <button class="template-name" data-action="template-detail" data-template="${template.id}">${esc(template.name)}</button>
+        <div class="table-secondary template-list-desc">${esc(template.description)}</div>
+      </td>
+      <td>
+        <div class="template-combo-line"><strong>${esc(template.dataset)}</strong><span>${esc(template.datasetVersion)} · ${template.datasetCount} 用例</span></div>
+        <div class="template-combo-line"><span>${esc(template.agent)} · ${esc(template.provider)} ${esc(template.model)}</span></div>
+        <div class="template-combo-line"><span>${esc(template.pool)} · ${esc(template.assetSourceName)}</span></div>
+      </td>
+      <td>${templateStatusTag(template)}</td>
+      <td>${templateLastRunTag(last)}<div class="table-secondary">${esc(last.at)}</div></td>
+      <td>${template.launches} 次</td>
+      <td class="small muted">${esc(template.updated)}</td>
+      <td>
+        <div class="row template-list-actions">
+          <button class="btn btn-sm" data-action="template-detail" data-template="${template.id}">详情</button>
+          <button class="btn btn-sm" data-action="template-api" data-template="${template.id}">接口</button>
+          ${launchButton}
+        </div>
+      </td>
+    </tr>
+  `;
+}
+
+
+function templateFixedRows(template) {
+  return `
+    <div class="template-fixed-row"><span>数据集</span><strong>${esc(template.dataset)}</strong><small>${esc(template.datasetVersion)} · ${template.datasetCount} 用例</small></div>
+    <div class="template-fixed-row"><span>Agent 资产</span><strong>${esc(template.agent)} ${esc(template.agentVersion)}</strong><small>${esc(template.assetSourceName)} · ${esc(template.assetMeta)}</small></div>
+    <div class="template-fixed-row"><span>模型</span><strong>${esc(template.provider)} · ${esc(template.model)}</strong><small>${esc(template.credential)} · 启动时换发短期凭据</small></div>
+    <div class="template-fixed-row"><span>资源池</span><strong>${esc(template.pool)}</strong><small>${esc(template.poolMeta)} · 最大并发 ${template.concurrency}</small></div>
+  `;
+}
+
+function templateApiBody(template) {
+  return `
+    <div class="api-summary">
+      <div><span>Base URL</span><code>https://eval.acme.internal</code></div>
+      <div><span>模板 ID</span><code>${template.id}</code></div>
+      <div><span>鉴权</span><span>控制台会话 Cookie；启动需管理员权限</span></div>
+    </div>
+    <div class="api-list">
+      <div class="api-item">
+        <div class="api-item-head"><span class="api-method get">GET</span><code>/api/v1/eval-templates?q=&amp;status=&amp;limit=&amp;offset=</code></div>
+        <p>控制台管理列表：按名称、数据集、Agent、模型搜索，按启用状态筛选，服务端分页返回 total；不属于三个执行接口。</p>
+      </div>
+      <div class="api-item">
+        <div class="api-item-head"><span class="api-method post">POST</span><code>/api/v1/eval-templates/${template.id}/launch</code></div>
+        <p>按模板触发一次评测，返回 run_id 与状态/结果地址；固定字段不可在启动时覆盖，幂等键重放返回同一 run。</p>
+        <pre class="api-code">curl -sS -X POST "https://eval.acme.internal/api/v1/eval-templates/${template.id}/launch" \\
+  -H 'Content-Type: application/json' \\
+  -b 'ep_session=&lt;session&gt;' \\
+  -d '{"idempotency_key":"nightly-20261122"}'</pre>
+      </div>
+      <div class="api-item">
+        <div class="api-item-head"><span class="api-method get">GET</span><code>/api/v1/eval-runs/{run_id}/status</code></div>
+        <p>轮询执行状态、进度与是否终态；terminal=true 后停止轮询，再读取结果。</p>
+        <pre class="api-code">GET /api/v1/eval-runs/eval-004/status
+{"status":"running","terminal":false,"progress":{"finished":231,"total":500}}</pre>
+      </div>
+      <div class="api-item">
+        <div class="api-item-head"><span class="api-method get">GET</span><code>/api/v1/eval-runs/{run_id}/results</code></div>
+        <p>读取指标快照；运行中 is_final=false，终态后返回完整指标与 token 摘要。</p>
+        <pre class="api-code">GET /api/v1/eval-runs/eval-004/results
+{"status":"completed","is_final":true,"items":[{"metric_key":"resolve_rate","value":0.412}]}</pre>
+      </div>
+    </div>
+    <div class="banner">${icon("shield", 15)}<div><strong>模板只固化选择，不固化执行结果。</strong> 每次启动都会重新解析资产 Ref 并冻结新的快照；模板后续编辑不会改变已启动的评测。</div></div>
+  `;
+}
+
+function openTemplateApi(templateId) {
+  const template = evalTemplateById(templateId);
+  modal({
+    title: "模板接口",
+    subtitle: `${template.name} · 列表查询与触发、状态、结果三个执行接口`,
+    wide: true,
+    body: templateApiBody(template),
+    footer: `<button class="btn" data-action="close-modal">关闭</button><button class="btn btn-primary" data-action="template-launch" data-template="${template.id}">${icon("play", 13)} 一键启动</button>`,
+  });
+}
+
+function openTemplateLaunch(templateId) {
+  const template = evalTemplateById(templateId);
+  modal({
+    title: `从「${template.name}」启动？`,
+    subtitle: "配置已固化，启动时不再询问；只确认本次费用与容量",
+    body: `
+      <div class="template-fixed-list">${templateFixedRows(template)}</div>
+      <div class="review-box" style="margin-top:14px">
+        <div class="summary-item"><span class="summary-label">用例范围</span><span class="summary-value">${esc(template.caseSelection)}</span></div>
+        <div class="summary-item"><span class="summary-label">最大并发</span><span class="summary-value">${template.concurrency} Runner</span></div>
+        <div class="summary-item"><span class="summary-label">超时与重试</span><span class="summary-value">${esc(template.timeout)} · ${esc(template.retries)}</span></div>
+        <div class="summary-item"><span class="summary-label">预计费用</span><span class="summary-value">¥126–158</span></div>
+      </div>
+      <div class="banner warning" style="margin-top:14px">${icon("alert", 15)}<div><strong>这会占用 ${esc(template.pool)} 并产生模型费用。</strong> 启动后平台会重新解析资产 Ref、检查镜像与环境，再创建评测记录。</div></div>
+    `,
+    footer: `<button class="btn" data-action="close-modal">取消</button><button class="btn btn-primary" data-action="confirm-template-launch" data-template="${template.id}">${icon("play", 13)} 确认启动</button>`,
+  });
+}
+
+
 function navActive(path) {
+  if (path.startsWith("/evals/templates")) return "eval-templates";
   const first = path.split("/")[1];
   return first || "overview";
 }
 
 function breadcrumbFor(path) {
-  if (path.startsWith("/evals/new")) return ["评测任务", "发起评测"];
-  if (path.startsWith("/evals/")) return ["评测任务", "评测详情"];
+  if (path === "/evals/templates") return ["评测", "评测模板"];
+  if (path.startsWith("/evals/templates/")) return ["评测", "评测模板", "模板详情"];
+  if (path === "/evals/new") return ["评测", currentRoute().query.get("mode") === "template" ? "新建模板" : "发起评测"];
+  if (path.startsWith("/evals/")) return ["评测", "评测详情"];
   if (path === "/evals") return ["评测", "评测任务"];
   if (path === "/datasets/import") return ["数据集", "导入数据集"];
   if (path.startsWith("/datasets/")) return ["数据集", "数据集详情"];
@@ -1973,8 +2416,8 @@ function evalsPage() {
       ${pageHeading({
         eyebrow: "Evaluation runs",
         title: "评测任务",
-        description: "一次评测由数据集版本、Agent 运行时、Git 资产源、模型凭据与资源池共同定义。",
-        actions: `<button class="btn" data-action="open-filter">${icon("filter", 14)} 筛选</button><button class="btn btn-primary" data-route="/evals/new">${icon("plus", 14)} 发起评测</button>`,
+        description: "把数据集版本、Agent 运行时与资产、模型凭据与资源池固化为模板，一键创建可复现的评测。",
+        actions: `<button class="btn" data-route="/evals/new">${icon("play", 14)} 发起评测</button><button class="btn btn-primary" data-action="new-template">${icon("boxes", 14)} 新建模板</button>`,
       })}
       <div class="grid grid-4">
         ${metricCard("全部任务", "18", "<span>本月创建</span>", "play")}
@@ -1982,6 +2425,19 @@ function evalsPage() {
         ${metricCard("平均解决率", "38.7%", '<span class="trend-up">↑ 2.4%</span><span>较上月</span>', "sparkles", "violet")}
         ${metricCard("平均耗时", "2h 47m", "<span>Verified · 500 用例</span>", "clock", "warning")}
       </div>
+      <section class="card quick-template-section section-gap">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">快速启动</h2>
+            <p class="card-subtitle">只展示最近使用的 3 个模板；模板数量增长后，完整列表支持搜索、筛选与分页。</p>
+          </div>
+          <div class="card-actions">
+            <span class="small muted">共 ${ui.templates.length} 个模板</span>
+            <button class="btn btn-sm" data-route="/evals/templates">全部模板 ${icon("arrowRight", 12)}</button>
+          </div>
+        </div>
+        <div class="quick-template-list">${ui.templates.slice(0, 3).map(quickTemplateRow).join("")}</div>
+      </section>
       <section class="card section-gap">
         <div class="filter-bar">
           <div class="input-with-icon"><span>${icon("search", 14)}</span><input class="input" style="width:270px" placeholder="搜索评测名称、Agent 或模型" /></div>
@@ -2010,7 +2466,7 @@ function attemptRetryState() {
   };
 }
 
-function evalSummaryAside() {
+function evalSummaryAside(templateMode = false) {
   const dataset = ui.newEval.dataset === "lite" ? "SWE-bench Lite" : "SWE-bench Verified";
   const agent = { codex: "Codex CLI", claude: "Claude Code", opencode: "OpenCode", pi: "pi" }[ui.newEval.agent];
   const credential =
@@ -2023,8 +2479,9 @@ function evalSummaryAside() {
   const source = assetSourceById(ui.newEval.assetSource);
   return `
     <aside class="card wizard-aside">
-      <div class="card-header"><div><h2 class="card-title">评测摘要</h2><p class="card-subtitle">提交后仍可取消排队任务</p></div>${icon("shield", 15, "muted")}</div>
+      <div class="card-header"><div><h2 class="card-title">${templateMode ? "模板摘要" : "评测摘要"}</h2><p class="card-subtitle">${templateMode ? "保存后可在模板列表一键启动" : "提交后仍可取消排队任务"}</p></div>${icon("shield", 15, "muted")}</div>
       <div class="card-body summary-list">
+        ${templateMode ? `<div class="summary-item"><span class="summary-label">模板名称</span><span class="summary-value">${esc(ui.newEval.templateName || "未命名模板")}</span></div>` : ""}
         <div class="summary-item"><span class="summary-label">数据集</span><span class="summary-value">${dataset}<br /><span class="muted">v2026.10 · 500 用例</span></span></div>
         <div class="summary-item"><span class="summary-label">Agent</span><span class="summary-value">${agent}<br /><span class="muted">最新稳定版</span></span></div>
         <div class="summary-item"><span class="summary-label">Agent 资产</span><span class="summary-value">${source.name}<br /><span class="muted mono" id="summary-asset-ref">${ui.newEval.assetRef} · ${ui.newEval.selectedAssets.length} 项</span></span></div>
@@ -2221,6 +2678,8 @@ function resetImagePrep() {
 
 function newEvalPage() {
   const step = ui.newEvalStep;
+  const templateMode = currentRoute().query.get("mode") === "template";
+  const saveAsTemplate = templateMode || ui.newEval.saveAsTemplate;
   let content = "";
   if (step === 1) {
     content = `
@@ -2472,10 +2931,30 @@ function newEvalPage() {
     const selectedAssetSource = assetSourceById(ui.newEval.assetSource);
     content = `
       <div class="eyebrow">Step 4 · Review</div>
-      <h2 style="font-size:19px;margin-bottom:6px">确认并启动评测</h2>
-      <p class="small muted" style="margin-bottom:18px">启动后平台会创建评测记录并拆分为多个 GitHub Actions 分片。</p>
-      <div class="review-box">
-        <div class="summary-item"><span class="summary-label">评测名称</span><span class="summary-value"><input class="input" style="max-width:290px" value="Codex × DeepSeek · Verified 回归" /></span></div>
+      <h2 style="font-size:19px;margin-bottom:6px">${templateMode ? "核对并保存模板" : "确认并启动评测"}</h2>
+      <p class="small muted" style="margin-bottom:18px">${templateMode ? "保存后不会立即启动；模板会出现在评测模板列表；最近使用的 3 个还会出现在评测任务页的快速启动区。" : "启动后平台会创建评测记录并拆分为多个 GitHub Actions 分片。"}</p>
+      <div class="save-template-card ${saveAsTemplate ? "is-on" : ""}">
+        <div class="switch-row">
+          <div>
+            <strong>保存为评测模板</strong>
+            <div class="small muted">把本次数据集、Agent 资产、模型、资源池与执行策略固化，之后只需确认费用即可启动。</div>
+          </div>
+          <button class="switch ${saveAsTemplate ? "on" : ""}" data-action="toggle-save-template" aria-label="切换保存为评测模板" aria-pressed="${saveAsTemplate}" ${templateMode ? "disabled" : ""}></button>
+        </div>
+        ${
+          saveAsTemplate
+            ? `
+          <div class="field-row" style="margin-top:12px">
+            <div class="field"><label class="required">模板名称</label><input class="input" id="template-name" value="${esc(ui.newEval.templateName)}" placeholder="例如：日常回归 · Verified" /></div>
+            <div class="field"><label>模板说明</label><input class="input" id="template-description" value="${esc(ui.newEval.templateDescription)}" placeholder="说明使用场景与适用批次" /></div>
+          </div>
+          <div class="banner success" style="margin-top:10px">${icon("check", 15)}<div>保存后固定组合会出现在模板列表；启动时仍会重新解析资产 Ref、检查镜像并冻结新的快照。</div></div>
+        `
+            : `<div class="small muted" style="margin-top:8px">不保存模板时，本次选择只对这一次评测生效。</div>`
+        }
+      </div>
+      <div class="review-box" style="margin-top:14px">
+        ${templateMode ? "" : `<div class="summary-item"><span class="summary-label">评测名称</span><span class="summary-value"><input class="input" style="max-width:290px" value="Codex × DeepSeek · Verified 回归" /></span></div>`}
         <div class="summary-item"><span class="summary-label">数据集</span><span class="summary-value">SWE-bench Verified · v2026.10</span></div>
         <div class="summary-item"><span class="summary-label">执行组合</span><span class="summary-value">Codex CLI × ${selectedAssetSource.name} × DeepSeek</span></div>
         <div class="summary-item"><span class="summary-label">Agent 资产</span><span class="summary-value">${ui.newEval.selectedAssets.length} 项 · ${selectedAssetSource.scanPath}</span></div>
@@ -2488,26 +2967,33 @@ function newEvalPage() {
         <div class="summary-item"><span class="summary-label">Agent 超时</span><span class="summary-value">${ui.newEval.agentTimeout ? `${esc(ui.newEval.agentTimeout)} 分钟` : `数据集默认 ${esc(ui.datasetAgentTimeout)} 分钟`}</span></div>
         <div class="summary-item"><span class="summary-label">自进化上报</span><span class="summary-value">${selfEvolutionSummary()}</span></div>
       </div>
-      ${evalImagePrepCard()}
+      ${
+        templateMode
+          ? `<div class="banner" style="margin-top:15px">${icon("shield", 15)}<div><strong>保存模板不占用资源池，也不产生模型费用。</strong> 每次从模板启动时再检查镜像与环境，检查失败会阻止启动并保留模板。</div></div>`
+          : `${evalImagePrepCard()}
       <div class="banner warning" style="margin-top:15px">${icon("alert", 15)}<div><strong>这会占用资源池并产生模型费用。</strong> 预计 ¥126–158，实际费用以 token 与机时为准。启动后仍可取消排队和执行中的用例。</div></div>
-      <div class="field" style="margin-top:16px"><label>通知</label><select class="select"><option>完成后站内通知</option><option>完成后站内通知 + Webhook</option><option>不通知</option></select></div>
+      <div class="field" style="margin-top:16px"><label>通知</label><select class="select"><option>完成后站内通知</option><option>完成后站内通知 + Webhook</option><option>不通知</option></select></div>`
+      }
     `;
   }
   const imagePrep = imagePrepSummary();
   return shell(
     `<div class="page">
       ${pageHeading({
-        eyebrow: "New evaluation",
-        title: "发起评测",
-        description: "组合数据集、Agent 运行时、Git 资产源、模型与资源池，创建可复现的评测任务。",
+        eyebrow: templateMode ? "New template" : "New evaluation",
+        title: templateMode ? "新建评测模板" : "发起评测",
+        description: templateMode
+          ? "固化数据集、Agent 资产、模型、资源池与执行策略；保存后可在模板列表一键启动。"
+          : "组合数据集、Agent 运行时、Git 资产源、模型与资源池，创建可复现的评测任务。",
         actions: `<button class="btn" data-route="/evals">取消</button>`,
       })}
+      ${templateMode ? `<div class="banner template-mode-banner" style="margin-bottom:16px">${icon("boxes", 15)}<div><strong>模板模式：只保存配置，不创建评测。</strong> 保存后固定组合出现在模板列表；每次启动都会重新解析资产 Ref 并冻结新的快照。</div></div>` : ""}
       <div class="step-bar">
         ${[
           ["选择数据集", "数据集版本"],
           ["Agent / 资产", "运行时与 Git 源"],
           ["模型 / 资源", "凭据与容量"],
-          ["确认启动", "费用与策略"],
+          [templateMode ? "保存模板" : "确认启动", templateMode ? "固定配置" : "费用与策略"],
         ]
           .map(
             ([title, meta], index) => `
@@ -2528,14 +3014,18 @@ function newEvalPage() {
               ${
                 step < 4
                   ? `<button class="btn btn-primary" data-action="eval-next">下一步 ${icon("arrowRight", 13)}</button>`
-                  : imagePrep.allReady
-                    ? `<button class="btn btn-primary btn-lg" data-action="start-eval">${icon("play", 14)} 启动评测</button>`
-                    : `<button class="btn btn-primary btn-lg" disabled title="等待 ${imagePrep.total - imagePrep.ready} 个镜像准备完成">${icon("clock", 14)} 等待镜像就绪 (${imagePrep.ready}/${imagePrep.total})</button>`
+                  : templateMode
+                    ? `<button class="btn btn-primary btn-lg" data-action="save-template">${icon("boxes", 14)} 保存模板</button>`
+                    : `<div class="row" style="gap:8px">${saveAsTemplate ? `<button class="btn" data-action="save-template">仅保存模板</button>` : ""}${
+                        imagePrep.allReady
+                          ? `<button class="btn btn-primary btn-lg" data-action="start-eval">${icon("play", 14)} ${saveAsTemplate ? "启动并保存模板" : "启动评测"}</button>`
+                          : `<button class="btn btn-primary btn-lg" disabled title="等待 ${imagePrep.total - imagePrep.ready} 个镜像准备完成">${icon("clock", 14)} 等待镜像就绪 (${imagePrep.ready}/${imagePrep.total})</button>`
+                      }</div>`
               }
             </div>
           </div>
         </section>
-        ${evalSummaryAside()}
+        ${evalSummaryAside(templateMode)}
       </div>
     </div>`,
     "/evals",
@@ -2865,11 +3355,13 @@ function evalResults(run) {
 }
 
 function evalConfig(run) {
+  const sourceTemplate = run.templateId ? ui.templates.find((template) => template.id === run.templateId) : null;
   return `
     <div class="grid grid-2">
       <section class="card">
         <div class="card-header"><div><h2 class="card-title">执行组合</h2><p class="card-subtitle">创建后固化为评测快照</p></div></div>
         <div class="card-body summary-list">
+          ${sourceTemplate ? `<div class="summary-item"><span class="summary-label">来源模板</span><span class="summary-value"><button class="link-button" data-action="template-detail" data-template="${sourceTemplate.id}">${esc(sourceTemplate.name)}</button><br /><span class="muted">一键启动 · 固定配置未覆盖</span></span></div>` : ""}
           <div class="summary-item"><span class="summary-label">数据集</span><span class="summary-value">${run.dataset} · ${run.datasetVersion}</span></div>
           <div class="summary-item"><span class="summary-label">Agent 运行时</span><span class="summary-value">${run.agent} ${run.agentVersion}</span></div>
           <div class="summary-item"><span class="summary-label">Agent 资产</span><span class="summary-value">Superpowers @ main · 3 项</span></div>
@@ -2911,10 +3403,188 @@ function evalEvents(run) {
   `;
 }
 
+function filteredTemplates() {
+  const query = ui.templateSearch.trim().toLowerCase();
+  return ui.templates.filter((template) => {
+    if (ui.templateStatus === "enabled" && !template.enabled) return false;
+    if (ui.templateStatus === "disabled" && template.enabled) return false;
+    if (!query) return true;
+    return [
+      template.name,
+      template.description,
+      template.dataset,
+      template.datasetVersion,
+      template.agent,
+      template.model,
+      template.provider,
+      template.pool,
+      template.assetSourceName,
+      template.createdBy,
+    ]
+      .join(" ")
+      .toLowerCase()
+      .includes(query);
+  });
+}
+
+function evalTemplatesPage() {
+  const filtered = filteredTemplates();
+  const total = filtered.length;
+  const pageCount = Math.max(1, Math.ceil(total / ui.templatePageSize));
+  ui.templatePage = Math.min(Math.max(1, ui.templatePage), pageCount);
+  const start = (ui.templatePage - 1) * ui.templatePageSize;
+  const rows = filtered.slice(start, start + ui.templatePageSize);
+  const pageItems = paginationWindow(ui.templatePage, pageCount);
+  const hasFilters = Boolean(ui.templateSearch.trim()) || ui.templateStatus !== "all";
+  return shell(
+    `<div class="page">
+      ${pageHeading({
+        eyebrow: "Evaluation templates",
+        title: "评测模板",
+        description: "按名称、数据集、Agent 或模型搜索固定组合；列表分页读取，任意模板都可一键启动。",
+        actions: `<button class="btn btn-primary" data-action="new-template">${icon("plus", 14)} 新建模板</button>`,
+      })}
+      <section class="card template-list-card">
+        <div class="template-toolbar">
+          <div class="input-with-icon"><span>${icon("search", 14)}</span><input class="input" id="template-search" style="width:340px" value="${esc(ui.templateSearch)}" placeholder="搜索模板、数据集、Agent 或模型" /></div>
+          <select class="select" id="template-status-filter" style="width:150px">
+            <option value="all" ${ui.templateStatus === "all" ? "selected" : ""}>状态：全部</option>
+            <option value="enabled" ${ui.templateStatus === "enabled" ? "selected" : ""}>状态：启用</option>
+            <option value="disabled" ${ui.templateStatus === "disabled" ? "selected" : ""}>状态：停用</option>
+          </select>
+          ${hasFilters ? `<button class="btn btn-sm" data-action="template-clear-filters">清除筛选</button>` : ""}
+          <span class="small muted" style="margin-left:auto">共 ${ui.templates.length} 个模板 · 匹配 ${total} 个</span>
+        </div>
+        ${
+          rows.length
+            ? `<div class="table-wrap"><table class="template-list-table">
+                <thead><tr><th>模板</th><th>固定组合</th><th>状态</th><th>最近启动</th><th>累计启动</th><th>更新</th><th>操作</th></tr></thead>
+                <tbody>${rows.map(templateListRow).join("")}</tbody>
+              </table></div>`
+            : `<div class="table-empty"><div class="empty-mark">${icon("search", 20)}</div><strong>没有匹配的评测模板</strong><div class="small muted">调整搜索词或状态筛选，或清空条件查看全部模板。</div><button class="btn btn-primary btn-sm" style="margin-top:14px" data-action="template-clear-filters">清除筛选</button></div>`
+        }
+        <div class="table-pagination template-list-pagination">
+          <div class="row small muted">
+            <span>显示 ${total ? start + 1 : 0}–${Math.min(start + ui.templatePageSize, total)} / ${total}</span>
+            <span>·</span><span>共 ${pageCount} 页</span>
+            <label class="row" style="gap:6px">每页
+              <select class="select table-page-size" id="template-page-size">
+                ${[10, 20, 50].map((size) => `<option value="${size}" ${ui.templatePageSize === size ? "selected" : ""}>${size}</option>`).join("")}
+              </select>
+            </label>
+          </div>
+          <div class="pagination-buttons">
+            <button class="page-button" data-action="template-page" data-page="${ui.templatePage - 1}" ${ui.templatePage === 1 ? "disabled" : ""}>${icon("arrowLeft", 12)}</button>
+            ${pageItems.map((page) => page === null ? '<span class="pagination-ellipsis">…</span>' : `<button class="page-button ${ui.templatePage === page ? "active" : ""}" data-action="template-page" data-page="${page}">${page}</button>`).join("")}
+            <button class="page-button" data-action="template-page" data-page="${ui.templatePage + 1}" ${ui.templatePage === pageCount ? "disabled" : ""}>${icon("arrowRight", 12)}</button>
+          </div>
+        </div>
+      </section>
+    </div>`,
+    "/evals/templates",
+  );
+}
+
+
+function evalTemplateDetailPage(id) {
+  const template = evalTemplateById(id);
+  const recentRuns = template.recentRuns || [];
+  return shell(
+    `<div class="page">
+      <div class="row small muted" style="margin-bottom:14px"><button class="btn btn-ghost btn-sm" data-route="/evals/templates">${icon("arrowLeft", 13)} 返回模板列表</button></div>
+      ${pageHeading({
+        eyebrow: `Template · ${template.id}`,
+        title: `<span class="eval-title-row">${esc(template.name)} ${templateStatusTag(template)}</span>`,
+        description: `${esc(template.dataset)} ${esc(template.datasetVersion)} · ${esc(template.agent)} · ${esc(template.model)} · ${esc(template.pool)}`,
+        actions: `<button class="btn" data-action="template-api" data-template="${template.id}">${icon("link", 14)} 接口</button><button class="btn btn-primary" data-action="template-launch" data-template="${template.id}">${icon("play", 14)} 一键启动</button>`,
+      })}
+      <div class="template-detail-layout">
+        <div class="stack">
+          <section class="card">
+            <div class="card-header"><div><h2 class="card-title">固定配置</h2><p class="card-subtitle">启动时不再询问；引用失效会阻止启动</p></div><span class="tag tag-primary">已固化</span></div>
+            <div class="card-body summary-list">
+              <div class="summary-item"><span class="summary-label">数据集</span><span class="summary-value">${esc(template.dataset)} · ${esc(template.datasetVersion)}<br /><span class="muted">${template.datasetCount} 个用例 · 解决率</span></span></div>
+              <div class="summary-item"><span class="summary-label">Agent 运行时</span><span class="summary-value">${esc(template.agent)} ${esc(template.agentVersion)}</span></div>
+              <div class="summary-item"><span class="summary-label">Agent 资产</span><span class="summary-value">${esc(template.assetSourceName)}<br /><span class="muted mono">${esc(template.assetMeta)}</span></span></div>
+              <div class="summary-item"><span class="summary-label">模型</span><span class="summary-value">${esc(template.provider)} · ${esc(template.model)}<br /><span class="muted">${esc(template.credential)}</span></span></div>
+              <div class="summary-item"><span class="summary-label">资源池</span><span class="summary-value">${esc(template.pool)}<br /><span class="muted">${esc(template.poolMeta)}</span></span></div>
+            </div>
+          </section>
+          <section class="card">
+            <div class="card-header"><div><h2 class="card-title">执行策略</h2><p class="card-subtitle">与固定配置一起冻结到每次启动的快照</p></div></div>
+            <div class="card-body summary-list">
+              <div class="summary-item"><span class="summary-label">用例范围</span><span class="summary-value">${esc(template.caseSelection)}</span></div>
+              <div class="summary-item"><span class="summary-label">最大并发</span><span class="summary-value">${template.concurrency} Runner</span></div>
+              <div class="summary-item"><span class="summary-label">单用例超时</span><span class="summary-value">${esc(template.timeout)}</span></div>
+              <div class="summary-item"><span class="summary-label">失败重试</span><span class="summary-value">${esc(template.retries)}</span></div>
+              <div class="summary-item"><span class="summary-label">最大轮次</span><span class="summary-value">${esc(template.maxTurns)}</span></div>
+              <div class="summary-item"><span class="summary-label">Agent 超时</span><span class="summary-value">${esc(template.agentTimeout)}</span></div>
+              <div class="summary-item"><span class="summary-label">附加指令</span><span class="summary-value" style="white-space:pre-wrap">${template.promptSuffix ? esc(template.promptSuffix) : "未设置"}</span></div>
+            </div>
+          </section>
+          <section class="card">
+            <div class="card-header"><div><h2 class="card-title">最近运行</h2><p class="card-subtitle">每次启动创建独立评测，模板编辑不回溯修改</p></div><button class="btn btn-sm" data-action="template-launch" data-template="${template.id}">${icon("play", 13)} 再启动一次</button></div>
+            <div class="table-wrap"><table>
+              <thead><tr><th>运行</th><th>状态</th><th>结果</th><th>启动</th><th>耗时</th><th></th></tr></thead>
+              <tbody>
+                ${recentRuns
+                  .map(
+                    (run) => `
+                      <tr class="clickable" data-route="/evals/${run.id}">
+                        <td><div class="table-primary mono">${run.id}</div><div class="table-secondary">${esc(template.name)}</div></td>
+                        <td>${statusTag(run.status)}</td>
+                        <td>${esc(run.result)}</td>
+                        <td>${esc(run.at)}</td>
+                        <td>${esc(run.duration)}</td>
+                        <td><button class="btn btn-sm" data-route="/evals/${run.id}">打开 ${icon("arrowRight", 12)}</button></td>
+                      </tr>
+                    `,
+                  )
+                  .join("")}
+              </tbody>
+            </table></div>
+          </section>
+        </div>
+        <aside class="stack">
+          <section class="card">
+            <div class="card-header"><div><h2 class="card-title">启动概览</h2><p class="card-subtitle">模板复用与最近状态</p></div></div>
+            <div class="card-body summary-list">
+              <div class="summary-item"><span class="summary-label">累计启动</span><span class="summary-value">${template.launches} 次</span></div>
+              <div class="summary-item"><span class="summary-label">最近一次</span><span class="summary-value">${esc(template.lastRun.at)}<br /><span class="muted">${templateLastRunTag(template.lastRun)}</span></span></div>
+              <div class="summary-item"><span class="summary-label">创建人</span><span class="summary-value">${esc(template.createdBy)}</span></div>
+              <div class="summary-item"><span class="summary-label">最近更新</span><span class="summary-value">${esc(template.updated)}</span></div>
+            </div>
+          </section>
+          <section class="card">
+            <div class="card-header"><div><h2 class="card-title">接口</h2><p class="card-subtitle">列表查询与三个执行接口</p></div><span class="tag tag-neutral">3 + 列表</span></div>
+            <div class="card-body api-mini-list">
+              <div class="api-mini"><span class="api-method get">GET</span><code>/eval-templates?q=&amp;status=&amp;limit=&amp;offset=</code></div>
+              <div class="api-mini"><span class="api-method post">POST</span><code>/eval-templates/${template.id}/launch</code></div>
+              <div class="api-mini"><span class="api-method get">GET</span><code>/eval-runs/{run_id}/status</code></div>
+              <div class="api-mini"><span class="api-method get">GET</span><code>/eval-runs/{run_id}/results</code></div>
+              <button class="btn btn-sm" style="margin-top:10px" data-action="template-api" data-template="${template.id}">查看 curl 示例 ${icon("arrowRight", 12)}</button>
+            </div>
+          </section>
+          <section class="card">
+            <div class="card-header"><div><h2 class="card-title">边界</h2><p class="card-subtitle">一键启动不改变执行链路</p></div></div>
+            <div class="card-body small muted">
+              启动请求不能覆盖固定字段；模板停用或引用被删除时返回明确错误。每次启动都重新解析资产 Ref 并冻结新的不可变快照，已启动的评测不受后续编辑影响。
+            </div>
+          </section>
+        </aside>
+      </div>
+    </div>`,
+    "/evals",
+  );
+}
+
+
 function evalDetailPage(id) {
   const run = mock.evalRuns.find((item) => item.id === id) || mock.evalRuns[0];
   const route = currentRoute();
   const tab = route.query.get("tab") || "overview";
+  const fromTemplate = route.query.get("fromTemplate");
+  const sourceTemplate = fromTemplate ? evalTemplateById(fromTemplate) : null;
   let content = evalOverview(run);
   if (tab === "cases") content = evalCaseTable(run);
   if (tab === "results") content = evalResults(run);
@@ -2932,6 +3602,7 @@ function evalDetailPage(id) {
             ? `<button class="btn" data-action="retry-failed">${icon("refresh", 14)} 重试失败用例</button><button class="btn btn-danger" data-action="cancel-eval">${icon("x", 14)} 取消评测</button>`
             : `<button class="btn" data-action="compare-run">${icon("sparkles", 14)} 对比基线</button><button class="btn btn-primary" data-action="rerun-eval">${icon("refresh", 14)} 重新评测</button>`,
       })}
+      ${sourceTemplate ? `<div class="banner success template-source-banner">${icon("boxes", 15)}<div><strong>由评测模板「${esc(sourceTemplate.name)}」启动。</strong> 固定配置与资产快照在启动时冻结；需要调整请先编辑模板或发起自定义评测。</div><button class="btn btn-sm" data-action="template-detail" data-template="${sourceTemplate.id}">查看模板</button></div>` : ""}
       <section class="card" style="margin-bottom:16px">
         <div class="tabs" style="padding:0 12px">
           <button class="tab ${tab === "overview" ? "active" : ""}" data-route="/evals/${run.id}">实时进展</button>
@@ -3192,6 +3863,10 @@ function render(options = {}) {
     html = evalsPage();
   } else if (path === "/evals/new") {
     html = newEvalPage();
+  } else if (path === "/evals/templates") {
+    html = evalTemplatesPage();
+  } else if (path.startsWith("/evals/templates/")) {
+    html = evalTemplateDetailPage(parts[2]);
   } else if (path.startsWith("/evals/")) {
     html = evalDetailPage(parts[1]);
   } else if (path.startsWith("/trace/")) {
@@ -4351,6 +5026,73 @@ function handleAction(action, target) {
     return;
   }
 
+  if (action === "template-detail") {
+    go(`/evals/templates/${target.dataset.template}`);
+    return;
+  }
+  if (action === "template-api") {
+    openTemplateApi(target.dataset.template);
+    return;
+  }
+  if (action === "template-launch") {
+    openTemplateLaunch(target.dataset.template);
+    return;
+  }
+  if (action === "template-page") {
+    ui.templatePage = Number(target.dataset.page) || 1;
+    render({ preserveScroll: true });
+    return;
+  }
+  if (action === "template-clear-filters") {
+    ui.templateSearch = "";
+    ui.templateStatus = "all";
+    ui.templatePage = 1;
+    render();
+    return;
+  }
+  if (action === "confirm-template-launch") {
+    const template = evalTemplateById(target.dataset.template);
+    closeOverlay();
+    toast(`已从「${template.name}」启动评测，正在解析资产与镜像`);
+    go(`/evals/eval-001?fromTemplate=${template.id}`);
+    return;
+  }
+  if (action === "new-template") {
+    ui.newEvalStep = 1;
+    ui.newEval.saveAsTemplate = true;
+    ui.newEval.templateName = "日常回归 · Verified";
+    go("/evals/new?mode=template");
+    return;
+  }
+  if (action === "toggle-save-template") {
+    ui.newEval.saveAsTemplate = !ui.newEval.saveAsTemplate;
+    render({ preserveScroll: true });
+    return;
+  }
+  if (action === "save-template") {
+    if (ui.newEval.credentialMode !== "existing") {
+      toast("模板必须引用已保存的模型凭据，临时凭据不能复用", true);
+      return;
+    }
+    if (!ui.newEval.templateName.trim()) {
+      toast("请填写模板名称", true);
+      return;
+    }
+    if (ui.newEval.assetRef !== ui.newEval.assetVerifiedRef) {
+      toast("请先读取并确认当前 Agent 版本下的资产", true);
+      return;
+    }
+    const template = createTemplateFromWizard();
+    ui.newEval.saveAsTemplate = false;
+    ui.newEvalStep = 1;
+    ui.templateSearch = "";
+    ui.templateStatus = "all";
+    ui.templatePage = 1;
+    toast(`模板「${template.name}」已保存，可在模板列表一键启动`);
+    go("/evals/templates");
+    return;
+  }
+
   if (action === "select-dataset") {
     ui.newEval.dataset = value;
     render();
@@ -4416,6 +5158,14 @@ function handleAction(action, target) {
     return;
   }
   if (action === "start-eval") {
+    if (ui.newEval.credentialMode !== "existing" && ui.newEval.saveAsTemplate) {
+      toast("模板必须引用已保存的模型凭据；请改用已保存凭据或取消保存模板", true);
+      return;
+    }
+    if (ui.newEval.saveAsTemplate && !ui.newEval.templateName.trim()) {
+      toast("请填写模板名称", true);
+      return;
+    }
     if (!imagePrepSummary().allReady) {
       toast("镜像尚未就绪，启动已暂停；请等待后台准备完成或重试失败镜像", true);
       return;
@@ -4423,16 +5173,25 @@ function handleAction(action, target) {
     modal({
       title: "启动这次评测？",
       subtitle: "将占用 Linux Spot Pool 并产生模型费用",
-      body: `<div class="review-box"><div class="summary-item"><span class="summary-label">用例数量</span><span class="summary-value">500</span></div><div class="summary-item"><span class="summary-label">预计费用</span><span class="summary-value">¥126–158</span></div><div class="summary-item"><span class="summary-label">预计耗时</span><span class="summary-value">2h 30m</span></div><div class="summary-item"><span class="summary-label">失败重试</span><span class="summary-value">${attemptRetryState().short}</span></div></div><div class="banner warning" style="margin-top:14px">${icon("alert", 15)}<div>如果没有空闲 Runner，任务会先在 GitHub Actions 侧排队，最长等待 24 小时。${attemptRetryState().enabled ? "" : " 重试已关闭，失败或超时的用例不会自动重试。"}</div></div>`,
+      body: `<div class="review-box"><div class="summary-item"><span class="summary-label">用例数量</span><span class="summary-value">500</span></div><div class="summary-item"><span class="summary-label">预计费用</span><span class="summary-value">¥126–158</span></div><div class="summary-item"><span class="summary-label">预计耗时</span><span class="summary-value">2h 30m</span></div><div class="summary-item"><span class="summary-label">失败重试</span><span class="summary-value">${attemptRetryState().short}</span></div>${ui.newEval.saveAsTemplate ? `<div class="summary-item"><span class="summary-label">同时保存模板</span><span class="summary-value">${esc(ui.newEval.templateName)}</span></div>` : ""}</div><div class="banner warning" style="margin-top:14px">${icon("alert", 15)}<div>如果没有空闲 Runner，任务会先在 GitHub Actions 侧排队，最长等待 24 小时。${attemptRetryState().enabled ? "" : " 重试已关闭，失败或超时的用例不会自动重试。"}</div></div>`,
       footer: `<button class="btn" data-action="close-modal">再检查一下</button><button class="btn btn-primary" data-action="confirm-start-eval">${icon("play", 13)} 确认启动</button>`,
     });
     return;
   }
   if (action === "confirm-start-eval") {
+    let launchedTemplate = null;
+    if (ui.newEval.saveAsTemplate) {
+      if (ui.newEval.credentialMode !== "existing") {
+        toast("模板必须引用已保存的模型凭据，临时凭据不能复用", true);
+        return;
+      }
+      launchedTemplate = createTemplateFromWizard();
+      ui.newEval.saveAsTemplate = false;
+    }
     closeOverlay();
     ui.newEvalStep = 1;
-    toast("评测已创建，正在派发第一批用例");
-    go("/evals/eval-001");
+    toast(launchedTemplate ? `评测已创建，模板「${launchedTemplate.name}」已保存` : "评测已创建，正在派发第一批用例");
+    go(launchedTemplate ? `/evals/eval-001?fromTemplate=${launchedTemplate.id}` : "/evals/eval-001");
     return;
   }
   if (action === "cancel-eval") return openCancelEval();
@@ -4685,6 +5444,17 @@ document.addEventListener("input", (event) => {
       nextInput.setSelectionRange(selection, selection);
     }
   }
+  if (event.target.id === "template-search") {
+    ui.templateSearch = event.target.value;
+    ui.templatePage = 1;
+    const selection = event.target.selectionStart;
+    render({ preserveScroll: true });
+    const nextInput = document.querySelector("#template-search");
+    if (nextInput) {
+      nextInput.focus();
+      nextInput.setSelectionRange(selection, selection);
+    }
+  }
   if (event.target.id === "max-turns") {
     ui.newEval.maxTurns = event.target.value.replace(/[^0-9]/g, "").slice(0, 4);
     return;
@@ -4699,6 +5469,14 @@ document.addEventListener("input", (event) => {
   }
   if (event.target.id === "prompt-suffix") {
     ui.newEval.promptSuffix = event.target.value;
+    return;
+  }
+  if (event.target.id === "template-name") {
+    ui.newEval.templateName = event.target.value;
+    return;
+  }
+  if (event.target.id === "template-description") {
+    ui.newEval.templateDescription = event.target.value;
     return;
   }
   if (event.target.id === "self-evolution-base-url") {
@@ -4783,6 +5561,16 @@ document.addEventListener("change", (event) => {
     ui.casePageSize = Number(event.target.value);
     ui.casePage = 1;
     render();
+  }
+  if (event.target.id === "template-status-filter") {
+    ui.templateStatus = event.target.value;
+    ui.templatePage = 1;
+    render({ preserveScroll: true });
+  }
+  if (event.target.id === "template-page-size") {
+    ui.templatePageSize = Number(event.target.value);
+    ui.templatePage = 1;
+    render({ preserveScroll: true });
   }
   if (event.target.id === "asset-page-size") {
     ui.newEval.assetPageSize = Number(event.target.value);
