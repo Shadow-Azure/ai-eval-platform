@@ -12,6 +12,7 @@ from .api.dataset_image_sources import router as dataset_image_sources_router
 from .api.datasets import router as datasets_router
 from .api.dependencies import require_session
 from .api.deployments import router as deployments_router
+from .api.eval_templates import router as eval_templates_router
 from .api.eval_workbench import router as eval_workbench_router
 from .api.evaluations import router as evaluations_router
 from .api.health import router as health_router
@@ -74,6 +75,9 @@ def create_app() -> FastAPI:
     app.include_router(overview_router, dependencies=[Depends(require_session)])
     app.include_router(runners_router)
     app.include_router(evaluations_router, dependencies=[Depends(require_session)])
+    # M10 (#378): reusable launch presets; launch requires the admin role and
+    # is enforced inside the router, list/detail stay session-readable.
+    app.include_router(eval_templates_router, dependencies=[Depends(require_session)])
     app.include_router(datasets_router, dependencies=[Depends(require_session)])
     app.include_router(dataset_image_sources_router, dependencies=[Depends(require_session)])
     # M8 (#290): per-preparation tarball readiness/ensure/retry polling.

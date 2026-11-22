@@ -1,0 +1,351 @@
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Button, Input, Popconfirm, Select, Space, Table, message } from "antd";
+import type { TableColumnsType } from "antd";
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { useAuth } from "../app/auth";
+import {
+  fetchEvalTemplates,
+  updateEvalTemplate,
+  type EvalTemplate,
+  type EvalTemplateListQuery,
+} from "../api/evalTemplates";
+import { EmptyState } from "../components/EmptyState";
+import { Icon } from "../components/Icon";
+import { PageHeading } from "../components/PageHeading";
+import { QueryError } from "../components/QueryError";
+import { TemplateApiModal } from "../components/TemplateApiModal";
+import {
+  TemplateStatusTag,
+  formatCostRange,
+  templateLastRunLabel,
+} from "../components/TemplateBits";
+import { TemplateLaunchModal } from "../components/TemplateLaunchModal";
+import { dateTimeLabel } from "../utils/evaluationDisplay";
+
+const templateQueries = {
+  all: ["eval-templates"] as const,
+  list: (query: EvalTemplateListQuery, page: number, pageSize: number) =>
+    ["eval-templates", "list", query, page, pageSize] as const,
+};
+
+export function EvalTemplatesPage() {
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const { session } = useAuth();
+  const isAdmin = session?.role === "admin";
+  const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [launchTarget, setLaunchTarget] = useState<EvalTemplate | null>(null);
+  const [apiTarget, setApiTarget] = useState<EvalTemplate | null>(null);
+  const hasFilters = Boolean(debouncedSearch) || statusFilter !== "all";
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedSearch(search.trim());
+      setPage(1);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [search]);
+
+  const listQuery = useQuery({
+    queryKey: templateQueries.list(
+      {
+        q: debouncedSearch || undefined,
+        status: statusFilter === "all" ? undefined : statusFilter,
+        limit: pageSize,
+        offset: (page - 1) * pageSize,
+      },
+      page,
+      pageSize,
+    ),
+    queryFn: ({ signal }) =>
+      fetchEvalTemplates(
+        {
+          q: debouncedSearch || undefined,
+          status: statusFilter === "all" ? undefined : statusFilter,
+          limit: pageSize,
+          offset: (page - 1) * pageSize,
+        },
+        signal,
+      ),
+    placeholderData: keepPreviousData,
+  });
+
+  const total = listQuery.data?.total;
+  useEffect(() => {
+    if (total === undefined) return;
+    const lastPage = Math.max(1, Math.ceil(total / pageSize));
+    if (page > lastPage) setPage(lastPage);
+  }, [page, pageSize, total]);
+
+  const toggle = useMutation({
+    mutationFn: (template: EvalTemplate) =>
+      updateEvalTemplate(template.id, { enabled: !template.enabled }, template.version),
+    onSuccess: (template) => {
+      message.success(template.enabled ? "模板已启用" : "模板已停用");
+      void queryClient.invalidateQueries({ queryKey: templateQueries.all });
+    },
+    onError: (error) => message.error(error instanceof Error ? error.message : "更新失败"),
+  });
+
+  const resetFilters = () => {
+    setSearch("");
+    setDebouncedSearch("");
+    setStatusFilter("all");
+    setPage(1);
+  };
+
+  const columns: TableColumnsType<EvalTemplate> = [
+    {
+      title: "模板",
+      key: "name",
+      render: (_value, row) => (
+        <div>
+          <Button
+            type="link"
+            size="small"
+            className="template-name-link"
+            onClick={() => navigate(`/evals/templates/${row.id}`)}
+          >
+            {row.name}
+          </Button>
+          <div className="table-secondary">{row.description || "—"}</div>
+        </div>
+      ),
+    },
+    {
+      title: "固定组合",
+      key: "combo",
+      render: (_value, row) => (
+        <div className="template-combo">
+          <div>
+            <strong>{row.dataset_name ?? "—"}</strong>
+            <span className="table-secondary">
+              {" "}
+              · {row.dataset_version ?? "—"} · {row.case_count} 用例
+            </span>
+          </div>
+          <div className="table-secondary">
+            {row.runtime_key} · {row.model_provider ?? "—"} {row.model_name ?? "—"}
+          </div>
+          <div className="table-secondary">
+            {row.resource_pool_name ?? "—"} · {row.asset_source_name ?? "无资产源"}
+          </div>
+        </div>
+      ),
+    },
+    {
+      title: "状态",
+      key: "enabled",
+      width: 90,
+      render: (_value, row) => <TemplateStatusTag enabled={row.enabled} />,
+    },
+    {
+      title: "最近启动",
+      key: "last_launched",
+      width: 150,
+      render: (_value, row) => (
+        <div>
+          <div>{templateLastRunLabel(row)}</div>
+          <div className="table-secondary">{dateTimeLabel(row.last_launched_at)}</div>
+        </div>
+      ),
+    },
+    {
+      title: "累计启动",
+      key: "launch_count",
+      width: 92,
+      render: (_value, row) => `${row.launch_count} 次`,
+    },
+    {
+      title: "费用估算",
+      key: "cost",
+      width: 130,
+      render: (_value, row) => (
+        <div>
+          <div>{formatCostRange(row.estimated_cost?.total_cny)}</div>
+          <div className="table-secondary">
+            {row.estimated_cost ? "启动时重新计算" : "未填写定价"}
+          </div>
+        </div>
+      ),
+    },
+    {
+      title: "更新",
+      key: "updated_at",
+      width: 120,
+      render: (_value, row) => (
+        <div className="small muted">{dateTimeLabel(row.updated_at)}</div>
+      ),
+    },
+    {
+      title: "操作",
+      key: "actions",
+      width: 250,
+      render: (_value, row) => (
+        <Space size={4} wrap>
+          <Button size="small" onClick={() => navigate(`/evals/templates/${row.id}`)}>
+            详情
+          </Button>
+          <Button size="small" onClick={() => setApiTarget(row)}>
+            接口
+          </Button>
+          {isAdmin ? (
+            <Popconfirm
+              title={row.enabled ? "停用这个模板？" : "启用这个模板？"}
+              description={
+                row.enabled ? "停用后不能一键启动，已启动的评测不受影响。" : "启用后可以一键启动。"
+              }
+              okText={row.enabled ? "停用" : "启用"}
+              cancelText="取消"
+              onConfirm={() => toggle.mutate(row)}
+            >
+              <Button size="small">{row.enabled ? "停用" : "启用"}</Button>
+            </Popconfirm>
+          ) : null}
+          <Button
+            size="small"
+            type="primary"
+            icon={<Icon name="play" size={12} />}
+            disabled={!row.enabled || !isAdmin}
+            onClick={() => setLaunchTarget(row)}
+          >
+            启动
+          </Button>
+        </Space>
+      ),
+    },
+  ];
+
+  return (
+    <div className="page">
+      <PageHeading
+        eyebrow="Evaluation · Templates"
+        title="评测模板"
+        description="把数据集版本、Agent 运行时与资产、模型凭据与资源池固化为可复用模板；列表在服务端搜索、筛选与分页。"
+        actions={
+          <>
+            <Button icon={<Icon name="refresh" size={14} />} onClick={() => listQuery.refetch()}>
+              刷新
+            </Button>
+            <Button
+              type="primary"
+              icon={<Icon name="plus" size={14} />}
+              onClick={() => navigate("/evals/new?mode=template")}
+            >
+              新建模板
+            </Button>
+          </>
+        }
+      />
+
+      {listQuery.isError && !listQuery.data ? (
+        <QueryError
+          error={listQuery.error}
+          onRetry={() => listQuery.refetch()}
+          title="无法加载评测模板"
+          endpoint="GET /api/v1/eval-templates"
+        />
+      ) : (
+        <section className="card template-list-card">
+          <div className="template-toolbar">
+            <Input
+              allowClear
+              aria-label="搜索评测模板"
+              placeholder="搜索模板、数据集、Agent 或模型"
+              prefix={<Icon name="search" size={14} />}
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              style={{ width: 340 }}
+            />
+            <Select
+              aria-label="启用状态筛选"
+              value={statusFilter}
+              options={[
+                { value: "all", label: "状态：全部" },
+                { value: "enabled", label: "状态：启用" },
+                { value: "disabled", label: "状态：停用" },
+              ]}
+              onChange={(value) => {
+                setStatusFilter(value);
+                setPage(1);
+              }}
+              style={{ width: 150 }}
+            />
+            {hasFilters ? (
+              <Button size="small" onClick={resetFilters}>
+                清除筛选
+              </Button>
+            ) : null}
+            <span className="small muted" style={{ marginLeft: "auto" }}>
+              共 {total ?? 0} 个模板 · 服务端分页
+            </span>
+          </div>
+          <Table
+            rowKey="id"
+            size="small"
+            loading={listQuery.isLoading}
+            columns={columns}
+            dataSource={listQuery.data?.items ?? []}
+            pagination={{
+              current: page,
+              pageSize,
+              total: total ?? 0,
+              showSizeChanger: true,
+              pageSizeOptions: [10, 20, 50],
+              showTotal: (value) => `共 ${value} 个模板`,
+              onChange: (nextPage, nextSize) => {
+                setPage(nextSize === pageSize ? nextPage : 1);
+                setPageSize(nextSize);
+              },
+            }}
+            locale={{
+              emptyText: hasFilters ? (
+                <EmptyState
+                  icon="search"
+                  title="没有匹配的评测模板"
+                  description="调整搜索词或状态筛选，或清空条件查看全部模板。"
+                  action={
+                    <Button size="small" onClick={resetFilters}>
+                      清除筛选
+                    </Button>
+                  }
+                />
+              ) : (
+                <EmptyState
+                  icon="boxes"
+                  title="还没有评测模板"
+                  description="从发起评测向导第 4 步保存，或新建模板只保存配置、不立即启动。"
+                  action={
+                    <Button
+                      size="small"
+                      type="primary"
+                      onClick={() => navigate("/evals/new?mode=template")}
+                    >
+                      新建模板
+                    </Button>
+                  }
+                />
+              ),
+            }}
+          />
+        </section>
+      )}
+
+      <TemplateLaunchModal
+        template={launchTarget}
+        open={Boolean(launchTarget)}
+        onClose={() => setLaunchTarget(null)}
+      />
+      <TemplateApiModal
+        template={apiTarget}
+        open={Boolean(apiTarget)}
+        onClose={() => setApiTarget(null)}
+      />
+    </div>
+  );
+}

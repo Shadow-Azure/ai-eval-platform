@@ -203,6 +203,8 @@ export interface EvaluationDetail extends EvaluationSummary {
   retryable_count?: number;
   /** All-attempt trace token aggregate; absent until the API ships it. */
   token_summary?: EvalTokenSummary | null;
+  /** M10 (#378): source template banner for a template-launched run. */
+  template?: { id: string; name: string; version: number; enabled: boolean } | null;
 }
 
 export interface EvaluationEvent {
@@ -809,6 +811,14 @@ export function parseEvaluationDetail(payload: unknown): EvaluationDetail {
     retryable_count:
       typeof record.retryable_count === "number" ? record.retryable_count : undefined,
     token_summary: parseTokenSummary(record.token_summary),
+    template: isRecord(record.template)
+      ? {
+          id: readString(record.template.id),
+          name: readString(record.template.name),
+          version: readCount(record.template.version, "template.version"),
+          enabled: record.template.enabled !== false,
+        }
+      : null,
     cases: cases.map((entry) => {
       const item = (entry ?? {}) as Record<string, unknown>;
       return {

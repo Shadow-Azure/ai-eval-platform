@@ -39,6 +39,7 @@ import {
   type DatasetCaseSummary,
   type DatasetVersion,
 } from "../api/datasets";
+import { createEvalTemplate } from "../api/evalTemplates";
 import {
   createEvaluation,
   ensureImageReadiness,
@@ -411,6 +412,9 @@ function sourceOption(source: AssetSource): string {
 export function EvalWizardPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  // M10 (#378): ?mode=template enters the same four-step wizard but only saves
+  // a reusable template; the normal flow can also save one alongside a run.
+  const templateMode = searchParams.get("mode") === "template";
   const initialDraft = useRef<WizardDraft | null>(null);
   if (initialDraft.current === null) {
     initialDraft.current = readDraft() ?? defaultDraft();
@@ -425,6 +429,10 @@ export function EvalWizardPage() {
   } | null>(null);
   const [checking, setChecking] = useState(false);
   const [name, setName] = useState("");
+  const [saveAsTemplate, setSaveAsTemplate] = useState(templateMode);
+  const [templateName, setTemplateName] = useState("");
+  const [templateDescription, setTemplateDescription] = useState("");
+  const templateSavedRef = useRef(false);
   const [caseOffset, setCaseOffset] = useState(0);
   const [caseLimit, setCaseLimit] = useState(CASE_PAGE_SIZE);
   const [assetPage, setAssetPage] = useState(1);
@@ -468,6 +476,9 @@ export function EvalWizardPage() {
         setImagePrepError(null);
         setImagePrepAction(null);
         setImagePollNonce((value) => value + 1);
+        // The next launch is a new intent: its current draft must be saved
+        // again instead of reusing the previous template.
+        templateSavedRef.current = false;
         imageEnsureStartedRef.current = null;
         // Invalidate any request still in flight for the old configuration.
         imageActionTokenRef.current += 1;
@@ -683,6 +694,10 @@ export function EvalWizardPage() {
 
   const create = useMutation({
     mutationFn: async () => {
+      if (saveAsTemplate && !templateSavedRef.current) {
+        await createEvalTemplate(buildTemplatePayload());
+        templateSavedRef.current = true;
+      }
       if (!preparation?.preparation_id) throw new Error("准备快照缺失");
       if (!idempotencyRef.current || idempotencyRef.current.preparationId !== preparation.preparation_id) {
         idempotencyRef.current = {
@@ -697,10 +712,13 @@ export function EvalWizardPage() {
     },
     onSuccess: (run) => {
       clearDraft();
-      message.success("评测已创建");
+      message.success(templateSavedRef.current ? "评测已创建，模板已保存" : "评测已创建");
       navigate(`/evals/${run.id}`);
     },
     onError: (error) => {
+      if (templateSavedRef.current) {
+        message.info("模板已保存，可在评测模板列表中查看");
+      }
       const api = error instanceof ApiError ? error : null;
       if (api && api.code === "image_not_ready") {
         // #290: readiness can change between the disabled check and the POST.
@@ -766,6 +784,17 @@ export function EvalWizardPage() {
       }
       message.error(error instanceof Error ? error.message : "创建失败");
     },
+  });
+
+  const saveTemplateOnly = useMutation({
+    mutationFn: async () => createEvalTemplate(buildTemplatePayload()),
+    onSuccess: () => {
+      clearDraft();
+      message.success("模板已保存；可在一键启动区或模板列表中启动");
+      navigate("/evals/templates");
+    },
+    onError: (error) =>
+      message.error(error instanceof Error ? error.message : "模板保存失败"),
   });
 
   function selectDataset(datasetId: string) {
@@ -1029,6 +1058,37 @@ export function EvalWizardPage() {
     };
   }
 
+  function buildTemplatePayload() {
+    if (!draft.versionId || !draft.modelConfigId || !draft.poolId) {
+      throw new Error("先选择数据集版本、模型配置和资源池");
+    }
+    if (!templateName.trim()) {
+      throw new Error("请填写模板名称");
+    }
+    return {
+      name: templateName.trim(),
+      description: templateDescription.trim() || undefined,
+      dataset_version_id: draft.versionId,
+      runtime_key: draft.runtimeKey,
+      model_config_id: draft.modelConfigId,
+      resource_pool_id: draft.poolId,
+      ...(draft.assetSourceId
+        ? {
+            asset_source_id: draft.assetSourceId,
+            asset_ref: draft.assetRef || selectedSource?.default_ref || undefined,
+            asset_paths: draft.selectedPaths,
+          }
+        : {}),
+      case_selection: caseSelectionPayload(),
+      execution: executionPayload(),
+      prompt_suffix: draft.promptSuffix.trim() || undefined,
+      ...(maxTurns.value !== null ? { max_turns: maxTurns.value } : {}),
+      ...(agentTimeout.seconds !== null
+        ? { agent_timeout_seconds: agentTimeout.seconds }
+        : {}),
+    };
+  }
+
   async function runPrepare() {
     if (!draft.versionId || !draft.modelConfigId || !draft.poolId) {
       message.warning("先选择数据集版本、模型配置和资源池");
@@ -1209,8 +1269,10 @@ export function EvalWizardPage() {
       <aside className="card wizard-aside">
         <div className="card-header">
           <div>
-            <h2 className="card-title">评测摘要</h2>
-            <p className="card-subtitle">提交后仍可取消排队任务</p>
+            <h2 className="card-title">{templateMode ? "模板摘要" : "评测摘要"}</h2>
+            <p className="card-subtitle">
+              {templateMode ? "保存后可在模板列表一键启动" : "提交后仍可取消排队任务"}
+            </p>
           </div>
           <Icon name="lock" size={15} className="muted" />
         </div>
@@ -2371,8 +2433,69 @@ export function EvalWizardPage() {
         <div className="eyebrow">Step 4 · Review</div>
         <h2 className="wizard-title">确认并启动评测</h2>
         <p className="small muted wizard-subtitle">
-          启动后平台会创建评测记录并拆分为多个 GitHub Actions 分片；创建按钮是幂等操作。
+          {templateMode
+            ? "模板模式只保存这组固定选择，不创建评测；保存后可从模板列表一键启动。"
+            : "启动后平台会创建评测记录并拆分为多个 GitHub Actions 分片；创建按钮是幂等操作。"}
         </p>
+        {templateMode ? (
+          <div className="banner success" style={{ marginBottom: 14 }}>
+            <Icon name="boxes" size={15} />
+            <div>
+              <strong>模板模式：只保存配置，不创建评测。</strong>{" "}
+              保存后固定组合出现在模板列表；每次启动都会重新解析资产 Ref 并冻结新的快照。
+            </div>
+          </div>
+        ) : null}
+        <div className="template-save-box">
+          <div className="row-between">
+            <div>
+              <strong>保存为评测模板</strong>
+              <div className="small muted">
+                把本次数据集、Agent 资产、模型、资源池与执行策略固化为可复用模板。
+              </div>
+            </div>
+            <Switch
+              checked={saveAsTemplate || templateMode}
+              disabled={templateMode}
+              onChange={setSaveAsTemplate}
+              aria-label="切换保存为评测模板"
+            />
+          </div>
+          {saveAsTemplate || templateMode ? (
+            <>
+              <div className="field-row" style={{ marginTop: 12 }}>
+                <div className="field">
+                  <label className="required">模板名称</label>
+                  <Input
+                    value={templateName}
+                    onChange={(event) => setTemplateName(event.target.value)}
+                    placeholder="例如：日常回归 · Verified"
+                    maxLength={200}
+                  />
+                </div>
+                <div className="field">
+                  <label>模板说明</label>
+                  <Input
+                    value={templateDescription}
+                    onChange={(event) => setTemplateDescription(event.target.value)}
+                    placeholder="说明使用场景与适用批次"
+                    maxLength={1000}
+                  />
+                </div>
+              </div>
+              <div className="banner success" style={{ marginTop: 10 }}>
+                <Icon name="check" size={15} />
+                <div>
+                  启动时仍会重新解析资产 Ref、检查镜像并冻结新的快照；模板编辑不会影响已启动的评测。
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="small muted" style={{ marginTop: 8 }}>
+              不保存模板时，本次选择只对这一次评测生效。
+            </div>
+          )}
+        </div>
         <div className="review-box">
           <div className="summary-item">
             <span className="summary-label">评测名称</span>
@@ -2540,10 +2663,18 @@ export function EvalWizardPage() {
   return (
     <section className="page eval-wizard">
       <PageHeading
-        eyebrow="New evaluation"
-        title="发起评测"
-        description="组合数据集、Agent 资产、模型、资源池与执行策略；准备快照会冻结全部输入，创建是幂等操作。"
-        actions={<Button onClick={() => navigate("/evals")}>取消</Button>}
+        eyebrow={templateMode ? "New template" : "New evaluation"}
+        title={templateMode ? "新建评测模板" : "发起评测"}
+        description={
+          templateMode
+            ? "组合数据集、Agent 资产、模型、资源池与执行策略并保存为模板；只保存配置，不创建评测。"
+            : "组合数据集、Agent 资产、模型、资源池与执行策略；准备快照会冻结全部输入，创建是幂等操作。"
+        }
+        actions={
+          <Button onClick={() => navigate(templateMode ? "/evals/templates" : "/evals")}>
+            取消
+          </Button>
+        }
       />
       {renderStepBar()}
       <div className="wizard-layout">
@@ -2566,34 +2697,59 @@ export function EvalWizardPage() {
                 </Button>
               ) : null}
               {step === 3 ? (
-                <Tooltip
-                  title={
-                    imageReadinessBlocked
-                      ? `等待 ${imagePendingCount} 个镜像准备完成；失败镜像可重试，全部就绪后才能创建评测`
-                      : undefined
-                  }
-                >
-                  <span className="wizard-create-wrap">
-                    <Button
-                      type="primary"
-                      size="large"
-                      loading={create.isPending}
-                      disabled={!preparation || expired || imageReadinessBlocked}
-                      onClick={() => create.mutate()}
+                templateMode ? (
+                  <Button
+                    type="primary"
+                    size="large"
+                    loading={saveTemplateOnly.isPending}
+                    disabled={!preparation || expired}
+                    onClick={() => saveTemplateOnly.mutate()}
+                  >
+                    <Icon name="boxes" size={14} /> 保存模板
+                  </Button>
+                ) : (
+                  <>
+                    {saveAsTemplate ? (
+                      <Button
+                        size="large"
+                        loading={saveTemplateOnly.isPending}
+                        disabled={!preparation || expired}
+                        onClick={() => saveTemplateOnly.mutate()}
+                      >
+                        仅保存模板
+                      </Button>
+                    ) : null}
+                    <Tooltip
+                      title={
+                        imageReadinessBlocked
+                          ? `等待 ${imagePendingCount} 个镜像准备完成；失败镜像可重试，全部就绪后才能创建评测`
+                          : undefined
+                      }
                     >
-                      {imageReadinessBlocked && imageReadiness ? (
-                        <>
-                          <Icon name="clock" size={14} />{" "}
-                          {`等待镜像就绪 (${imageReadiness.ready_count}/${imageReadiness.total})`}
-                        </>
-                      ) : (
-                        <>
-                          <Icon name="play" size={14} /> 创建评测
-                        </>
-                      )}
-                    </Button>
-                  </span>
-                </Tooltip>
+                      <span className="wizard-create-wrap">
+                        <Button
+                          type="primary"
+                          size="large"
+                          loading={create.isPending}
+                          disabled={!preparation || expired || imageReadinessBlocked}
+                          onClick={() => create.mutate()}
+                        >
+                          {imageReadinessBlocked && imageReadiness ? (
+                            <>
+                              <Icon name="clock" size={14} />{" "}
+                              {`等待镜像就绪 (${imageReadiness.ready_count}/${imageReadiness.total})`}
+                            </>
+                          ) : (
+                            <>
+                              <Icon name="play" size={14} />{" "}
+                              {saveAsTemplate ? "启动并保存模板" : "创建评测"}
+                            </>
+                          )}
+                        </Button>
+                      </span>
+                    </Tooltip>
+                  </>
+                )
               ) : null}
             </div>
           </div>

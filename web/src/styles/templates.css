@@ -1,0 +1,203 @@
+/* M10 (#378): evaluation templates list, quick launch and detail pages. */
+
+.quick-template-section .card-body {
+  padding-top: 0;
+}
+
+.quick-template-list {
+  display: grid;
+  gap: 0;
+  border-top: 1px solid var(--line);
+}
+
+.quick-template-row {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.quick-template-row:last-child {
+  border-bottom: none;
+}
+
+.quick-template-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 10%, transparent);
+}
+
+.quick-template-main {
+  min-width: 0;
+}
+
+.quick-template-combo {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.quick-template-last {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.quick-template-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.template-name-link {
+  height: auto;
+  padding: 0;
+  font-weight: 650;
+  text-align: left;
+}
+
+.template-list-card {
+  overflow: hidden;
+}
+
+.template-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.template-combo > div + div {
+  margin-top: 2px;
+}
+
+.template-detail-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 330px;
+  gap: 16px;
+  align-items: start;
+}
+
+.template-detail-layout > .stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.template-api-summary {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--canvas-soft, #f8fafc);
+}
+
+.template-api-summary > div {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.template-api-summary span:first-child {
+  min-width: 74px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.template-api-summary code {
+  overflow-wrap: anywhere;
+}
+
+.template-api-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.template-api-item {
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.template-api-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.template-api-head code {
+  overflow-wrap: anywhere;
+}
+
+.template-api-item p {
+  margin: 7px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.template-api-code {
+  overflow-x: auto;
+  margin: 9px 0 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #0f172a;
+  color: #e2e8f0;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.template-api-mini {
+  display: grid;
+  gap: 8px;
+}
+
+.template-api-mini > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.template-api-mini code {
+  overflow: hidden;
+  font-size: 12px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.template-api-mini .btn,
+.template-api-mini button {
+  justify-self: start;
+}
+
+@media (max-width: 1240px) {
+  .template-detail-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.template-save-box {
+  margin-bottom: 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--canvas-soft, #f8fafc);
+}

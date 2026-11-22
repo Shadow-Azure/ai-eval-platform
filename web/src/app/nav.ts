@@ -25,6 +25,7 @@ export const navGroups: NavGroup[] = [
     section: "评测",
     items: [
       { label: "评测任务", to: "/evals", icon: "play" },
+      { label: "评测模板", to: "/evals/templates", icon: "list" },
       { label: "数据集", to: "/datasets", icon: "database" },
       { label: "发起评测", to: "/evals/new", icon: "plus" },
     ],
@@ -50,6 +51,8 @@ const breadcrumbs: Array<{ test: (path: string) => boolean; crumbs: [string, str
   { test: (path) => path === "/datasets", crumbs: ["评测", "数据集"] },
   { test: (path) => path === "/datasets/import", crumbs: ["评测", "导入数据集"] },
   { test: (path) => path.startsWith("/datasets/"), crumbs: ["评测", "数据集详情"] },
+  { test: (path) => path === "/evals/templates", crumbs: ["评测", "评测模板"] },
+  { test: (path) => path.startsWith("/evals/templates/"), crumbs: ["评测", "模板详情"] },
   { test: (path) => path.includes("/trace"), crumbs: ["评测", "会话轨迹"] },
   { test: (path) => path.startsWith("/evals/") && path !== "/evals/new", crumbs: ["评测", "评测详情"] },
   { test: (path) => path === "/assets", crumbs: ["配置", "Agent 资产"] },
