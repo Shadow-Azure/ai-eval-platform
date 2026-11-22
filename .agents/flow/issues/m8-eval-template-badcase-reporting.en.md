@@ -63,6 +63,7 @@ Production evidence: template `49a201b3-87f6-41a8-a89f-cf124c2bef81` (hy4-flash 
 - Issue #378 (evaluation templates).
 - Production template `49a201b3-87f6-41a8-a89f-cf124c2bef81`; same-configuration historical run `5f5d2f48-4ef1-4bb4-af93-453d1a2d1fe7`.
 - Design: `docs/design/eval-platform-architecture.md`, `plans/m1-02-fullstack-design/`.
+- Related PR: #383 (prototype fix; production implementation still pending).
 
 ## Evidence
 

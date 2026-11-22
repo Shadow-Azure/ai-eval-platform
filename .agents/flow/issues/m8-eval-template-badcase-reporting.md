@@ -63,6 +63,7 @@ M10 评测模板把一次评测的固定组合保存为可复用对象，一键�
 - Issue #378（评测模板）。
 - 生产模板 `49a201b3-87f6-41a8-a89f-cf124c2bef81`；同配置历史 run `5f5d2f48-4ef1-4bb4-af93-453d1a2d1fe7`。
 - 设计：`docs/design/eval-platform-architecture.md`、`plans/m1-02-fullstack-design/`。
+- 关联 PR：#383（原型修复；生产实现待跟进）。
 
 ## 证据
 
