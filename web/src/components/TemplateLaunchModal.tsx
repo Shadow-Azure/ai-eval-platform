@@ -84,7 +84,7 @@ export function TemplateLaunchModal({ template, open, onClose }: TemplateLaunchM
       <p className="small muted" style={{ marginTop: 0 }}>
         配置已固化，启动时不再询问；只确认本次费用与容量。
       </p>
-      <Descriptions size="small" column={1} bordered labelStyle={{ width: 96 }}>
+      <Descriptions size="small" column={1} bordered labelStyle={{ width: 120 }}>
         <Descriptions.Item label="数据集">
           {template.dataset_name ?? "—"}
           <span className="small muted">
