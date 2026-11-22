@@ -8,6 +8,29 @@ export function TemplateStatusTag({ enabled }: { enabled: boolean }) {
   return enabled ? <Tag color="success">启用</Tag> : <Tag>已停用</Tag>;
 }
 
+/** M8 #382: the list badge for a template that reports bad cases at terminal. */
+export function TemplateSelfEvolutionTag({ template }: { template: EvalTemplate }) {
+  if (!template.self_evolution.enabled) return null;
+  return (
+    <Tag color="purple" title="自进化上报已启用">
+      上报
+    </Tag>
+  );
+}
+
+/** "已启用 · host · 工作区 ws" or "未启用"; never includes the token. */
+export function selfEvolutionLabel(template: EvalTemplate): string {
+  const config = template.self_evolution;
+  if (!config.enabled) return "未启用";
+  const host = (config.base_url ?? "").replace(/^https?:\/\//, "").replace(/\/+$/, "");
+  return `已启用 · ${host || "未填地址"} · 工作区 ${config.workspace_id || "未填"}`;
+}
+
+/** A template only exposes whether a token is stored, never the token itself. */
+export function selfEvolutionTokenLabel(template: EvalTemplate): string {
+  return template.self_evolution.has_token ? "令牌已配置" : "未配置";
+}
+
 export function templateComboText(template: EvalTemplate): string {
   return [
     template.dataset_name ?? "未绑定数据集",

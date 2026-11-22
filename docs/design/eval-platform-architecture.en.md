@@ -180,9 +180,11 @@ Existing adapter code changes only when the upstream data format changes or the 
 
 ### 5.14 Evaluation Templates and One-Click Launch
 
-An evaluation template (`eval_template`) is a project-level reusable launch preset that stores the dataset version, agent runtime, agent asset source and ref, asset selection, model credential, resource pool, case scope, execution policy, prompt suffix, max turns, and agent timeout as one fixed selection. A template fixes the selection, not the execution outcome: on every launch the API service re-resolves the template's asset ref, validates the references, and generates a fresh immutable snapshot, while the evaluation records `template_id`, the template version, and the launch snapshot, so later template edits never change an evaluation that has started. Set the ref to a commit to pin the content; otherwise each launch resolves the branch or tag as it exists at that moment.
+An evaluation template (`eval_template`) is a project-level reusable launch preset that stores the dataset version, agent runtime, agent asset source and ref, asset selection, model credential, resource pool, case scope, execution policy, prompt suffix, max turns, agent timeout, and the self-evolution reporting target as one fixed selection. A template fixes the selection, not the execution outcome: on every launch the API service re-resolves the template's asset ref, validates the references, and generates a fresh immutable snapshot, while the evaluation records `template_id`, the template version, and the launch snapshot, so later template edits never change an evaluation that has started. Set the ref to a commit to pin the content; otherwise each launch resolves the branch or tag as it exists at that moment.
 
 The template lifecycle is create, edit, disable, and delete; a template that is disabled or whose references were deleted cannot launch, and the platform validates the dataset version, model credential, resource pool, and asset source before creating a run. A template launch accepts no configuration overrides, preserving the one-click semantics and reproducibility; use a copied and edited template, or the existing custom launch flow, for a different combination.
+
+A template persists template-level self-evolution reporting in `self_evolution_enabled` (boolean, default false), `self_evolution_base_url` (varchar 512), `self_evolution_workspace_id` (varchar 64), and `self_evolution_token_encrypted` (Fernet ciphertext). The template view returns `self_evolution: {enabled, base_url, workspace_id, has_token}` and never echoes the token; create and update accept `self_evolution: {enabled, base_url, workspace_id, token}`: when enabled, the base URL and workspace are required; on create or when no ciphertext is stored, `token` is required; an update may omit `token` to keep the existing ciphertext; an explicit disable clears all fields. The token is encrypted at rest, and no response, log, or snapshot contains it in cleartext or masked form; existing templates default to disabled with no token.
 
 As templates grow, the evaluations page keeps only the three most recently used templates as quick-launch entries, each retaining one-click launch and details; the confirmation dialog shows only cost, capacity, and the fixed configuration instead of the four-step wizard. Full template management moves to a dedicated evaluation templates page that uses a list rather than cards: it supports search by name, dataset, agent, and model, filtering by enabled state, and pagination ordered by most recent launch. Step 4 of the launch wizard can select "save as an evaluation template", and template mode saves without launching. The template detail page shows the fixed configuration, execution policy, recent runs, and API examples.
 
@@ -202,6 +204,8 @@ The launch API first verifies that the template exists and is enabled and that i
 
 A template launch does not change the scheduling or execution chain: the server simply turns the fixed selection into a normal prepare and create call, and the subsequent sharding, runners, scoring, traces, and result aggregation are identical to a custom launch. A template therefore cannot bypass capacity admission, budget, image preflight, or permission checks; failures happen before a run is created and never leave a half-created task.
 
+Before creating a run, a launch decrypts the stored token and passes it with the other reporting fields into the existing prepare/create flow, so an evaluation launched from a template reports bad cases in its terminal state through the M9 #266/#341 outbox; when enabled but the configuration is incomplete or the ciphertext cannot be decrypted, the launch returns 422 before creating a run.
+
 ## 6. Core Data Model
 
 Table 2 lists the core tables; every business table carries a tenant ID, and the evaluation case table is the hub for session drill-down.
@@ -219,7 +223,7 @@ Table 2 Core data model
 | agent_asset_source | Git asset sources | Repository, source connection, default ref, scan paths, selection mode, asset types |
 | agent_asset_snapshot / agent_asset | Immutable asset snapshots and assets | Resolved commit, tree digest, OSS address, content hash |
 | resource_pool / runner | Resource pool registry | Connection ID, provisioning mode, labels, status, last heartbeat |
-| eval_template | Evaluation templates (reusable launch presets) | Fixed fields and references, execution policy, enabled state, version, last launch time, creator |
+| eval_template | Evaluation templates (reusable launch presets) | Fixed fields and references, execution policy, self-evolution reporting config and encrypted token, enabled state, version, last launch time, creator |
 | eval_run / eval_case_run | Evaluations and case executions | State machine, metric snapshots, asset snapshot, template ID and launch snapshot, session ID, timeout |
 | session / span | Normalized traces | Parent session, span kind, attribute JSONB, tokens and cost |
 

@@ -22,6 +22,8 @@ import {
   costEstimateLabel,
   recentRunLabel,
   retryLabel,
+  selfEvolutionLabel,
+  selfEvolutionTokenLabel,
 } from "../components/TemplateBits";
 import { TemplateLaunchModal } from "../components/TemplateLaunchModal";
 import { dateTimeLabel, durationLabel, rateLabel } from "../utils/evaluationDisplay";
@@ -233,6 +235,15 @@ export function EvalTemplateDetailPage() {
                     {template.resource_pool_max_capacity != null
                       ? `最大容量 ${template.resource_pool_max_capacity}`
                       : "容量以当前在线 Runner 为准"}
+                  </div>
+                </Descriptions.Item>
+                <Descriptions.Item label="自进化上报">
+                  {selfEvolutionLabel(template)}
+                  <div className="small muted">
+                    {selfEvolutionTokenLabel(template)} ·{" "}
+                    {template.self_evolution.enabled
+                      ? "未通过用例在终态上报；令牌加密保存，不回显"
+                      : "未启用：评测行为与现状一致"}
                   </div>
                 </Descriptions.Item>
               </Descriptions>

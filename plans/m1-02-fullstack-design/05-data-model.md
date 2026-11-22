@@ -158,6 +158,15 @@ INDEX(status, next_attempt_at)
 
 自进化上报 outbox（M9）：结果不可变后由 Worker 逐条冻结，run 终态批量入队兜底；每行 `payload_json` 是最终上报报文，Worker 按 `next_attempt_at` 阶梯重试；`(tenant_id, bad_case_id)` 唯一键吸收重复入队，删除 eval_run 级联删除。
 
+### 6.6 `eval_template` 的自进化上报字段
+
+```text
+self_evolution_enabled, self_evolution_base_url,
+self_evolution_workspace_id, self_evolution_token_encrypted
+```
+
+评测模板（M8 #382）的四个上报列：`self_evolution_enabled` 布尔非空、默认 false，`self_evolution_base_url` varchar 512、可空，`self_evolution_workspace_id` varchar 64、可空，`self_evolution_token_encrypted` 为 Fernet 密文、可空。启用时地址与工作区必填，创建或库中无密文时必须提供令牌；停用清空四列。密文只在启动时解密，任何 API 响应、日志与快照都不出现明文或掩码，既有模板默认停用且其余三列为空。
+
 ## 7. 结果、轨迹与交付
 
 | 表 | 关键字段 | 说明 |

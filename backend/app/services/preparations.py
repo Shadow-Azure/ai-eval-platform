@@ -542,14 +542,20 @@ def _self_evolution_view(config: dict | None) -> dict:
     }
 
 
-def _normalise_self_evolution(config: dict | None) -> tuple[dict, str | None]:
-    """Validate the launch-time self-evolution config.
+def normalise_self_evolution(
+    config: dict | None, *, require_token: bool = True
+) -> tuple[dict, str | None]:
+    """Validate a self-evolution reporting target.
 
     Returns ``(view, token)`` where ``view`` holds only the non-secret target
     fields (the snapshot form) and ``token`` is the plaintext workspace token
     the caller immediately encrypts. The server re-validates the request-model
     rules so a direct service caller cannot smuggle a half-configured target
     into a frozen preparation.
+
+    ``require_token=True`` is the launch-time contract. Template updates call
+    with ``require_token=False``: an enabled target still needs a base URL and
+    workspace, but an omitted token keeps the stored ciphertext.
     """
 
     config = dict(config or {})
@@ -581,7 +587,11 @@ def _normalise_self_evolution(config: dict | None) -> tuple[dict, str | None]:
             field="self_evolution",
         )
     if not token:
-        raise PreparationInvalid("自进化上报启用时必须提供上报令牌", field="self_evolution")
+        if require_token:
+            raise PreparationInvalid(
+                "自进化上报启用时必须提供上报令牌", field="self_evolution"
+            )
+        return {"enabled": True, "base_url": base_url, "workspace_id": workspace_id}, None
     if len(token) > 256 or not SELF_EVOLUTION_TOKEN_PATTERN.match(token):
         raise PreparationInvalid(
             "自进化上报令牌必须以 whk_ 开头且仅含字母数字、下划线或连字符",
@@ -590,7 +600,7 @@ def _normalise_self_evolution(config: dict | None) -> tuple[dict, str | None]:
     return {"enabled": True, "base_url": base_url, "workspace_id": workspace_id}, token
 
 
-def _encrypt_self_evolution_token(token: str | None) -> str | None:
+def encrypt_self_evolution_token(token: str | None) -> str | None:
     if not token:
         return None
     try:
@@ -598,6 +608,18 @@ def _encrypt_self_evolution_token(token: str | None) -> str | None:
     except SecretBoxError as exc:
         raise PreparationInvalid(f"自进化上报令牌加密失败：{exc}", field="self_evolution") from exc
     return ciphertext
+
+
+def decrypt_self_evolution_token(ciphertext: str | None) -> str | None:
+    """Decrypt a stored workspace token; ``None`` when nothing is stored."""
+
+    if not ciphertext:
+        return None
+    box = get_secret_box()
+    try:
+        return box.decrypt(ciphertext, box.version)
+    except SecretBoxError as exc:
+        raise PreparationInvalid(f"自进化上报令牌解密失败：{exc}", field="self_evolution") from exc
 
 
 def build_preparation(
@@ -631,8 +653,8 @@ def build_preparation(
     # configuration. Only the non-secret fields enter the snapshot; the
     # workspace token is encrypted onto the preparation row and never appears
     # in ``snapshot_json`` (which the wizard echoes back).
-    self_evolution_view, self_evolution_token = _normalise_self_evolution(self_evolution)
-    self_evolution_token_encrypted = _encrypt_self_evolution_token(self_evolution_token)
+    self_evolution_view, self_evolution_token = normalise_self_evolution(self_evolution)
+    self_evolution_token_encrypted = encrypt_self_evolution_token(self_evolution_token)
     # M8-07: empty/whitespace-only instructions keep today's prompt behaviour.
     suffix = (prompt_suffix or "").strip()
     # M8-31: an omitted cap keeps the platform default of 200 turns.

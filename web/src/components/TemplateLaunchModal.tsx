@@ -11,6 +11,8 @@ import {
   costEstimateLabel,
   executionSummary,
   retryLabel,
+  selfEvolutionLabel,
+  selfEvolutionTokenLabel,
 } from "./TemplateBits";
 
 interface TemplateLaunchModalProps {
@@ -82,7 +84,7 @@ export function TemplateLaunchModal({ template, open, onClose }: TemplateLaunchM
       <p className="small muted" style={{ marginTop: 0 }}>
         配置已固化，启动时不再询问；只确认本次费用与容量。
       </p>
-      <Descriptions size="small" column={1} bordered>
+      <Descriptions size="small" column={1} bordered labelStyle={{ width: 96 }}>
         <Descriptions.Item label="数据集">
           {template.dataset_name ?? "—"}
           <span className="small muted">
@@ -111,6 +113,15 @@ export function TemplateLaunchModal({ template, open, onClose }: TemplateLaunchM
             {template.resource_pool_max_capacity != null
               ? `最大容量 ${template.resource_pool_max_capacity}`
               : "容量以当前在线 Runner 为准"}
+          </div>
+        </Descriptions.Item>
+        <Descriptions.Item label="自进化上报">
+          {selfEvolutionLabel(template)}
+          <div className="small muted">
+            {selfEvolutionTokenLabel(template)} ·{" "}
+            {template.self_evolution.enabled
+              ? "启动沿用模板保存的上报目标，不在启动请求里覆盖"
+              : "未启用：本次启动不上报 bad case"}
           </div>
         </Descriptions.Item>
         <Descriptions.Item label="用例与策略">

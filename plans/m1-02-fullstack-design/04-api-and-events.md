@@ -209,3 +209,35 @@ M9（issue #263/#288）：评测 run 运行中，Worker 每轮在 trace 解析�
 `runtime_key=claude-code` 且平台配置了签名密钥与公网基地址时，报文附带 `sessionSource`：`runtime="claude-code"`，`sessionUrlTemplate` 指向本平台的会话包端点并自带 7 天有效的 HMAC-SHA256 短时签名（对 `GET\n/api/v1/self-evolution/sessions/\n{run_id}\n{exp}` 即路径前缀 + 所属评测 run id + 过期时间计算，不绑定具体会话 id——拉取方 BFS 会把根与每个子会话 id 逐一代入 `{sessionId}` 占位符，同一签名对同一次评测 run 内全部命中；签名把授权范围收敛到单次评测，一条泄漏 URL 不能跨 run 拉取其他会话；占位符恰好出现一次）。没有解析出主会话轨迹的用例回退 `sessionId=attempt id` 且不携带 `sessionSource`。
 
 会话包端点 `GET /api/v1/self-evolution/sessions/{session_id}?run=&exp=&sig=` 无需 Bearer，签名即授权：签名对请求携带的 `run` 值验证，通过后端点沿 `trace_session → eval_case_attempt → eval_case_run` 校验会话确实属于该评测 run，不一致或 `run` 缺失/格式非法统一 401（稳定 code `self_evolution_signature_invalid` / `self_evolution_signature_expired`，不暴露会话存在性）；会话不存在或运行时非 claude-code 返回 404（存在性校验在签名验证之后）。节点寻址以平台 `TraceSession.id` 为准：根入口继续用冻结的原生根 native id，并在 run 作用域内选择 `parent_session_id IS NULL`、`status != 'unlinked'`、ordinal 最小的根行，找不到即 404，绝不把共享 native id 的子行或 `unlinked` 行当 `main`；`childSessionIds` 与更深层 `parentSessionId` 均返回 `TraceSession.id`，子节点直接挂在根下时 `parentSessionId` 仍为 native 根 id，`agentId` 只进入 `agentMeta` 展示。响应 envelope 为 `schemaVersion=1`、`sessionId` 回显、`runtime`、`runtimeVersion`（取 parser 版本）、`agentKind=main|subagent`、`parentSessionId`、一层 `childSessionIds`、`agentMeta`（仅携带 harness-evolution 封闭词表内的键，如 Claude 的 `name`）、`trajectory={format:"ndjson", lineCount, content}` 与 `updatedAt`。轨迹原文从对象存储读取，超过 64MiB 总量、1MiB 单行或 100 万行返回 413 稳定 code，绝不静默截断。
+
+### 8.1 模板级上报配置
+
+评测模板（M8 #382）把上报目标保存为模板字段 `self_evolution_enabled`（默认 false）、`self_evolution_base_url`、`self_evolution_workspace_id` 与 `self_evolution_token_encrypted`（Fernet 密文）。创建与更新（`POST /api/v1/eval-templates`、`PATCH /api/v1/eval-templates/{template_id}`）接受：
+
+```json
+{
+  "self_evolution": {
+    "enabled": true,
+    "base_url": "https://harness-evolution.example.com",
+    "workspace_id": "ws-prod-01",
+    "token": "whk_..."
+  }
+}
+```
+
+启用时 `base_url` 与 `workspace_id` 必填且沿用 Prepare 的格式约束；创建时或库中无密文时必须提供 `token`（`^whk_`），更新省略 `token` 保留既有密文，显式停用清空四个字段。令牌加密落库，不进入日志与快照。
+
+模板视图（`GET /api/v1/eval-templates/{template_id}` 与列表项）返回 `self_evolution`，只含 `enabled`、`base_url`、`workspace_id` 与 `has_token`，任何响应不回显令牌：
+
+```json
+{
+  "self_evolution": {
+    "enabled": true,
+    "base_url": "https://harness-evolution.example.com",
+    "workspace_id": "ws-prod-01",
+    "has_token": true
+  }
+}
+```
+
+启动在创建运行前解密令牌，与其他上报字段一并进入既有 Prepare/Create 链路；run 终态按 #266/#341 outbox 上报，启动请求不接受覆盖。启用但字段不完整或密文无法解密时，启动在创建运行前返回 422；既有模板默认停用且无令牌。

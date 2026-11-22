@@ -84,6 +84,14 @@ export function TemplateApiModal({
 {"status":"completed","is_final":true,"items":[{"metric_key":"resolve_rate","value":0.412}]}`}</pre>
         </div>
       </div>
+      <div className="banner" style={{ marginBottom: 12 }}>
+        <div>
+          <strong>自进化上报随模板保存。</strong> 创建/更新模板时传{" "}
+          <code>self_evolution</code>（<code>base_url</code>、<code>workspace_id</code>、
+          <code>token</code>）；令牌加密存储、任何响应不回显，更新时省略令牌会保留已存值。
+          一键启动沿用模板配置，不在启动请求里覆盖。
+        </div>
+      </div>
       <div className="banner">
         <div>
           <strong>模板只固化选择，不固化执行结果。</strong>{" "}

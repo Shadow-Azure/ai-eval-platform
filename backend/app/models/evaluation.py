@@ -458,6 +458,16 @@ class EvalTemplate(Base, TimestampMixin):
     enabled: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default="true"
     )
+    # M8 (#382): optional self-evolution reporting target, the template-level
+    # twin of the run columns. ``enabled`` gates the launch-time hand-off and
+    # the token is Fernet ciphertext that a launch decrypts only to freeze the
+    # resulting run, so the API and template snapshot never echo plaintext.
+    self_evolution_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    self_evolution_base_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    self_evolution_workspace_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    self_evolution_token_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Bumped on every owned-field edit so clients can spot a stale detail view.
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
     launch_count: Mapped[int] = mapped_column(

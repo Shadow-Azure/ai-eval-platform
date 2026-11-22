@@ -9,6 +9,23 @@ export interface EvalTemplateExecution {
   shard_size?: number | null;
 }
 
+/** M8 #382: template-level bad-case reporting target. The token is write-only,
+ * so a response can only state whether one is stored (`has_token`). */
+export interface EvalTemplateSelfEvolution {
+  enabled: boolean;
+  base_url: string | null;
+  workspace_id: string | null;
+  has_token: boolean;
+}
+
+/** Write-only payload for create/update; the token is encrypted at rest. */
+export interface EvalTemplateSelfEvolutionInput {
+  enabled: boolean;
+  base_url?: string;
+  workspace_id?: string;
+  token?: string;
+}
+
 export interface EvalTemplateRecentRun {
   id: string;
   name: string;
@@ -63,6 +80,7 @@ export interface EvalTemplate {
   prompt_suffix: string;
   max_turns: number | null;
   agent_timeout_seconds: number | null;
+  self_evolution: EvalTemplateSelfEvolution;
   estimated_cost: CostEstimate | null;
   status_url: string;
   result_url: string;
@@ -102,6 +120,7 @@ export interface CreateEvalTemplateRequest {
   prompt_suffix?: string;
   max_turns?: number;
   agent_timeout_seconds?: number;
+  self_evolution?: EvalTemplateSelfEvolutionInput;
   enabled?: boolean;
 }
 
@@ -119,6 +138,7 @@ export interface UpdateEvalTemplateRequest {
   prompt_suffix?: string;
   max_turns?: number | null;
   agent_timeout_seconds?: number | null;
+  self_evolution?: EvalTemplateSelfEvolutionInput;
   enabled?: boolean;
 }
 
@@ -242,6 +262,18 @@ function parseCostEstimate(value: unknown): CostEstimate | null {
   };
 }
 
+function parseSelfEvolution(value: unknown): EvalTemplateSelfEvolution {
+  if (!isRecord(value)) {
+    return { enabled: false, base_url: null, workspace_id: null, has_token: false };
+  }
+  return {
+    enabled: value.enabled === true,
+    base_url: optionalText(value.base_url),
+    workspace_id: optionalText(value.workspace_id),
+    has_token: value.has_token === true,
+  };
+}
+
 function parseRecentRun(value: unknown): EvalTemplateRecentRun {
   const record = isRecord(value) ? value : {};
   return {
@@ -303,6 +335,7 @@ export function parseEvalTemplate(payload: unknown): EvalTemplate {
     prompt_suffix: text(payload.prompt_suffix),
     max_turns: optionalCount(payload.max_turns),
     agent_timeout_seconds: optionalCount(payload.agent_timeout_seconds),
+    self_evolution: parseSelfEvolution(payload.self_evolution),
     estimated_cost: parseCostEstimate(payload.estimated_cost),
     status_url: text(payload.status_url),
     result_url: text(payload.result_url),
