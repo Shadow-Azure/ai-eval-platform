@@ -1,12 +1,12 @@
 # [m10] Evaluation templates: fixed defaults, one-click launch, and three execution APIs
 
-English | [中文](m10-eval-template-quick-launch.md)
+English | [中文](m8-eval-template-quick-launch.md)
 
 ```yaml flow
 kind: issue
-milestone: m10
+milestone: m8
 priority: P1
-status: ready
+status: done
 scope:
   - backend/app/**
   - backend/migrations/**
@@ -16,7 +16,7 @@ scope:
   - docs/**
   - plans/**
   - .agents/flow/**
-  - scripts/doc-budgets.manifest.json
+  - scripts/**
 adr: []
 github:
   number: 378

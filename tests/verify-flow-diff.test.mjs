@@ -121,3 +121,69 @@ test("rejects a PR change outside the referenced issue scope", async (context) =
     else process.env.PR_TITLE = previousTitle;
   }
 });
+
+test("allows closing an issue after renaming its file and moving milestone", async (context) => {
+  const root = mkdtempSync(path.join(tmpdir(), "ai-eval-flow-rename-"));
+  context.after(() => rmSync(root, { recursive: true, force: true }));
+  for (const [relative, contents] of Object.entries(baseFiles("ready")))
+    write(root, relative, contents);
+
+  const git = (args) =>
+    execFileSync(
+      "git",
+      ["-c", "user.name=test", "-c", "user.email=test@example.com", ...args],
+      { cwd: root, encoding: "utf8" },
+    );
+  git(["init", "-q"]);
+  git(["add", "."]);
+  git(["commit", "-qm", "initial"]);
+
+  const doneIssue = `# First issue
+
+\`\`\`yaml flow
+kind: issue
+milestone: m0
+priority: P0
+status: done
+scope:
+  - .agents/flow/**
+adr: []
+github:
+  number: 7
+  url: https://github.com/o/r/issues/7
+\`\`\`
+`;
+  git(["rm", "-q", ".agents/flow/issues/m0-01-first.md"]);
+  write(root, ".agents/flow/issues/m0-02-first.md", doneIssue);
+  write(
+    root,
+    ".agents/flow/milestones/m0-first.md",
+    `# M0
+
+\`\`\`yaml flow
+kind: milestone
+id: m0
+title: M0
+status: done
+github:
+  number: null
+  url: null
+\`\`\`
+`,
+  );
+  git(["add", "."]);
+  git(["commit", "-qm", "close renamed issue (#7)"]);
+
+  const previous = process.cwd();
+  const previousTitle = process.env.PR_TITLE;
+  process.chdir(root);
+  process.env.PR_TITLE = "close renamed issue (#7)";
+  try {
+    const result = await verifyFlowDiff("HEAD~1");
+    assert.equal(result.ok, true, result.errors.join("\n"));
+  } finally {
+    process.chdir(previous);
+    if (previousTitle === undefined) delete process.env.PR_TITLE;
+    else process.env.PR_TITLE = previousTitle;
+  }
+});

@@ -1,12 +1,12 @@
 # [m10] 评测模板：固化默认配置、一键启动与三个执行接口
 
-[English](m10-eval-template-quick-launch.en.md) | 中文
+[English](m8-eval-template-quick-launch.en.md) | 中文
 
 ```yaml flow
 kind: issue
-milestone: m10
+milestone: m8
 priority: P1
-status: ready
+status: done
 scope:
   - backend/app/**
   - backend/migrations/**
@@ -16,7 +16,7 @@ scope:
   - docs/**
   - plans/**
   - .agents/flow/**
-  - scripts/doc-budgets.manifest.json
+  - scripts/**
 adr: []
 github:
   number: 378

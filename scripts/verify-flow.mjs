@@ -40,17 +40,49 @@ function git(args) {
  * PR 内引用 issue 的有效状态：优先按 base 评估，避免引用已在 main 上 done
  * 的 issue。base 为 backlog 且 HEAD 已推进为 ready/in-progress/done 时视为
  * 本 PR 完成开工激活。base 无该文件（新 issue 首次提交）返回 undefined，
- * 调用方回落到 HEAD 状态。
+ * 调用方回落到 HEAD 状态。重命名/迁移 milestone 的 issue 在 base 里没有
+ * 新路径，再按 GitHub issue 编号回查旧文件，避免把“同一 issue 已 ready”
+ * 误判成“新 issue 直接 done”。
  */
 function baseIssueStatus(base, file) {
   try {
     const text = execFileSync("git", ["show", `${base}:${file}`], {
       encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
     });
     return parseFlowDocument(text, file).data.status;
   } catch {
     return undefined;
   }
+}
+
+/** 按 GitHub issue 编号在 base 树中回查状态（支持本 PR 内重命名 issue 文件）。 */
+function baseIssueStatusByNumber(base, number) {
+  let files;
+  try {
+    files = execFileSync(
+      "git",
+      ["ls-tree", "-r", "--name-only", base, ".agents/flow/issues"],
+      { encoding: "utf8" },
+    )
+      .split("\n")
+      .filter(Boolean);
+  } catch {
+    return undefined;
+  }
+  for (const file of files) {
+    try {
+      const text = execFileSync("git", ["show", `${base}:${file}`], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+      const data = parseFlowDocument(text, file).data;
+      if (data.github?.number === number) return data.status;
+    } catch {
+      // A malformed or unreadable base file cannot authorize the reference.
+    }
+  }
+  return undefined;
 }
 
 /** base 树是否已启用流程（无 roadmap 则本 PR 是流程自身的自举，跳过 diff 校验）。 */
@@ -104,7 +136,8 @@ export async function verifyFlowDiff(base) {
       errors.push(`引用的 issue #${n} 在 .agents/flow/issues/ 内不存在（先建 issue 或先跑 pnpm flow:sync 回填）`);
       continue;
     }
-    const baseStatus = baseIssueStatus(base, issue.file);
+    const baseStatus =
+      baseIssueStatus(base, issue.file) ?? baseIssueStatusByNumber(base, n);
     const headStatus = issue.data.status;
     const activated = baseStatus === "backlog" && ["ready", "in-progress", "done"].includes(headStatus);
     const status = baseStatus ?? headStatus;
