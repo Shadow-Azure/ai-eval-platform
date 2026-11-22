@@ -1,5 +1,5 @@
 # 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
 # git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
 #   pnpm run record:i18n -- .agents/flow/issues/m8-eval-failure-reason.md
-m8-eval-failure-reason.md: 92d3b8d787a7410f56baf9537ad96d2dfaf13d31
-m8-eval-failure-reason.en.md: c89e06fefb515cd26e5c0da641ee29b0cc3f62b5
+m8-eval-failure-reason.md: 8f06cf42c106876746264d904aa04be002351904
+m8-eval-failure-reason.en.md: 6fbe8c7eb6fdd869a57db9c31435d98a61e4f24c
