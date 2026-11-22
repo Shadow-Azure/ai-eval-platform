@@ -363,6 +363,37 @@ def test_not_scored_with_execution_is_reported_with_reason(session: Session) -> 
     assert "执行失败" in reports[0].payload_json["reason"]
 
 
+def test_not_scored_reason_uses_structured_failure_detail(session: Session) -> None:
+    run = _seed_enabled_run(session, case_keys=["case-quota"])
+    cases = _cases_by_key(session, run)
+    case = cases["case-quota"]
+    _finish_case(
+        session,
+        case,
+        execution_status="failed",
+        result_status="not_scored",
+        error_summary="agent_failed",
+    )
+    case.failure_detail_json = {
+        "code": "model_quota_exhausted",
+        "message": "MiniMax 429 rate_limit_error：已达到 Token Plan 用量上限 (2056)",
+        "phase": "executing",
+        "request_id": "req-2056",
+        "http_status": 429,
+        "retryable": False,
+    }
+    run.status = "running"
+    evaluation_service.refresh_run_progress(session, run, now=NOW)
+    session.commit()
+    reports = _reports_for(session, run)
+    assert len(reports) == 1
+    reason = reports[0].payload_json["reason"]
+    assert "模型配额耗尽" in reason
+    assert "Token Plan 用量上限 (2056)" in reason
+    assert "request_id: req-2056" in reason
+    assert "agent_failed" not in reason
+
+
 def test_reason_renders_markdown_summary_problem_and_test_groups(session: Session) -> None:
     run = _seed_enabled_run(session, case_keys=["astropy__astropy-13398"])
     case = _cases_by_key(session, run)["astropy__astropy-13398"]

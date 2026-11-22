@@ -68,6 +68,7 @@ import { StatusCard } from "../components/StatusCard";
 import { TokenComposition } from "../components/TokenComposition";
 import { copyText } from "../utils/clipboard";
 import { EVAL_STATUS_META } from "../utils/evalStatus";
+import { FAILURE_LABELS, failureLabel, failureView } from "../utils/failure";
 import { formatMoney, formatUsd } from "../utils/money";
 import { formatTokenAmount, formatTokenOrZero, readTokenNumber } from "../utils/tokens";
 
@@ -661,8 +662,12 @@ export function EvalDetailPage() {
         "成本USD",
         "错误码",
         "错误摘要",
+        "失败类别",
+        "上游原文",
+        "request_id",
       ];
       const rows = all.map((row) => {
+        const failure = failureView(row.failure, row.error_code, row.error_summary);
         const input = readTokenNumber(row.metrics.input_tokens);
         const output = readTokenNumber(row.metrics.output_tokens);
         const cacheRead = readTokenNumber(row.metrics.cache_read_tokens);
@@ -685,6 +690,9 @@ export function EvalDetailPage() {
           caseCostUsd(row),
           row.error_code,
           row.error_summary,
+          failure?.label ?? "",
+          failure?.message ?? "",
+          failure?.requestId ?? "",
         ];
       });
       const csv =
@@ -1391,16 +1399,36 @@ function caseColumns(
     title: "用例",
     dataIndex: "case_key",
     key: "case_key",
-    render: (_value, record) => (
-      <div>
-        <div className="table-primary mono">{record.case_key}</div>
-        <div className="table-secondary">
-          #{record.ordinal}
-          {record.repo ? ` · ${record.repo}` : ""} · attempt {record.latest_attempt_no}
-          {record.error_code ? ` · ${record.error_code}` : ""}
+    width: 200,
+    render: (_value, record) => {
+      const failure = failureView(record.failure, record.error_code, record.error_summary);
+      return (
+        <div>
+          <div className="table-primary mono">{record.case_key}</div>
+          <div className="table-secondary">
+            #{record.ordinal}
+            {record.repo ? ` · ${record.repo}` : ""} · attempt {record.latest_attempt_no}
+          </div>
+          {failure ? (
+            <div className="eval-case-failure">
+              <Tag color={failure.tone === "warning" ? "warning" : "error"}>
+                {failure.label}
+              </Tag>
+              {failure.message ? (
+                <span className="eval-case-failure-message" title={failure.message}>
+                  {failure.message}
+                </span>
+              ) : null}
+              {failure.requestId ? (
+                <span className="eval-case-failure-request mono" title={failure.requestId}>
+                  request_id {failure.requestId}
+                </span>
+              ) : null}
+            </div>
+          ) : null}
         </div>
-      </div>
-    ),
+      );
+    },
   },
   {
     title: "主 Agent session id",
@@ -1611,6 +1639,10 @@ function OverviewPanel(props: OverviewPanelProps) {
     (item) => item.execution_status === "running",
   );
   const keyCases = [...runningCases, ...failedCases].slice(0, 6);
+  const failureEntries = Object.entries(detail.failure_counts ?? {})
+    .filter(([, count]) => count > 0)
+    .sort((a, b) => b[1] - a[1]);
+  const failureMax = failureEntries.reduce((max, [, count]) => Math.max(max, count), 1);
   const recentEvents = events.slice(-6).reverse();
   const datasetLabel = config?.dataset
     ? `${config.dataset.dataset_name ?? config.dataset.dataset_slug} · ${config.dataset.version}`
@@ -1739,6 +1771,43 @@ function OverviewPanel(props: OverviewPanelProps) {
         </div>
       </Card>
 
+      {failureEntries.length ? (
+        <Card
+          title="失败原因分布"
+          className="section-gap eval-panel-card eval-failure-distribution-card"
+          extra={
+            <Button size="small" type="link" onClick={() => onViewCases("failed")}>
+              查看失败用例 <Icon name="arrowRight" size={12} />
+            </Button>
+          }
+        >
+          <div className="eval-failure-distribution">
+            {failureEntries.map(([code, count]) => {
+              const retryable = ["model_rate_limited", "model_overloaded", "callback_retryable"].includes(code);
+              return (
+                <div className="eval-failure-dist-row" key={code}>
+                  <span className="eval-failure-dist-label">
+                    <Tag color={retryable ? "warning" : "error"}>
+                      {FAILURE_LABELS[code] ?? code}
+                    </Tag>
+                  </span>
+                  <span className="eval-failure-dist-bar" aria-hidden="true">
+                    <span
+                      className={retryable ? "warning" : "danger"}
+                      style={{ width: `${Math.max(6, (count / failureMax) * 100)}%` }}
+                    />
+                  </span>
+                  <strong className="mono">{count}</strong>
+                </div>
+              );
+            })}
+          </div>
+          <p className="muted small eval-failure-dist-foot">
+            按用例最终结构化失败分类统计；旧运行没有该字段时不显示。
+          </p>
+        </Card>
+      ) : null}
+
       {hasBudget ? (
         <Card title="模型预算" className="section-gap eval-panel-card">
           {pausingBudget ? (
@@ -1806,7 +1875,9 @@ function OverviewPanel(props: OverviewPanelProps) {
                       <span className="mono">{item.case_key}</span>
                       <span className="muted small">
                         {item.repo ?? `用例 #${item.ordinal}`}
-                        {item.error_code ? ` · ${item.error_code}` : ""}
+                        {failureLabel(item.failure?.code ?? item.error_code)
+                          ? ` · ${failureLabel(item.failure?.code ?? item.error_code)}`
+                          : ""}
                       </span>
                     </span>
                     {statusTag(item.execution_status, executionStatusMeta)}
@@ -3196,14 +3267,62 @@ function CaseDrawer({
               )}
             </div>
 
-            {detail.case.error_summary ? (
-              <Alert
-                type="error"
-                showIcon
-                message={detail.case.error_code ?? "失败"}
-                description={detail.case.error_summary}
-              />
-            ) : null}
+            {(() => {
+              const failure = failureView(
+                detail.case.failure,
+                detail.case.error_code,
+                detail.case.error_summary,
+              );
+              if (!failure) return null;
+              return (
+                <Alert
+                  type={failure.tone}
+                  showIcon
+                  message={
+                    <Space wrap size={[8, 4]}>
+                      <span>{failure.label}</span>
+                      {failure.httpStatus ? <Tag>HTTP {failure.httpStatus}</Tag> : null}
+                      {failure.retryable === true ? (
+                        <Tag color="warning">可重试</Tag>
+                      ) : failure.retryable === false ? (
+                        <Tag>永久失败</Tag>
+                      ) : null}
+                    </Space>
+                  }
+                  description={
+                    <div className="case-failure-detail">
+                      {failure.message ? (
+                        <div className="case-failure-message">{failure.message}</div>
+                      ) : (
+                        <div className="muted small">平台未收到上游原文；请打开轨迹查看详情。</div>
+                      )}
+                      <Space wrap size="middle">
+                        {failure.requestId ? (
+                          <Typography.Text className="mono small" copyable>
+                            request_id {failure.requestId}
+                          </Typography.Text>
+                        ) : null}
+                        <Button
+                          size="small"
+                          type="link"
+                          onClick={() =>
+                            navigate(
+                              `/evals/${encodeURIComponent(detail.run.id)}/cases/${encodeURIComponent(
+                                detail.case.id,
+                              )}/trace?attempt=${
+                                selectedAttempt ?? detail.case.latest_attempt_no
+                              }`,
+                            )
+                          }
+                        >
+                          查看轨迹
+                        </Button>
+                      </Space>
+                    </div>
+                  }
+                />
+              );
+            })()}
 
             <div className="case-drawer-section">
               <div className="case-drawer-title">Attempt 历史</div>

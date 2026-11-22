@@ -210,6 +210,10 @@ class EvalCaseRun(Base, TimestampMixin):
     task_json: Mapped[dict] = mapped_column(json_type(), default=dict, nullable=False)
     error_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
     error_summary: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    # M8 (#375): structured failure classification for the console, metrics and
+    # bad-case report. Nullable so rows created before the upgrade keep their
+    # legacy error_code/error_summary display.
+    failure_detail_json: Mapped[dict | None] = mapped_column(json_type(), nullable=True)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
     __table_args__ = (
@@ -269,6 +273,7 @@ class EvalCaseAttempt(Base, TimestampMixin):
     )
     error_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
     error_summary: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    failure_detail_json: Mapped[dict | None] = mapped_column(json_type(), nullable=True)
     retry_reason: Mapped[str | None] = mapped_column(String(128), nullable=True)
     # M4-02: when the attempt entered its current phase. The lifecycle reaper
     # measures scoring/upload/queue budgets from here because ``updated_at``

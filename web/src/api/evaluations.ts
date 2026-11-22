@@ -105,6 +105,28 @@ export interface CaseTestSummary {
   p2p_failed: number;
 }
 
+export interface EvalFailure {
+  code: string;
+  message: string | null;
+  phase: string | null;
+  request_id: string | null;
+  http_status: number | null;
+  retryable: boolean | null;
+}
+
+/** M8 (#375): structured terminal failure persisted by the control plane. */
+export function parseFailure(value: unknown): EvalFailure | null {
+  if (!isRecord(value) || typeof value.code !== "string" || !value.code) return null;
+  return {
+    code: value.code,
+    message: readOptionalString(value.message),
+    phase: readOptionalString(value.phase),
+    request_id: readOptionalString(value.request_id),
+    http_status: typeof value.http_status === "number" ? value.http_status : null,
+    retryable: typeof value.retryable === "boolean" ? value.retryable : null,
+  };
+}
+
 export interface EvaluationCase {
   id: string;
   case_key: string;
@@ -117,6 +139,7 @@ export interface EvaluationCase {
   duration_ms: number | null;
   error_code: string | null;
   error_summary: string | null;
+  failure?: EvalFailure | null;
   metrics?: Record<string, unknown>;
   test_summary?: CaseTestSummary;
   updated_at: string | null;
@@ -176,6 +199,7 @@ export interface EvaluationDetail extends EvaluationSummary {
   consistency?: Record<string, unknown>;
   case_counts?: Record<string, number>;
   trace_counts?: Record<string, number>;
+  failure_counts?: Record<string, number>;
   retryable_count?: number;
   /** All-attempt trace token aggregate; absent until the API ships it. */
   token_summary?: EvalTokenSummary | null;
@@ -780,6 +804,7 @@ export function parseEvaluationDetail(payload: unknown): EvaluationDetail {
     consistency: isRecord(record.consistency) ? record.consistency : undefined,
     case_counts: readNumberMap(record.case_counts),
     trace_counts: readNumberMap(record.trace_counts),
+    failure_counts: readNumberMap(record.failure_counts),
     progress: readProgress(record.progress),
     retryable_count:
       typeof record.retryable_count === "number" ? record.retryable_count : undefined,
@@ -798,6 +823,7 @@ export function parseEvaluationDetail(payload: unknown): EvaluationDetail {
         duration_ms: typeof item.duration_ms === "number" ? item.duration_ms : null,
         error_code: readOptionalString(item.error_code),
         error_summary: readOptionalString(item.error_summary),
+        failure: parseFailure(item.failure),
         updated_at: readOptionalString(item.updated_at),
       };
     }),

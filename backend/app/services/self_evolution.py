@@ -60,6 +60,25 @@ EXECUTION_LABELS = {
     "agent_failed": "Agent 执行失败",
     "scoring_failed": "评分阶段失败",
 }
+# M8 (#375): the structured failure code is the remote platform's only clue to
+# whether a run failed on provider quota, auth, timeout or Agent crash.
+FAILURE_LABELS = {
+    "model_rate_limited": "模型供应商限流",
+    "model_quota_exhausted": "模型配额耗尽",
+    "model_authentication_failed": "模型鉴权失败",
+    "model_unavailable": "模型供应商不可用",
+    "model_overloaded": "模型供应商过载",
+    "agent_timeout": "Agent 执行超时",
+    "agent_crashed": "Agent 崩溃",
+    "asset_source_install_failed": "资产安装失败",
+    "asset_source_init_failed": "资产初始化失败",
+    "asset_source_inject_failed": "资产注入失败",
+    "asset_source_setup_failed": "资产构建失败",
+    "source_archive_invalid": "源码包无效",
+    "manifest_invalid": "任务清单无效",
+    "scoring_failed": "评分阶段失败",
+    "empty_patch": "未生成有效补丁",
+}
 
 # Short-lived session-envelope grant embedded in sessionUrlTemplate. The HMAC
 # binds the endpoint path PREFIX (not the concrete session id) plus the
@@ -300,6 +319,26 @@ def _execution_label(error_summary: str) -> str:
     return EXECUTION_LABELS.get(error_summary, error_summary)
 
 
+def _failure_text(failure: dict | None, error_summary: str | None) -> str:
+    """Human-readable cause shared by the console and the HE reason."""
+
+    if isinstance(failure, dict) and isinstance(failure.get("code"), str):
+        code = failure["code"]
+        label = FAILURE_LABELS.get(code, code)
+        message = failure.get("message")
+        text = label
+        if isinstance(message, str) and message.strip() and message.strip() != code:
+            if label not in message:
+                text = f"{label}：{message.strip()}"
+            else:
+                text = message.strip()
+        request_id = failure.get("request_id")
+        if isinstance(request_id, str) and request_id.strip():
+            text += f"（request_id: {request_id.strip()}）"
+        return text
+    return _execution_label(error_summary) if error_summary else ""
+
+
 def _build_reason(
     *,
     case_key: str,
@@ -307,6 +346,7 @@ def _build_reason(
     base_commit: str | None,
     result_status: str,
     error_summary: str | None,
+    failure: dict | None,
     problem: str,
     fail_to_pass: list[tuple[str, str]],
     pass_to_pass: list[tuple[str, str]],
@@ -327,10 +367,11 @@ def _build_reason(
         subject += f"（@ {base_commit[:8]}）"
 
     sections: list[str] = []
+    cause = _failure_text(failure, error_summary)
     if result_status == "not_scored":
         conclusion = f"**结论**：{subject}执行失败（未进入评分）"
-        if error_summary:
-            conclusion += f"——{_execution_label(error_summary)}"
+        if cause:
+            conclusion += f"——{cause}"
         sections.append(conclusion + "。")
     else:
         parts: list[str] = []
@@ -350,8 +391,8 @@ def _build_reason(
         conclusion = f"**结论**：{subject}未解决"
         if parts:
             conclusion += "——" + "，".join(parts)
-        if error_summary:
-            conclusion += f"；执行信息：{_execution_label(error_summary)}"
+        if cause:
+            conclusion += f"；执行信息：{cause}"
         elif not parts:
             conclusion += "——未报告失败测试"
         elif fail_to_pass_count or pass_to_pass_count:
@@ -436,6 +477,7 @@ def build_bad_case_payload(
         base_commit=task.get("base_commit"),
         result_status=case.result_status,
         error_summary=case.error_summary,
+        failure=case.failure_detail_json,
         problem=_problem_excerpt(task.get("problem_statement")),
         fail_to_pass=fail_to_pass,
         pass_to_pass=pass_to_pass,

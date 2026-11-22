@@ -17,6 +17,7 @@ export function runAgentExec(args, { agentName, timeout = 1_200_000 } = {}) {
     let stderr = "";
     let settled = false;
     let cancelled = false;
+    let timedOut = false;
     let timer = null;
     const settle = (value) => {
       if (settled) return;
@@ -42,7 +43,7 @@ export function runAgentExec(args, { agentName, timeout = 1_200_000 } = {}) {
       } catch {
         // The container may already have exited.
       }
-      settle({ cancelled: true, signal, status: null, stdout, stderr });
+      settle({ cancelled: true, signal, status: null, timedOut: false, stdout, stderr });
     };
     process.on("SIGTERM", onSignal);
     process.on("SIGINT", onSignal);
@@ -66,10 +67,11 @@ export function runAgentExec(args, { agentName, timeout = 1_200_000 } = {}) {
     });
     child.once("close", (status) => {
       if (settled) return;
-      settle({ status, stdout, stderr });
+      settle({ status, stdout, stderr, timedOut });
     });
     if (timeout > 0) {
       timer = setTimeout(() => {
+        timedOut = true;
         try {
           child.kill("SIGTERM");
         } catch {

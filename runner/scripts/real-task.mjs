@@ -17,6 +17,10 @@ import { runAgentExec } from "../lib/agent-exec.mjs";
 import { postCallback } from "../lib/callback-client.mjs";
 import { buildCancellationFailure } from "../lib/cancellation.mjs";
 import { buildSigtermDiagnostics } from "../lib/diagnostics.mjs";
+import {
+  buildFailureDetail,
+  classifyAgentFailure,
+} from "../lib/failure-classify.mjs";
 import { requireValid, validateDispatch, validateManifest, validateStarted } from "../lib/contracts.mjs";
 import { DispatchGuard } from "../lib/dispatch-guard.mjs";
 import {
@@ -556,12 +560,14 @@ async function realCase(
         `${JSON.stringify({ type: "trace.failed", code, phase, message, ...extra })}\n`,
       );
       console.error(JSON.stringify({ status: "case_failed", error_code: code, phase }));
+      const failure = buildFailureDetail({ code, message, phase, retryable: false });
       return {
         score: {
           [task.case_key]: {
             resolved: false,
             error: code,
             message,
+            failure,
             tests_status: {
               FAIL_TO_PASS: { success: [], failure: [] },
               PASS_TO_PASS: { success: [], failure: [] },
@@ -569,6 +575,7 @@ async function realCase(
           },
         },
         traceBundle: collectCapture(),
+        failure,
         executionStatus: "failed",
         resultStatus: "not_scored",
         durationMs: Date.now() - startedAt,
@@ -1000,15 +1007,27 @@ async function realCase(
       const claudeStderr = existsSync(claudeStderrPath) ? readFileSync(claudeStderrPath, "utf8") : "";
       const failureDetail = `agent exit ${agent.status}\n${claudeStderr.slice(-6000)}\n${(agent.stderr || "").slice(-4000)}\n${(agent.stdout || "").slice(-2000)}`;
       console.error(failureDetail);
+      const failure = classifyAgentFailure({
+        traceText: traceBytes.toString("utf8"),
+        stderr: `${claudeStderr}\n${agent.stderr || ""}`,
+        stdout: agent.stdout || "",
+        exitStatus: agent.status,
+        timedOut: Boolean(agent.timedOut) || agent.status === null,
+        phase: "executing",
+      });
+      console.error(JSON.stringify({ status: "case_failed", ...failure }));
       return {
         score: {
           [task.case_key]: {
             resolved: false,
-            error: "agent_failed",
+            error: failure.code,
+            message: failure.message,
+            failure,
             tests_status: { FAIL_TO_PASS: { success: [], failure: [] }, PASS_TO_PASS: { success: [], failure: [] } },
           },
         },
         traceBundle: collectCapture(failureDetail),
+        failure,
         executionStatus: "failed",
         resultStatus: "not_scored",
         durationMs: Date.now() - startedAt,
@@ -1053,16 +1072,23 @@ async function realCase(
         "scoring-failure.json",
         `${JSON.stringify({ error: message })}\n`,
       );
+      const failure = buildFailureDetail({
+        code: "scoring_failed",
+        message: `评分阶段失败：${message}`,
+        phase: "scoring",
+      });
       return {
         score: {
           [task.case_key]: {
             resolved: false,
             error: "scoring_failed",
             message,
+            failure,
             tests_status: { FAIL_TO_PASS: { success: [], failure: [] }, PASS_TO_PASS: { success: [], failure: [] } },
           },
         },
         traceBundle: collectCapture(traceBytes.toString("utf8")),
+        failure,
         executionStatus: "failed",
         resultStatus: "not_scored",
         durationMs: Date.now() - startedAt,
@@ -1717,6 +1743,7 @@ async function main() {
           size: scoreReport.size,
         },
         ...(traceManifest.objects.length > 0 ? { trace_manifest: traceManifest } : {}),
+        ...(caseResult.failure ? { failure: caseResult.failure } : {}),
         summary: { duration_ms: caseResult.durationMs, input_tokens: 0, output_tokens: 0 },
       });
       const result = await postCallback(

@@ -48,6 +48,7 @@ from ..models import (
 )
 from ..runner_contracts import validate_payload
 from ..scoring.service import ingest_score_report, recompute_metrics
+from ..scoring.swebench import normalize_failure_detail
 from . import capacity, evaluations, lifecycle, queue_lease, spot_fallback
 from .evaluations import refresh_run_progress
 from .object_store import ObjectMissing, ObjectSizeMismatch, object_store_from_settings
@@ -696,8 +697,13 @@ def _ingest_report_and_metrics(
     attempt: EvalCaseAttempt,
     score_manifest: dict,
     settings: Settings | None,
+    failure_hint: dict | None = None,
 ) -> None:
     if settings is None:
+        if failure_hint is not None:
+            case_run.failure_detail_json = failure_hint
+            attempt.failure_detail_json = failure_hint
+            attempt.error_code = failure_hint["code"]
         return
     store = object_store_from_settings(settings)
     if store is None:
@@ -720,7 +726,15 @@ def _ingest_report_and_metrics(
     except Exception as exc:  # noqa: BLE001 - keep the completion auditable
         case_run.result_status = "not_scored"
         case_run.error_summary = f"评分报告解析失败：{type(exc).__name__}"[:1000]
+        if failure_hint is not None:
+            case_run.failure_detail_json = failure_hint
+            attempt.failure_detail_json = failure_hint
+            attempt.error_code = failure_hint["code"]
         return
+    if case_run.failure_detail_json is None and failure_hint is not None:
+        case_run.failure_detail_json = failure_hint
+        attempt.failure_detail_json = failure_hint
+        attempt.error_code = failure_hint["code"]
     if run.dataset_version_id:
         definitions = list(
             session.scalars(
@@ -748,6 +762,7 @@ def finalize_completion(
     score_manifest: dict,
     trace_manifest: dict | None,
     summary: dict,
+    failure: dict | None = None,
     now: datetime,
     settings: Settings | None = None,
     event_type: str = "case.completed",
@@ -771,6 +786,13 @@ def finalize_completion(
     attempt_status = COMPLETION_TO_ATTEMPT_STATUS[execution_status]
     lifecycle.mark_status(attempt, attempt_status, now)
     attempt.ended_at = now
+    failure_detail = normalize_failure_detail(failure)
+    if failure_detail is not None:
+        attempt.failure_detail_json = failure_detail
+        attempt.error_code = failure_detail["code"]
+        case_run.failure_detail_json = failure_detail
+        if failure_detail.get("message"):
+            case_run.error_summary = str(failure_detail["message"])[:1000]
     if attempt.started_at is not None:
         # M8-45 (#307): a completed (or runner-failed) attempt is shard
         # progress, so the still-waiting siblings get a fresh lease before this
@@ -839,6 +861,24 @@ def finalize_completion(
         sequence=sequence,
         payload=payload,
     )
+    # M8 (#375): an execution failure that the runner classifies as retryable
+    # (for example a transient model 429) consumes the existing attempt budget
+    # just like a runner ``failed`` callback. Queue it BEFORE the progress
+    # refresh so a one-case run is not marked terminal first; quota exhaustion
+    # and other permanent classes stay terminal.
+    retried = False
+    if (
+        execution_status != "succeeded"
+        and failure_detail is not None
+        and failure_detail.get("retryable") is True
+        and lifecycle.classify_failure(failure_detail["code"])
+        != lifecycle.SCORING_ONLY
+    ):
+        retried = lifecycle.queue_retry_attempt(
+            session,
+            ctx=CaseContext(session, case_run, run, attempt),
+            now=now,
+        )
     refresh_run_progress(session, run, now=now)
     _ingest_report_and_metrics(
         session,
@@ -847,7 +887,12 @@ def finalize_completion(
         attempt=attempt,
         score_manifest=score_manifest,
         settings=settings,
+        failure_hint=failure_detail,
     )
+    if retried:
+        # The report's own ``resolved=false`` must not turn the re-queued case
+        # into an unresolved (scored) row.
+        case_run.result_status = "not_scored"
     # M6-02: enqueue pending trace_file rows in the same completion
     # transaction. Parsing itself is asynchronous and must never delay or
     # fail the callback; a bad manifest only leaves the rows unqueued for the
@@ -903,6 +948,7 @@ def handle_completed(
             score_manifest=payload["score_manifest"],
             trace_manifest=trace_manifest,
             summary=payload["summary"],
+            failure=payload.get("failure"),
             now=now,
             settings=settings,
             event_type="case.completed",
@@ -1094,12 +1140,19 @@ def handle_failed(
     phase = payload.get("phase")
     if isinstance(phase, str) and phase:
         ctx.attempt.phase = phase[:64]
+    failure_detail = normalize_failure_detail(payload.get("failure"))
+    if failure_detail is not None:
+        ctx.attempt.failure_detail_json = failure_detail
+        ctx.case_run.failure_detail_json = failure_detail
+        if failure_detail.get("message"):
+            payload = {**payload, "error_summary": str(failure_detail["message"])[:1000]}
     retry_queued = lifecycle.settle_attempt_failure(
         session,
         ctx=ctx,
         error_code=payload["error_code"],
         error_summary=payload["error_summary"],
         retryable=retryable,
+        failure_detail=failure_detail,
         event_type="case.failed",
         sequence=payload["sequence"],
         event_payload={

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime, timedelta
+from hashlib import sha256
 
 from app.config import get_settings
 from app.models import EvalCaseAttempt, EvalCaseRun, EvalEvent, EvalRun, Outbox, Runner
@@ -870,3 +871,152 @@ def test_bootstrap_failure_before_started_retries_immediately(
     assert event.payload_json["error_code"] == "runner_bootstrap_failed"
     assert event.payload_json["phase"] == "bootstrap"
     assert event.payload_json["retryable"] is True
+
+
+# ---------------------------------------------------------------------------
+# M8 (#375): structured failure detail + retryable completed execution failure
+# ---------------------------------------------------------------------------
+
+
+def _completion_with_report(
+    env: dict,
+    case_run_id: str,
+    report_entry: dict,
+    *,
+    failure: dict | None = None,
+    execution_status: str = "failed",
+) -> dict:
+    """Register a real readable score report and return the completion body."""
+
+    case = env["session"].query(EvalCaseRun).filter(EvalCaseRun.id == case_run_id).one()
+    raw = json.dumps({case.case_key: report_entry}).encode()
+    digest = sha256(raw).hexdigest()
+    object_key = f"evaluations/{env['run_id']}/objects/{digest}"
+    env["store"].add_bytes(object_key, raw)
+    body = completion_body(
+        env,
+        case_run_id,
+        score={"object_key": object_key, "sha256": digest, "size": len(raw)},
+    )
+    body["execution_status"] = execution_status
+    body["result_status"] = "not_scored"
+    if failure is not None:
+        body["failure"] = failure
+    return body
+
+
+def test_quota_failure_detail_reaches_case_and_does_not_retry(
+    eval_env, client: TestClient
+) -> None:
+    env = eval_env
+    case_run_id = env["cases"]["case-a"]
+    failure = {
+        "code": "model_quota_exhausted",
+        "message": "MiniMax 429 rate_limit_error：已达到 Token Plan 用量上限 (2056)",
+        "phase": "executing",
+        "request_id": "req-2056",
+        "http_status": 429,
+        "retryable": False,
+    }
+    body = _completion_with_report(
+        env,
+        case_run_id,
+        {
+            "resolved": False,
+            "error": "model_quota_exhausted",
+            "message": failure["message"],
+            "failure": failure,
+            "tests_status": {
+                "FAIL_TO_PASS": {"success": [], "failure": []},
+                "PASS_TO_PASS": {"success": [], "failure": []},
+            },
+        },
+        failure=failure,
+    )
+    response = client.post(case_url(env, case_run_id, "completed"), json=body, headers=auth(env))
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "failed"
+
+    env["session"].expire_all()
+    attempt = attempt_rows(env, case_run_id)[0]
+    case = env["session"].query(EvalCaseRun).filter(EvalCaseRun.id == case_run_id).one()
+    assert attempt.failure_detail_json == failure
+    assert case.failure_detail_json == failure
+    assert case.error_summary == failure["message"]
+    assert case.execution_status == "failed"
+    # Permanent quota exhaustion must not consume another attempt.
+    assert len(attempt_rows(env, case_run_id)) == 1
+
+
+def test_retryable_completed_failure_queues_exactly_one_new_attempt(
+    eval_env, client: TestClient
+) -> None:
+    env = eval_env
+    case_run_id = env["cases"]["case-a"]
+    failure = {
+        "code": "model_rate_limited",
+        "message": "模型供应商 429 限流：请重试",
+        "phase": "executing",
+        "request_id": "req-429",
+        "http_status": 429,
+        "retryable": True,
+    }
+    body = _completion_with_report(
+        env,
+        case_run_id,
+        {
+            "resolved": False,
+            "error": "model_rate_limited",
+            "message": failure["message"],
+            "failure": failure,
+            "tests_status": {
+                "FAIL_TO_PASS": {"success": [], "failure": []},
+                "PASS_TO_PASS": {"success": [], "failure": []},
+            },
+        },
+        failure=failure,
+    )
+    response = client.post(case_url(env, case_run_id, "completed"), json=body, headers=auth(env))
+    assert response.status_code == 200, response.text
+
+    rows = attempt_rows(env, case_run_id)
+    assert [row.attempt_no for row in rows] == [1, 2]
+    assert rows[0].status == "failed"
+    assert rows[0].failure_detail_json == failure
+    assert rows[1].status == "pending"
+    case = env["session"].query(EvalCaseRun).filter(EvalCaseRun.id == case_run_id).one()
+    assert case.execution_status == "queued"
+    assert case.failure_detail_json == failure
+    events = (
+        env["session"]
+        .query(EvalEvent)
+        .filter(EvalEvent.eval_case_run_id == case_run_id)
+        .all()
+    )
+    assert any(event.event_type == "case.retry_queued" for event in events)
+
+
+def test_legacy_score_message_is_kept_in_error_summary(eval_env, client: TestClient) -> None:
+    env = eval_env
+    case_run_id = env["cases"]["case-a"]
+    body = _completion_with_report(
+        env,
+        case_run_id,
+        {
+            "resolved": False,
+            "error": "asset_source_install_failed",
+            "message": "npm error code EEXIST：/testbed/node_modules already exists",
+            "tests_status": {
+                "FAIL_TO_PASS": {"success": [], "failure": []},
+                "PASS_TO_PASS": {"success": [], "failure": []},
+            },
+        },
+    )
+    response = client.post(case_url(env, case_run_id, "completed"), json=body, headers=auth(env))
+    assert response.status_code == 200, response.text
+
+    env["session"].expire_all()
+    case = env["session"].query(EvalCaseRun).filter(EvalCaseRun.id == case_run_id).one()
+    assert "npm error code EEXIST" in (case.error_summary or "")
+    assert case.failure_detail_json["code"] == "asset_source_install_failed"
+    assert len(attempt_rows(env, case_run_id)) == 1

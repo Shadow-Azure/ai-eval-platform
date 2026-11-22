@@ -41,15 +41,39 @@ from ..services import budget as budget_service
 router = APIRouter(tags=["model-gateway"])
 
 
-def _error_response(status_code: int, code: str, message: str) -> JSONResponse:
-    return JSONResponse(
-        status_code=status_code,
-        content={"error": {"code": code, "message": message, "request_id": None}},
-    )
+def _error_response(
+    status_code: int,
+    code: str,
+    message: str,
+    *,
+    request_id: str | None = None,
+    upstream_message: str | None = None,
+    upstream_status: int | None = None,
+) -> JSONResponse:
+    error: dict[str, object] = {
+        "code": code,
+        "message": message,
+        "request_id": request_id,
+    }
+    if upstream_message:
+        # M8 (#375): the runner parses this from Claude Code's api_error event
+        # and stores it on the case; request ids stay out of the model token.
+        error["upstream_message"] = upstream_message
+    if upstream_status is not None:
+        error["upstream_status"] = upstream_status
+    headers = {"x-request-id": request_id} if request_id else None
+    return JSONResponse(status_code=status_code, content={"error": error}, headers=headers)
 
 
 def _gateway_response(error: service.GatewayError) -> JSONResponse:
-    return _error_response(error.status_code, error.code, error.message)
+    return _error_response(
+        error.status_code,
+        error.code,
+        error.message,
+        request_id=error.request_id,
+        upstream_message=error.upstream_message,
+        upstream_status=error.upstream_status,
+    )
 
 
 def get_session_factory():
@@ -214,9 +238,16 @@ async def _forward(
 
     request_id = service.provider_request_id(upstream)
     if upstream.status_code >= 400:
-        await upstream.aread()
+        body = await upstream.aread()
         _record(session, claims, config, status="failed", request_id=request_id)
-        return _gateway_response(service.normalize_upstream_error(upstream.status_code))
+        normalized = service.normalize_upstream_error(upstream.status_code)
+        upstream_message = service.upstream_error_message(body)
+        if upstream_message:
+            normalized.message = f"{normalized.message}：{upstream_message}"[:1000]
+            normalized.upstream_message = upstream_message
+            normalized.upstream_status = upstream.status_code
+        normalized.request_id = request_id
+        return _gateway_response(normalized)
 
     if not stream:
         content = await upstream.aread()
@@ -269,10 +300,13 @@ async def _forward(
             except Exception:
                 pass
 
+    response_headers = {"Cache-Control": "no-cache"}
+    if request_id:
+        response_headers["x-request-id"] = request_id
     return StreamingResponse(
         body(),
         media_type=media_type,
-        headers={"Cache-Control": "no-cache"},
+        headers=response_headers,
     )
 
 
