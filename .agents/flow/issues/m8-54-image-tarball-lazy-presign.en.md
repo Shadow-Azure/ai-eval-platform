@@ -12,6 +12,7 @@ scope:
   - .agents/notes/adr-0003-image-tarball-lazy-presign.*
   - docs/design/eval-platform-architecture.*
   - docs/architecture.*
+  - plans/2026-11-22-pr373-review.md
   - runner/scripts/real-task.mjs
   - runner/lib/task-payload.mjs
   - runner/lib/image-tarball.mjs
