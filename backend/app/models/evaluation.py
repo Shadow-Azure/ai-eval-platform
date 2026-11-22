@@ -148,6 +148,14 @@ class EvalRun(Base, TimestampMixin):
     self_evolution_base_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     self_evolution_workspace_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     self_evolution_token_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # M10 (#378): a run launched from a reusable template records the source
+    # template, the version frozen at launch, and the launch-time snapshot. A
+    # later template edit cannot retroactively change this run.
+    template_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    template_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    template_snapshot_json: Mapped[dict] = mapped_column(
+        json_type(), default=dict, nullable=False, server_default="{}"
+    )
     # M4-02 cancellation/reconciliation: the dispatched GitHub workflow run and
     # the client cancellation request are tracked on the run (A2 consumes both).
     github_run_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -404,4 +412,73 @@ class EvalPreparation(Base, TimestampMixin):
             "status",
         ),
         Index("ix_eval_preparation_expiry", "status", "expires_at"),
+    )
+
+
+class EvalTemplate(Base, TimestampMixin):
+    """M10 (#378): a reusable, project-level evaluation launch preset.
+
+    A template freezes *selections*, not results: the dataset version, Agent
+    runtime, asset source/ref/selection, model credential, resource pool, case
+    subset, execution policy, prompt suffix, max turns and Agent timeout are
+    stored as plain references. Every launch re-resolves the asset ref,
+    re-validates the referenced rows and freezes a fresh immutable
+    ``eval_run`` snapshot, so editing a template never changes a run that was
+    already started.
+    """
+
+    __tablename__ = "eval_template"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    tenant_id: Mapped[str] = tenant_fk()
+    project_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    dataset_version_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    runtime_key: Mapped[str] = mapped_column(
+        String(64), nullable=False, default="claude-code", server_default="claude-code"
+    )
+    runtime_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    asset_source_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    # A non-empty ref is required when a source is selected; empty means the
+    # source default. The concrete commit is resolved at launch, never stored.
+    asset_ref: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    asset_paths_json: Mapped[list] = mapped_column(json_type(), default=list, nullable=False)
+    asset_types_json: Mapped[dict] = mapped_column(json_type(), default=dict, nullable=False)
+    model_config_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    model_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    resource_pool_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    case_selection_json: Mapped[dict] = mapped_column(json_type(), default=dict, nullable=False)
+    execution_json: Mapped[dict] = mapped_column(json_type(), default=dict, nullable=False)
+    prompt_suffix: Mapped[str] = mapped_column(
+        Text, nullable=False, default="", server_default=""
+    )
+    max_turns: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    agent_timeout_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true"
+    )
+    # Bumped on every owned-field edit so clients can spot a stale detail view.
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    launch_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    last_launched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "id", name="uq_eval_template_tenant_id_id"),
+        ForeignKeyConstraint(
+            ["tenant_id", "project_id"],
+            ["project.tenant_id", "project.id"],
+            name="fk_eval_template_project_tenant",
+            ondelete="RESTRICT",
+        ),
+        Index(
+            "ix_eval_template_tenant_enabled_launched",
+            "tenant_id",
+            "enabled",
+            "last_launched_at",
+        ),
+        Index("ix_eval_template_tenant_created", "tenant_id", "created_at"),
     )

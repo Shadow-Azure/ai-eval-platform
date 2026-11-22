@@ -36,6 +36,7 @@ from .evaluation import (
     EvalEvent,
     EvalPreparation,
     EvalRun,
+    EvalTemplate,
 )
 from .identity import (
     AuditLog,
@@ -112,6 +113,7 @@ __all__ = [
     "EvalCaseAttempt",
     "EvalEvent",
     "EvalPreparation",
+    "EvalTemplate",
     "Dataset",
     "DatasetVersion",
     "DatasetCase",

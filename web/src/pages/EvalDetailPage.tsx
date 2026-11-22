@@ -940,6 +940,19 @@ export function EvalDetailPage() {
         }
       />
 
+      {data.template ? (
+        <div className="banner success template-source-banner">
+          <Icon name="boxes" size={15} />
+          <div>
+            <strong>由评测模板「{data.template.name}」启动。</strong>{" "}
+            固定配置与资产快照在启动时冻结（模板版本 v{data.template.version}）；需要调整请编辑模板或发起自定义评测。
+          </div>
+          <Button size="small" onClick={() => navigate(`/evals/templates/${data.template?.id}`)}>
+            查看模板
+          </Button>
+        </div>
+      ) : null}
+
       <div className="eval-status-strip">
         <span className="eval-status-item">
           <span className="eval-status-label">执行</span>

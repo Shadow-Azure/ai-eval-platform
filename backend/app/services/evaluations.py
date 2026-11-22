@@ -869,6 +869,10 @@ def evaluation_summary(
     return {
         "id": run.id,
         "name": run.name,
+        # M10 (#378): provenance for a template-launched run. Plain runs keep
+        # both fields null; the template may have been deleted afterwards.
+        "template_id": run.template_id,
+        "template_version": run.template_version,
         "status": run.status,
         "total_cases": run.total_cases,
         "queued_count": run.queued_count,
@@ -1044,8 +1048,17 @@ def evaluation_detail(
         )
         estimated_finish_at = now + timedelta(seconds=estimated_remaining_seconds)
 
+    # M10 (#378): the template banner on the run detail page. Imported lazily
+    # because the template service itself reuses these evaluation helpers.
+    source_template = None
+    if run.template_id:
+        from . import eval_templates as template_service
+
+        source_template = template_service.template_brief(session, run.template_id)
+
     return {
         **evaluation_summary(run, spent_cny=live_spent),
+        "template": source_template,
         "asset_snapshot": run.asset_snapshot_json or {},
         # M5-04: the frozen preparation snapshot (execution policy, case
         # subset summary, digest) is part of the run record for traceability.

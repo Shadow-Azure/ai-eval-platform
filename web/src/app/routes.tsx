@@ -8,6 +8,8 @@ import { DatasetImportPage } from "../pages/DatasetImportPage";
 import { DatasetImageSourcesPage } from "../pages/DatasetImageSourcesPage";
 import { DatasetsPage } from "../pages/DatasetsPage";
 import { EvalDetailPage } from "../pages/EvalDetailPage";
+import { EvalTemplateDetailPage } from "../pages/EvalTemplateDetailPage";
+import { EvalTemplatesPage } from "../pages/EvalTemplatesPage";
 import { EvalWizardPage } from "../pages/EvalWizardPage";
 import { EvalsPage } from "../pages/EvalsPage";
 import { LoginPage } from "../pages/LoginPage";
@@ -28,6 +30,8 @@ export function AppRoutes() {
           <Route path="/overview" element={<OverviewPage />} />
           <Route path="/evals" element={<EvalsPage />} />
           <Route path="/evals/new" element={<EvalWizardPage />} />
+          <Route path="/evals/templates" element={<EvalTemplatesPage />} />
+          <Route path="/evals/templates/:templateId" element={<EvalTemplateDetailPage />} />
           <Route path="/evals/:runId/cases/:caseRunId/trace" element={<TracePage />} />
           <Route path="/evals/:runId" element={<EvalDetailPage />} />
           <Route path="/datasets" element={<DatasetsPage />} />

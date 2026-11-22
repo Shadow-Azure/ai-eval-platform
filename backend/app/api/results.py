@@ -17,7 +17,8 @@ from ..models import (
 from ..scoring.service import case_test_summary
 from ..seed import ensure_default_scope
 from ..services import comparison, token_usage
-from ..services.evaluations import iso_utc
+from ..services import evaluations as evaluation_service
+from ..services.evaluations import TERMINAL_RUN_STATUSES, iso_utc
 
 router = APIRouter(tags=["results"])
 
@@ -190,7 +191,10 @@ def get_eval_results(
     )
     final_rows = [(result, definition) for result, definition in rows if result.is_final]
     selected = final_rows or rows
-    is_final = bool(final_rows)
+    # M10 (#378): the stable results contract marks a terminal run as final
+    # even when it produced no metric rows (for example a fully failed run),
+    # so a poller can stop based on ``is_final`` alone.
+    is_final = bool(final_rows) or run.status in TERMINAL_RUN_STATUSES
     items = []
     for result, definition in selected:
         value = result.value_json.get("value") if isinstance(result.value_json, dict) else None
@@ -227,10 +231,64 @@ def get_eval_results(
     )
     return {
         "run_id": run.id,
+        "template_id": run.template_id,
         "status": run.status,
         "is_final": is_final,
+        "status_url": f"/api/v1/eval-runs/{run.id}/status",
+        "result_url": f"/api/v1/eval-runs/{run.id}/results",
         "items": items,
         "token_summary": token_summary,
+    }
+
+
+@router.get("/api/v1/eval-runs/{run_id}/status")
+def get_eval_status(
+    run_id: str, session: Session = Depends(get_session)
+) -> dict[str, object]:
+    """M10 (#378): the stable poll read model for template-launched runs.
+
+    Returns terminal/progress/counts/resolve-rate without the full detail
+    payload, so an external script can poll cheaply and stop at ``terminal``.
+    """
+
+    tenant_id = _scope(session)
+    run = _run_or_404(session, tenant_id, run_id)
+    totals = evaluation_service.evaluation_case_totals(session, [run.id])
+    resolved, scored = totals.get(run.id, (0, 0))
+    total = int(run.total_cases or 0)
+    unfinished = int(run.queued_count or 0) + int(run.running_count or 0)
+    finished = max(0, total - unfinished)
+    percent = (
+        100
+        if total and finished >= total
+        else (min(99, round(finished / total * 100)) if total else 0)
+    )
+    duration = evaluation_service.run_duration_seconds(run)
+    return {
+        "run_id": run.id,
+        "template_id": run.template_id,
+        "template_version": run.template_version,
+        "status": run.status,
+        "terminal": run.status in TERMINAL_RUN_STATUSES,
+        "total_cases": total,
+        "queued_count": run.queued_count,
+        "running_count": run.running_count,
+        "succeeded_count": run.succeeded_count,
+        "failed_count": run.failed_count,
+        "finished_count": finished,
+        "progress": {
+            "total": total,
+            "finished": finished,
+            "percent": percent,
+        },
+        "resolved_count": resolved,
+        "scored_count": scored,
+        "resolve_rate": (round(resolved / scored * 100, 1) if scored else None),
+        "started_at": iso_utc(run.started_at),
+        "finished_at": iso_utc(run.finished_at),
+        "duration_seconds": int(duration) if duration is not None else None,
+        "status_url": f"/api/v1/eval-runs/{run.id}/status",
+        "result_url": f"/api/v1/eval-runs/{run.id}/results",
     }
 
 
