@@ -57,6 +57,7 @@ class FakeProvider:
             "usage": {"input_tokens": 14, "output_tokens": 2},
         }
         self.stream_body: bytes | None = None
+        self.headers: dict[str, str] = {}
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         self.calls.append(request)
@@ -68,7 +69,7 @@ class FakeProvider:
                 content=self.stream_body,
                 headers={"content-type": "text/event-stream"},
             )
-        return httpx.Response(self.status, json=self.body)
+        return httpx.Response(self.status, json=self.body, headers=self.headers)
 
 
 @pytest.fixture
@@ -508,6 +509,41 @@ def test_gateway_normalizes_upstream_rate_limit(
     assert response.status_code == 429
     assert response.json()["error"]["code"] == "rate_limited"
     assert _usage_rows(engine)[0].status == "failed"
+
+
+def test_gateway_returns_upstream_request_id_and_quota_message(
+    client, model_env, provider, engine, usage_factory, bound_eval
+) -> None:
+    """M8 (#375): Claude Code's api_error must carry the provider's own text.
+
+    The runner reads this envelope from the trace and persists it on the case;
+    without it the console could only show a generic "rate limited" node code.
+    """
+
+    config = bound_eval["config"]
+    provider.status = 429
+    provider.headers = {"x-request-id": "req-upstream-429"}
+    provider.body = {
+        "error": {
+            "code": "rate_limit_error",
+            "message": "已达到 Token Plan 用量上限 (2056)",
+        }
+    }
+    token = _mint(
+        config["id"],
+        eval_run_id=bound_eval["run_id"],
+        shard_id=bound_eval["shard_id"],
+        attempt=bound_eval["attempt"],
+    )
+    response = _gateway(client, token)
+    assert response.status_code == 429
+    error = response.json()["error"]
+    assert error["code"] == "rate_limited"
+    assert error["request_id"] == "req-upstream-429"
+    assert "Token Plan 用量上限 (2056)" in error["upstream_message"]
+    assert "Token Plan 用量上限 (2056)" in error["message"]
+    assert response.headers["x-request-id"] == "req-upstream-429"
+    assert _usage_rows(engine)[0].request_id == "req-upstream-429"
 
 
 def test_gateway_streams_and_records_usage(

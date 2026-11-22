@@ -213,6 +213,7 @@ def case_row(
         "duration_ms": case.duration_ms,
         "error_code": case.error_code,
         "error_summary": case.error_summary,
+        "failure": case.failure_detail_json or None,
         "metrics": metrics,
         "test_summary": summary or empty_test_summary(),
         "updated_at": evaluations._iso(case.updated_at),
@@ -406,6 +407,7 @@ def _attempt_row(session: Session, attempt: EvalCaseAttempt) -> dict[str, Any]:
         "duration_ms": duration_ms,
         "error_code": attempt.error_code,
         "error_summary": attempt.error_summary,
+        "failure": attempt.failure_detail_json or None,
         "retry_reason": attempt.retry_reason,
         "test_summary": {
             **empty_test_summary(),

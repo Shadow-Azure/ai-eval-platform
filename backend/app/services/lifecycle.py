@@ -77,6 +77,7 @@ RETRYABLE_FAILURE_CODES = frozenset(
         "network_error",
         "model_rate_limited",
         "model_unavailable",
+        "model_overloaded",
         "upload_failed",
         "callback_retryable",
         "service_unavailable",
@@ -88,6 +89,11 @@ PERMANENT_FAILURE_CODES = frozenset(
         "config_error",
         "credential_forbidden",
         "credential_unavailable",
+        "model_quota_exhausted",
+        "model_authentication_failed",
+        "agent_crashed",
+        "agent_timeout",
+        "asset_source_install_failed",
         "commit_missing",
         "asset_invalid",
         "image_unavailable",
@@ -233,6 +239,56 @@ def _add_attempt_event(
     )
 
 
+def queue_retry_attempt(
+    session: Session,
+    *,
+    ctx: CaseContext,
+    now: datetime,
+    sequence: int | None = None,
+    event_type: str = "case.retry_queued",
+) -> bool:
+    """Queue exactly one retry attempt + dispatch for a terminal failure.
+
+    M8 (#375): completed execution failures now also enter the attempt budget,
+    so both the runner's ``failed`` callback and a retryable completion share
+    this builder. The caller must have already marked the attempt terminal and
+    persisted its error/failure detail.
+    """
+
+    attempt = ctx.attempt
+    if not retry_allowed(ctx.run, attempt):
+        return False
+    from . import case_attempts  # local import: case_attempts imports us
+
+    new_attempt_no = attempt.attempt_no + 1
+    outbox_row = case_attempts.build_retry_dispatch(
+        session,
+        ctx,
+        new_attempt_no=new_attempt_no,
+        settings=get_settings(),
+        now=now,
+    )
+    session.add(outbox_row)
+    ctx.case_run.execution_status = "queued"
+    ctx.case_run.result_status = "not_scored"
+    if attempt.error_code:
+        ctx.case_run.error_code = attempt.error_code
+    if sequence is None:
+        sequence = _next_sequence(session, ctx)
+    _add_attempt_event(
+        session,
+        ctx,
+        event_type=event_type,
+        sequence=sequence,
+        payload={
+            "new_attempt_no": new_attempt_no,
+            "shard_id": outbox_row.payload_json["shard_id"],
+            "dispatch_key": outbox_row.dispatch_key,
+        },
+    )
+    return True
+
+
 def settle_attempt_failure(
     session: Session,
     *,
@@ -240,6 +296,7 @@ def settle_attempt_failure(
     error_code: str,
     error_summary: str,
     retryable: bool,
+    failure_detail: dict | None = None,
     terminal_status: str = "failed",
     event_type: str = "case.failed",
     sequence: int | None = None,
@@ -300,6 +357,12 @@ def settle_attempt_failure(
     attempt.error_code = error_code
     attempt.error_summary = error_summary
     attempt.retry_reason = RETRYABLE if retryable else PERMANENT
+    if failure_detail is not None:
+        attempt.failure_detail_json = failure_detail
+        ctx.case_run.failure_detail_json = failure_detail
+        if failure_detail.get("message"):
+            error_summary = str(failure_detail["message"])[:1000]
+            attempt.error_summary = error_summary
     release_runner_binding(session, attempt)
     if attempt.started_at is not None:
         # M8-45 (#307): only an attempt that actually ran proves shard
@@ -339,31 +402,9 @@ def settle_attempt_failure(
         logger.exception("enqueue trace ingestion failed for attempt %s", attempt.id)
 
     retried = False
-    new_attempt_no = attempt.attempt_no + 1
-    if retryable and retry_allowed(ctx.run, attempt):
-        from . import case_attempts  # local import: case_attempts imports us
-
-        outbox_row = case_attempts.build_retry_dispatch(
-            session,
-            ctx,
-            new_attempt_no=new_attempt_no,
-            settings=get_settings(),
-            now=now,
-        )
-        session.add(outbox_row)
-        ctx.case_run.execution_status = "queued"
-        ctx.case_run.error_code = error_code
-        _add_attempt_event(
-            session,
-            ctx,
-            event_type="case.retry_queued",
-            sequence=sequence + 1,
-            payload={
-                "new_attempt_no": new_attempt_no,
-                "shard_id": outbox_row.payload_json["shard_id"],
-                "dispatch_key": outbox_row.dispatch_key,
-            },
-        )
+    if retryable and queue_retry_attempt(
+        session, ctx=ctx, now=now, sequence=sequence + 1
+    ):
         retried = True
     else:
         if paused_run:

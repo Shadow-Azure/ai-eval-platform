@@ -91,8 +91,21 @@ def ingest_score_report(
             )
         )
     case_run.result_status = parsed.result_status
+    if parsed.failure is not None:
+        # M8 (#375): persist the structured failure on both rows so the list,
+        # the attempt history, the distribution card and the bad-case report
+        # read one frozen record. The message becomes the display summary;
+        # the legacy ``error`` code alone no longer reaches the console.
+        detail = parsed.failure.as_dict()
+        case_run.failure_detail_json = detail
+        attempt.failure_detail_json = detail
+        attempt.error_code = parsed.failure.code
     if parsed.failure_message:
         case_run.error_summary = parsed.failure_message[:1000]
+    else:
+        failure_code = parsed.failure.code if parsed.failure is not None else None
+        if failure_code:
+            case_run.error_summary = failure_code[:1000]
     artifact.parse_error = None
     artifact.parsed_at = utcnow()
     session.flush()

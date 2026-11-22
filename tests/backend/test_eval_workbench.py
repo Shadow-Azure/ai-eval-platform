@@ -350,10 +350,24 @@ def test_cases_filter_every_trace_state(seeded: Session, client: TestClient) -> 
 def test_case_detail_lists_attempts_and_tests(seeded: Session, client: TestClient) -> None:
     run, cases = _prepare_failed_run(seeded, key="detail-run")
     _add_test(seeded, cases[0], group="F2P", outcome="failed")
+    failure = {
+        "code": "model_rate_limited",
+        "message": "模型供应商 429 限流：请重试",
+        "phase": "executing",
+        "request_id": "req-429",
+        "http_status": 429,
+        "retryable": True,
+    }
+    cases[0].failure_detail_json = failure
+    attempt_row = _attempt(seeded, cases[0])
+    attempt_row.failure_detail_json = failure
+    seeded.commit()
 
     body = client.get(f"/api/v1/eval-case-runs/{cases[0].id}").json()
     assert body["case"]["id"] == cases[0].id
     assert body["case"]["error_code"] == "runtime_error"
+    assert body["case"]["failure"] == failure
+    assert body["attempts"][0]["failure"] == failure
     assert body["run"]["max_attempts"] == run.max_attempts
     assert body["run"]["agent_timeout_seconds"] == 1800
     run.agent_timeout_seconds = 4500

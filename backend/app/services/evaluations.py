@@ -983,6 +983,7 @@ def evaluation_detail(
         "queued": 0,
     }
     trace_counts: dict[str, int] = {}
+    failure_counts: dict[str, int] = {}
     retryable_count = 0
     for case in cases:
         if case.result_status == "resolved":
@@ -996,6 +997,10 @@ def evaluation_detail(
         if case.execution_status == "queued":
             case_counts["queued"] += 1
         trace_counts[case.trace_status] = trace_counts.get(case.trace_status, 0) + 1
+        failure = case.failure_detail_json
+        if isinstance(failure, dict) and isinstance(failure.get("code"), str):
+            code = failure["code"]
+            failure_counts[code] = failure_counts.get(code, 0) + 1
         if (
             run.status == "running"
             and case.execution_status in ("failed", "timeout")
@@ -1047,6 +1052,7 @@ def evaluation_detail(
         "consistency": run.consistency_json or {},
         "case_counts": case_counts,
         "trace_counts": trace_counts,
+        "failure_counts": failure_counts,
         "retryable_count": retryable_count,
         "token_summary": token_summary,
         "progress": {
@@ -1070,6 +1076,7 @@ def evaluation_detail(
                 "duration_ms": case.duration_ms,
                 "error_code": case.error_code,
                 "error_summary": case.error_summary,
+                "failure": case.failure_detail_json or None,
                 "updated_at": _iso(case.updated_at),
             }
             for case in cases

@@ -1,5 +1,5 @@
 import { ApiError } from "./types";
-import { request } from "./evaluations";
+import { parseFailure, request, type EvalFailure } from "./evaluations";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -59,6 +59,7 @@ export interface EvalCaseRow {
   duration_ms: number | null;
   error_code: string | null;
   error_summary: string | null;
+  failure: EvalFailure | null;
   metrics: Record<string, unknown>;
   test_summary: CaseTestSummary;
   updated_at: string | null;
@@ -118,6 +119,7 @@ function parseCase(row: unknown): EvalCaseRow {
     duration_ms: optNum(item.duration_ms),
     error_code: optStr(item.error_code),
     error_summary: optStr(item.error_summary),
+    failure: parseFailure(item.failure),
     metrics: isRecord(item.metrics) ? item.metrics : {},
     test_summary: parseTestSummary(item.test_summary),
     updated_at: optStr(item.updated_at),
@@ -176,6 +178,7 @@ export interface EvalAttempt {
   duration_ms: number | null;
   error_code: string | null;
   error_summary: string | null;
+  failure: EvalFailure | null;
   retry_reason: string | null;
   test_summary: CaseTestSummary;
 }
@@ -218,6 +221,7 @@ function parseAttempt(row: unknown): EvalAttempt {
     duration_ms: optNum(item.duration_ms),
     error_code: optStr(item.error_code),
     error_summary: optStr(item.error_summary),
+    failure: parseFailure(item.failure),
     retry_reason: optStr(item.retry_reason),
     test_summary: parseTestSummary(item.test_summary),
   };

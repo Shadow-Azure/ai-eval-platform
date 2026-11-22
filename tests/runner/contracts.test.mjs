@@ -129,3 +129,33 @@ test("failure accepts runner cancellation codes and a partial trace manifest", (
   assert.equal(invalidTrace.ok, false);
   assert.match(invalidTrace.errors.join("; "), /trace_manifest/);
 });
+
+test("completion and failure accept an optional structured failure detail", () => {
+  const failureDetail = {
+    code: "model_quota_exhausted",
+    message: "MiniMax 429: 已达到 Token Plan 用量上限 (2056)",
+    phase: "executing",
+    request_id: "req-2056",
+    http_status: 429,
+    retryable: false,
+  };
+  for (const [kind, fixture] of [
+    ["completion", "completion.valid.json"],
+    ["failure", "failure.valid.json"],
+  ]) {
+    const payload = readFixture(fixture);
+    assert.equal(validatePayload(kind, payload).ok, true);
+    assert.equal(validatePayload(kind, { ...payload, failure: failureDetail }).ok, true);
+    const missingCode = { ...failureDetail };
+    delete missingCode.code;
+    assert.equal(
+      validatePayload(kind, { ...payload, failure: missingCode }).ok,
+      false,
+      `${kind} must require failure.code`,
+    );
+    assert.equal(
+      validatePayload(kind, { ...payload, failure: { ...failureDetail, raw_key: "sk-secret" } }).ok,
+      false,
+    );
+  }
+});

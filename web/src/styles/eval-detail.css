@@ -1051,3 +1051,96 @@
   line-height: 1.35;
   white-space: nowrap;
 }
+
+
+/* M8 (#375): structured failure cause in the case list, drawer, and overview. */
+.eval-case-failure {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 6px;
+  margin-top: 4px;
+  max-width: 210px;
+}
+
+.eval-case-failure .ant-tag {
+  margin-inline-end: 0;
+}
+
+.eval-case-failure-message {
+  color: var(--text-secondary, #5b6472);
+  font-size: 12px;
+  line-height: 1.4;
+  max-width: 100%;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  word-break: break-word;
+}
+
+.eval-case-failure-request {
+  color: var(--text-tertiary, #8a93a0);
+  font-size: 11px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.case-failure-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.case-failure-message {
+  word-break: break-word;
+  line-height: 1.6;
+}
+
+.eval-failure-distribution {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.eval-failure-dist-row {
+  display: grid;
+  grid-template-columns: 130px 1fr 44px;
+  align-items: center;
+  gap: 12px;
+}
+
+.eval-failure-dist-label .ant-tag {
+  margin-inline-end: 0;
+}
+
+.eval-failure-dist-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--fill-quaternary, #eef0f4);
+  overflow: hidden;
+}
+
+.eval-failure-dist-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+}
+
+.eval-failure-dist-bar > span.danger {
+  background: var(--danger, #d4380d);
+}
+
+.eval-failure-dist-bar > span.warning {
+  background: var(--warning, #d48806);
+}
+
+.eval-failure-dist-row strong {
+  text-align: right;
+}
+
+.eval-failure-dist-foot {
+  margin: 14px 0 0;
+}

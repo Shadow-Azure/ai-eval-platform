@@ -7,6 +7,7 @@ is the authority on model spend.
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -25,15 +26,28 @@ from ..models import (
 from ..money import MICRO, Money, money_str
 from ..secrets import SecretBoxError, mask_secret
 from ..services.evaluations import TERMINAL_ATTEMPT_STATUSES
+from ..services.trace_redaction import redact_text
 from .tokens import GatewayClaims
 
 
 class GatewayError(Exception):
-    def __init__(self, status_code: int, code: str, message: str) -> None:
+    def __init__(
+        self,
+        status_code: int,
+        code: str,
+        message: str,
+        *,
+        request_id: str | None = None,
+        upstream_message: str | None = None,
+        upstream_status: int | None = None,
+    ) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.code = code
         self.message = message
+        self.request_id = request_id
+        self.upstream_message = upstream_message
+        self.upstream_status = upstream_status
 
 
 def extract_bearer(header: str | None) -> str:
@@ -359,6 +373,47 @@ def normalize_upstream_error(status_code: int) -> GatewayError:
 
 def provider_request_id(response: httpx.Response) -> str | None:
     return response.headers.get("x-request-id") or response.headers.get("request-id")
+
+
+def upstream_error_message(body: bytes | str | None, *, limit: int = 500) -> str | None:
+    """Extract the provider's own error text from an upstream error body.
+
+    M8 (#375): the console must show "Token Plan 用量上限 (2056)" instead of a
+    generic "rate limited". Providers answer with either a JSON error envelope
+    or a short plain-text body; both are redacted and bounded before they are
+    echoed to the runner (never raw headers or credentials).
+    """
+
+    if body is None:
+        return None
+    if isinstance(body, bytes):
+        try:
+            text = body.decode("utf-8", errors="replace")
+        except Exception:  # pragma: no cover - decode with replace cannot raise
+            return None
+    else:
+        text = body
+    text = text.strip()
+    if not text:
+        return None
+    try:
+        payload = json.loads(text)
+    except ValueError:
+        payload = None
+    if isinstance(payload, dict):
+        error = payload.get("error")
+        if isinstance(error, dict):
+            message = error.get("message")
+            code = error.get("code")
+            if isinstance(message, str) and message.strip():
+                text = message
+                if isinstance(code, str) and code.strip() and code not in message:
+                    text = f"{code}: {message}"
+            elif isinstance(error.get("type"), str):
+                text = str(error["type"])
+        elif isinstance(payload.get("message"), str):
+            text = str(payload["message"])
+    return redact_text(text, limit=limit) or None
 
 
 def credential_payload(credential: Credential) -> dict[str, object]:
