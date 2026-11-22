@@ -4,7 +4,15 @@ from __future__ import annotations
 
 from app.config import Settings
 from app.runner_contracts import validate_payload
-from app.services.dataset_image_tarballs import tarball_key, task_image_tarball
+from app.services.dataset_image_tarballs import (
+    DOWNLOAD_BUDGET_SECONDS,
+    DOWNLOAD_MARGIN_SECONDS,
+    MIN_PRESIGN_TTL_SECONDS,
+    PRESIGN_TTL_SECONDS,
+    presign_ttl_seconds,
+    tarball_key,
+    task_image_tarball,
+)
 from app.services.object_store import internal_aliyun_endpoint, object_store_from_settings
 
 
@@ -59,6 +67,28 @@ def test_task_image_tarball_presigns_internal_url() -> None:
     assert tarball["format"] == "tar.gz"
     assert "oss-cn-hangzhou-internal.aliyuncs.com" in tarball["url"]
     assert "X-Amz-Signature" in tarball["url"]
+    assert f"X-Amz-Expires={PRESIGN_TTL_SECONDS}" in tarball["url"]
+
+
+def test_presign_ttl_covers_the_download_budget_only() -> None:
+    # M8-54 (#371): no queue time, no case timeout — just one curl budget plus
+    # a scheduling/load margin. Raising this default past 30 minutes would
+    # reintroduce the exposure the ADR rejects.
+    assert PRESIGN_TTL_SECONDS == DOWNLOAD_BUDGET_SECONDS + DOWNLOAD_MARGIN_SECONDS
+    assert DOWNLOAD_BUDGET_SECONDS == 900
+    assert 900 <= PRESIGN_TTL_SECONDS <= 1800
+
+
+def test_presign_ttl_override_has_a_floor() -> None:
+    assert presign_ttl_seconds(None) == PRESIGN_TTL_SECONDS
+    assert presign_ttl_seconds(PRESIGN_TTL_SECONDS) == PRESIGN_TTL_SECONDS
+    assert presign_ttl_seconds(0) == MIN_PRESIGN_TTL_SECONDS
+    assert presign_ttl_seconds(42) == MIN_PRESIGN_TTL_SECONDS
+
+
+def test_settings_default_ttl_matches_download_budget() -> None:
+    default = Settings.model_fields["dataset_image_tarball_ttl_seconds"].default
+    assert default == PRESIGN_TTL_SECONDS
 
 
 def test_task_image_tarball_is_none_without_store_or_image() -> None:

@@ -10,6 +10,11 @@
  *
  * The signed URL is never written to logs or diagnostics: only the object key
  * and host are kept.
+ *
+ * Issue #371: the URL is requested only after capacity admission, and a 401/403
+ * on the first download can be repaired by refreshing the per-case `/tasks`
+ * descriptor once. `loadImageTarballWithRefresh` owns that one retry so the
+ * caller cannot accidentally loop on a stale credential.
  */
 
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -21,6 +26,18 @@ import { runCommand } from "./run-command.mjs";
 const DEFAULT_DOWNLOAD_TIMEOUT_MS = 900_000;
 const DEFAULT_LOAD_TIMEOUT_MS = 900_000;
 const INSPECT_TIMEOUT_MS = 60_000;
+// A rejected presigned GET (expired credential, revoked signer) is the only
+// failure a fresh `/tasks` response can fix; 404/timeout/corrupt tar must fall
+// back to the registry chain immediately.
+const AUTH_HTTP_STATUSES = new Set([401, 403]);
+
+/** Parse curl's `--write-out %{http_code}` trailer without trusting stderr. */
+function parseHttpStatus(stdout) {
+  const match = /(\d{3})\s*$/.exec(String(stdout ?? "").trim());
+  if (!match) return null;
+  const status = Number(match[1]);
+  return status >= 100 && status <= 599 ? status : null;
+}
 
 function urlHost(value) {
   try {
@@ -58,7 +75,7 @@ function recordResult(traceDir, result) {
  *
  * @param {{url?: string, key?: string, image?: string, format?: string}} tarball
  * @param {{traceDir?: string|null, spawn?: Function, downloadTimeoutMs?: number, loadTimeoutMs?: number}} options
- * @returns {Promise<{ok: boolean, image: string|null, key: string|null, stage: string, elapsed_ms: number, error: string|null}>}
+ * @returns {Promise<{ok: boolean, image: string|null, key: string|null, stage: string, httpStatus: number|null, elapsed_ms: number, error: string|null}>}
  */
 export async function loadImageTarball(tarball, options = {}) {
   const spawn = options.spawn;
@@ -73,6 +90,7 @@ export async function loadImageTarball(tarball, options = {}) {
     key: typeof tarball?.key === "string" ? tarball.key : null,
     host: urlHost(tarball?.url),
     stage: "start",
+    httpStatus: null,
     elapsed_ms: 0,
     error: null,
   };
@@ -116,12 +134,15 @@ export async function loadImageTarball(tarball, options = {}) {
         "-fsSL",
         "--max-time",
         String(Math.ceil(downloadTimeoutMs / 1000)),
+        "--write-out",
+        "%{http_code}",
         "-o",
         tarPath,
         tarball.url,
       ],
       { timeout: downloadTimeoutMs },
     );
+    result.httpStatus = parseHttpStatus(download?.stdout);
     if (download?.error || download?.status !== 0) {
       return finish(
         "download",
@@ -165,4 +186,47 @@ export async function loadImageTarball(tarball, options = {}) {
       // Best-effort cleanup; a leftover temp dir must not mask the result.
     }
   }
+}
+
+/** The first download was rejected by the object store's credential check. */
+export function isTarballAuthFailure(result) {
+  return Boolean(
+    result &&
+      result.ok === false &&
+      result.stage === "download" &&
+      AUTH_HTTP_STATUSES.has(result.httpStatus),
+  );
+}
+
+/**
+ * Load a tarball, refreshing the descriptor once on an auth failure (#371).
+ *
+ * `refresh` returns a fresh per-case descriptor (a new presigned URL) or
+ * `null`. Only 401/403 triggers it; a 404, timeout, corrupt tar or load failure
+ * falls back to the registry chain exactly as before. A refresh that returns no
+ * URL, the same URL or throws leaves the original failure untouched, so the
+ * caller still reports the real download error.
+ *
+ * @param {{url?: string, key?: string, image?: string, format?: string}} tarball
+ * @param {(() => Promise<{url?: string, key?: string, image?: string, format?: string}|null>)|null} refresh
+ * @param {object} options
+ * @returns {Promise<object>} result of the first or refreshed attempt
+ */
+export async function loadImageTarballWithRefresh(tarball, refresh, options = {}) {
+  const first = await loadImageTarball(tarball, options);
+  first.refreshed = false;
+  if (first.ok || !isTarballAuthFailure(first) || typeof refresh !== "function") {
+    return first;
+  }
+  let refreshed;
+  try {
+    refreshed = await refresh();
+  } catch (error) {
+    first.refreshError = truncated(error?.message || error, 300);
+    return first;
+  }
+  if (!refreshed?.url || refreshed.url === tarball?.url) return first;
+  const second = await loadImageTarball(refreshed, options);
+  second.refreshed = true;
+  return second;
 }

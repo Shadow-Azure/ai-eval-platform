@@ -110,6 +110,39 @@ test("a 429 started is capacity-waited with the same event id and then succeeds"
   }
 });
 
+test("case task URLs are fetched only after capacity admission", async () => {
+  // M8-54 (#371): `/tasks` signs the per-case image tarball URL, so fetching
+  // it before the 429 capacity wait produced URLs that expired in the queue.
+  const ctx = await createScenario({
+    behavior: {
+      startedCapacityFailures: 1,
+      tasks: {
+        model: { name: "test-model", anthropic_base_url: "http://127.0.0.1:9" },
+        cases: [{ case_run_id: "ecr_a", case_key: "case-a" }],
+      },
+    },
+  });
+  try {
+    const result = await runCase(ctx, "ecr_a", { RUNNER_CAPACITY_WAIT_SECONDS: "2" });
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(statusOf(result), "completed");
+
+    const paths = ctx.platform.requests.map((request) => request.path);
+    const taskIndexes = paths.flatMap((path, index) => (path === "/tasks" ? [index] : []));
+    const startedIndexes = paths.flatMap((path, index) =>
+      path.endsWith("/started") ? [index] : [],
+    );
+    assert.equal(taskIndexes.length, 1, "the runner fetches /tasks exactly once per case");
+    assert.ok(startedIndexes.length >= 2, "the capacity retry must happen first");
+    assert.ok(
+      taskIndexes[0] > startedIndexes.at(-1),
+      "/tasks must be fetched after the successful started callback, not before the 429 wait",
+    );
+  } finally {
+    await ctx.close();
+  }
+});
+
 test("capacity waiting is bounded and releases the claim when the budget runs out", async () => {
   const ctx = await createScenario({ behavior: { startedCapacityFailures: 1000 } });
   try {
