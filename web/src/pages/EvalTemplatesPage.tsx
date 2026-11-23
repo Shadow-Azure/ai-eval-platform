@@ -21,6 +21,7 @@ import {
   formatCostRange,
   templateLastRunLabel,
 } from "../components/TemplateBits";
+import { TemplateHistoryModal } from "../components/TemplateHistoryModal";
 import { TemplateLaunchModal } from "../components/TemplateLaunchModal";
 import { dateTimeLabel } from "../utils/evaluationDisplay";
 
@@ -42,6 +43,7 @@ export function EvalTemplatesPage() {
   const [pageSize, setPageSize] = useState(10);
   const [launchTarget, setLaunchTarget] = useState<EvalTemplate | null>(null);
   const [apiTarget, setApiTarget] = useState<EvalTemplate | null>(null);
+  const [historyTarget, setHistoryTarget] = useState<EvalTemplate | null>(null);
   const hasFilters = Boolean(debouncedSearch) || statusFilter !== "all";
 
   useEffect(() => {
@@ -104,7 +106,7 @@ export function EvalTemplatesPage() {
     {
       title: "模板",
       key: "name",
-      width: "20%",
+      width: "18%",
       className: "template-name-cell",
       render: (_value, row) => (
         <div className="template-name-cell-inner">
@@ -126,7 +128,7 @@ export function EvalTemplatesPage() {
     {
       title: "固定组合",
       key: "combo",
-      width: "25%",
+      width: "21%",
       className: "template-combo-cell",
       render: (_value, row) => {
         const datasetLine = `${row.dataset_name ?? "—"} · ${row.dataset_version ?? "—"} · ${row.case_count} 用例`;
@@ -203,7 +205,7 @@ export function EvalTemplatesPage() {
     {
       title: "操作",
       key: "actions",
-      width: "16%",
+      width: "22%",
       render: (_value, row) => (
         <Space size={4} wrap>
           <Button size="small" onClick={() => navigate(`/evals/templates/${row.id}`)}>
@@ -211,6 +213,9 @@ export function EvalTemplatesPage() {
           </Button>
           <Button size="small" onClick={() => setApiTarget(row)}>
             接口
+          </Button>
+          <Button size="small" onClick={() => setHistoryTarget(row)}>
+            历史
           </Button>
           {isAdmin ? (
             <Popconfirm
@@ -307,7 +312,7 @@ export function EvalTemplatesPage() {
             rowKey="id"
             size="small"
             tableLayout="fixed"
-            scroll={{ x: 1180 }}
+            scroll={{ x: 1220 }}
             loading={listQuery.isLoading}
             columns={columns}
             dataSource={listQuery.data?.items ?? []}
@@ -370,6 +375,11 @@ export function EvalTemplatesPage() {
           setApiTarget(null);
           setLaunchTarget(apiTarget);
         }}
+      />
+      <TemplateHistoryModal
+        template={historyTarget}
+        open={Boolean(historyTarget)}
+        onClose={() => setHistoryTarget(null)}
       />
     </div>
   );

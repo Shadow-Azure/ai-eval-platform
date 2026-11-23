@@ -9,7 +9,16 @@ priority: P2
 status: ready
 scope:
   - prototype/**
+  - plans/**
   - .gitignore
+  - backend/app/api/evaluations.py
+  - backend/app/services/evaluations.py
+  - tests/backend/test_eval_templates.py
+  - web/src/api/evaluations.ts
+  - web/src/components/TemplateHistoryModal.tsx
+  - web/src/pages/EvalTemplatesPage.tsx
+  - web/src/pages/EvalTemplateDetailPage.tsx
+  - web/src/styles/templates.css
   - docs/design/eval-platform-architecture.md
   - docs/design/eval-platform-architecture.en.md
   - docs/design/eval-platform-architecture.i18n.yaml

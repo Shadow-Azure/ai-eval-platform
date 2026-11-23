@@ -72,6 +72,9 @@ export interface EvaluationSummary {
   self_evolution_enabled?: boolean;
   self_evolution_base_url?: string | null;
   self_evolution_workspace_id?: string | null;
+  /** M10 #394: provenance for template-launched runs; plain runs keep these null. */
+  template_id?: string | null;
+  template_version?: number | null;
 }
 
 export interface FrozenAsset {
@@ -231,6 +234,8 @@ export interface EvaluationListQuery {
   q?: string;
   status?: string;
   datasetId?: string;
+  /** M10 #394: narrow the read model to one template's launch history. */
+  templateId?: string;
   limit?: number;
   offset?: number;
 }
@@ -240,6 +245,11 @@ export interface EvaluationListResponse {
   total: number;
   items: EvaluationSummary[];
   stats: EvaluationListStats;
+  /** Server echo of the applied page contract; older responses may omit it. */
+  limit?: number;
+  offset?: number;
+  /** M10 #394: zero-filled counts over the unfiltered template history. */
+  status_counts?: Record<string, number>;
 }
 
 export interface CreateEvaluationRequest {
@@ -778,6 +788,8 @@ export function parseEvaluationSummary(payload: unknown): EvaluationSummary {
       typeof payload.self_evolution_enabled === "boolean" ? payload.self_evolution_enabled : undefined,
     self_evolution_base_url: readOptionalString(payload.self_evolution_base_url),
     self_evolution_workspace_id: readOptionalString(payload.self_evolution_workspace_id),
+    template_id: readOptionalString(payload.template_id),
+    template_version: readOptionalNumber(payload.template_version),
   };
 }
 
@@ -790,6 +802,9 @@ export function parseEvaluationList(payload: unknown): EvaluationListResponse {
     total: readCount(payload.total, "total"),
     items: payload.items.map(parseEvaluationSummary),
     stats: readStats(payload.stats),
+    limit: readOptionalNumber(payload.limit) ?? undefined,
+    offset: readOptionalNumber(payload.offset) ?? undefined,
+    status_counts: readNumberMap(payload.status_counts),
   };
 }
 
@@ -946,6 +961,7 @@ export async function fetchEvaluations(
   if (query.q?.trim()) params.set("q", query.q.trim());
   if (query.status) params.set("status", query.status);
   if (query.datasetId) params.set("dataset_id", query.datasetId);
+  if (query.templateId) params.set("template_id", query.templateId);
   return parseEvaluationList(await request(`/api/v1/evaluations?${params.toString()}`, { signal }));
 }
 

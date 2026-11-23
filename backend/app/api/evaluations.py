@@ -26,6 +26,7 @@ from ..db import get_session
 from ..models import EVAL_RUN_STATUSES
 from ..services import agent_assets as asset_service
 from ..services import budget as budget_service
+from ..services import eval_templates as template_service
 from ..services import evaluations as evaluation_service
 from ..services import identity
 from ..services import preflight as preflight_service
@@ -487,18 +488,34 @@ def create_evaluation(
 
 @router.get("/api/v1/evaluations")
 def list_evaluations(
-    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    limit: Annotated[int | None, Query(ge=1, le=200)] = None,
     offset: Annotated[int, Query(ge=0)] = 0,
     q: Annotated[str | None, Query(max_length=200)] = None,
     status: Annotated[str | None, Query(max_length=32)] = None,
     dataset_id: Annotated[str | None, Query(max_length=36)] = None,
+    template_id: Annotated[str | None, Query(max_length=36)] = None,
     session: Session = Depends(get_session),
 ) -> dict:
     """M5-16: the list page filters and aggregates on the server.
 
     ``q`` matches run name/runtime/model and the dataset name/version;
     ``status`` is an exact run-status enum value (partial included).
+    M10 (#394): ``template_id`` narrows the same read model to one template's
+    launch history; an unknown template is a 404 rather than an empty page.
     """
+
+    if template_id is not None:
+        try:
+            template_service.get_template(session, template_id)
+        except template_service.TemplateNotFound as exc:
+            raise HTTPException(
+                status_code=404,
+                detail=error_detail("template_not_found", "评测模板不存在"),
+            ) from exc
+
+    # The general list keeps its historical 50-row default; template history
+    # is a paginated modal whose contract defaults to 10 rows.
+    effective_limit = limit if limit is not None else (10 if template_id else 50)
 
     if status is not None and status not in EVAL_RUN_STATUSES:
         raise HTTPException(
@@ -511,11 +528,12 @@ def list_evaluations(
         )
     rows, total = evaluation_service.list_evaluations(
         session,
-        limit=limit,
+        limit=effective_limit,
         offset=offset,
         search=q,
         status=status,
         dataset_id=dataset_id,
+        template_id=template_id,
     )
     totals = evaluation_service.evaluation_case_totals(session, [row[0].id for row in rows])
     now = datetime.now(UTC)
@@ -532,14 +550,27 @@ def list_evaluations(
                 now=now,
             )
         )
-    return {
+    response = {
         "status": "ok",
         "total": total,
         "items": items,
         "stats": evaluation_service.evaluation_list_stats(
-            session, search=q, status=status, dataset_id=dataset_id
+            session,
+            search=q,
+            status=status,
+            dataset_id=dataset_id,
+            template_id=template_id,
         ),
+        "limit": effective_limit,
+        "offset": offset,
     }
+    if template_id is not None:
+        # The history modal needs every status count even while one status is
+        # selected; one grouped query beats one list request per status.
+        response["status_counts"] = evaluation_service.evaluation_status_counts(
+            session, search=q, dataset_id=dataset_id, template_id=template_id
+        )
+    return response
 
 
 @router.get("/api/v1/evaluations/{run_id}")

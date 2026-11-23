@@ -25,6 +25,7 @@ import {
   selfEvolutionLabel,
   selfEvolutionTokenLabel,
 } from "../components/TemplateBits";
+import { TemplateHistoryModal } from "../components/TemplateHistoryModal";
 import { TemplateLaunchModal } from "../components/TemplateLaunchModal";
 import { dateTimeLabel, durationLabel, rateLabel } from "../utils/evaluationDisplay";
 import { evalStatusMeta } from "../utils/evalStatus";
@@ -56,6 +57,7 @@ export function EvalTemplateDetailPage() {
   const isAdmin = session?.role === "admin";
   const [launchOpen, setLaunchOpen] = useState(false);
   const [apiOpen, setApiOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [disableOpen, setDisableOpen] = useState(false);
 
   const query = useQuery({
@@ -145,7 +147,10 @@ export function EvalTemplateDetailPage() {
       title: "",
       key: "open",
       render: (_value, row) => (
-        <Button size="small" onClick={() => navigate(`/evals/${row.id}`)}>
+        <Button
+          size="small"
+          onClick={() => navigate(`/evals/${row.id}?fromTemplate=${templateId}`)}
+        >
           打开 <Icon name="arrowRight" size={12} />
         </Button>
       ),
@@ -174,6 +179,12 @@ export function EvalTemplateDetailPage() {
         description={`${template.dataset_name ?? "—"} ${template.dataset_version ?? ""} · ${template.runtime_key} · ${template.model_display_name ?? template.model_name ?? "—"} · ${template.resource_pool_name ?? "—"}`}
         actions={
           <Space wrap>
+            <Button
+              icon={<Icon name="clock" size={14} />}
+              onClick={() => setHistoryOpen(true)}
+            >
+              启动历史
+            </Button>
             <Button icon={<Icon name="pipeline" size={14} />} onClick={() => setApiOpen(true)}>
               接口
             </Button>
@@ -300,14 +311,19 @@ export function EvalTemplateDetailPage() {
                 <h2 className="card-title">最近运行</h2>
                 <p className="card-subtitle">每次启动创建独立评测，模板编辑不回溯修改</p>
               </div>
-              <Button
-                size="small"
-                icon={<Icon name="play" size={13} />}
-                disabled={!template.enabled || !isAdmin}
-                onClick={() => setLaunchOpen(true)}
-              >
-                再启动一次
-              </Button>
+              <Space size={6}>
+                <Button size="small" onClick={() => setHistoryOpen(true)}>
+                  全部历史
+                </Button>
+                <Button
+                  size="small"
+                  icon={<Icon name="play" size={13} />}
+                  disabled={!template.enabled || !isAdmin}
+                  onClick={() => setLaunchOpen(true)}
+                >
+                  再启动一次
+                </Button>
+              </Space>
             </div>
             <Table
               rowKey="id"
@@ -407,6 +423,11 @@ export function EvalTemplateDetailPage() {
         template={template}
         open={launchOpen}
         onClose={() => setLaunchOpen(false)}
+      />
+      <TemplateHistoryModal
+        template={template}
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
       />
       <TemplateApiModal
         template={template}
