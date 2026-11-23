@@ -6,7 +6,7 @@ English | [中文](m8-eval-quick-start-row.md)
 kind: issue
 milestone: m8
 priority: P2
-status: in-progress
+status: done
 scope:
   - web/src/pages/EvalsPage.tsx
   - web/src/components/TemplateBits.tsx
@@ -40,3 +40,7 @@ The production "Evaluations / Quick start" area diverges visually from `prototyp
 - At 1200×837 the last launch is hidden, the name does not cover the adjacent column, and there is no horizontal overlap.
 - The prototype shows the same structure with the same data and viewport; before/after screenshots use the same viewport and theme and are attached to the implementation PR.
 - `npm test`, `npm run verify:flow`, `npm run verify:docs` and the `web` build pass.
+
+## References
+
+- Implementation PR: #389 (review record: `plans/2026-11-23-pr389-review.md`).
