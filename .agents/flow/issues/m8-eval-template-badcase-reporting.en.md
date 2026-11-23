@@ -6,7 +6,7 @@ English | [中文](m8-eval-template-badcase-reporting.md)
 kind: issue
 milestone: m8
 priority: P2
-status: in-progress
+status: done
 scope:
   - backend/app/**
   - backend/migrations/**
@@ -48,7 +48,7 @@ Production evidence: template `49a201b3-87f6-41a8-a89f-cf124c2bef81` (hy4-flash 
 - Do not change the evaluation execution, scheduling, scoring, or trace pipeline; reporting keeps using the existing outbox and backoff.
 - Do not allow field overrides in the template launch request; reporting is saved with the template, and launch only confirms cost and capacity.
 - Do not introduce a template-specific reporting retry policy; keep the run-level 60/300/900/3600 second backoff and terminal-failure semantics.
-- This iteration delivers the issue description and the prototype fix first; the production backend/frontend implementation follows separately.
+- Production implementation: PR #384; prototype: PR #383.
 
 ## Acceptance
 
@@ -64,7 +64,7 @@ Production evidence: template `49a201b3-87f6-41a8-a89f-cf124c2bef81` (hy4-flash 
 - Issue #378 (evaluation templates).
 - Production template `49a201b3-87f6-41a8-a89f-cf124c2bef81`; same-configuration historical run `5f5d2f48-4ef1-4bb4-af93-453d1a2d1fe7`.
 - Design: `docs/design/eval-platform-architecture.md`, `plans/m1-02-fullstack-design/`.
-- Related PR: #383 (prototype fix; production implementation still pending).
+- Related PR: #383 (prototype), #384 (production implementation).
 
 ## Evidence
 
