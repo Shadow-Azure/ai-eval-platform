@@ -6,7 +6,7 @@ English | [中文](m8-node-download-network-retry.md)
 kind: issue
 milestone: m8
 priority: P2
-status: in-progress
+status: done
 scope:
   - .agents/flow/issues/m8-node-download-network-retry.*
   - runner/adapters/runtimes/claude-code.mjs
@@ -33,3 +33,7 @@ At 10:50 CST on 2026-11-23 the only case of evaluation `de8e73cc-1ff5-4bcf-a53c-
 - Each of the 7 network exit codes is retried exactly once and then lets the install continue; each of the 5 deterministic exit codes is not retried and keeps its original exit code.
 - A second network failure ends with the second exit code and stderr, without running later install steps.
 - `node --test tests/runner/*.test.mjs`, `npm test`, flow and documentation gates pass.
+
+## References
+
+- Implementation PR: #400 (review record: `plans/2026-11-23-pr400-review.md`).

@@ -6,7 +6,7 @@
 kind: issue
 milestone: m8
 priority: P2
-status: in-progress
+status: done
 scope:
   - .agents/flow/issues/m8-node-download-network-retry.*
   - runner/adapters/runtimes/claude-code.mjs
@@ -33,3 +33,7 @@ github:
 - 7 个网络退出码首次失败后只重试一次并继续安装；5 个确定性退出码不重试且保留原退出码。
 - 第二次网络失败时以第二次退出码和 stderr 结束，不执行后续安装步骤。
 - `node --test tests/runner/*.test.mjs`、`npm test`、flow 与文档门禁通过。
+
+## 参考
+
+- 实现 PR：#400（检视记录见 `plans/2026-11-23-pr400-review.md`）。
