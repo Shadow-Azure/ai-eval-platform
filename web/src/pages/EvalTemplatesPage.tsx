@@ -365,6 +365,11 @@ export function EvalTemplatesPage() {
         template={apiTarget}
         open={Boolean(apiTarget)}
         onClose={() => setApiTarget(null)}
+        onLaunch={() => {
+          if (!apiTarget) return;
+          setApiTarget(null);
+          setLaunchTarget(apiTarget);
+        }}
       />
     </div>
   );

@@ -412,6 +412,10 @@ export function EvalTemplateDetailPage() {
         template={template}
         open={apiOpen}
         onClose={() => setApiOpen(false)}
+        onLaunch={() => {
+          setApiOpen(false);
+          setLaunchOpen(true);
+        }}
       />
       <Modal
         title="停用这个模板？"
