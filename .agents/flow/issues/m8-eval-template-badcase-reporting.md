@@ -6,7 +6,7 @@
 kind: issue
 milestone: m8
 priority: P2
-status: in-progress
+status: done
 scope:
   - backend/app/**
   - backend/migrations/**
@@ -48,7 +48,7 @@ M10 评测模板把一次评测的固定组合保存为可复用对象，一键�
 - 不改变评测执行、调度、评分与轨迹链路；上报仍复用既有 outbox 与退避机制。
 - 不在模板启动请求里做字段覆盖；上报配置随模板保存，启动只确认费用与容量。
 - 不引入新的模板级上报重试策略；沿用 run 级 60/300/900/3600 秒退避与终态失败语义。
-- 本次先交付 issue 描述与原型修改；生产后端/前端实现另行跟进。
+- 生产实现见 PR #384；原型见 PR #383。
 
 ## 验收
 
@@ -64,7 +64,7 @@ M10 评测模板把一次评测的固定组合保存为可复用对象，一键�
 - Issue #378（评测模板）。
 - 生产模板 `49a201b3-87f6-41a8-a89f-cf124c2bef81`；同配置历史 run `5f5d2f48-4ef1-4bb4-af93-453d1a2d1fe7`。
 - 设计：`docs/design/eval-platform-architecture.md`、`plans/m1-02-fullstack-design/`。
-- 关联 PR：#383（原型修复；生产实现待跟进）。
+- 关联 PR：#383（原型）、#384（生产实现）。
 
 ## 证据
 
