@@ -1359,6 +1359,14 @@ function templateStatusTag(template) {
   return '<span class="tag tag-success"><span class="status-dot pulse"></span>启用</span>';
 }
 
+// 停用模板不能启动，操作区保留启用与删除；启用模板仍是一键启动。
+function templateActionButtons(template) {
+  if (!template.enabled) {
+    return `<button class="btn btn-sm" data-action="template-enable" data-template="${template.id}">启用</button><button class="btn btn-sm btn-danger" data-action="template-delete" data-template="${template.id}">删除</button>`;
+  }
+  return `<button class="btn btn-primary btn-sm" data-action="template-launch" data-template="${template.id}">${icon("play", 13)} 启动</button>`;
+}
+
 function templateLastRunTag(lastRun) {
   if (!lastRun || lastRun.status === "draft") return '<span class="tag tag-neutral">尚未启动</span>';
   return statusTag(lastRun.status);
@@ -1659,9 +1667,7 @@ function createTemplateFromWizard() {
 
 function quickTemplateRow(template) {
   const last = template.lastRun;
-  const launchButton = template.enabled
-    ? `<button class="btn btn-primary btn-sm" data-action="template-launch" data-template="${template.id}">${icon("play", 13)} 启动</button>`
-    : `<button class="btn btn-primary btn-sm" disabled title="模板已停用">启动</button>`;
+  const actionButtons = templateActionButtons(template);
   return `
     <div class="quick-template-row">
       <div class="quick-template-glyph">${icon("boxes", 16)}</div>
@@ -1672,7 +1678,7 @@ function quickTemplateRow(template) {
       <div class="quick-template-last">${templateLastRunTag(last)}<span>${esc(last.at)}</span></div>
       <div class="quick-template-actions">
         <button class="btn btn-sm" data-action="template-detail" data-template="${template.id}">详情</button>
-        ${launchButton}
+        ${actionButtons}
       </div>
     </div>
   `;
@@ -1680,9 +1686,7 @@ function quickTemplateRow(template) {
 
 function templateListRow(template) {
   const last = template.lastRun;
-  const launchButton = template.enabled
-    ? `<button class="btn btn-primary btn-sm" data-action="template-launch" data-template="${template.id}">${icon("play", 13)} 启动</button>`
-    : `<button class="btn btn-primary btn-sm" disabled title="模板已停用">启动</button>`;
+  const actionButtons = templateActionButtons(template);
   return `
     <tr>
       <td>
@@ -1707,7 +1711,7 @@ function templateListRow(template) {
           <button class="btn btn-sm" data-action="template-detail" data-template="${template.id}">详情</button>
           <button class="btn btn-sm" data-action="template-api" data-template="${template.id}">接口</button>
           <button class="btn btn-sm" data-action="template-history" data-template="${template.id}">历史</button>
-          ${launchButton}
+          ${actionButtons}
         </div>
       </td>
     </tr>
@@ -1841,6 +1845,28 @@ function openTemplateLaunch(templateId, { failed = false } = {}) {
       }
     `,
     footer: `<button class="btn" data-action="close-modal">取消</button><button class="btn btn-primary" data-action="confirm-template-launch" data-template="${template.id}">${icon("play", 13)} 确认启动</button>`,
+  });
+}
+
+function openTemplateDelete(templateId) {
+  const template = ui.templates.find((item) => item.id === templateId);
+  if (!template) return;
+  if (template.enabled) {
+    toast("启用中的模板不能删除，请先停用", true);
+    return;
+  }
+  modal({
+    title: `删除模板「${esc(template.name)}」？`,
+    subtitle: "删除后不可恢复，模板不会再出现在列表与快速启动中",
+    body: `
+      <div class="danger-illustration">${icon("alert", 20)}</div>
+      <p class="small">该模板已停用，删除不会影响已启动的评测记录与轨迹；之后也不能再用它一键启动。</p>
+      <div class="review-box" style="margin-top:14px">
+        <div class="summary-item"><span class="summary-label">固定组合</span><span class="summary-value">${esc(template.dataset)} ${esc(template.datasetVersion)} · ${esc(template.agent)} · ${esc(template.model)}</span></div>
+        <div class="summary-item"><span class="summary-label">累计启动</span><span class="summary-value">${template.launches} 次 · 历史评测保留</span></div>
+      </div>
+    `,
+    footer: `<button class="btn" data-action="close-modal">取消</button><button class="btn btn-danger-solid" data-action="confirm-template-delete" data-template="${template.id}">确认删除</button>`,
   });
 }
 
@@ -5580,6 +5606,32 @@ function handleAction(action, target) {
   }
   if (action === "template-launch") {
     openTemplateLaunch(target.dataset.template);
+    return;
+  }
+  if (action === "template-enable") {
+    const template = ui.templates.find((item) => item.id === target.dataset.template);
+    if (!template || template.enabled) return;
+    template.enabled = true;
+    template.updated = "刚刚";
+    toast(`模板「${template.name}」已启用`);
+    render({ preserveScroll: true });
+    return;
+  }
+  if (action === "template-delete") {
+    openTemplateDelete(target.dataset.template);
+    return;
+  }
+  if (action === "confirm-template-delete") {
+    const template = ui.templates.find((item) => item.id === target.dataset.template);
+    if (!template) {
+      closeOverlay();
+      return;
+    }
+    ui.templates = ui.templates.filter((item) => item.id !== template.id);
+    ui.templateHistory.templateId = null;
+    closeOverlay();
+    toast(`模板「${template.name}」已删除`);
+    render({ preserveScroll: true });
     return;
   }
   if (action === "template-page") {
