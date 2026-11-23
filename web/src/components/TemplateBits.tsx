@@ -75,19 +75,30 @@ export function costEstimateLabel(estimate: CostEstimate | null): string {
 
 export function recentRunLabel(template: EvalTemplate): string {
   const run = template.recent_runs?.[0];
-  if (!run) return "从未启动";
+  if (!run) return "尚未启动";
   const meta = evalStatusMeta(run.status);
   return `${meta.label} · ${run.resolve_rate == null ? "结果聚合中" : rateLabel(run.resolve_rate)}`;
 }
 
 /** Latest state label; a template launched before run provenance existed still
- * shows "已启动" instead of "从未启动". */
+ * shows "已启动" instead of "尚未启动". */
 export function templateLastRunLabel(template: EvalTemplate): string {
   return template.recent_runs?.[0] || template.last_launched_at
     ? template.recent_runs?.[0]
       ? recentRunLabel(template)
       : "已启动"
-    : "从未启动";
+    : "尚未启动";
+}
+
+/** Prototype `templateLastRunTag`: the latest run as a tag, or a neutral tag
+ * before the first launch. */
+export function TemplateLastRunTag({ template }: { template: EvalTemplate }) {
+  const run = template.recent_runs?.[0];
+  if (!run) {
+    return <Tag>{template.last_launched_at ? "已启动" : "尚未启动"}</Tag>;
+  }
+  const meta = evalStatusMeta(run.status);
+  return <Tag color={meta.color}>{meta.label}</Tag>;
 }
 
 export function executionSummary(template: EvalTemplate): string {

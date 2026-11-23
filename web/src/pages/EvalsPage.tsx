@@ -19,7 +19,7 @@ import {
 } from "../api/evaluations";
 import { fetchEvalTemplates, type EvalTemplate } from "../api/evalTemplates";
 import { TemplateLaunchModal } from "../components/TemplateLaunchModal";
-import { TemplateStatusTag, templateLastRunLabel } from "../components/TemplateBits";
+import { TemplateLastRunTag, templateComboText } from "../components/TemplateBits";
 import { EVAL_STATUS_OPTIONS, evalStatusMeta } from "../utils/evalStatus";
 import {
   dateTimeLabel,
@@ -305,26 +305,21 @@ export function EvalsPage() {
                   <Icon name="boxes" size={16} />
                 </div>
                 <div className="quick-template-main">
-                  <Button
-                    type="link"
-                    size="small"
-                    className="template-name-link"
+                  <button
+                    type="button"
+                    className="quick-template-name"
+                    title={template.name}
                     onClick={() => navigate(`/evals/templates/${template.id}`)}
                   >
                     {template.name}
-                  </Button>
-                  <div className="quick-template-combo">
-                    {template.dataset_name ?? "未绑定数据集"} · {template.runtime_key} ·{" "}
-                    {template.model_display_name ?? template.model_name ?? "模型未配置"} ·{" "}
-                    {template.resource_pool_name ?? "资源池未配置"}
-                  </div>
+                  </button>
+                  <div className="quick-template-combo">{templateComboText(template)}</div>
                 </div>
                 <div className="quick-template-last">
-                  <span>{templateLastRunLabel(template)}</span>
+                  <TemplateLastRunTag template={template} />
                   <span>{dateTimeLabel(template.last_launched_at)}</span>
                 </div>
                 <div className="quick-template-actions">
-                  <TemplateStatusTag enabled={template.enabled} />
                   <Button size="small" onClick={() => navigate(`/evals/templates/${template.id}`)}>
                     详情
                   </Button>
@@ -333,6 +328,7 @@ export function EvalsPage() {
                     type="primary"
                     icon={<Icon name="play" size={12} />}
                     disabled={!template.enabled}
+                    title={template.enabled ? undefined : "模板已停用"}
                     onClick={() => setLaunchTarget(template)}
                   >
                     启动
