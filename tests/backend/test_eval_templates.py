@@ -414,11 +414,16 @@ def test_evaluation_list_filters_by_template_history(
 
     history = client.get(
         "/api/v1/evaluations",
-        params={"template_id": template["id"], "limit": 10, "offset": 0},
+        params={"template_id": template["id"]},
     )
     assert history.status_code == 200, history.text
     body = history.json()
     assert body["total"] == 2
+    assert body["limit"] == 10
+    assert body["offset"] == 0
+    assert body["status_counts"]["queued"] == 2
+    assert body["status_counts"]["completed"] == 0
+    assert sum(body["status_counts"].values()) == 2
     assert {item["id"] for item in body["items"]} == {
         first.json()["run_id"],
         second.json()["run_id"],
@@ -432,6 +437,8 @@ def test_evaluation_list_filters_by_template_history(
         params={"template_id": template["id"], "limit": 1, "offset": 1},
     ).json()
     assert page["total"] == 2
+    assert page["limit"] == 1
+    assert page["offset"] == 1
     assert len(page["items"]) == 1
     assert page["items"][0]["id"] in {first.json()["run_id"], second.json()["run_id"]}
 
@@ -446,6 +453,8 @@ def test_evaluation_list_filters_by_template_history(
         params={"template_id": template["id"], "status": "completed"},
     ).json()
     assert completed["total"] == 0
+    # Counts stay unfiltered by status so the selector keeps every option.
+    assert completed["status_counts"]["queued"] == 2
 
     other_history = client.get(
         "/api/v1/evaluations", params={"template_id": other["id"]}

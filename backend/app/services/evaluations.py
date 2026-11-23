@@ -750,6 +750,34 @@ def list_evaluations(
     return items, total
 
 
+def evaluation_status_counts(
+    session: Session,
+    *,
+    search: str | None = None,
+    dataset_id: str | None = None,
+    template_id: str | None = None,
+) -> dict[str, int]:
+    """Zero-filled status counts for the template-history filter selector.
+
+    The counts deliberately ignore ``status``: the selector must keep showing
+    every status with its unfiltered count while the table below is filtered.
+    """
+
+    conditions = _run_filter_conditions(
+        search=search, dataset_id=dataset_id, template_id=template_id
+    )
+    joins = _needs_dataset_join(search=search, dataset_id=dataset_id)
+    rows = session.execute(
+        _run_select(EvalRun.status, func.count(), joins=joins)
+        .where(*conditions)
+        .group_by(EvalRun.status)
+    ).all()
+    counts = {status: 0 for status in EVAL_RUN_STATUSES}
+    for status, count in rows:
+        counts[str(status)] = int(count)
+    return counts
+
+
 def evaluation_case_totals(
     session: Session, run_ids: list[str]
 ) -> dict[str, tuple[int, int]]:

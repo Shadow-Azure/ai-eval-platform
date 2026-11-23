@@ -1,5 +1,5 @@
 # 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
 # git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
 #   pnpm run record:i18n -- docs/design/eval-platform-architecture.md
-eval-platform-architecture.md: a43d79c9a4dba3b725464096ae343770e327deeb
-eval-platform-architecture.en.md: 84c6e5814b8bb131dc1891978a858e8bba50f510
+eval-platform-architecture.md: 81c0cf2708a48c11d76683ac6826352118cd38a2
+eval-platform-architecture.en.md: 7c503691c6958e2facb3bf33b9fdf7aac41b129c

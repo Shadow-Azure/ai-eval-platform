@@ -23,20 +23,6 @@ interface TemplateHistoryModalProps {
   onClose: () => void;
 }
 
-async function fetchStatusCounts(
-  templateId: string,
-  signal: AbortSignal,
-): Promise<Record<string, number>> {
-  const results = await Promise.all(
-    HISTORY_STATUSES.map((status) =>
-      fetchEvaluations({ templateId, status, limit: 1 }, signal),
-    ),
-  );
-  return Object.fromEntries(
-    HISTORY_STATUSES.map((status, index) => [status, results[index].total]),
-  );
-}
-
 function HistoryTable({
   query,
   emptyText,
@@ -180,12 +166,6 @@ export function TemplateHistoryModal({ template, open, onClose }: TemplateHistor
     placeholderData: keepPreviousData,
   });
 
-  const countsQuery = useQuery({
-    queryKey: ["eval-templates", template?.id, "history-counts"],
-    queryFn: ({ signal }) => fetchStatusCounts(template?.id ?? "", signal),
-    enabled: open && Boolean(template?.id),
-  });
-
   const total = historyQuery.data?.total ?? 0;
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
   const start = total === 0 ? 0 : (page - 1) * pageSize + 1;
@@ -196,7 +176,7 @@ export function TemplateHistoryModal({ template, open, onClose }: TemplateHistor
     if (page > pageCount) setPage(pageCount);
   }, [open, page, pageCount, historyQuery.data]);
 
-  const counts = countsQuery.data;
+  const counts = historyQuery.data?.status_counts;
   const allCount = counts ? Object.values(counts).reduce((sum, value) => sum + value, 0) : null;
 
   const statusOptions = useMemo(

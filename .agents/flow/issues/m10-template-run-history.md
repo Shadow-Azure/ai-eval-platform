@@ -9,6 +9,7 @@ priority: P2
 status: ready
 scope:
   - prototype/**
+  - plans/**
   - .gitignore
   - backend/app/api/evaluations.py
   - backend/app/services/evaluations.py

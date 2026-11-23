@@ -245,6 +245,11 @@ export interface EvaluationListResponse {
   total: number;
   items: EvaluationSummary[];
   stats: EvaluationListStats;
+  /** Server echo of the applied page contract; older responses may omit it. */
+  limit?: number;
+  offset?: number;
+  /** M10 #394: zero-filled counts over the unfiltered template history. */
+  status_counts?: Record<string, number>;
 }
 
 export interface CreateEvaluationRequest {
@@ -797,6 +802,9 @@ export function parseEvaluationList(payload: unknown): EvaluationListResponse {
     total: readCount(payload.total, "total"),
     items: payload.items.map(parseEvaluationSummary),
     stats: readStats(payload.stats),
+    limit: readOptionalNumber(payload.limit) ?? undefined,
+    offset: readOptionalNumber(payload.offset) ?? undefined,
+    status_counts: readNumberMap(payload.status_counts),
   };
 }
 
