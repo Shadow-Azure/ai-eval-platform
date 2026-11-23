@@ -1,50 +1,72 @@
-import { Modal, Tag } from "antd";
+import { Button, Modal } from "antd";
 import type { EvalTemplate } from "../api/evalTemplates";
+import { Icon } from "./Icon";
 
-function MethodTag({ method }: { method: "GET" | "POST" }) {
-  return <Tag color={method === "POST" ? "blue" : "default"}>{method}</Tag>;
+function MethodBadge({ method }: { method: "GET" | "POST" }) {
+  return <span className={`template-api-method ${method.toLowerCase()}`}>{method}</span>;
 }
 
 export function TemplateApiModal({
   template,
   open,
   onClose,
+  onLaunch,
 }: {
   template: EvalTemplate | null;
   open: boolean;
   onClose: () => void;
+  onLaunch: () => void;
 }) {
   if (!template) return null;
   const base = typeof window === "undefined" ? "" : window.location.origin;
   return (
     <Modal
       open={open}
-      title="模板接口"
+      title={
+        <div className="template-api-heading">
+          <div className="template-api-heading-title">模板接口</div>
+          <div className="template-api-heading-subtitle">
+            {template.name} · 列表查询与触发、状态、结果三个执行接口
+          </div>
+        </div>
+      }
       width={760}
-      footer={null}
+      centered
+      rootClassName="template-api-modal"
       onCancel={onClose}
+      footer={[
+        <Button key="close" autoInsertSpace={false} onClick={onClose}>
+          关闭
+        </Button>,
+        <Button
+          key="launch"
+          type="primary"
+          autoInsertSpace={false}
+          icon={<Icon name="play" size={13} />}
+          onClick={onLaunch}
+        >
+          一键启动
+        </Button>,
+      ]}
     >
-      <p className="small muted">
-        {template.name} · 列表查询与触发、状态、结果三个执行接口；鉴权复用控制台会话，启动需要管理员权限。
-      </p>
       <div className="template-api-summary">
         <div>
           <span>Base URL</span>
-          <code>{base}</code>
+          <code title={base}>{base}</code>
         </div>
         <div>
           <span>模板 ID</span>
-          <code>{template.id}</code>
+          <code title={template.id}>{template.id}</code>
         </div>
         <div>
           <span>鉴权</span>
-          <span>会话 Cookie；启动需管理员权限</span>
+          <span className="template-api-summary-value">会话 Cookie；启动需管理员权限</span>
         </div>
       </div>
       <div className="template-api-list">
         <div className="template-api-item">
           <div className="template-api-head">
-            <MethodTag method="GET" />
+            <MethodBadge method="GET" />
             <code>/api/v1/eval-templates?q=&amp;status=&amp;limit=&amp;offset=</code>
           </div>
           <p>
@@ -54,7 +76,7 @@ export function TemplateApiModal({
         </div>
         <div className="template-api-item">
           <div className="template-api-head">
-            <MethodTag method="POST" />
+            <MethodBadge method="POST" />
             <code>/api/v1/eval-templates/{template.id}/launch</code>
           </div>
           <p>
@@ -67,7 +89,7 @@ export function TemplateApiModal({
         </div>
         <div className="template-api-item">
           <div className="template-api-head">
-            <MethodTag method="GET" />
+            <MethodBadge method="GET" />
             <code>/api/v1/eval-runs/{"{run_id}"}/status</code>
           </div>
           <p>轮询执行状态、进度与是否终态；terminal=true 后停止轮询，再读取结果。</p>
@@ -76,7 +98,7 @@ export function TemplateApiModal({
         </div>
         <div className="template-api-item">
           <div className="template-api-head">
-            <MethodTag method="GET" />
+            <MethodBadge method="GET" />
             <code>/api/v1/eval-runs/{"{run_id}"}/results</code>
           </div>
           <p>读取指标快照；运行中 is_final=false，终态后返回完整指标与 token 摘要。</p>
