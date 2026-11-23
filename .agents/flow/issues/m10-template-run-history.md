@@ -9,6 +9,7 @@ priority: P2
 status: ready
 scope:
   - prototype/**
+  - .gitignore
   - docs/design/eval-platform-architecture.md
   - docs/design/eval-platform-architecture.en.md
   - docs/design/eval-platform-architecture.i18n.yaml
