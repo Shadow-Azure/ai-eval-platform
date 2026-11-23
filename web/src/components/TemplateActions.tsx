@@ -91,13 +91,10 @@ export function TemplateActions({
             if (!remove.isPending) setDeleteOpen(false);
           }}
         >
-          <p className="small muted" style={{ marginTop: 0 }}>
-            删除后不可恢复，模板不会再出现在列表与快速启动中。
-          </p>
           <Alert
-            type="warning"
+            type="error"
             showIcon
-            message="删除只影响模板本身"
+            message="删除后不可恢复，模板不会再出现在列表与快速启动中。"
             description="该模板已停用，删除不会影响已启动的评测记录与轨迹；之后也不能再用它一键启动。"
           />
           <Descriptions
