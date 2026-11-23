@@ -6,7 +6,7 @@ English | [中文](m8-eval-template-list-layout.md)
 kind: issue
 milestone: m8
 priority: P2
-status: in-progress
+status: done
 scope:
   - web/src/pages/EvalTemplatesPage.tsx
   - web/src/styles/templates.css
@@ -42,3 +42,7 @@ Production has one more column than the prototype: "cost estimate" (8 vs 7 colum
 - Narrow screens scroll horizontally instead of squashing the fixed-combination column.
 - The prototype shows the same 8-column structure and truncation with the same data; before/after screenshots use the same viewport and theme and are attached to the implementation PR.
 - `npm test`, `npm run verify:flow`, `npm run lint:docs`, `npm run verify:docs` and the `web` build pass.
+
+## References
+
+- Implementation PR: #387 (review record: `plans/2026-11-23-pr387-review.md`).

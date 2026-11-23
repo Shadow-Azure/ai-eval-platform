@@ -6,7 +6,7 @@
 kind: issue
 milestone: m8
 priority: P2
-status: in-progress
+status: done
 scope:
   - web/src/pages/EvalTemplatesPage.tsx
   - web/src/styles/templates.css
@@ -42,3 +42,7 @@ github:
 - 窄屏出现横向滚动，不压塌固定组合列。
 - 原型在相同数据下呈现同样的 8 列结构与截断效果；修改前后截图同视口、同主题并附在实现 PR。
 - `npm test`、`npm run verify:flow`、`npm run lint:docs`、`npm run verify:docs` 与 `web` 构建通过。
+
+## 参考
+
+- 实现 PR：#387（评审记录见 `plans/2026-11-23-pr387-review.md`）。
