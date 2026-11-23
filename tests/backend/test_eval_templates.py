@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 from uuid import uuid4
 
+from app.config import get_settings
 from app.models import (
     AgentAssetSource,
     Credential,
@@ -25,6 +26,7 @@ from app.models import (
 )
 from app.secrets import get_secret_box
 from app.seed import ensure_default_scope
+from app.services import eval_templates as template_service
 from app.services import identity
 from fastapi.testclient import TestClient
 from sqlalchemy import select, text
@@ -49,6 +51,8 @@ def seed_launch(
     *,
     case_count: int = 4,
     runner_count: int = 2,
+    execution_image_digest: str | None = "sha256:" + "a" * 64,
+    scoring_image_digest: str | None = "sha256:" + "b" * 64,
 ) -> dict:
     tenant, workspace, project = ensure_default_scope(session)
     suffix = uuid4().hex[:8]
@@ -70,8 +74,8 @@ def seed_launch(
         adapter_version="1.0",
         case_count=case_count,
         status="active",
-        execution_image_digest="sha256:" + "a" * 64,
-        scoring_image_digest="sha256:" + "b" * 64,
+        execution_image_digest=execution_image_digest,
+        scoring_image_digest=scoring_image_digest,
         agent_timeout_seconds=1800,
     )
     session.add(version)
@@ -332,6 +336,104 @@ def test_template_save_rejects_empty_name_and_invalid_references(
     )
     assert unresolved.status_code == 422
     assert unresolved.json()["detail"]["error"]["details"]["fields"]["asset_ref"] == "invalid"
+
+
+def test_template_save_rejects_missing_image_digests(
+    client: TestClient, session: Session
+) -> None:
+    ids = seed_launch(
+        session, execution_image_digest=None, scoring_image_digest=None
+    )
+
+    response = client.post("/api/v1/eval-templates", json=template_body(ids))
+    assert response.status_code == 422
+    error = response.json()["detail"]["error"]
+    assert error["code"] == "template_save_blocked"
+    blockers = {blocker["code"]: blocker for blocker in error["details"]["blockers"]}
+    assert set(blockers) == {"execution_image_missing", "scoring_image_missing"}
+    assert blockers["execution_image_missing"]["field"] == "execution.execution_image_digest"
+    assert blockers["scoring_image_missing"]["field"] == "execution.scoring_image_digest"
+    assert error["details"]["fields"] == {
+        "execution.execution_image_digest": "invalid",
+        "execution.scoring_image_digest": "invalid",
+    }
+    assert "执行镜像 digest 缺失" in error["message"]
+    assert client.get("/api/v1/eval-templates").json()["total"] == 0
+
+
+def test_template_save_accepts_platform_default_digests(
+    client: TestClient, session: Session, monkeypatch
+) -> None:
+    ids = seed_launch(
+        session, execution_image_digest=None, scoring_image_digest=None
+    )
+    settings = get_settings().model_copy(
+        update={
+            "default_execution_image_digest": "sha256:" + "c" * 64,
+            "default_scoring_image_digest": "sha256:" + "d" * 64,
+        }
+    )
+    monkeypatch.setattr(template_service, "get_settings", lambda: settings)
+
+    response = client.post("/api/v1/eval-templates", json=template_body(ids))
+    assert response.status_code == 201, response.text
+    template = response.json()["template"]
+    assert template["preflight"] == {"status": "ready", "blockers": []}
+
+
+def test_template_preflight_blocks_existing_template_and_recovers(
+    client: TestClient, session: Session
+) -> None:
+    ids = seed_launch(session)
+    template = create_template(client, ids)
+    assert template["preflight"] == {"status": "ready", "blockers": []}
+
+    version = session.get(DatasetVersion, ids["dataset_version_id"])
+    assert version is not None
+    version.execution_image_digest = None
+    version.scoring_image_digest = None
+    session.commit()
+
+    detail = client.get(f"/api/v1/eval-templates/{template['id']}").json()["template"]
+    assert detail["preflight"]["status"] == "blocked"
+    assert {blocker["code"] for blocker in detail["preflight"]["blockers"]} == {
+        "execution_image_missing",
+        "scoring_image_missing",
+    }
+    listing = client.get("/api/v1/eval-templates").json()["items"]
+    stored = next(item for item in listing if item["id"] == template["id"])
+    assert stored["preflight"]["status"] == "blocked"
+
+    rejected = client.patch(
+        f"/api/v1/eval-templates/{template['id']}", json={"name": "改名"}
+    )
+    assert rejected.status_code == 422
+    assert rejected.json()["detail"]["error"]["code"] == "template_save_blocked"
+
+    blocked_launch = client.post(
+        f"/api/v1/eval-templates/{template['id']}/launch",
+        headers={"Idempotency-Key": "blocked-image-template"},
+        json={},
+    )
+    assert blocked_launch.status_code == 422
+    launch_error = blocked_launch.json()["detail"]["error"]
+    assert launch_error["code"] == "template_launch_blocked"
+    assert {blocker["code"] for blocker in launch_error["details"]["blockers"]} == {
+        "execution_image_missing",
+        "scoring_image_missing",
+    }
+
+    version.execution_image_digest = "sha256:" + "a" * 64
+    version.scoring_image_digest = "sha256:" + "b" * 64
+    session.commit()
+    recovered = client.get(f"/api/v1/eval-templates/{template['id']}").json()["template"]
+    assert recovered["preflight"] == {"status": "ready", "blockers": []}
+    assert (
+        client.patch(
+            f"/api/v1/eval-templates/{template['id']}", json={"name": "恢复后可保存"}
+        ).status_code
+        == 200
+    )
 
 
 def test_launch_creates_run_with_template_provenance_and_replays(

@@ -6,7 +6,7 @@
 kind: issue
 milestone: m8
 priority: P2
-status: ready
+status: in-progress
 scope:
   - prototype/**
   - docs/design/eval-platform-architecture.md
@@ -19,6 +19,16 @@ scope:
   - .agents/flow/issues/m8-template-save-preflight.md
   - .agents/flow/issues/m8-template-save-preflight.en.md
   - .agents/flow/issues/m8-template-save-preflight.i18n.yaml
+  - backend/app/services/eval_templates.py
+  - tests/backend/test_eval_templates.py
+  - web/src/api/evalTemplates.ts
+  - web/src/components/TemplateBits.tsx
+  - web/src/components/TemplateLaunchModal.tsx
+  - web/src/pages/EvalTemplateDetailPage.tsx
+  - web/src/pages/EvalTemplatesPage.tsx
+  - web/src/pages/EvalWizardPage.tsx
+  - web/src/styles/templates.css
+  - plans/2026-11-23-pr*-review.md
 adr: []
 github:
   number: 398

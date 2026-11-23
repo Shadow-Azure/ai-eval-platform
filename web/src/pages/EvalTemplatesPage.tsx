@@ -16,6 +16,7 @@ import { PageHeading } from "../components/PageHeading";
 import { QueryError } from "../components/QueryError";
 import { TemplateApiModal } from "../components/TemplateApiModal";
 import {
+  TemplatePreflightTag,
   TemplateSelfEvolutionTag,
   TemplateStatusTag,
   formatCostRange,
@@ -161,6 +162,7 @@ export function EvalTemplatesPage() {
         <>
           <TemplateStatusTag enabled={row.enabled} />
           <TemplateSelfEvolutionTag template={row} />
+          <TemplatePreflightTag template={row} />
         </>
       ),
     },

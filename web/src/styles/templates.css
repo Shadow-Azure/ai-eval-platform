@@ -544,3 +544,27 @@
     align-items: flex-start;
   }
 }
+
+/* #398: deterministic image-digest blockers shown at save/launch/detail. */
+.template-blocker-list ul {
+  display: grid;
+  gap: 8px;
+  margin: 8px 0 0;
+  padding-left: 18px;
+}
+
+.template-blocker-list li::marker {
+  color: var(--danger, #cf1322);
+}
+
+.template-blocker-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.template-blocker-head .ant-tag {
+  margin-inline-end: 0;
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+}

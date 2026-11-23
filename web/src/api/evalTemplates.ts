@@ -41,6 +41,20 @@ export interface EvalTemplateRecentRun {
   duration_seconds: number | null;
 }
 
+/** #398: deterministic template blockers known at save/read time. Only image
+ * digest dependencies are frozen here; capacity and credentials stay live. */
+export interface EvalTemplatePreflightBlocker {
+  code: string;
+  message: string;
+  field?: string;
+  details?: Record<string, unknown>;
+}
+
+export interface EvalTemplatePreflight {
+  status: "ready" | "blocked";
+  blockers: EvalTemplatePreflightBlocker[];
+}
+
 export interface EvalTemplate {
   id: string;
   name: string;
@@ -82,6 +96,7 @@ export interface EvalTemplate {
   agent_timeout_seconds: number | null;
   self_evolution: EvalTemplateSelfEvolution;
   estimated_cost: CostEstimate | null;
+  preflight: EvalTemplatePreflight;
   status_url: string;
   result_url: string;
   recent_runs?: EvalTemplateRecentRun[];
@@ -274,6 +289,25 @@ function parseSelfEvolution(value: unknown): EvalTemplateSelfEvolution {
   };
 }
 
+function parsePreflight(value: unknown): EvalTemplatePreflight {
+  if (!isRecord(value)) return { status: "ready", blockers: [] };
+  const blockers = (Array.isArray(value.blockers) ? value.blockers : [])
+    .map((entry): EvalTemplatePreflightBlocker | null => {
+      if (!isRecord(entry) || typeof entry.code !== "string") return null;
+      return {
+        code: entry.code,
+        message: text(entry.message) || entry.code,
+        field: optionalText(entry.field) ?? undefined,
+        details: isRecord(entry.details) ? entry.details : undefined,
+      };
+    })
+    .filter((entry): entry is EvalTemplatePreflightBlocker => entry !== null);
+  return {
+    status: value.status === "blocked" || blockers.length > 0 ? "blocked" : "ready",
+    blockers,
+  };
+}
+
 function parseRecentRun(value: unknown): EvalTemplateRecentRun {
   const record = isRecord(value) ? value : {};
   return {
@@ -337,6 +371,7 @@ export function parseEvalTemplate(payload: unknown): EvalTemplate {
     agent_timeout_seconds: optionalCount(payload.agent_timeout_seconds),
     self_evolution: parseSelfEvolution(payload.self_evolution),
     estimated_cost: parseCostEstimate(payload.estimated_cost),
+    preflight: parsePreflight(payload.preflight),
     status_url: text(payload.status_url),
     result_url: text(payload.result_url),
     recent_runs: Array.isArray(payload.recent_runs)
