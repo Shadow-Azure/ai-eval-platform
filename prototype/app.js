@@ -127,6 +127,29 @@ const mock = {
       duration: "2 小时 47 分",
       cost: "¥91.20",
     },
+    {
+      id: "eval-010",
+      name: "m9 生产 hy4-flash × 固定环境 × OpenSpec-cn · SWE-bench 120min",
+      templateId: null,
+      dataset: "SWE-bench Verified",
+      datasetVersion: "v2026.11-m825-prod",
+      agent: "Claude Code",
+      agentVersion: "2.1.4",
+      model: "hy4-flash",
+      provider: "Anthropic",
+      pool: "Linux Spot Pool",
+      status: "completed",
+      progress: 100,
+      submitted: 500,
+      completed: 500,
+      resolved: 250,
+      runningCases: 0,
+      failed: 0,
+      queued: 0,
+      started: "11 月 22 日 17:33",
+      duration: "1 小时 37 分",
+      cost: "¥73.00",
+    },
   ],
   evalTemplates: [
     {
@@ -2096,6 +2119,20 @@ function overviewPage() {
   );
 }
 
+function evalSourceTemplate(run) {
+  if (!run || !run.templateId) return null;
+  return ui.templates.find((template) => template.id === run.templateId) || null;
+}
+
+function evalTemplateOriginLine(run) {
+  const template = evalSourceTemplate(run);
+  if (!template) return "";
+  return `<div class="eval-origin">
+      <span class="eval-origin-badge">${icon("boxes", 10)} 来自模板</span>
+      <button class="eval-origin-link" data-route="/evals/templates/${template.id}" title="查看模板：${esc(template.name)}">${esc(template.name)}</button>
+    </div>`;
+}
+
 function evalTable(runs) {
   return `
     <div class="table-wrap">
@@ -2106,7 +2143,7 @@ function evalTable(runs) {
             .map(
               (run) => `
                 <tr class="clickable" data-route="/evals/${run.id}">
-                  <td><div class="table-primary">${run.name}</div><div class="table-secondary">${run.id} · ${run.pool}</div></td>
+                  <td><div class="table-primary">${run.name}</div><div class="table-secondary">${run.id} · ${run.pool}</div>${evalTemplateOriginLine(run)}</td>
                   <td><div>${run.agent}</div><div class="table-secondary">${run.model}</div></td>
                   <td><div>${run.dataset}</div><div class="table-secondary">${run.datasetVersion}</div></td>
                   <td>${statusTag(run.status)}</td>
@@ -3832,7 +3869,7 @@ function evalResults(run) {
 }
 
 function evalConfig(run) {
-  const sourceTemplate = run.templateId ? ui.templates.find((template) => template.id === run.templateId) : null;
+  const sourceTemplate = evalSourceTemplate(run);
   return `
     <div class="grid grid-2">
       <section class="card">
@@ -4074,7 +4111,7 @@ function evalDetailPage(id) {
   const route = currentRoute();
   const tab = route.query.get("tab") || "overview";
   const fromTemplate = route.query.get("fromTemplate");
-  const sourceTemplate = fromTemplate ? evalTemplateById(fromTemplate) : null;
+  const sourceTemplate = evalSourceTemplate(run) || (fromTemplate ? evalTemplateById(fromTemplate) : null);
   let content = evalOverview(run);
   if (tab === "cases") content = evalCaseTable(run);
   if (tab === "results") content = evalResults(run);
