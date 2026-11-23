@@ -5,8 +5,8 @@ English | [中文](m10-template-origin.md)
 ```yaml flow
 kind: issue
 milestone: m10
-priority: P2
-status: ready
+priority: P0
+status: done
 scope:
   - prototype/**
   - web/src/pages/EvalsPage.tsx
