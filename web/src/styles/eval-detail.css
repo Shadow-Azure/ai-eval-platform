@@ -530,38 +530,81 @@
 }
 
 .eval-event-list {
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  min-width: 0;
 }
 
 .eval-event-row {
-  display: flex;
-  align-items: flex-start;
+  position: relative;
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
   gap: 10px;
+  min-width: 0;
+  padding-bottom: 14px;
+}
+
+.eval-event-row:last-child {
+  padding-bottom: 0;
+}
+
+.eval-event-row:not(:last-child)::before {
+  content: "";
+  position: absolute;
+  top: 14px;
+  bottom: 0;
+  left: 5px;
+  width: 1px;
+  background: var(--line);
 }
 
 .eval-event-dot {
-  width: 7px;
-  height: 7px;
-  flex: 0 0 auto;
-  margin-top: 6px;
+  z-index: 1;
+  width: 11px;
+  height: 11px;
+  margin-top: 3px;
+  border: 2px solid #bfe0ff;
   border-radius: 50%;
-  background: var(--primary);
+  background: var(--surface);
 }
 
 .eval-event-dot.success {
-  background: var(--success);
+  border-color: #8dd9b7;
 }
 
 .eval-event-dot.danger {
-  background: var(--danger);
+  border-color: #ffb4ae;
 }
 
 .eval-event-copy {
   min-width: 0;
   font-size: 12px;
   line-height: 1.5;
+}
+
+.eval-event-action {
+  overflow-wrap: anywhere;
+}
+
+.eval-event-action strong {
+  color: var(--ink);
+  font-weight: 650;
+}
+
+.eval-event-context {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.eval-event-time {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .eval-issue-list {
