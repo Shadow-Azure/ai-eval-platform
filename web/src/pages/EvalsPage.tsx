@@ -261,6 +261,83 @@ export function EvalsPage() {
   ];
 
 
+  const quickStartSection = (
+    <section className="card quick-template-section section-gap">
+      <div className="card-header">
+        <div>
+          <h2 className="card-title">快速启动</h2>
+          <p className="card-subtitle">
+            只展示最近使用的 3 个模板；模板数量增长后，完整列表支持搜索、筛选与分页。
+          </p>
+        </div>
+        <div className="card-actions">
+          <span className="small muted">共 {templatesQuery.data?.total ?? 0} 个模板</span>
+          <Button size="small" onClick={() => navigate("/evals/templates")}>
+            全部模板 <Icon name="arrowRight" size={12} />
+          </Button>
+        </div>
+      </div>
+      {templatesQuery.data?.items.length ? (
+        <div className="quick-template-list">
+          {templatesQuery.data.items.map((template) => (
+            <div className="quick-template-row" key={template.id}>
+              <div className="quick-template-glyph">
+                <Icon name="boxes" size={16} />
+              </div>
+              <div className="quick-template-main">
+                <button
+                  type="button"
+                  className="quick-template-name"
+                  title={template.name}
+                  onClick={() => navigate(`/evals/templates/${template.id}`)}
+                >
+                  {template.name}
+                </button>
+                <div className="quick-template-combo">{templateComboText(template)}</div>
+              </div>
+              <div className="quick-template-last">
+                <TemplateLastRunTag template={template} />
+                <span>{dateTimeLabel(template.last_launched_at)}</span>
+              </div>
+              <div className="quick-template-actions">
+                <Button size="small" onClick={() => navigate(`/evals/templates/${template.id}`)}>
+                  详情
+                </Button>
+                <Button
+                  size="small"
+                  type="primary"
+                  icon={<Icon name="play" size={12} />}
+                  disabled={!template.enabled}
+                  title={template.enabled ? undefined : "模板已停用"}
+                  onClick={() => setLaunchTarget(template)}
+                >
+                  启动
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="card-body">
+          <EmptyState
+            icon="boxes"
+            title="还没有评测模板"
+            description="把常用的数据集、Agent 资产、模型与资源池保存为模板，之后一键启动。"
+            action={
+              <Button
+                size="small"
+                type="primary"
+                onClick={() => navigate("/evals/new?mode=template")}
+              >
+                新建模板
+              </Button>
+            }
+          />
+        </div>
+      )}
+    </section>
+  );
+
   return (
     <div className="page">
       <PageHeading
@@ -282,88 +359,16 @@ export function EvalsPage() {
         }
       />
 
-      <section className="card quick-template-section section-gap">
-        <div className="card-header">
-          <div>
-            <h2 className="card-title">快速启动</h2>
-            <p className="card-subtitle">
-              只展示最近使用的 3 个模板；模板数量增长后，完整列表支持搜索、筛选与分页。
-            </p>
-          </div>
-          <div className="card-actions">
-            <span className="small muted">共 {templatesQuery.data?.total ?? 0} 个模板</span>
-            <Button size="small" onClick={() => navigate("/evals/templates")}>
-              全部模板 <Icon name="arrowRight" size={12} />
-            </Button>
-          </div>
-        </div>
-        {templatesQuery.data?.items.length ? (
-          <div className="quick-template-list">
-            {templatesQuery.data.items.map((template) => (
-              <div className="quick-template-row" key={template.id}>
-                <div className="quick-template-glyph">
-                  <Icon name="boxes" size={16} />
-                </div>
-                <div className="quick-template-main">
-                  <button
-                    type="button"
-                    className="quick-template-name"
-                    title={template.name}
-                    onClick={() => navigate(`/evals/templates/${template.id}`)}
-                  >
-                    {template.name}
-                  </button>
-                  <div className="quick-template-combo">{templateComboText(template)}</div>
-                </div>
-                <div className="quick-template-last">
-                  <TemplateLastRunTag template={template} />
-                  <span>{dateTimeLabel(template.last_launched_at)}</span>
-                </div>
-                <div className="quick-template-actions">
-                  <Button size="small" onClick={() => navigate(`/evals/templates/${template.id}`)}>
-                    详情
-                  </Button>
-                  <Button
-                    size="small"
-                    type="primary"
-                    icon={<Icon name="play" size={12} />}
-                    disabled={!template.enabled}
-                    title={template.enabled ? undefined : "模板已停用"}
-                    onClick={() => setLaunchTarget(template)}
-                  >
-                    启动
-                  </Button>
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className="card-body">
-            <EmptyState
-              icon="boxes"
-              title="还没有评测模板"
-              description="把常用的数据集、Agent 资产、模型与资源池保存为模板，之后一键启动。"
-              action={
-                <Button
-                  size="small"
-                  type="primary"
-                  onClick={() => navigate("/evals/new?mode=template")}
-                >
-                  新建模板
-                </Button>
-              }
-            />
-          </div>
-        )}
-      </section>
-
       {listQuery.isError && !listQuery.data ? (
-        <QueryError
-          error={listQuery.error}
-          onRetry={() => listQuery.refetch()}
-          title="无法加载评测列表"
-          endpoint="GET /api/v1/evaluations"
-        />
+        <>
+          <QueryError
+            error={listQuery.error}
+            onRetry={() => listQuery.refetch()}
+            title="无法加载评测列表"
+            endpoint="GET /api/v1/evaluations"
+          />
+          {quickStartSection}
+        </>
       ) : (
         <>
           <div className="grid grid-4">
@@ -405,6 +410,8 @@ export function EvalsPage() {
               loading={statsLoading}
             />
           </div>
+
+          {quickStartSection}
 
           <section className="card section-gap">
             <div className="eval-filter-bar">
