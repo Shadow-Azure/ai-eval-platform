@@ -6,7 +6,7 @@ English | [中文](m8-eval-quick-start-position.md)
 kind: issue
 milestone: m8
 priority: P2
-status: in-progress
+status: done
 scope:
   - web/src/pages/EvalsPage.tsx
   - plans/**

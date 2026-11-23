@@ -6,7 +6,7 @@
 kind: issue
 milestone: m8
 priority: P2
-status: in-progress
+status: done
 scope:
   - backend/app/api/model_configs.py
   - tests/backend/test_model_gateway.py
