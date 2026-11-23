@@ -1,5 +1,5 @@
 # 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
 # git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
 #   pnpm run record:i18n -- .agents/flow/issues/m10-template-delete-confirm.md
-m10-template-delete-confirm.md: 1c92b4da2fd2f16d3755c4ed2fe77fc70903c27f
-m10-template-delete-confirm.en.md: 4234d1621fb9960883e6d9e448c1aaf10a286790
+m10-template-delete-confirm.md: 29a9f290430504abf63f06975c2062c924b44d0a
+m10-template-delete-confirm.en.md: eb4665a22b46867a618f403514c694a9d2976f3c

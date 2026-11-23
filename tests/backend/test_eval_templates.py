@@ -629,9 +629,38 @@ def test_launch_rejects_disabled_missing_and_reused_idempotency(
     assert conflict.status_code == 409
     assert conflict.json()["detail"]["error"]["code"] == "idempotency_conflict"
 
-    in_use = client.delete(f"/api/v1/eval-templates/{template['id']}")
-    assert in_use.status_code == 409
-    assert in_use.json()["detail"]["error"]["code"] == "template_in_use"
+
+def test_delete_disabled_template_preserves_started_runs(
+    client: TestClient, session: Session
+) -> None:
+    ids = seed_launch(session)
+    template = create_template(client, ids)
+    created = client.post(
+        f"/api/v1/eval-templates/{template['id']}/launch",
+        headers={"Idempotency-Key": "delete-keeps-run"},
+        json={},
+    )
+    assert created.status_code == 202, created.text
+    run_id = created.json()["run_id"]
+
+    disabled = client.patch(
+        f"/api/v1/eval-templates/{template['id']}",
+        params={"version": template["version"]},
+        json={"enabled": False},
+    )
+    assert disabled.status_code == 200, disabled.text
+
+    deleted = client.delete(f"/api/v1/eval-templates/{template['id']}")
+    assert deleted.status_code == 204
+    assert client.get(f"/api/v1/eval-templates/{template['id']}").status_code == 404
+
+    run = session.get(EvalRun, run_id)
+    assert run is not None
+    assert run.template_id == template["id"]
+    assert run.template_version == template["version"]
+    detail = client.get(f"/api/v1/evaluations/{run_id}")
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["template"] is None
 
 
 def test_launch_rejects_invalid_reference(client: TestClient, session: Session) -> None:

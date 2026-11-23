@@ -3,6 +3,7 @@ import { Button, Form, Input, InputNumber, Modal, Select, Space, Table, Tag, mes
 import type { TableColumnsType } from "antd";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useAuth } from "../app/auth";
 import { EmptyState } from "../components/EmptyState";
 import { Icon } from "../components/Icon";
 import { PageHeading } from "../components/PageHeading";
@@ -18,6 +19,7 @@ import {
   type EvaluationSummary,
 } from "../api/evaluations";
 import { fetchEvalTemplates, type EvalTemplate } from "../api/evalTemplates";
+import { TemplateActions } from "../components/TemplateActions";
 import { TemplateLaunchModal } from "../components/TemplateLaunchModal";
 import { EvalTemplateOrigin, TemplateLastRunTag, templateComboText } from "../components/TemplateBits";
 import { EVAL_STATUS_OPTIONS, evalStatusMeta } from "../utils/evalStatus";
@@ -50,6 +52,8 @@ interface CreateFormValues {
 export function EvalsPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { session } = useAuth();
+  const isAdmin = session?.role === "admin";
   const [createOpen, setCreateOpen] = useState(false);
   const [launchTarget, setLaunchTarget] = useState<EvalTemplate | null>(null);
   const [form] = Form.useForm<CreateFormValues>();
@@ -307,16 +311,12 @@ export function EvalsPage() {
                 <Button size="small" onClick={() => navigate(`/evals/templates/${template.id}`)}>
                   详情
                 </Button>
-                <Button
-                  size="small"
-                  type="primary"
-                  icon={<Icon name="play" size={12} />}
-                  disabled={!template.enabled}
-                  title={template.enabled ? undefined : "模板已停用"}
-                  onClick={() => setLaunchTarget(template)}
-                >
-                  启动
-                </Button>
+                <TemplateActions
+                  template={template}
+                  canManage={isAdmin}
+                  canLaunch
+                  onLaunch={() => setLaunchTarget(template)}
+                />
               </div>
             </div>
           ))}

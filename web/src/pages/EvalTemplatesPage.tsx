@@ -1,12 +1,11 @@
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Button, Input, Popconfirm, Select, Space, Table, message } from "antd";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { Button, Input, Select, Space, Table } from "antd";
 import type { TableColumnsType } from "antd";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../app/auth";
 import {
   fetchEvalTemplates,
-  updateEvalTemplate,
   type EvalTemplate,
   type EvalTemplateListQuery,
 } from "../api/evalTemplates";
@@ -22,19 +21,18 @@ import {
   formatCostRange,
   templateLastRunLabel,
 } from "../components/TemplateBits";
+import { TemplateActions } from "../components/TemplateActions";
 import { TemplateHistoryModal } from "../components/TemplateHistoryModal";
 import { TemplateLaunchModal } from "../components/TemplateLaunchModal";
 import { dateTimeLabel } from "../utils/evaluationDisplay";
 
 const templateQueries = {
-  all: ["eval-templates"] as const,
   list: (query: EvalTemplateListQuery, page: number, pageSize: number) =>
     ["eval-templates", "list", query, page, pageSize] as const,
 };
 
 export function EvalTemplatesPage() {
   const navigate = useNavigate();
-  const queryClient = useQueryClient();
   const { session } = useAuth();
   const isAdmin = session?.role === "admin";
   const [search, setSearch] = useState("");
@@ -85,16 +83,6 @@ export function EvalTemplatesPage() {
     const lastPage = Math.max(1, Math.ceil(total / pageSize));
     if (page > lastPage) setPage(lastPage);
   }, [page, pageSize, total]);
-
-  const toggle = useMutation({
-    mutationFn: (template: EvalTemplate) =>
-      updateEvalTemplate(template.id, { enabled: !template.enabled }, template.version),
-    onSuccess: (template) => {
-      message.success(template.enabled ? "模板已启用" : "模板已停用");
-      void queryClient.invalidateQueries({ queryKey: templateQueries.all });
-    },
-    onError: (error) => message.error(error instanceof Error ? error.message : "更新失败"),
-  });
 
   const resetFilters = () => {
     setSearch("");
@@ -219,28 +207,13 @@ export function EvalTemplatesPage() {
           <Button size="small" onClick={() => setHistoryTarget(row)}>
             历史
           </Button>
-          {isAdmin ? (
-            <Popconfirm
-              title={row.enabled ? "停用这个模板？" : "启用这个模板？"}
-              description={
-                row.enabled ? "停用后不能一键启动，已启动的评测不受影响。" : "启用后可以一键启动。"
-              }
-              okText={row.enabled ? "停用" : "启用"}
-              cancelText="取消"
-              onConfirm={() => toggle.mutate(row)}
-            >
-              <Button size="small">{row.enabled ? "停用" : "启用"}</Button>
-            </Popconfirm>
-          ) : null}
-          <Button
-            size="small"
-            type="primary"
-            icon={<Icon name="play" size={12} />}
-            disabled={!row.enabled || !isAdmin}
-            onClick={() => setLaunchTarget(row)}
-          >
-            启动
-          </Button>
+          <TemplateActions
+            template={row}
+            canManage={isAdmin}
+            canLaunch={isAdmin}
+            allowDisable
+            onLaunch={() => setLaunchTarget(row)}
+          />
         </Space>
       ),
     },
