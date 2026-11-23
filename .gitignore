@@ -4,6 +4,22 @@ reports/
 # 原型截图作为 issue/PR 附件或 release 资产，不入仓
 prototype/screenshots/
 
+# 所有图片类型不入仓：证据图走 issue/PR 附件或 release 资产
+*.png
+*.jpg
+*.jpeg
+*.jfif
+*.gif
+*.webp
+*.avif
+*.svg
+*.bmp
+*.ico
+*.tif
+*.tiff
+*.heic
+*.heif
+
 .venv/
 .pytest_cache/
 
