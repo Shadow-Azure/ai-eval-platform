@@ -13,6 +13,9 @@ scope:
   - docs/design/eval-platform-architecture.en.md
   - docs/design/eval-platform-architecture.i18n.yaml
   - scripts/doc-budgets.manifest.json
+  - .agents/flow/issues/m8-node-download-network-retry.md
+  - .agents/flow/issues/m8-node-download-network-retry.en.md
+  - .agents/flow/issues/m8-node-download-network-retry.i18n.yaml
   - .agents/flow/issues/m8-template-save-preflight.md
   - .agents/flow/issues/m8-template-save-preflight.en.md
   - .agents/flow/issues/m8-template-save-preflight.i18n.yaml

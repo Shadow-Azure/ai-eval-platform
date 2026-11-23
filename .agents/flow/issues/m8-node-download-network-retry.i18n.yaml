@@ -1,5 +1,5 @@
 # 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
 # git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
 #   pnpm run record:i18n -- .agents/flow/issues/m8-node-download-network-retry.md
-m8-node-download-network-retry.md: e903da666e6dc0b82994abc361bbaef36a51f86c
-m8-node-download-network-retry.en.md: 404091e86adee03c20bbc85d9df5b259ab4829a6
+m8-node-download-network-retry.md: 5f645be55ad0fd6b8ec4017d7f5ec0661f5ee60b
+m8-node-download-network-retry.en.md: fb0ff2378a2fdb4a089d83c2dabded29e1b04835
