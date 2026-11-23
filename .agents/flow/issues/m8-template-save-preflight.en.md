@@ -6,7 +6,7 @@ English | [中文](m8-template-save-preflight.md)
 kind: issue
 milestone: m8
 priority: P2
-status: ready
+status: done
 scope:
   - prototype/**
   - docs/design/eval-platform-architecture.md
