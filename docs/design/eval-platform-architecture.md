@@ -184,6 +184,8 @@ Skill、Command 与 Subagent 统一归入可配置的 Agent 资产源。资产�
 
 模板的生命周期是创建、编辑、停用和删除；停用或删除引用对象的模板不能启动，平台在创建运行前统一校验数据集版本、模型凭据、资源池与资产源是否仍可用。模板启动不接受配置覆盖，保证“一键”语义与结果可复现；需要不同组合时复制模板再编辑，或走现有的自定义发起流程。
 
+模板保存/更新时先校验确定性镜像依赖：执行与评分 digest 按「本次覆盖 → 数据集版本 → 平台默认」解析，三处皆空时返回 422，定位到 `execution.execution_image_digest` 与 `execution.scoring_image_digest`，提示补录 digest 或配置平台默认值。资产 Ref、容量与凭据仍在启动时检查。启动被 blocker 阻断时返回 `details.blockers`，界面逐条展示 code、message、字段与修复建议。
+
 模板级自进化上报用 `self_evolution_enabled`（布尔，默认 false）、`self_evolution_base_url`（varchar 512）、`self_evolution_workspace_id`（varchar 64）与 `self_evolution_token_encrypted`（Fernet 密文）持久化。模板视图返回 `self_evolution: {enabled, base_url, workspace_id, has_token}`，从不回显令牌；创建与更新接受 `self_evolution: {enabled, base_url, workspace_id, token}`：启用时地址与工作区必填，创建或库中无密文时必须提供 `token`，更新省略 `token` 保留既有密文，显式停用清空全部字段。令牌加密落库，任何响应、日志与快照不出现明文或掩码；既有模板默认停用且无令牌。
 
 模板数量增长后，评测任务页只保留最近使用的三个模板作为快速启动入口，每个入口保留“一键启动”和“详情”；确认弹层只展示费用、容量与固定配置，不再走四步向导。完整模板管理进入独立的评测模板页，使用列表而非卡片：支持按名称、数据集、Agent、模型搜索，按启用状态筛选，并按最近启动倒序分页。发起评测向导第 4 步可勾选“保存为评测模板”，模板模式则只保存不启动。模板详情页展示固定配置、执行策略、最近运行、全部启动历史入口和接口示例。

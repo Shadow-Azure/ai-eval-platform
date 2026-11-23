@@ -249,6 +249,46 @@ const mock = {
         { id: "eval-003", status: "partial", progress: 100, result: "151 / 500 · 30.2%", at: "11 月 6 日 09:31", duration: "2h 47m" },
       ],
     },
+    {
+      id: "tpl-004",
+      name: "生产验收 · 6×SWE-bench",
+      description: "生产切片固化了数据集版本 v2026.11-m825-prod；该版本未登记镜像 digest，平台默认也未配置，启动会被镜像预检阻断。",
+      enabled: true,
+      dataset: "SWE-bench Verified",
+      datasetVersion: "v2026.11-m825-prod",
+      datasetCount: 6,
+      agent: "Claude Code",
+      agentVersion: "2.1.4",
+      runtimeKey: "claude",
+      assetSource: "openspec",
+      assetSourceName: "OpenSpec-cn",
+      assetRef: "main",
+      assetCommit: "f3c19ab",
+      assetCount: 3,
+      assetMeta: "main · 3 项 · 提交 f3c19ab",
+      model: "deepseek-v4.1-flash",
+      provider: "DeepSeek",
+      credential: "DeepSeek · sk-ds-••••8c21",
+      pool: "Linux Spot Pool",
+      poolMeta: "6 在线 / 8 上限",
+      caseSelection: "全部 6 个用例",
+      concurrency: 6,
+      timeout: "单用例 30 分钟",
+      retries: "关闭 · 每用例 1 次 attempt",
+      maxTurns: "默认 200 轮",
+      agentTimeout: "30 分钟",
+      promptSuffix: "",
+      imageDigests: {
+        executionDigest: null,
+        scoringDigest: null,
+        digestSource: "数据集版本未登记，平台默认也未配置",
+      },
+      updated: "今天 12:46",
+      createdBy: "张宁",
+      launches: 0,
+      lastRun: { id: null, status: "draft", at: "尚未启动", progress: 0 },
+      recentRuns: [],
+    },
   ],
   datasets: [
     {
@@ -911,6 +951,7 @@ const ui = {
     saveAsTemplate: false,
     templateName: "日常回归 · Verified",
     templateDescription: "固定数据集、Agent 资产、模型与资源池，供后续一键启动。",
+    templateSaveAttempted: false,
     attemptRetry: { enabled: false, count: 1 },
     selfEvolution: { enabled: false, baseUrl: "", workspaceId: "", token: "" },
   },
@@ -1203,6 +1244,93 @@ function evalTemplateById(id) {
   return ui.templates.find((template) => template.id === id) || ui.templates[0];
 }
 
+// 模板保存与启动共用同一套镜像 digest 解析：本次覆盖 → 数据集版本 → 平台默认。
+// 原型把数据集版本的登记状态直接放进数据，保证“保存时校验”和“启动 blocker”
+// 在演示里看到的是同一份依赖，而不是两套文案。
+const DATASET_VERSIONS = {
+  verified: {
+    value: "verified",
+    dataset: "SWE-bench Verified",
+    version: "v2026.10",
+    count: 500,
+    executionDigest: "sha256:e082963099ed7d5a5f75a0be46e338be36faae33b2cba5289a9ddbd505997f1f",
+    scoringDigest: "sha256:e082963099ed7d5a5f75a0be46e338be36faae33b2cba5289a9ddbd505997f1f",
+    digestSource: "数据集版本已登记",
+  },
+  lite: {
+    value: "lite",
+    dataset: "SWE-bench Lite",
+    version: "v2026.09",
+    count: 300,
+    executionDigest: "sha256:7b31c2a8d64e0f9a1c5d2e7b4a8f6c3d9e1b0a2c4d6f8e0a1b3c5d7e9f0a2b3c",
+    scoringDigest: "sha256:7b31c2a8d64e0f9a1c5d2e7b4a8f6c3d9e1b0a2c4d6f8e0a1b3c5d7e9f0a2b3c",
+    digestSource: "数据集版本已登记",
+  },
+  prod: {
+    value: "prod",
+    dataset: "SWE-bench Verified",
+    version: "v2026.11-m825-prod",
+    count: 6,
+    executionDigest: null,
+    scoringDigest: null,
+    digestSource: "数据集版本未登记，平台默认也未配置",
+  },
+};
+
+function datasetVersionInfo(value) {
+  return DATASET_VERSIONS[value] || DATASET_VERSIONS.verified;
+}
+
+function imageDigestBlockers(images, version) {
+  const blockers = [];
+  if (!images.executionDigest) {
+    blockers.push({
+      code: "execution_image_missing",
+      title: "执行镜像 digest 缺失",
+      field: "execution.execution_image_digest",
+      detail: `数据集版本 ${version} 未登记执行镜像 digest，平台默认也未配置。`,
+      fix: `在数据集版本 ${version} 补录执行镜像 digest，或让管理员配置平台默认执行镜像。`,
+    });
+  }
+  if (!images.scoringDigest) {
+    blockers.push({
+      code: "scoring_image_missing",
+      title: "评分镜像 digest 缺失",
+      field: "execution.scoring_image_digest",
+      detail: `数据集版本 ${version} 未登记评分镜像 digest，平台默认也未配置。`,
+      fix: `在数据集版本 ${version} 补录评分镜像 digest，或让管理员配置平台默认评分镜像。`,
+    });
+  }
+  return blockers;
+}
+
+function templateImageDigests(template) {
+  if (template.imageDigests) return template.imageDigests;
+  return {
+    executionDigest: "sha256:e082963099ed7d5a5f75a0be46e338be36faae33b2cba5289a9ddbd505997f1f",
+    scoringDigest: "sha256:e082963099ed7d5a5f75a0be46e338be36faae33b2cba5289a9ddbd505997f1f",
+    digestSource: "数据集版本已登记",
+  };
+}
+
+function templateDigestBlockers(template) {
+  return imageDigestBlockers(templateImageDigests(template), template.datasetVersion);
+}
+
+function templateDependencyTag(template) {
+  if (!templateDigestBlockers(template).length) return "";
+  return '<span class="tag tag-danger" title="镜像 digest 缺失，启动会被阻断">镜像待补</span>';
+}
+
+function newEvalImageInfo() {
+  return datasetVersionInfo(ui.newEval.dataset);
+}
+
+function newEvalDigestBlockers() {
+  const info = newEvalImageInfo();
+  return imageDigestBlockers(info, info.version);
+}
+
 function templateStatusTag(template) {
   if (!template.enabled) return '<span class="tag tag-neutral">已停用</span>';
   return '<span class="tag tag-success"><span class="status-dot pulse"></span>启用</span>';
@@ -1441,10 +1569,10 @@ function openTemplateHistory(templateId) {
 }
 
 function createTemplateFromWizard() {
-  const isLite = ui.newEval.dataset === "lite";
-  const dataset = isLite ? "SWE-bench Lite" : "SWE-bench Verified";
-  const datasetVersion = isLite ? "v2026.09" : "v2026.10";
-  const datasetCount = isLite ? 300 : 500;
+  const datasetInfo = newEvalImageInfo();
+  const dataset = datasetInfo.dataset;
+  const datasetVersion = datasetInfo.version;
+  const datasetCount = datasetInfo.count;
   const agent = { codex: "Codex CLI", claude: "Claude Code", opencode: "OpenCode", pi: "pi" }[ui.newEval.agent];
   const agentVersion = { codex: "0.114.0", claude: "2.1.4", opencode: "1.8.2", pi: "0.62.1" }[ui.newEval.agent];
   const source = assetSourceById(ui.newEval.assetSource);
@@ -1462,6 +1590,11 @@ function createTemplateFromWizard() {
     dataset,
     datasetVersion,
     datasetCount,
+    imageDigests: {
+      executionDigest: datasetInfo.executionDigest,
+      scoringDigest: datasetInfo.scoringDigest,
+      digestSource: datasetInfo.digestSource,
+    },
     agent,
     agentVersion,
     runtimeKey: ui.newEval.agent,
@@ -1538,7 +1671,7 @@ function templateListRow(template) {
         <div class="template-combo-line"><span>${esc(template.agent)} · ${esc(template.provider)} ${esc(template.model)}</span></div>
         <div class="template-combo-line"><span>${esc(template.pool)} · ${esc(template.assetSourceName)}</span></div>
       </td>
-      <td>${templateStatusTag(template)}${templateSelfEvolutionTag(template)}</td>
+      <td>${templateStatusTag(template)}${templateSelfEvolutionTag(template)}${templateDependencyTag(template)}</td>
       <td>${templateLastRunTag(last)}<div class="table-secondary">${esc(last.at)}</div></td>
       <td>${template.launches} 次</td>
       <td>
@@ -1559,13 +1692,33 @@ function templateListRow(template) {
 }
 
 
+function imageBlockerItems(blockers) {
+  return `<div class="image-blocker-list">${blockers
+    .map(
+      (blocker) => `
+        <article class="image-blocker">
+          <div class="image-blocker-head">
+            <span class="tag tag-danger">${esc(blocker.title)}</span>
+            <code>${esc(blocker.code)}</code>
+            <span class="small muted">字段 ${esc(blocker.field)}</span>
+          </div>
+          <p>${esc(blocker.detail)}</p>
+          <p class="image-blocker-fix"><strong>修复建议：</strong>${esc(blocker.fix)}</p>
+        </article>`,
+    )
+    .join("")}</div>`;
+}
+
 function templateFixedRows(template) {
   const reporting = templateSelfEvolution(template);
+  const images = templateImageDigests(template);
+  const blockers = templateDigestBlockers(template);
   return `
     <div class="template-fixed-row"><span>数据集</span><strong>${esc(template.dataset)}</strong><small>${esc(template.datasetVersion)} · ${template.datasetCount} 用例</small></div>
     <div class="template-fixed-row"><span>Agent 资产</span><strong>${esc(template.agent)} ${esc(template.agentVersion)}</strong><small>${esc(template.assetSourceName)} · ${esc(template.assetMeta)}</small></div>
     <div class="template-fixed-row"><span>模型</span><strong>${esc(template.provider)} · ${esc(template.model)}</strong><small>${esc(template.credential)} · 启动时换发短期凭据</small></div>
     <div class="template-fixed-row"><span>资源池</span><strong>${esc(template.pool)}</strong><small>${esc(template.poolMeta)} · 最大并发 ${template.concurrency}</small></div>
+    <div class="template-fixed-row"><span>镜像依赖</span><strong class="${blockers.length ? "text-danger" : ""}">${blockers.length ? `${blockers.length} 项 digest 缺失` : "执行 / 评分镜像已就绪"}</strong><small>${esc(images.digestSource)}${blockers.length ? " · 启动会被阻断" : ""}</small></div>
     <div class="template-fixed-row"><span>自进化上报</span><strong>${esc(templateSelfEvolutionSummary(template))}</strong><small>${reporting.enabled ? "终态上报未通过用例 · 令牌加密保存，不回显" : "未启用：评测行为与现状一致"}</small></div>
   `;
 }
@@ -1619,8 +1772,30 @@ function openTemplateApi(templateId) {
   });
 }
 
-function openTemplateLaunch(templateId) {
+function openTemplateLaunch(templateId, { failed = false } = {}) {
   const template = evalTemplateById(templateId);
+  const blockers = templateDigestBlockers(template);
+  if (failed && blockers.length) {
+    modal({
+      title: "启动被阻断",
+      subtitle: "启动前一致性检查未通过；没有创建评测",
+      wide: true,
+      className: "template-launch-blocked-modal",
+      body: `
+        <div class="launch-blocked-head">
+          <div class="danger-illustration">${icon("alert", 20)}</div>
+          <div>
+            <h3>发现 ${blockers.length} 个阻断项</h3>
+            <p class="small muted">镜像 digest 按「本次覆盖 → 数据集版本 → 平台默认」解析，三处都为空，启动无法继续。</p>
+          </div>
+        </div>
+        ${imageBlockerItems(blockers)}
+        <div class="banner warning" style="margin-top:14px">${icon("shield", 15)}<div><strong>本次没有创建评测，也没有占用资源。</strong> 资产加载、容量与模型凭据仍会在下次启动时重新检查。</div></div>
+      `,
+      footer: `<button class="btn" data-action="close-modal">关闭</button><button class="btn" data-action="template-launch" data-template="${template.id}">返回确认</button>`,
+    });
+    return;
+  }
   modal({
     title: `从「${template.name}」启动？`,
     subtitle: "配置已固化，启动时不再询问；只确认本次费用与容量",
@@ -1630,9 +1805,13 @@ function openTemplateLaunch(templateId) {
         <div class="summary-item"><span class="summary-label">用例范围</span><span class="summary-value">${esc(template.caseSelection)}</span></div>
         <div class="summary-item"><span class="summary-label">最大并发</span><span class="summary-value">${template.concurrency} Runner</span></div>
         <div class="summary-item"><span class="summary-label">超时与重试</span><span class="summary-value">${esc(template.timeout)} · ${esc(template.retries)}</span></div>
-        <div class="summary-item"><span class="summary-label">预计费用</span><span class="summary-value">¥126–158</span></div>
+        <div class="summary-item"><span class="summary-label">预计费用</span><span class="summary-value">${template.datasetCount <= 10 ? "¥6–9" : "¥126–158"}</span></div>
       </div>
-      <div class="banner warning" style="margin-top:14px">${icon("alert", 15)}<div><strong>这会占用 ${esc(template.pool)} 并产生模型费用。</strong> 启动后平台会重新解析资产 Ref、检查镜像与环境，再创建评测记录。</div></div>
+      ${
+        blockers.length
+          ? `<div class="banner danger" style="margin-top:14px">${icon("alert", 15)}<div><strong>启动前预检发现 ${blockers.length} 个镜像阻断项。</strong> 点击确认启动后会给出具体原因与修复建议；本次不会创建评测。</div></div>`
+          : `<div class="banner warning" style="margin-top:14px">${icon("alert", 15)}<div><strong>这会占用 ${esc(template.pool)} 并产生模型费用。</strong> 启动后平台会重新解析资产 Ref、检查镜像与环境，再创建评测记录。</div></div>`
+      }
     `,
     footer: `<button class="btn" data-action="close-modal">取消</button><button class="btn btn-primary" data-action="confirm-template-launch" data-template="${template.id}">${icon("play", 13)} 确认启动</button>`,
   });
@@ -2722,7 +2901,9 @@ function attemptRetryState() {
 }
 
 function evalSummaryAside(templateMode = false) {
-  const dataset = ui.newEval.dataset === "lite" ? "SWE-bench Lite" : "SWE-bench Verified";
+  const datasetInfo = newEvalImageInfo();
+  const dataset = datasetInfo.dataset;
+  const digestBlockers = newEvalDigestBlockers();
   const agent = { codex: "Codex CLI", claude: "Claude Code", opencode: "OpenCode", pi: "pi" }[ui.newEval.agent];
   const credential =
     ui.newEval.credentialMode === "existing"
@@ -2737,7 +2918,8 @@ function evalSummaryAside(templateMode = false) {
       <div class="card-header"><div><h2 class="card-title">${templateMode ? "模板摘要" : "评测摘要"}</h2><p class="card-subtitle">${templateMode ? "保存后可在模板列表一键启动" : "提交后仍可取消排队任务"}</p></div>${icon("shield", 15, "muted")}</div>
       <div class="card-body summary-list">
         ${templateMode ? `<div class="summary-item"><span class="summary-label">模板名称</span><span class="summary-value">${esc(ui.newEval.templateName || "未命名模板")}</span></div>` : ""}
-        <div class="summary-item"><span class="summary-label">数据集</span><span class="summary-value">${dataset}<br /><span class="muted">v2026.10 · 500 用例</span></span></div>
+        <div class="summary-item"><span class="summary-label">数据集</span><span class="summary-value">${dataset}<br /><span class="muted">${esc(datasetInfo.version)} · ${datasetInfo.count} 用例</span></span></div>
+        <div class="summary-item"><span class="summary-label">镜像依赖</span><span class="summary-value ${digestBlockers.length ? "text-danger" : ""}">${digestBlockers.length ? `${digestBlockers.length} 项 digest 缺失` : "执行 / 评分镜像已就绪"}<br /><span class="muted">${esc(datasetInfo.digestSource)}</span></span></div>
         <div class="summary-item"><span class="summary-label">Agent</span><span class="summary-value">${agent}<br /><span class="muted">最新稳定版</span></span></div>
         <div class="summary-item"><span class="summary-label">Agent 资产</span><span class="summary-value">${source.name}<br /><span class="muted mono" id="summary-asset-ref">${ui.newEval.assetRef} · ${ui.newEval.selectedAssets.length} 项</span></span></div>
         <div class="summary-item"><span class="summary-label">模型</span><span class="summary-value">${credential}</span></div>
@@ -2750,9 +2932,9 @@ function evalSummaryAside(templateMode = false) {
       </div>
       <div style="padding:0 19px 19px">
         <div class="review-box">
-          <div class="row-between"><span class="small muted">预计模型费</span><strong>¥126–158</strong></div>
+          <div class="row-between"><span class="small muted">预计模型费</span><strong>${datasetInfo.count <= 10 ? "¥6–9" : "¥126–158"}</strong></div>
           <div class="row-between" style="margin-top:7px"><span class="small muted">预计峰值并发</span><strong>8 Runner</strong></div>
-          <div class="row-between" style="margin-top:7px"><span class="small muted">预计总耗时</span><strong>2h 30m</strong></div>
+          <div class="row-between" style="margin-top:7px"><span class="small muted">预计总耗时</span><strong>${datasetInfo.count <= 10 ? "3m" : "2h 30m"}</strong></div>
         </div>
       </div>
     </aside>
@@ -2941,7 +3123,7 @@ function newEvalPage() {
       <div class="eyebrow">Step 1 · Dataset</div>
       <h2 style="font-size:19px;margin-bottom:6px">选择数据集版本</h2>
       <p class="small muted" style="margin-bottom:18px">版本固定用例、环境、评分命令与指标口径，确保结果可复现。</p>
-      <div class="choice-grid">
+      <div class="choice-grid dataset-choice-grid">
         <button class="choice-card ${ui.newEval.dataset === "verified" ? "selected" : ""}" data-action="select-dataset" data-value="verified">
           <div class="choice-icon">${icon("database", 16)}</div>
           <div class="choice-title">SWE-bench Verified</div>
@@ -2954,9 +3136,15 @@ function newEvalPage() {
           <div class="choice-meta">300 个用例 · v2026.09 · 解决率</div>
           <div class="row" style="margin-top:12px"><span class="tag tag-primary">日常回归</span><span class="tag tag-neutral">~1h 50m</span></div>
         </button>
+        <button class="choice-card ${ui.newEval.dataset === "prod" ? "selected" : ""}" data-action="select-dataset" data-value="prod">
+          <div class="choice-icon">${icon("database", 16)}</div>
+          <div class="choice-title">SWE-bench Verified · 生产切片</div>
+          <div class="choice-meta">6 个用例 · v2026.11-m825-prod · 解决率</div>
+          <div class="row" style="margin-top:12px"><span class="tag tag-warning">镜像 digest 待补</span><span class="tag tag-neutral">生产</span></div>
+        </button>
       </div>
       <div class="field-row" style="margin-top:18px">
-        <div class="field"><label>用例范围</label><select class="select"><option>全部 500 个用例</option><option>随机抽取 100 个用例</option><option>按难度筛选</option></select></div>
+        <div class="field"><label>用例范围</label><select class="select"><option>全部 ${newEvalImageInfo().count} 个用例</option><option>随机抽取 100 个用例</option><option>按难度筛选</option></select></div>
         <div class="field"><label>重复次数</label><select class="select"><option>1 次</option><option>3 次（稳定性分析）</option></select></div>
       </div>
       <div class="banner" style="margin-top:16px">${icon("file", 15)}<div><strong>结果将包含</strong> · 解决率、Token / 用例、成本 / 用例、难度分布与逐用例评分明细。</div></div>
@@ -3184,6 +3372,10 @@ function newEvalPage() {
     `;
   } else {
     const selectedAssetSource = assetSourceById(ui.newEval.assetSource);
+    const datasetInfo = newEvalImageInfo();
+    const saveTemplateBlockers = newEvalDigestBlockers();
+    const saveTemplateBlocked = saveAsTemplate && saveTemplateBlockers.length > 0;
+    const saveAttempted = ui.newEval.templateSaveAttempted === true;
     content = `
       <div class="eyebrow">Step 4 · Review</div>
       <h2 style="font-size:19px;margin-bottom:6px">${templateMode ? "核对并保存模板" : "确认并启动评测"}</h2>
@@ -3203,14 +3395,40 @@ function newEvalPage() {
             <div class="field"><label class="required">模板名称</label><input class="input" id="template-name" value="${esc(ui.newEval.templateName)}" placeholder="例如：日常回归 · Verified" /></div>
             <div class="field"><label>模板说明</label><input class="input" id="template-description" value="${esc(ui.newEval.templateDescription)}" placeholder="说明使用场景与适用批次" /></div>
           </div>
-          <div class="banner success" style="margin-top:10px">${icon("check", 15)}<div>保存后固定组合与上报目标会出现在模板列表；启动时仍会重新解析资产 Ref、检查镜像并冻结新的快照。</div></div>
+          ${
+            saveTemplateBlocked
+              ? `
+            <div class="image-dependency ${saveAttempted ? "is-error" : "is-warning"}">
+              <div class="image-dependency-head">
+                <div>
+                  <strong>${saveAttempted ? "保存被拒绝：镜像 digest 校验未通过" : "保存前校验：镜像 digest 缺失"}</strong>
+                  <div class="small muted">模板保存与启动共用「本次覆盖 → 数据集版本 → 平台默认」的解析规则；三处都为空时保存会被拒绝，避免留下必然无法启动的模板。</div>
+                </div>
+                <span class="tag tag-danger">${saveTemplateBlockers.length} 项阻断</span>
+              </div>
+              ${imageBlockerItems(saveTemplateBlockers)}
+              <div class="image-dependency-foot">${saveAttempted ? "本次没有写入模板。补齐 digest 后可以重新保存；已填写的模板配置不会丢失。" : "补齐 digest 后再保存；本次填写的模板配置不会丢失。"}</div>
+            </div>
+          `
+              : `
+            <div class="image-dependency is-ok">
+              <div class="image-dependency-head">
+                <div>
+                  <strong>镜像 digest 已就绪</strong>
+                  <div class="small muted">${esc(datasetInfo.digestSource)}；保存后启动时仍会重新解析资产 Ref 并检查运行状态。</div>
+                </div>
+                <span class="tag tag-success">可保存</span>
+              </div>
+            </div>
+          `
+          }
         `
             : `<div class="small muted" style="margin-top:8px">不保存模板时，本次选择只对这一次评测生效。</div>`
         }
       </div>
       <div class="review-box" style="margin-top:14px">
         ${templateMode ? "" : `<div class="summary-item"><span class="summary-label">评测名称</span><span class="summary-value"><input class="input" style="max-width:290px" value="Codex × DeepSeek · Verified 回归" /></span></div>`}
-        <div class="summary-item"><span class="summary-label">数据集</span><span class="summary-value">SWE-bench Verified · v2026.10</span></div>
+        <div class="summary-item"><span class="summary-label">数据集</span><span class="summary-value">${esc(datasetInfo.dataset)} · ${esc(datasetInfo.version)}<span class="muted"> · ${datasetInfo.count} 用例</span></span></div>
         <div class="summary-item"><span class="summary-label">执行组合</span><span class="summary-value">Codex CLI × ${selectedAssetSource.name} × DeepSeek</span></div>
         <div class="summary-item"><span class="summary-label">Agent 资产</span><span class="summary-value">${ui.newEval.selectedAssets.length} 项 · ${selectedAssetSource.scanPath}</span></div>
         <div class="summary-item"><span class="summary-label">Agent 版本</span><span class="summary-value mono">${ui.newEval.assetRef} @ ${ui.newEval.assetCommit}</span></div>
@@ -3224,7 +3442,7 @@ function newEvalPage() {
       </div>
       ${
         templateMode
-          ? `<div class="banner" style="margin-top:15px">${icon("shield", 15)}<div><strong>保存模板不占用资源池，也不产生模型费用。</strong> 每次从模板启动时再检查镜像与环境，检查失败会阻止启动并保留模板。</div></div>`
+          ? `<div class="banner" style="margin-top:15px">${icon("shield", 15)}<div><strong>保存模板不占用资源池，也不产生模型费用。</strong> 保存时先校验确定性的镜像 digest；资产、容量与凭据仍在启动时实时检查，检查失败会阻止启动并保留模板。</div></div>`
           : `${evalImagePrepCard()}
       <div class="banner warning" style="margin-top:15px">${icon("alert", 15)}<div><strong>这会占用资源池并产生模型费用。</strong> 预计 ¥126–158，实际费用以 token 与机时为准。启动后仍可取消排队和执行中的用例。</div></div>
       <div class="field" style="margin-top:16px"><label>通知</label><select class="select"><option>完成后站内通知</option><option>完成后站内通知 + Webhook</option><option>不通知</option></select></div>`
@@ -3744,21 +3962,29 @@ function evalTemplatesPage() {
 function evalTemplateDetailPage(id) {
   const template = evalTemplateById(id);
   const recentRuns = template.recentRuns || [];
+  const digestBlockers = templateDigestBlockers(template);
+  const images = templateImageDigests(template);
   return shell(
     `<div class="page">
       <div class="row small muted" style="margin-bottom:14px"><button class="btn btn-ghost btn-sm" data-route="/evals/templates">${icon("arrowLeft", 13)} 返回模板列表</button></div>
       ${pageHeading({
         eyebrow: `Template · ${template.id}`,
-        title: `<span class="eval-title-row">${esc(template.name)} ${templateStatusTag(template)}</span>`,
+        title: `<span class="eval-title-row">${esc(template.name)} ${templateStatusTag(template)}${templateDependencyTag(template)}</span>`,
         description: `${esc(template.dataset)} ${esc(template.datasetVersion)} · ${esc(template.agent)} · ${esc(template.model)} · ${esc(template.pool)}`,
         actions: `<button class="btn" data-action="template-history" data-template="${template.id}">${icon("clock", 14)} 启动历史</button><button class="btn" data-action="template-api" data-template="${template.id}">${icon("link", 14)} 接口</button><button class="btn btn-primary" data-action="template-launch" data-template="${template.id}">${icon("play", 14)} 一键启动</button>`,
       })}
+      ${
+        digestBlockers.length
+          ? `<div class="banner danger detail-dependency-banner">${icon("alert", 15)}<div><strong>该模板当前无法启动：${digestBlockers.map((blocker) => esc(blocker.title)).join("、")}。</strong><ul class="detail-blocker-list">${digestBlockers.map((blocker) => `<li><strong>${esc(blocker.title)}</strong>：${esc(blocker.fix)}</li>`).join("")}</ul></div></div>`
+          : ""
+      }
       <div class="template-detail-layout">
         <div class="stack">
           <section class="card">
             <div class="card-header"><div><h2 class="card-title">固定配置</h2><p class="card-subtitle">启动时不再询问；引用失效会阻止启动</p></div><span class="tag tag-primary">已固化</span></div>
             <div class="card-body summary-list">
               <div class="summary-item"><span class="summary-label">数据集</span><span class="summary-value">${esc(template.dataset)} · ${esc(template.datasetVersion)}<br /><span class="muted">${template.datasetCount} 个用例 · 解决率</span></span></div>
+              <div class="summary-item"><span class="summary-label">镜像依赖</span><span class="summary-value ${digestBlockers.length ? "text-danger" : ""}">${digestBlockers.length ? `${digestBlockers.length} 项 digest 缺失` : "执行 / 评分镜像已就绪"}<br /><span class="muted">${esc(images.digestSource)}</span></span></div>
               <div class="summary-item"><span class="summary-label">Agent 运行时</span><span class="summary-value">${esc(template.agent)} ${esc(template.agentVersion)}</span></div>
               <div class="summary-item"><span class="summary-label">Agent 资产</span><span class="summary-value">${esc(template.assetSourceName)}<br /><span class="muted mono">${esc(template.assetMeta)}</span></span></div>
               <div class="summary-item"><span class="summary-label">模型</span><span class="summary-value">${esc(template.provider)} · ${esc(template.model)}<br /><span class="muted">${esc(template.credential)}</span></span></div>
@@ -3780,7 +4006,9 @@ function evalTemplateDetailPage(id) {
           </section>
           <section class="card">
             <div class="card-header"><div><h2 class="card-title">最近运行</h2><p class="card-subtitle">每次启动创建独立评测，模板编辑不回溯修改</p></div><div class="row" style="gap:6px"><button class="btn btn-sm" data-action="template-history" data-template="${template.id}">${icon("clock", 13)} 全部历史</button><button class="btn btn-sm" data-action="template-launch" data-template="${template.id}">${icon("play", 13)} 再启动一次</button></div></div>
-            <div class="table-wrap"><table>
+            ${
+              recentRuns.length
+                ? `<div class="table-wrap"><table>
               <thead><tr><th>运行</th><th>状态</th><th>结果</th><th>启动</th><th>耗时</th><th></th></tr></thead>
               <tbody>
                 ${recentRuns
@@ -3798,7 +4026,9 @@ function evalTemplateDetailPage(id) {
                   )
                   .join("")}
               </tbody>
-            </table></div>
+            </table></div>`
+                : `<div class="table-empty"><div class="empty-mark">${icon("play", 20)}</div><strong>还没有启动记录</strong><div class="small muted">修正上面的依赖后从该模板启动，运行会按时间倒序出现在这里。</div></div>`
+            }
           </section>
         </div>
         <aside class="stack">
@@ -5325,6 +5555,10 @@ function handleAction(action, target) {
   }
   if (action === "confirm-template-launch") {
     const template = evalTemplateById(target.dataset.template);
+    if (templateDigestBlockers(template).length) {
+      openTemplateLaunch(template.id, { failed: true });
+      return;
+    }
     closeOverlay();
     toast(`已从「${template.name}」启动评测，正在解析资产与镜像`);
     go(`/evals/eval-001?fromTemplate=${template.id}`);
@@ -5334,11 +5568,13 @@ function handleAction(action, target) {
     ui.newEvalStep = 1;
     ui.newEval.saveAsTemplate = true;
     ui.newEval.templateName = "日常回归 · Verified";
+    ui.newEval.templateSaveAttempted = false;
     go("/evals/new?mode=template");
     return;
   }
   if (action === "toggle-save-template") {
     ui.newEval.saveAsTemplate = !ui.newEval.saveAsTemplate;
+    ui.newEval.templateSaveAttempted = false;
     render({ preserveScroll: true });
     return;
   }
@@ -5355,8 +5591,14 @@ function handleAction(action, target) {
       toast("请先读取并确认当前 Agent 版本下的资产", true);
       return;
     }
+    if (newEvalDigestBlockers().length) {
+      ui.newEval.templateSaveAttempted = true;
+      render({ preserveScroll: true });
+      return;
+    }
     const template = createTemplateFromWizard();
     ui.newEval.saveAsTemplate = false;
+    ui.newEval.templateSaveAttempted = false;
     ui.newEvalStep = 1;
     ui.templateSearch = "";
     ui.templateStatus = "all";
@@ -5368,6 +5610,7 @@ function handleAction(action, target) {
 
   if (action === "select-dataset") {
     ui.newEval.dataset = value;
+    ui.newEval.templateSaveAttempted = false;
     render();
     return;
   }
