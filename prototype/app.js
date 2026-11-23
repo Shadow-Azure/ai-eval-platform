@@ -1359,10 +1359,10 @@ function templateStatusTag(template) {
   return '<span class="tag tag-success"><span class="status-dot pulse"></span>启用</span>';
 }
 
-// 停用模板不能启动，操作位改为删除；启用模板仍是一键启动。
-function templatePrimaryAction(template) {
+// 停用模板不能启动，操作区保留启用与删除；启用模板仍是一键启动。
+function templateActionButtons(template) {
   if (!template.enabled) {
-    return `<button class="btn btn-sm btn-danger" data-action="template-delete" data-template="${template.id}">${icon("trash", 13)} 删除</button>`;
+    return `<button class="btn btn-sm" data-action="template-enable" data-template="${template.id}">启用</button><button class="btn btn-sm btn-danger" data-action="template-delete" data-template="${template.id}">删除</button>`;
   }
   return `<button class="btn btn-primary btn-sm" data-action="template-launch" data-template="${template.id}">${icon("play", 13)} 启动</button>`;
 }
@@ -1667,7 +1667,7 @@ function createTemplateFromWizard() {
 
 function quickTemplateRow(template) {
   const last = template.lastRun;
-  const primaryAction = templatePrimaryAction(template);
+  const actionButtons = templateActionButtons(template);
   return `
     <div class="quick-template-row">
       <div class="quick-template-glyph">${icon("boxes", 16)}</div>
@@ -1678,7 +1678,7 @@ function quickTemplateRow(template) {
       <div class="quick-template-last">${templateLastRunTag(last)}<span>${esc(last.at)}</span></div>
       <div class="quick-template-actions">
         <button class="btn btn-sm" data-action="template-detail" data-template="${template.id}">详情</button>
-        ${primaryAction}
+        ${actionButtons}
       </div>
     </div>
   `;
@@ -1686,7 +1686,7 @@ function quickTemplateRow(template) {
 
 function templateListRow(template) {
   const last = template.lastRun;
-  const primaryAction = templatePrimaryAction(template);
+  const actionButtons = templateActionButtons(template);
   return `
     <tr>
       <td>
@@ -1711,7 +1711,7 @@ function templateListRow(template) {
           <button class="btn btn-sm" data-action="template-detail" data-template="${template.id}">详情</button>
           <button class="btn btn-sm" data-action="template-api" data-template="${template.id}">接口</button>
           <button class="btn btn-sm" data-action="template-history" data-template="${template.id}">历史</button>
-          ${primaryAction}
+          ${actionButtons}
         </div>
       </td>
     </tr>
@@ -5606,6 +5606,15 @@ function handleAction(action, target) {
   }
   if (action === "template-launch") {
     openTemplateLaunch(target.dataset.template);
+    return;
+  }
+  if (action === "template-enable") {
+    const template = ui.templates.find((item) => item.id === target.dataset.template);
+    if (!template || template.enabled) return;
+    template.enabled = true;
+    template.updated = "刚刚";
+    toast(`模板「${template.name}」已启用`);
+    render({ preserveScroll: true });
     return;
   }
   if (action === "template-delete") {

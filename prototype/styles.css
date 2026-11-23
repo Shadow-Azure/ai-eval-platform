@@ -4790,11 +4790,11 @@ tbody tr.clickable {
 }
 
 .template-list-table th:nth-child(1) {
-  width: 19%;
+  width: 17%;
 }
 
 .template-list-table th:nth-child(2) {
-  width: 24%;
+  width: 23%;
 }
 
 .template-list-table th:nth-child(3) {
@@ -4818,7 +4818,7 @@ tbody tr.clickable {
 }
 
 .template-list-table th:nth-child(8) {
-  width: 18%;
+  width: 21%;
 }
 
 .template-list-table td {
@@ -4861,13 +4861,13 @@ tbody tr.clickable {
 }
 
 .template-list-actions {
-  gap: 5px;
+  gap: 4px;
   flex-wrap: wrap;
 }
 
 .template-list-actions .btn {
-  padding-right: 7px;
-  padding-left: 7px;
+  padding-right: 6px;
+  padding-left: 6px;
 }
 
 .template-list-pagination {
