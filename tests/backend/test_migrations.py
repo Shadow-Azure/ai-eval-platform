@@ -143,6 +143,15 @@ def test_pool_unique_label_migration_backfills_legacy_pools(database_url: str) -
                         },
                         "status": "active",
                     },
+                    {
+                        "id": "legacy-custom",
+                        "tenant_id": tenant_id,
+                        "project_id": project_id,
+                        "name": "gpu-custom",
+                        "provider_key": "fixed",
+                        "labels_json": {"runs_on": ["gpu-only"]},
+                        "status": "active",
+                    },
                 ],
             )
     finally:
@@ -167,6 +176,11 @@ def test_pool_unique_label_migration_backfills_legacy_pools(database_url: str) -
             "pool-fixed-linux",
         ]
         assert spot["runs_on"] == ["self-hosted", "linux", "eval", "m5-08-spot"]
+        with engine.connect() as connection:
+            custom = connection.execute(
+                sa.select(pool.c.labels_json).where(pool.c.id == "legacy-custom")
+            ).scalar_one()
+        assert custom["runs_on"] == ["self-hosted", "gpu-only"]
     finally:
         engine.dispose()
 

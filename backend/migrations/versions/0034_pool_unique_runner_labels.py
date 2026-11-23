@@ -102,6 +102,10 @@ def _dedupe(labels: list[str]) -> list[str]:
 def _ensure_unique(row: Mapping[str, Any], labels: list[str]) -> list[str]:
     if not labels:
         labels = list(DEFAULT_RUNS_ON)
+    elif "self-hosted" not in {label.lower() for label in labels}:
+        # GitHub only matches self-hosted runners when the job carries the
+        # automatic label; keep historical custom sets usable.
+        labels = ["self-hosted", *labels]
     required = {label.lower() for label in DEFAULT_RUNS_ON}
     pool_specific = [label for label in labels if label.lower() not in required]
     if not pool_specific:
