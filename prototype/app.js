@@ -1734,6 +1734,8 @@ function templateApiBody(template) {
       <div class="api-item">
         <div class="api-item-head"><span class="api-method get">GET</span><code>/api/v1/eval-templates?q=&amp;status=&amp;limit=&amp;offset=</code></div>
         <p>控制台管理列表：按名称、数据集、Agent、模型搜索，按启用状态筛选，服务端分页返回 total；不属于三个执行接口。</p>
+        <pre class="api-code">GET /api/v1/eval-templates?q=&amp;status=&amp;limit=20&amp;offset=0
+{"status":"ok","items":[{"id":"${template.id}","name":"${esc(template.name)}","enabled":true,"version":3,"launch_count":18,"preflight":{"status":"ready"}}],"total":3,"limit":20,"offset":0}</pre>
       </div>
       <div class="api-item">
         <div class="api-item-head"><span class="api-method post">POST</span><code>/api/v1/eval-templates/${template.id}/launch</code></div>
@@ -1742,6 +1744,8 @@ function templateApiBody(template) {
   -H 'Content-Type: application/json' \\
   -b 'ep_session=&lt;session&gt;' \\
   -d '{"idempotency_key":"nightly-20261122"}'</pre>
+        <pre class="api-code">HTTP/1.1 202 Accepted
+{"run_id":"eval-007","template_id":"${template.id}","status":"queued","status_url":"/api/v1/eval-runs/eval-007/status","result_url":"/api/v1/eval-runs/eval-007/results","created":true}</pre>
       </div>
       <div class="api-item">
         <div class="api-item-head"><span class="api-method get">GET</span><code>/api/v1/eval-runs/{run_id}/status</code></div>
