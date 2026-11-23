@@ -555,6 +555,11 @@ def test_evaluation_list_filters_by_template_history(
     }
     assert all(item["template_id"] == template["id"] for item in body["items"])
     assert all(item["template_version"] == 1 for item in body["items"])
+    # M10 (#410): each row carries the resolved template name for the list
+    # origin line, not just the opaque id.
+    assert all(item["template"]["id"] == template["id"] for item in body["items"])
+    assert all(item["template"]["name"] == template["name"] for item in body["items"])
+    assert all(item["template"]["version"] == 1 for item in body["items"])
     assert body["stats"]["total"] == 2
 
     page = client.get(

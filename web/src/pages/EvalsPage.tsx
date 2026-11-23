@@ -19,7 +19,7 @@ import {
 } from "../api/evaluations";
 import { fetchEvalTemplates, type EvalTemplate } from "../api/evalTemplates";
 import { TemplateLaunchModal } from "../components/TemplateLaunchModal";
-import { TemplateLastRunTag, templateComboText } from "../components/TemplateBits";
+import { EvalTemplateOrigin, TemplateLastRunTag, templateComboText } from "../components/TemplateBits";
 import { EVAL_STATUS_OPTIONS, evalStatusMeta } from "../utils/evalStatus";
 import {
   dateTimeLabel,
@@ -177,6 +177,10 @@ export function EvalsPage() {
             {row.id.slice(0, 8)}
             {row.resource_pool_id ? ` · ${row.resource_pool_id.slice(0, 8)}` : ""}
           </div>
+          <EvalTemplateOrigin
+            template={row.template}
+            onOpen={(templateId) => navigate(`/evals/templates/${templateId}`)}
+          />
         </div>
       ),
     },
@@ -458,6 +462,15 @@ export function EvalsPage() {
               loading={listQuery.isLoading}
               columns={columns}
               dataSource={listQuery.data?.items ?? []}
+              onRow={(row) => ({
+                className: "eval-table-row",
+                onClick: (event) => {
+                  // Action buttons and the template link keep their own
+                  // navigation; the rest of the row opens the evaluation.
+                  if ((event.target as HTMLElement).closest("button, a")) return;
+                  navigate(`/evals/${row.id}`);
+                },
+              })}
               pagination={{
                 current: page,
                 pageSize: PAGE_SIZE,

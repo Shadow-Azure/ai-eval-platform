@@ -1,5 +1,7 @@
 import { Alert, Tag } from "antd";
 import type { EvalTemplate, EvalTemplatePreflightBlocker } from "../api/evalTemplates";
+import type { EvaluationTemplateBrief } from "../api/evaluations";
+import { Icon } from "./Icon";
 import { durationLabel, rateLabel } from "../utils/evaluationDisplay";
 import { evalStatusMeta } from "../utils/evalStatus";
 import type { CostEstimate } from "../api/evaluations";
@@ -123,6 +125,32 @@ export function selfEvolutionLabel(template: EvalTemplate): string {
 /** A template only exposes whether a token is stored, never the token itself. */
 export function selfEvolutionTokenLabel(template: EvalTemplate): string {
   return template.self_evolution.has_token ? "令牌已配置" : "未配置";
+}
+
+/** M10 (#410): the run row's source template line; custom runs render nothing. */
+export function EvalTemplateOrigin({
+  template,
+  onOpen,
+}: {
+  template: EvaluationTemplateBrief | null | undefined;
+  onOpen: (templateId: string) => void;
+}) {
+  if (!template) return null;
+  return (
+    <div className="eval-origin">
+      <span className="eval-origin-badge">
+        <Icon name="boxes" size={10} /> 来自模板
+      </span>
+      <button
+        type="button"
+        className="eval-origin-link"
+        title={`查看模板：${template.name}`}
+        onClick={() => onOpen(template.id)}
+      >
+        {template.name}
+      </button>
+    </div>
+  );
 }
 
 export function templateComboText(template: EvalTemplate): string {

@@ -22,6 +22,7 @@ scope:
   - docs/design/eval-platform-architecture.en.md
   - docs/design/eval-platform-architecture.i18n.yaml
   - scripts/doc-budgets.manifest.json
+  - plans/**
   - .agents/flow/issues/m10-template-origin.md
   - .agents/flow/issues/m10-template-origin.en.md
   - .agents/flow/issues/m10-template-origin.i18n.yaml

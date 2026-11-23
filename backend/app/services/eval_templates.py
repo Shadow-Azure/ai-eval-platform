@@ -813,23 +813,40 @@ def template_view(
     return view
 
 
-def template_brief(session: Session, template_id: str | None) -> dict | None:
-    if not template_id:
-        return None
-    template = session.scalar(
+def template_briefs(
+    session: Session, template_ids: list[str | None]
+) -> dict[str, dict]:
+    """Resolve visible template briefs for a page of evaluation summaries.
+
+    One batched query keeps the evaluation list free of per-row template
+    requests; ids that are missing or belong to another tenant stay unresolved
+    so a run keeps its recorded ``template_id`` without inventing a label.
+    """
+
+    ids = {template_id for template_id in template_ids if template_id}
+    if not ids:
+        return {}
+    templates = session.scalars(
         select(EvalTemplate).where(
-            EvalTemplate.id == template_id,
+            EvalTemplate.id.in_(ids),
             EvalTemplate.tenant_id == str(DEFAULT_TENANT_ID),
         )
     )
-    if template is None:
-        return None
     return {
-        "id": template.id,
-        "name": template.name,
-        "version": template.version,
-        "enabled": bool(template.enabled),
+        template.id: {
+            "id": template.id,
+            "name": template.name,
+            "version": template.version,
+            "enabled": bool(template.enabled),
+        }
+        for template in templates
     }
+
+
+def template_brief(session: Session, template_id: str | None) -> dict | None:
+    if not template_id:
+        return None
+    return template_briefs(session, [template_id]).get(template_id)
 
 
 def _recent_runs(session: Session, template_id: str, *, limit: int = 5) -> list[dict]:

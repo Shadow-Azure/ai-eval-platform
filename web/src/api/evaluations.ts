@@ -75,6 +75,16 @@ export interface EvaluationSummary {
   /** M10 #394: provenance for template-launched runs; plain runs keep these null. */
   template_id?: string | null;
   template_version?: number | null;
+  /** M10 #410: resolved source template for the list origin line. */
+  template?: EvaluationTemplateBrief | null;
+}
+
+/** M10 #410: the readable source of a template-launched run. */
+export interface EvaluationTemplateBrief {
+  id: string;
+  name: string;
+  version: number;
+  enabled: boolean;
 }
 
 export interface FrozenAsset {
@@ -206,8 +216,6 @@ export interface EvaluationDetail extends EvaluationSummary {
   retryable_count?: number;
   /** All-attempt trace token aggregate; absent until the API ships it. */
   token_summary?: EvalTokenSummary | null;
-  /** M10 (#378): source template banner for a template-launched run. */
-  template?: { id: string; name: string; version: number; enabled: boolean } | null;
 }
 
 export interface EvaluationEvent {
@@ -790,6 +798,17 @@ export function parseEvaluationSummary(payload: unknown): EvaluationSummary {
     self_evolution_workspace_id: readOptionalString(payload.self_evolution_workspace_id),
     template_id: readOptionalString(payload.template_id),
     template_version: readOptionalNumber(payload.template_version),
+    template: parseTemplateBrief(payload.template),
+  };
+}
+
+function parseTemplateBrief(value: unknown): EvaluationTemplateBrief | null {
+  if (!isRecord(value)) return null;
+  return {
+    id: readString(value.id),
+    name: readString(value.name),
+    version: readCount(value.version, "template.version"),
+    enabled: value.enabled !== false,
   };
 }
 
@@ -826,14 +845,6 @@ export function parseEvaluationDetail(payload: unknown): EvaluationDetail {
     retryable_count:
       typeof record.retryable_count === "number" ? record.retryable_count : undefined,
     token_summary: parseTokenSummary(record.token_summary),
-    template: isRecord(record.template)
-      ? {
-          id: readString(record.template.id),
-          name: readString(record.template.name),
-          version: readCount(record.template.version, "template.version"),
-          enabled: record.template.enabled !== false,
-        }
-      : null,
     cases: cases.map((entry) => {
       const item = (entry ?? {}) as Record<string, unknown>;
       return {
