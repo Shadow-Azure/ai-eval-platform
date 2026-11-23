@@ -4689,6 +4689,10 @@ tbody tr.clickable {
   overflow: auto;
 }
 
+.api-code + .api-code {
+  margin-top: 8px;
+}
+
 .api-mini-list {
   display: flex;
   flex-direction: column;
