@@ -5,30 +5,29 @@
 }
 
 .quick-template-list {
-  display: grid;
-  gap: 0;
-  border-top: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  padding: 0 19px 14px;
 }
 
 .quick-template-row {
-  display: grid;
-  grid-template-columns: 34px minmax(0, 1fr) auto auto;
+  display: flex;
   align-items: center;
   gap: 12px;
-  padding: 13px 18px;
-  border-bottom: 1px solid var(--line);
+  padding: 11px 0;
+  border-bottom: 1px dashed var(--line);
 }
 
 .quick-template-row:last-child {
-  border-bottom: none;
+  border-bottom: 0;
 }
 
 .quick-template-glyph {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
   width: 30px;
   height: 30px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
   border-radius: 8px;
   color: var(--primary);
   background: color-mix(in srgb, var(--primary) 10%, transparent);
@@ -36,30 +35,71 @@
 
 .quick-template-main {
   min-width: 0;
+  flex: 1;
+}
+
+.quick-template-name {
+  display: block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  padding: 0;
+  border: 0;
+  color: var(--ink);
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: left;
+  white-space: normal;
+  cursor: pointer;
+}
+
+.quick-template-name:hover {
+  color: var(--primary);
 }
 
 .quick-template-combo {
   overflow: hidden;
+  margin-top: 3px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 10px;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
 
 .quick-template-last {
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 2px;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 10px;
   white-space: nowrap;
+}
+
+.quick-template-last .ant-tag {
+  margin-inline-end: 0;
+  padding-inline: 7px;
+  font-size: 10px;
+  line-height: 16px;
 }
 
 .quick-template-actions {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 6px;
+}
+
+.quick-template-actions .ant-btn-sm {
+  height: 29px;
+  padding-inline: 9px;
+}
+
+@media (max-width: 1240px) {
+  .quick-template-last {
+    display: none;
+  }
 }
 
 .template-name-link {
