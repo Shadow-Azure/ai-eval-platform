@@ -27,7 +27,7 @@ from ..config import Settings, get_settings
 from ..defaults import DEFAULT_PROJECT_ID, DEFAULT_TENANT_ID
 from ..models import EvalCaseAttempt, Project, ProvisionedInstance, ResourcePool, Runner, Tenant
 from .evaluations import ACTIVE_ATTEMPT_STATUSES
-from .runner_labels import DEFAULT_RUNS_ON
+from .runner_labels import default_pool_runs_on
 
 #: Provisioned instances in these states are already settled; only such an
 #: instance may let go of its runner pointer during retention cleanup.
@@ -86,7 +86,7 @@ def ensure_fixed_pool(session: Session, settings: Settings | None = None) -> Res
         name=settings.runner_fixed_pool_name,
         provider_key=settings.runner_fixed_pool_provider_key,
         runner_group=settings.runner_fixed_pool_name,
-        labels_json={"runs_on": list(DEFAULT_RUNS_ON)},
+        labels_json={"runs_on": default_pool_runs_on(settings.runner_fixed_pool_name)},
         status="active",
     )
     session.add(pool)

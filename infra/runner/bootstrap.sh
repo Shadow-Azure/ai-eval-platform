@@ -11,7 +11,9 @@
 #   PLATFORM_BASE_URL          platform API base URL (required on fresh env file)
 #   RUNNER_HEARTBEAT_TOKEN     runner-plane token (required on fresh env file)
 #   RUNNER_ID / RUNNER_NAME    runner identity (default fixed-linux-eval)
-#   RUNNER_LABELS              comma-separated labels (default self-hosted,linux,eval)
+#   RUNNER_LABELS              comma-separated labels; the pool-unique label is
+#                              appended when missing
+#   RUNNER_POOL_LABEL          pool-unique label (default pool-fixed-linux)
 #   HEARTBEAT_INTERVAL_SECONDS heartbeat interval, >=5 (default 30)
 #   SYNC_AGENT=1               overwrite a drifted heartbeat.mjs with this copy
 #   RUNNER_INSTALL=1           also install/register the GitHub Actions runner
@@ -199,12 +201,21 @@ if [ ! -f "$ENV_FILE" ]; then
   done
 fi
 
+RUNNER_POOL_LABEL="${RUNNER_POOL_LABEL:-pool-fixed-linux}"
+# #414: dispatch requires the pool's unique label, so registration must own it
+# too. Append it instead of trusting an operator-supplied list to be complete.
+RUNNER_LABELS_VALUE="${RUNNER_LABELS:-self-hosted,linux,eval}"
+case ",${RUNNER_LABELS_VALUE}," in
+  *",${RUNNER_POOL_LABEL},"*) ;;
+  *) RUNNER_LABELS_VALUE="${RUNNER_LABELS_VALUE},${RUNNER_POOL_LABEL}" ;;
+esac
+
 ENVS=()
 ENVS+=("PLATFORM_BASE_URL=${PLATFORM_BASE_URL:-}")
 ENVS+=("RUNNER_HEARTBEAT_TOKEN=${RUNNER_HEARTBEAT_TOKEN:-}")
 ENVS+=("RUNNER_ID=${RUNNER_ID:-fixed-linux-eval}")
 ENVS+=("RUNNER_NAME=${RUNNER_NAME:-fixed-linux-eval}")
-ENVS+=("RUNNER_LABELS=${RUNNER_LABELS:-self-hosted,linux,eval}")
+ENVS+=("RUNNER_LABELS=${RUNNER_LABELS_VALUE}")
 ENVS+=("HEARTBEAT_INTERVAL_SECONDS=${HEARTBEAT_INTERVAL_SECONDS:-30}")
 
 install_agent
@@ -257,7 +268,7 @@ if [ "${RUNNER_INSTALL:-0}" = "1" ]; then
       --url "$GITHUB_REPO" \
       --token "$RUNNER_REGISTRATION_TOKEN" \
       --name "${RUNNER_NAME:-fixed-linux-eval}" \
-      --labels "${RUNNER_LABELS:-self-hosted,linux,eval}" \
+      --labels "${RUNNER_LABELS_VALUE}" \
       --replace --unattended)
     (cd "$RUNNER_DIR" && ./svc.sh install && ./svc.sh start)
     CHANGED+=("runner-registered")

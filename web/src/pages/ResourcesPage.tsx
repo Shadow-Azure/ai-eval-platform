@@ -1680,8 +1680,13 @@ function PoolModal({
             <InputNumber min={0.0001} step={0.01} style={{ width: "100%" }} />
           </Form.Item>
         )}
-        <Form.Item name="labels_text" label="Runner 标签" extra="用逗号分隔，例如 self-hosted, linux, eval">
-          <Input placeholder="self-hosted, linux, eval" />
+        <Form.Item
+          name="labels_text"
+          label="Runner 标签"
+          rules={[{ required: true, message: "请填写包含池唯一标签的 Runner 标签" }]}
+          extra="用逗号分隔，必须包含池唯一标签；例如 self-hosted, linux, eval, pool-fixed-linux"
+        >
+          <Input placeholder="self-hosted, linux, eval, pool-fixed-linux" />
         </Form.Item>
       </Form>
     </Modal>

@@ -48,12 +48,13 @@ def _make_pool(
     key: str = "pool",
 ) -> ResourcePool:
     tenant, _workspace, project = ensure_default_scope(session)
+    runs_on = ["self-hosted", "linux", "eval", f"pool-{key}"]
     pool = ResourcePool(
         tenant_id=tenant.id,
         project_id=project.id,
         name=f"pool-{key}",
         provider_key="fixed",
-        labels_json=labels if labels is not None else {"kind": "fixed"},
+        labels_json={**(labels or {}), "runs_on": runs_on},
         status=status,
     )
     session.add(pool)
@@ -65,7 +66,7 @@ def _make_pool(
                 resource_pool_id=pool.id,
                 provider_runner_id=f"runner-{key}-{index}",
                 name=f"runner-{key}-{index}",
-                labels_json=["self-hosted", "linux", "eval"],
+                labels_json=list(runs_on),
                 status="online",
                 last_heartbeat_at=heartbeat_at,
             )

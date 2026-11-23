@@ -95,6 +95,11 @@ test("fresh install stages agent, env file and unit, then enables the service", 
     assert.match(envContent, new RegExp(`^${key}=`, "m"), `runner.env 缺 ${key}`);
   }
   assert.match(envContent, /^RUNNER_HEARTBEAT_TOKEN=staged-token$/m);
+  assert.match(
+    envContent,
+    /^RUNNER_LABELS=self-hosted,linux,eval,pool-fixed-linux$/m,
+    "固定 Runner 必须注册池唯一标签",
+  );
 
   const unitPath = join(stage.root, "etc", "systemd", "system", "eval-platform-heartbeat.service");
   const unit = readFileSync(unitPath, "utf8");
@@ -219,6 +224,25 @@ test("env-only change restarts the service to re-read EnvironmentFile", (t) => {
   const calls = systemctlCalls(stage).join("\n");
   assert.match(calls, /restart eval-platform-heartbeat/);
   assert.ok(!calls.includes("daemon-reload"), "unit 未变不应 daemon-reload");
+});
+
+test("pool-unique label is appended once to custom runner labels", (t) => {
+  const stage = makeStage();
+  t.after(() => rmSync(stage.root, { recursive: true, force: true }));
+
+  runBootstrap(stage, {
+    RUNNER_LABELS: "self-hosted,linux,eval,pool-fixed-linux",
+    RUNNER_POOL_LABEL: "pool-fixed-linux",
+  });
+  let envContent = readFileSync(stage.envFile, "utf8");
+  assert.match(envContent, /^RUNNER_LABELS=self-hosted,linux,eval,pool-fixed-linux$/m);
+
+  runBootstrap(stage, {
+    RUNNER_LABELS: "self-hosted,linux,gpu",
+    RUNNER_POOL_LABEL: "pool-gpu",
+  });
+  envContent = readFileSync(stage.envFile, "utf8");
+  assert.match(envContent, /^RUNNER_LABELS=self-hosted,linux,gpu,pool-gpu$/m);
 });
 
 test("drifted agent file is kept unless SYNC_AGENT=1", (t) => {

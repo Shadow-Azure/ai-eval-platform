@@ -39,8 +39,10 @@ from ..services.provisioning import (
 from ..services.resources import (
     ResourceValidationError,
     connection_payload,
+    normalize_pool_label_storage,
     pool_payload,
     validate_pool_configuration,
+    validate_pool_runs_on,
     verify_connection,
 )
 from .dependencies import require_admin, require_session
@@ -463,6 +465,8 @@ def create_resource_pool(
     mode = payload.provisioning_mode.strip()
     connection = _resolve_connection_for_write(session, tenant_id, payload.connection_id)
     provider_key = _provider_key(mode, connection)
+    labels_json = dict(payload.labels)
+    instance_config = dict(payload.instance_config)
     try:
         validate_pool_configuration(
             connection,
@@ -479,10 +483,20 @@ def create_resource_pool(
             tenant_id=tenant_id,
             pool_id=None,
             provisioning_mode=mode,
-            instance_config=payload.instance_config,
+            instance_config=instance_config,
+        )
+        runs_on = validate_pool_runs_on(
+            session,
+            tenant_id=tenant_id,
+            pool_id=None,
+            labels_json=labels_json,
+            instance_config_json=instance_config,
         )
     except ResourceValidationError as exc:
         raise _validation_error(exc) from exc
+    labels_json, instance_config = normalize_pool_label_storage(
+        labels_json, instance_config, runs_on
+    )
 
     pool = ResourcePool(
         tenant_id=tenant_id,
@@ -494,9 +508,9 @@ def create_resource_pool(
         provisioning_mode=mode,
         min_capacity=payload.min_capacity,
         max_capacity=payload.max_capacity,
-        instance_config_json=dict(payload.instance_config),
+        instance_config_json=instance_config,
         price_threshold_cny=payload.price_threshold_cny,
-        labels_json=dict(payload.labels),
+        labels_json=labels_json,
         status="active",
     )
     session.add(pool)
@@ -571,8 +585,20 @@ def update_resource_pool(
         else pool.price_threshold_cny
     )
     instance_config = (
-        fields.get("instance_config", pool.instance_config_json) or {}
+        dict(fields["instance_config"])
+        if "instance_config" in fields
+        else dict(pool.instance_config_json or {})
     )
+    labels_json = (
+        dict(fields["labels"])
+        if "labels" in fields
+        else dict(pool.labels_json or {})
+    )
+    if "labels" in fields:
+        # An explicit label edit wins over a legacy ``instance_config.runs_on``
+        # pin; otherwise the old pin would silently override the new list.
+        for key in ("runs_on", "runner_labels", "labels"):
+            instance_config.pop(key, None)
     provider_key = _provider_key(mode, connection)
     try:
         validate_pool_configuration(
@@ -592,8 +618,18 @@ def update_resource_pool(
             provisioning_mode=mode,
             instance_config=instance_config,
         )
+        runs_on = validate_pool_runs_on(
+            session,
+            tenant_id=tenant_id,
+            pool_id=pool.id,
+            labels_json=labels_json,
+            instance_config_json=instance_config,
+        )
     except ResourceValidationError as exc:
         raise _validation_error(exc) from exc
+    labels_json, instance_config = normalize_pool_label_storage(
+        labels_json, instance_config, runs_on
+    )
 
     pool.provisioning_mode = mode
     pool.provider_key = provider_key or capacity_control.PROVISIONING_MODE_FIXED
@@ -603,12 +639,10 @@ def update_resource_pool(
     pool.price_threshold_cny = price_threshold
     if "name" in fields and fields["name"]:
         pool.name = str(fields["name"])
-    if "instance_config" in fields:
-        pool.instance_config_json = dict(fields["instance_config"] or {})
+    pool.instance_config_json = instance_config
     if "runner_group" in fields:
         pool.runner_group = fields["runner_group"]
-    if "labels" in fields:
-        pool.labels_json = dict(fields["labels"] or {})
+    pool.labels_json = labels_json
 
     identity.record_audit(
         session,

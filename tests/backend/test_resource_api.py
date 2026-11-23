@@ -118,7 +118,14 @@ def _pool_body(connection_id: str | None, **overrides: object) -> dict:
             "runners_per_instance": 1,
         },
         "runner_group": "spot-linux",
-        "labels": {"kind": "spot"},
+        "labels": {
+            "runs_on": [
+                "self-hosted",
+                "linux",
+                "eval",
+                f"pool-{uuid4().hex[:12]}",
+            ]
+        },
     }
     body.update(overrides)
     return body
@@ -272,7 +279,8 @@ def test_admin_creates_spot_pool_with_capacity_policy(
     assert pool["price_threshold_cny"] == "0.5000"
     assert pool["instance_config"]["instance_type"] == "ecs.g7.large"
     assert pool["runner_group"] == "spot-linux"
-    assert pool["labels"] == {"kind": "spot"}
+    assert pool["labels"]["runs_on"][:3] == ["self-hosted", "linux", "eval"]
+    assert pool["labels"]["runs_on"][3].startswith("pool-")
     assert pool["status"] == "active"
     assert pool["capacity_reason"] is None
     assert SECRET_CIPHERTEXT not in str(pool)
@@ -354,10 +362,85 @@ def test_fixed_pool_needs_no_connection(
         max_capacity=1,
         price_threshold_cny=None,
         instance_config={},
-        labels={"kind": "fixed"},
+        labels={"runs_on": ["self-hosted", "linux", "eval", "pool-fixed-linux"]},
     )
     assert pool["provider_key"] == "fixed"
     assert pool["connection_id"] is None
+
+
+def test_pool_runs_on_is_required_and_unique(
+    client: TestClient, session: Session
+) -> None:
+    """#414: a new or updated pool must own a non-empty unique label set."""
+
+    missing = client.post(
+        "/api/v1/resource-pools",
+        json=_pool_body(
+            None,
+            name="fixed-no-labels",
+            provisioning_mode="fixed",
+            min_capacity=0,
+            max_capacity=1,
+            price_threshold_cny=None,
+            instance_config={},
+            labels={},
+        ),
+    )
+    assert missing.status_code == 422
+    assert _error(missing)["code"] == "pool_runs_on_required"
+
+    default_only = client.post(
+        "/api/v1/resource-pools",
+        json=_pool_body(
+            None,
+            name="fixed-default-only",
+            provisioning_mode="fixed",
+            min_capacity=0,
+            max_capacity=1,
+            price_threshold_cny=None,
+            instance_config={},
+            labels={"runs_on": ["self-hosted", "linux", "eval"]},
+        ),
+    )
+    assert default_only.status_code == 422
+    assert _error(default_only)["code"] == "pool_runs_on_required"
+
+    labels = {"runs_on": ["self-hosted", "linux", "eval", "pool-shared"]}
+    first = _create_pool(
+        client,
+        None,
+        name="fixed-shared-a",
+        provisioning_mode="fixed",
+        min_capacity=0,
+        max_capacity=1,
+        price_threshold_cny=None,
+        instance_config={},
+        labels=labels,
+    )
+    duplicate = client.post(
+        "/api/v1/resource-pools",
+        json=_pool_body(
+            None,
+            name="fixed-shared-b",
+            provisioning_mode="fixed",
+            min_capacity=0,
+            max_capacity=1,
+            price_threshold_cny=None,
+            instance_config={},
+            labels=labels,
+        ),
+    )
+    assert duplicate.status_code == 422
+    assert _error(duplicate)["code"] == "pool_runs_on_conflict"
+
+    cleared = client.patch(
+        f"/api/v1/resource-pools/{first['id']}",
+        json={"labels": {}},
+    )
+    assert cleared.status_code == 422
+    assert _error(cleared)["code"] == "pool_runs_on_required"
+
+    assert session.scalar(select(func.count()).select_from(ResourcePool)) == 1
 
 
 # ---------------------------------------------------------------------------
