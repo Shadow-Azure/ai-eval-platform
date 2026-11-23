@@ -29,7 +29,7 @@ The production evaluation-template list only offers details, API, disable, and l
 ## Goals
 
 - Add a history action to each template row and launch-history actions to the detail header and recent-runs card, all opening the same modal.
-- Read the template's historical evaluations through server pagination, defaulting to 10 rows per page with 10/20/50 options and filtering by the statuses the template actually has.
+- Read the template's historical evaluations through server pagination, defaulting to 10 rows per page with 10/20/50 options and filtering by status with counts, including zero counts.
 - Open the corresponding evaluation detail from any row or the view action; provide clear empty states for no launches and no filter matches with a reset action.
 - Reuse `GET /api/v1/evaluations` with an optional `template_id` filter instead of adding an execution API; keep `recent_runs` on the detail page as a five-item preview.
 
