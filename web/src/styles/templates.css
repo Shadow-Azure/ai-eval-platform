@@ -331,6 +331,10 @@
   overflow-wrap: anywhere;
 }
 
+.template-api-code + .template-api-code {
+  margin-top: 8px;
+}
+
 .template-api-mini {
   display: grid;
   gap: 8px;
