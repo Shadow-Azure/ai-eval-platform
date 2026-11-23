@@ -4,11 +4,35 @@ export const key = "claude-code";
 export const adapterVersion = "claude-code-1.0";
 export const runtimeVersion = "2.x";
 
+const NODE_URL = "https://registry.npmmirror.com/-/binary/node/v22.14.0/node-v22.14.0-linux-x64.tar.xz";
+// Curl exit codes that identify a transient network failure: resolve/connect
+// failure, timeout, TLS handshake, empty reply, send failure and receive
+// failure. Deterministic failures (HTTP 22, write 23, certificate 60, size 63,
+// CA file 77, tar/disk errors) must fail immediately instead of being retried.
+const NODE_DOWNLOAD_NETWORK_CODES = "6|7|28|35|52|55|56";
+
 export function installScript() {
   return [
     "set -e",
     "if ! command -v node >/dev/null 2>&1; then",
-    "  curl -fsSL https://registry.npmmirror.com/-/binary/node/v22.14.0/node-v22.14.0-linux-x64.tar.xz -o /tmp/node.tar.xz",
+    `  node_url=${NODE_URL}`,
+    "  fetch_node() {",
+    '    curl -fsSL "$node_url" -o /tmp/node.tar.xz',
+    "  }",
+    "  if fetch_node; then",
+    "    :",
+    "  else",
+    "    code=$?",
+    '    case "$code" in',
+    `      ${NODE_DOWNLOAD_NETWORK_CODES})`,
+    '        echo "node download network error (curl $code), retry 1/1" >&2',
+    "        fetch_node",
+    "        ;;",
+    "      *)",
+    '        exit "$code"',
+    "        ;;",
+    "    esac",
+    "  fi",
     "  mkdir -p /opt/node",
     "  tar -xJf /tmp/node.tar.xz -C /opt/node --strip-components=1",
     "fi",
