@@ -67,7 +67,7 @@ test("trace.ingestion.updated becomes a counted summary, never a files dump", ()
   assert.equal(EVENT_TYPE_LABELS[TRACE_INGESTION_EVENT], "轨迹入库更新");
 });
 
-test("full-log summaries stay single-line English-free JSON-free copy", () => {
+test("full-log summaries stay single-line and never embed raw JSON", () => {
   const item = ingestion({ caseRunId: "case-a", attempt: 2 });
   const summary = eventSummary(item, caseKeys);
 
