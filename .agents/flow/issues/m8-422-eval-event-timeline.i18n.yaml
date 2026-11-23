@@ -1,5 +1,5 @@
 # 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
 # git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
 #   pnpm run record:i18n -- .agents/flow/issues/m8-422-eval-event-timeline.md
-m8-422-eval-event-timeline.md: 949f7d39b5294fc65ab6fafc9803fadd009f8bbf
-m8-422-eval-event-timeline.en.md: 004429c3d0f077deffdea1f2390f4eee7895cbbf
+m8-422-eval-event-timeline.md: 90d25d1ab5b827a7d59e0f2a42ea027118019bea
+m8-422-eval-event-timeline.en.md: 8395332c3272b81b9f06c6c9ddf8bfa075761ca0
