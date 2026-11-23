@@ -257,6 +257,53 @@ def _normalise_execution(value: dict | None, settings: Settings) -> dict:
     return result
 
 
+def _effective_digest(*candidates: Any) -> str | None:
+    """Resolve a digest by precedence: override → dataset version → platform default."""
+
+    for candidate in candidates:
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+    return None
+
+
+def _image_dependency_blockers(
+    version: DatasetVersion | None,
+    execution: dict | None,
+    settings: Settings,
+) -> list[dict[str, Any]]:
+    """Deterministic launch blockers that a template save can already reject.
+
+    Asset resolution, capacity and credentials depend on live state, so they
+    stay in the launch preflight. Image digests only depend on the stored
+    override, the bound dataset version and the platform defaults, so a
+    template that would certainly be blocked at launch must not be saved.
+    """
+
+    resolved_execution = execution if isinstance(execution, dict) else {}
+    version_label = version.version if version is not None else "未绑定数据集版本"
+    blockers: list[dict[str, Any]] = []
+    for key, code, message in (
+        ("execution_image_digest", "execution_image_missing", "执行镜像 digest 缺失"),
+        ("scoring_image_digest", "scoring_image_missing", "评分镜像 digest 缺失"),
+    ):
+        digest = _effective_digest(
+            resolved_execution.get(key),
+            getattr(version, key, None) if version is not None else None,
+            getattr(settings, f"default_{key}", None),
+        )
+        if digest:
+            continue
+        blockers.append(
+            {
+                "code": code,
+                "message": message,
+                "field": f"execution.{key}",
+                "details": {"dataset_version": version_label},
+            }
+        )
+    return blockers
+
+
 def _normalise_asset_selection(
     source: AgentAssetSource | None,
     asset_ref: str | None,
@@ -330,7 +377,13 @@ def _self_evolution_columns(
     }
 
 
-def _validate_fields(session: Session, data: dict, settings: Settings) -> dict:
+def _validate_fields(
+    session: Session,
+    data: dict,
+    settings: Settings,
+    *,
+    validate_image_dependencies: bool = True,
+) -> dict:
     name = _text(data.get("name"), field="name", max_length=200, required=True)
     description = _text(data.get("description"), field="description", max_length=1000)
     if not data.get("dataset_version_id"):
@@ -350,6 +403,21 @@ def _validate_fields(session: Session, data: dict, settings: Settings) -> dict:
     )
     case_selection = _normalise_case_selection(session, data.get("case_selection"), version)
     execution = _normalise_execution(data.get("execution"), settings)
+    image_blockers = (
+        _image_dependency_blockers(version, execution, settings)
+        if validate_image_dependencies
+        else []
+    )
+    if image_blockers:
+        raise TemplateInvalid(
+            "模板保存前镜像依赖校验未通过："
+            + "、".join(blocker["message"] for blocker in image_blockers),
+            code="template_save_blocked",
+            details={
+                "blockers": image_blockers,
+                "fields": {blocker["field"]: "invalid" for blocker in image_blockers},
+            },
+        )
     prompt_suffix = data.get("prompt_suffix")
     if prompt_suffix is not None:
         if not isinstance(prompt_suffix, str) or len(prompt_suffix) > 4000:
@@ -492,7 +560,18 @@ def update_template(
     ):
         if key in changes:
             current[key] = changes[key]
-    fields = _validate_fields(session, current, settings)
+    # A rename, description edit or enable/disable must not be trapped by an
+    # image dependency that was already missing before the request. Only a
+    # change to the launch fields that can alter digest resolution re-checks
+    # the deterministic save-time gate.
+    fields = _validate_fields(
+        session,
+        current,
+        settings,
+        validate_image_dependencies=(
+            "dataset_version_id" in changes or "execution" in changes
+        ),
+    )
     # ``self_evolution`` is patched as a whole: an omitted target (or an
     # explicit null) keeps the stored config/ciphertext, while a provided
     # target replaces every field. Its token stays optional on update.
@@ -665,6 +744,7 @@ def template_view(
             settings=settings,
         )
     asset_paths = list(template.asset_paths_json or [])
+    image_blockers = _image_dependency_blockers(version, execution, settings)
     view: dict[str, Any] = {
         "id": template.id,
         "name": template.name,
@@ -717,6 +797,14 @@ def template_view(
             "has_token": bool(template.self_evolution_token_encrypted),
         },
         "estimated_cost": estimate,
+        # #398: deterministic status for existing templates. Only the image
+        # dependency is known without a live check, so a template blocked here
+        # recovers automatically once the version or platform default carries
+        # both digests; no template edit is required.
+        "preflight": {
+            "status": "blocked" if image_blockers else "ready",
+            "blockers": image_blockers,
+        },
         "status_url": "/api/v1/eval-runs/{run_id}/status",
         "result_url": "/api/v1/eval-runs/{run_id}/results",
     }

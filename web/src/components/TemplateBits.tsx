@@ -1,5 +1,5 @@
-import { Tag } from "antd";
-import type { EvalTemplate } from "../api/evalTemplates";
+import { Alert, Tag } from "antd";
+import type { EvalTemplate, EvalTemplatePreflightBlocker } from "../api/evalTemplates";
 import { durationLabel, rateLabel } from "../utils/evaluationDisplay";
 import { evalStatusMeta } from "../utils/evalStatus";
 import type { CostEstimate } from "../api/evaluations";
@@ -16,6 +16,100 @@ export function TemplateSelfEvolutionTag({ template }: { template: EvalTemplate 
       上报
     </Tag>
   );
+}
+
+/** #398: map a launch blocker code to the operator's concrete repair action. */
+export function blockerFixHint(code: string): string {
+  switch (code) {
+    case "scoring_image_missing":
+    case "execution_image_missing":
+      return "数据集版本未记录镜像 digest，且平台未配置默认值；请在数据集版本补齐 digest，或联系管理员配置平台默认镜像。";
+    case "asset_runtime_setup_required":
+      return "资产冻结时加载测试未通过；请到 Agent 资产页重新执行加载测试并重新解析快照。";
+    case "credential_unavailable":
+      return "模型凭据不存在或已撤销；请先在「模型凭据」页替换 Key。";
+    case "capacity_invalid":
+      return "请求并发超过资源池上限；请降低并发或调整资源池容量。";
+    case "runner_labels_mismatch":
+      return "资源池 Runner 标签不满足 Runtime 要求；请检查并修正 Runner 标签。";
+    default:
+      return "按上面的原因修正配置后重试。";
+  }
+}
+
+/** Short field label for a blocker, tolerating both launch and save paths. */
+export function blockerFieldLabel(field: string | undefined): string {
+  if (!field) return "—";
+  if (field.endsWith("execution_image_digest")) return "执行镜像 digest";
+  if (field.endsWith("scoring_image_digest")) return "评分镜像 digest";
+  return field;
+}
+
+export function templatePreflightBlockers(template: EvalTemplate): EvalTemplatePreflightBlocker[] {
+  return template.preflight?.blockers ?? [];
+}
+
+/** #398: list/detail badge for an existing template blocked before launch. */
+export function TemplatePreflightTag({ template }: { template: EvalTemplate }) {
+  const blockers = templatePreflightBlockers(template);
+  if (!blockers.length) return null;
+  return (
+    <Tag color="error" title={`启动会被阻断：${blockers.map((blocker) => blocker.message).join("、")}`}>
+      待修复
+    </Tag>
+  );
+}
+
+/** Reusable blocker explanation: code, cause, field and repair action. */
+export function TemplateBlockerList({
+  blockers,
+  title,
+  description,
+}: {
+  blockers: EvalTemplatePreflightBlocker[];
+  title?: string;
+  description?: string;
+}) {
+  if (!blockers.length) return null;
+  return (
+    <Alert
+      type="error"
+      showIcon
+      message={title ?? `发现 ${blockers.length} 个阻断项`}
+      description={
+        <div className="template-blocker-list">
+          {description ? <p style={{ marginTop: 0 }}>{description}</p> : null}
+          <ul>
+            {blockers.map((blocker, index) => (
+              <li key={`${blocker.code}-${index}`}>
+                <div className="template-blocker-head">
+                  <strong>{blocker.message}</strong>
+                  <Tag color="error">{blocker.code}</Tag>
+                  {blocker.field ? (
+                    <span className="small muted">字段 {blockerFieldLabel(blocker.field)}</span>
+                  ) : null}
+                </div>
+                <div className="small">修复建议：{blockerFixHint(blocker.code)}</div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      }
+    />
+  );
+}
+
+/** "执行 / 评分镜像已就绪" or "2 项 digest 缺失" for detail/summary rows. */
+export function imageDependencyLabel(template: EvalTemplate): string {
+  const count = templatePreflightBlockers(template).length;
+  return count ? `${count} 项 digest 缺失` : "执行 / 评分镜像已就绪";
+}
+
+export function imageDependencyDetail(template: EvalTemplate): string {
+  if (templatePreflightBlockers(template).length) {
+    return `数据集版本 ${template.dataset_version ?? "—"} 未登记，平台默认也未配置 · 启动会被阻断`;
+  }
+  return `数据集版本 ${template.dataset_version ?? "—"} 或平台默认已提供 digest`;
 }
 
 /** "已启用 · host · 工作区 ws" or "未启用"; never includes the token. */

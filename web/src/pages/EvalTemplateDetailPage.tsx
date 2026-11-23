@@ -17,13 +17,18 @@ import { PageHeading } from "../components/PageHeading";
 import { QueryError } from "../components/QueryError";
 import { TemplateApiModal } from "../components/TemplateApiModal";
 import {
+  TemplateBlockerList,
+  TemplatePreflightTag,
   TemplateStatusTag,
   caseSelectionLabel,
   costEstimateLabel,
+  imageDependencyDetail,
+  imageDependencyLabel,
   recentRunLabel,
   retryLabel,
   selfEvolutionLabel,
   selfEvolutionTokenLabel,
+  templatePreflightBlockers,
 } from "../components/TemplateBits";
 import { TemplateHistoryModal } from "../components/TemplateHistoryModal";
 import { TemplateLaunchModal } from "../components/TemplateLaunchModal";
@@ -105,6 +110,8 @@ export function EvalTemplateDetailPage() {
     );
   }
 
+  const preflightBlockers = templatePreflightBlockers(template);
+
   const recentColumns: TableColumnsType<EvalTemplateRecentRun> = [
     {
       title: "运行",
@@ -174,6 +181,7 @@ export function EvalTemplateDetailPage() {
         title={
           <span className="eval-title-row">
             {template.name} <TemplateStatusTag enabled={template.enabled} />
+            <TemplatePreflightTag template={template} />
           </span>
         }
         description={`${template.dataset_name ?? "—"} ${template.dataset_version ?? ""} · ${template.runtime_key} · ${template.model_display_name ?? template.model_name ?? "—"} · ${template.resource_pool_name ?? "—"}`}
@@ -209,6 +217,16 @@ export function EvalTemplateDetailPage() {
         }
       />
 
+      {preflightBlockers.length ? (
+        <div style={{ marginBottom: 16 }}>
+          <TemplateBlockerList
+            blockers={preflightBlockers}
+            title={`该模板当前无法启动：${preflightBlockers.map((blocker) => blocker.message).join("、")}`}
+            description={`数据集版本 ${template.dataset_version ?? "—"} 与平台默认都没有提供完整的镜像 digest。补齐数据集版本或平台默认值后，模板会自动恢复为可启动，不需要修改模板本身。`}
+          />
+        </div>
+      ) : null}
+
       <div className="template-detail-layout">
         <div className="stack">
           <section className="card">
@@ -224,6 +242,12 @@ export function EvalTemplateDetailPage() {
                 <Descriptions.Item label="数据集">
                   {template.dataset_name ?? "—"} · {template.dataset_version ?? "—"}
                   <span className="small muted"> · {template.case_count} 个用例</span>
+                </Descriptions.Item>
+                <Descriptions.Item label="镜像依赖">
+                  <span className={preflightBlockers.length ? "text-danger" : undefined}>
+                    {imageDependencyLabel(template)}
+                  </span>
+                  <div className="small muted">{imageDependencyDetail(template)}</div>
                 </Descriptions.Item>
                 <Descriptions.Item label="Agent 运行时">
                   {template.runtime_key} {template.runtime_version ?? ""}

@@ -61,6 +61,7 @@ import { fetchResourcePools } from "../api/resources";
 import { fetchRuntimes } from "../api/runtimes";
 import { ApiError } from "../api/types";
 import { Icon } from "../components/Icon";
+import { TemplateBlockerList } from "../components/TemplateBits";
 import { shouldPollImageReadiness } from "../utils/imageReadiness";
 import { formatMoney, formatMoneyRange } from "../utils/money";
 import { PageHeading } from "../components/PageHeading";
@@ -394,6 +395,31 @@ function blockersFromDetails(details: Record<string, unknown> | null | undefined
   });
 }
 
+function imageDigestBlockers(
+  executionDigest: string,
+  scoringDigest: string,
+  versionLabel: string,
+): PreflightIssue[] {
+  const blockers: PreflightIssue[] = [];
+  if (!executionDigest.trim()) {
+    blockers.push({
+      code: "execution_image_missing",
+      message: "执行镜像 digest 缺失",
+      field: "execution.execution_image_digest",
+      details: { dataset_version: versionLabel },
+    });
+  }
+  if (!scoringDigest.trim()) {
+    blockers.push({
+      code: "scoring_image_missing",
+      message: "评分镜像 digest 缺失",
+      field: "execution.scoring_image_digest",
+      details: { dataset_version: versionLabel },
+    });
+  }
+  return blockers;
+}
+
 function assetTypeTag(type: AssetType) {
   if (type === "command") return <Tag color="purple">Command</Tag>;
   if (type === "subagent") return <Tag color="green">Subagent</Tag>;
@@ -435,6 +461,8 @@ export function EvalWizardPage() {
   const [saveAsTemplate, setSaveAsTemplate] = useState(templateMode);
   const [templateName, setTemplateName] = useState("");
   const [templateDescription, setTemplateDescription] = useState("");
+  const [templateSaveBlockers, setTemplateSaveBlockers] = useState<PreflightIssue[]>([]);
+  const [templateSaveAttempted, setTemplateSaveAttempted] = useState(false);
   const templateSavedRef = useRef(false);
   const [caseOffset, setCaseOffset] = useState(0);
   const [caseLimit, setCaseLimit] = useState(CASE_PAGE_SIZE);
@@ -723,6 +751,19 @@ export function EvalWizardPage() {
         message.info("模板已保存，可在评测模板列表中查看");
       }
       const api = error instanceof ApiError ? error : null;
+      const saveBlockers = api ? blockersFromDetails(api.details) : [];
+      if (
+        api &&
+        api.code === "template_save_blocked" &&
+        saveAsTemplate &&
+        !templateSavedRef.current &&
+        saveBlockers.length
+      ) {
+        setTemplateSaveBlockers(saveBlockers);
+        setTemplateSaveAttempted(true);
+        setStep(3);
+        return;
+      }
       if (api && api.code === "image_not_ready") {
         // #290: readiness can change between the disabled check and the POST.
         // Surface the backend reason and refresh the card instead of leaving a
@@ -796,9 +837,38 @@ export function EvalWizardPage() {
       message.success("模板已保存；可在一键启动区或模板列表中启动");
       navigate("/evals/templates");
     },
-    onError: (error) =>
-      message.error(error instanceof Error ? error.message : "模板保存失败"),
+    onError: (error) => {
+      const api = error instanceof ApiError ? error : null;
+      const saveBlockers = api ? blockersFromDetails(api.details) : [];
+      if (api?.code === "template_save_blocked" && saveBlockers.length) {
+        setTemplateSaveBlockers(saveBlockers);
+        setTemplateSaveAttempted(true);
+        setStep(3);
+        return;
+      }
+      message.error(error instanceof Error ? error.message : "模板保存失败");
+    },
   });
+
+  /** #398: reject a save that the backend would deterministically block. */
+  function saveTemplate() {
+    if (liveTemplateSaveBlockers.length) {
+      setTemplateSaveBlockers(liveTemplateSaveBlockers);
+      setTemplateSaveAttempted(true);
+      return;
+    }
+    setTemplateSaveBlockers([]);
+    saveTemplateOnly.mutate();
+  }
+
+  function createConfirmed() {
+    if (saveAsTemplate && !templateSavedRef.current && liveTemplateSaveBlockers.length) {
+      setTemplateSaveBlockers(liveTemplateSaveBlockers);
+      setTemplateSaveAttempted(true);
+      return;
+    }
+    create.mutate();
+  }
 
   function selectDataset(datasetId: string) {
     update({
@@ -860,6 +930,18 @@ export function EvalWizardPage() {
   const remainingSeconds = expiresAt ? Math.max(0, Math.floor((expiresAt - nowTick) / 1000)) : 0;
   const expired = Boolean(preparation) && remainingSeconds <= 0;
   const summary = preparation?.summary ?? null;
+  const templateVersionLabel = versionDetail.data?.version ?? summary?.dataset.version ?? "";
+  const liveTemplateSaveBlockers = imageDigestBlockers(
+    draft.executionDigest,
+    draft.scoringDigest,
+    templateVersionLabel,
+  );
+  // A repaired digest or a different dataset invalidates the previous save
+  // rejection; the next attempt must be judged from the current form state.
+  useEffect(() => {
+    setTemplateSaveBlockers([]);
+    setTemplateSaveAttempted(false);
+  }, [draft.executionDigest, draft.scoringDigest, draft.versionId, saveAsTemplate]);
   const costEstimate = preparation?.cost_estimate ?? null;
   const preparationId = preparation?.preparation_id ?? null;
   const imageReadinessBlocked = Boolean(imageReadiness && !imageReadiness.ready);
@@ -2451,6 +2533,9 @@ export function EvalWizardPage() {
         </Empty>
       );
     }
+    const saveBlockers = templateSaveBlockers.length
+      ? templateSaveBlockers
+      : liveTemplateSaveBlockers;
     return (
       <div>
         <div className="eyebrow">Step 4 · Review</div>
@@ -2506,12 +2591,26 @@ export function EvalWizardPage() {
                   />
                 </div>
               </div>
-              <div className="banner success" style={{ marginTop: 10 }}>
-                <Icon name="check" size={15} />
-                <div>
-                  启动时仍会重新解析资产 Ref、检查镜像并冻结新的快照；模板编辑不会影响已启动的评测。
+              {saveBlockers.length ? (
+                <div style={{ marginTop: 10 }}>
+                  <TemplateBlockerList
+                    blockers={saveBlockers}
+                    title={
+                      templateSaveAttempted
+                        ? "保存被拒绝：镜像 digest 校验未通过"
+                        : "保存前校验：镜像 digest 缺失"
+                    }
+                    description={`镜像 digest 按「本次覆盖 → 数据集版本 → 平台默认」解析，三处都为空时保存会被拒绝，避免留下必然无法启动的模板。${templateSaveAttempted ? "本次没有写入模板，已填写的配置不会丢失。" : "补齐 digest 后再保存。"}`}
+                  />
                 </div>
-              </div>
+              ) : (
+                <div className="banner success" style={{ marginTop: 10 }}>
+                  <Icon name="check" size={15} />
+                  <div>
+                    镜像 digest 已就绪；保存后启动时仍会重新解析资产 Ref、检查运行状态并冻结新的快照，模板编辑不会影响已启动的评测。
+                  </div>
+                </div>
+              )}
             </>
           ) : (
             <div className="small muted" style={{ marginTop: 8 }}>
@@ -2726,7 +2825,7 @@ export function EvalWizardPage() {
                     size="large"
                     loading={saveTemplateOnly.isPending}
                     disabled={!preparation || expired}
-                    onClick={() => saveTemplateOnly.mutate()}
+                    onClick={saveTemplate}
                   >
                     <Icon name="boxes" size={14} /> 保存模板
                   </Button>
@@ -2737,7 +2836,7 @@ export function EvalWizardPage() {
                         size="large"
                         loading={saveTemplateOnly.isPending}
                         disabled={!preparation || expired}
-                        onClick={() => saveTemplateOnly.mutate()}
+                        onClick={saveTemplate}
                       >
                         仅保存模板
                       </Button>
@@ -2755,7 +2854,7 @@ export function EvalWizardPage() {
                           size="large"
                           loading={create.isPending}
                           disabled={!preparation || expired || imageReadinessBlocked}
-                          onClick={() => create.mutate()}
+                          onClick={createConfirmed}
                         >
                           {imageReadinessBlocked && imageReadiness ? (
                             <>
