@@ -4374,6 +4374,145 @@ tbody tr.clickable {
   border-bottom: 0;
 }
 
+.text-danger {
+  color: var(--danger) !important;
+}
+
+.dataset-choice-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.image-dependency {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fafcff;
+}
+
+.image-dependency.is-ok {
+  border-color: #b7ead3;
+  background: #f3fbf7;
+}
+
+.image-dependency.is-warning {
+  border-color: #f3d38a;
+  background: #fffdf6;
+}
+
+.image-dependency.is-error {
+  border-color: #ffc1bd;
+  background: #fff7f6;
+}
+
+.image-dependency-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.image-dependency-head strong {
+  font-size: 12px;
+}
+
+.image-dependency.is-warning .image-dependency-head strong {
+  color: #9b6500;
+}
+
+.image-dependency.is-error .image-dependency-head strong {
+  color: var(--danger);
+}
+
+.image-dependency-head .tag {
+  flex: 0 0 auto;
+}
+
+.image-blocker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.image-blocker {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+}
+
+.image-blocker-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.image-blocker-head code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  color: #8a4b00;
+  background: #fff7e6;
+  font-size: 10px;
+}
+
+.image-blocker-head .small {
+  margin-left: auto;
+}
+
+.image-blocker p {
+  margin: 6px 0 0;
+  color: var(--ink-2);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.image-blocker .image-blocker-fix {
+  padding: 7px 9px;
+  border-radius: 6px;
+  color: #0b7b4b;
+  background: #effaf5;
+}
+
+.image-blocker-fix strong {
+  color: #0b7b4b;
+}
+
+.image-dependency-foot {
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px dashed var(--line);
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.launch-blocked-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+
+.launch-blocked-head .danger-illustration {
+  margin-bottom: 0;
+}
+
+.launch-blocked-head h3 {
+  margin: 0 0 3px;
+  font-size: 15px;
+}
+
+.detail-dependency-banner {
+  margin-bottom: 14px;
+}
+
+.detail-blocker-list {
+  margin: 6px 0 0;
+  padding-left: 16px;
+  line-height: 1.6;
+}
+
 .template-mode-banner {
   align-items: center;
 }
