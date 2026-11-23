@@ -19,6 +19,33 @@ export function TemplateApiModal({
 }) {
   if (!template) return null;
   const base = typeof window === "undefined" ? "" : window.location.origin;
+  const runId = "eval-007";
+  const listResponse = `GET /api/v1/eval-templates?q=&status=&limit=20&offset=0
+${JSON.stringify({
+  status: "ok",
+  items: [
+    {
+      id: template.id,
+      name: template.name,
+      enabled: true,
+      version: 3,
+      launch_count: 18,
+      preflight: { status: "ready" },
+    },
+  ],
+  total: 3,
+  limit: 20,
+  offset: 0,
+})}`;
+  const launchResponse = `HTTP/1.1 202 Accepted
+${JSON.stringify({
+  run_id: runId,
+  template_id: template.id,
+  status: "queued",
+  status_url: `/api/v1/eval-runs/${runId}/status`,
+  result_url: `/api/v1/eval-runs/${runId}/results`,
+  created: true,
+})}`;
   return (
     <Modal
       open={open}
@@ -73,6 +100,7 @@ export function TemplateApiModal({
             控制台管理列表：按名称、数据集、Agent、模型搜索，按启用状态筛选，服务端分页返回
             total；不属于三个执行接口。
           </p>
+          <pre className="template-api-code">{listResponse}</pre>
         </div>
         <div className="template-api-item">
           <div className="template-api-head">
@@ -86,6 +114,7 @@ export function TemplateApiModal({
   -H 'Content-Type: application/json' \\
   -b 'ep_session=<session>' \\
   -d '{"idempotency_key":"nightly-20261122"}'`}</pre>
+          <pre className="template-api-code">{launchResponse}</pre>
         </div>
         <div className="template-api-item">
           <div className="template-api-head">
