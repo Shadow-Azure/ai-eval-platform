@@ -396,6 +396,68 @@ def test_launch_creates_run_with_template_provenance_and_replays(
     assert refreshed["recent_runs"][0]["id"] == body["run_id"]
 
 
+def test_evaluation_list_filters_by_template_history(
+    client: TestClient, session: Session
+) -> None:
+    """M10 (#394): the read-only history reuses the evaluation list contract."""
+
+    ids = seed_launch(session)
+    template = create_template(client, ids)
+    other = create_template(client, ids, name="另一个模板")
+
+    first = client.post(f"/api/v1/eval-templates/{template['id']}/launch", json={})
+    second = client.post(f"/api/v1/eval-templates/{template['id']}/launch", json={})
+    unrelated = client.post(f"/api/v1/eval-templates/{other['id']}/launch", json={})
+    assert first.status_code == 202, first.text
+    assert second.status_code == 202, second.text
+    assert unrelated.status_code == 202, unrelated.text
+
+    history = client.get(
+        "/api/v1/evaluations",
+        params={"template_id": template["id"], "limit": 10, "offset": 0},
+    )
+    assert history.status_code == 200, history.text
+    body = history.json()
+    assert body["total"] == 2
+    assert {item["id"] for item in body["items"]} == {
+        first.json()["run_id"],
+        second.json()["run_id"],
+    }
+    assert all(item["template_id"] == template["id"] for item in body["items"])
+    assert all(item["template_version"] == 1 for item in body["items"])
+    assert body["stats"]["total"] == 2
+
+    page = client.get(
+        "/api/v1/evaluations",
+        params={"template_id": template["id"], "limit": 1, "offset": 1},
+    ).json()
+    assert page["total"] == 2
+    assert len(page["items"]) == 1
+    assert page["items"][0]["id"] in {first.json()["run_id"], second.json()["run_id"]}
+
+    queued = client.get(
+        "/api/v1/evaluations",
+        params={"template_id": template["id"], "status": "queued"},
+    ).json()
+    assert queued["total"] == 2
+
+    completed = client.get(
+        "/api/v1/evaluations",
+        params={"template_id": template["id"], "status": "completed"},
+    ).json()
+    assert completed["total"] == 0
+
+    other_history = client.get(
+        "/api/v1/evaluations", params={"template_id": other["id"]}
+    ).json()
+    assert other_history["total"] == 1
+    assert other_history["items"][0]["id"] == unrelated.json()["run_id"]
+
+    missing = client.get("/api/v1/evaluations", params={"template_id": "missing"})
+    assert missing.status_code == 404
+    assert missing.json()["detail"]["error"]["code"] == "template_not_found"
+
+
 def test_launch_rejects_disabled_missing_and_reused_idempotency(
     client: TestClient, session: Session
 ) -> None:

@@ -26,6 +26,7 @@ from ..db import get_session
 from ..models import EVAL_RUN_STATUSES
 from ..services import agent_assets as asset_service
 from ..services import budget as budget_service
+from ..services import eval_templates as template_service
 from ..services import evaluations as evaluation_service
 from ..services import identity
 from ..services import preflight as preflight_service
@@ -492,13 +493,25 @@ def list_evaluations(
     q: Annotated[str | None, Query(max_length=200)] = None,
     status: Annotated[str | None, Query(max_length=32)] = None,
     dataset_id: Annotated[str | None, Query(max_length=36)] = None,
+    template_id: Annotated[str | None, Query(max_length=36)] = None,
     session: Session = Depends(get_session),
 ) -> dict:
     """M5-16: the list page filters and aggregates on the server.
 
     ``q`` matches run name/runtime/model and the dataset name/version;
     ``status`` is an exact run-status enum value (partial included).
+    M10 (#394): ``template_id`` narrows the same read model to one template's
+    launch history; an unknown template is a 404 rather than an empty page.
     """
+
+    if template_id is not None:
+        try:
+            template_service.get_template(session, template_id)
+        except template_service.TemplateNotFound as exc:
+            raise HTTPException(
+                status_code=404,
+                detail=error_detail("template_not_found", "评测模板不存在"),
+            ) from exc
 
     if status is not None and status not in EVAL_RUN_STATUSES:
         raise HTTPException(
@@ -516,6 +529,7 @@ def list_evaluations(
         search=q,
         status=status,
         dataset_id=dataset_id,
+        template_id=template_id,
     )
     totals = evaluation_service.evaluation_case_totals(session, [row[0].id for row in rows])
     now = datetime.now(UTC)
@@ -537,7 +551,11 @@ def list_evaluations(
         "total": total,
         "items": items,
         "stats": evaluation_service.evaluation_list_stats(
-            session, search=q, status=status, dataset_id=dataset_id
+            session,
+            search=q,
+            status=status,
+            dataset_id=dataset_id,
+            template_id=template_id,
         ),
     }
 
