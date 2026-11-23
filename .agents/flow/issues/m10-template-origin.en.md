@@ -54,7 +54,7 @@ In the production evaluation-task list (feedback on 2026-11-23), evaluations lau
 
 ## Acceptance
 
-- A template-launched row shows the source label and template name; clicking the template name opens the matching template detail, while clicking elsewhere in the row still opens the evaluation detail.
+- A template-launched row shows the source label and template name; clicking the template name opens the corresponding template detail, while clicking elsewhere in the row still opens the evaluation detail.
 - A custom-launched row shows no origin line.
 - Opening a template-launched evaluation detail from the list shows the “launched from evaluation template …” banner; a custom evaluation does not.
 - A long template name truncates and keeps a full title; table column widths and row heights keep the existing layout intact.

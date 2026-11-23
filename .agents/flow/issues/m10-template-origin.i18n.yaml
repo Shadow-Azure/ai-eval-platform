@@ -2,4 +2,4 @@
 # git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
 #   pnpm run record:i18n -- .agents/flow/issues/m10-template-origin.md
 m10-template-origin.md: 217864a973cec7036a5e969b2fb69fa6a01a5fb4
-m10-template-origin.en.md: d56c55b8e9d2f0b233e66546c96470cd22b4bab7
+m10-template-origin.en.md: cf3ef33b9a904bd7c765144a1939d80e3df48c6d
