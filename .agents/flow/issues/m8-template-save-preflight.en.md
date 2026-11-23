@@ -6,7 +6,7 @@ English | [中文](m8-template-save-preflight.md)
 kind: issue
 milestone: m8
 priority: P2
-status: in-progress
+status: done
 scope:
   - prototype/**
   - docs/design/eval-platform-architecture.md
@@ -63,3 +63,6 @@ Production template launches failed with "pre-launch consistency check failed". 
 
 - Issue: https://github.com/Shadow-Azure/ai-eval-platform/issues/398
 - Design: [docs/design/eval-platform-architecture.en.md](../../../docs/design/eval-platform-architecture.en.md)
+## Implementation
+
+- Production PR: #404 (review record: `plans/2026-11-23-pr404-review.md`; before/after screenshots and the smoke report are in the PR description).

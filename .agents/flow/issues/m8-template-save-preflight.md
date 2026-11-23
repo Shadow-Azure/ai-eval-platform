@@ -6,7 +6,7 @@
 kind: issue
 milestone: m8
 priority: P2
-status: in-progress
+status: done
 scope:
   - prototype/**
   - docs/design/eval-platform-architecture.md
@@ -63,3 +63,6 @@ github:
 
 - Issue：https://github.com/Shadow-Azure/ai-eval-platform/issues/398
 - 设计：[docs/design/eval-platform-architecture.md](../../../docs/design/eval-platform-architecture.md)
+## 实现
+
+- 生产实现 PR：#404（检视记录见 `plans/2026-11-23-pr404-review.md`；修改前后截图与冒烟报告见 PR 描述）。
