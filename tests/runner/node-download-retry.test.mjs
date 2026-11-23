@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -54,6 +54,9 @@ for arg in "$@"; do
   [ "$prev" = "-o" ] && out="$arg"
   prev="$arg"
 done
+# Keep the harness inside its temp dir instead of writing the production
+# /tmp/node.tar.xz path, so parallel runs cannot race on one host file.
+[ "$out" = "/tmp/node.tar.xz" ] && out="$HOME/node.tar.xz"
 [ -n "$out" ] && printf 'node-tarball\\n' > "$out"
 exit 0
 `,
@@ -70,6 +73,7 @@ exit 0
     dir,
     bin,
     log,
+    download: join(dir, "node.tar.xz"),
     script: getRuntimeAdapter("claude-code").installScript(),
   };
 }
@@ -114,6 +118,7 @@ test("does not retry when the first download succeeds", () => {
     assert.equal(calls(harness, "curl"), 1, "a successful download must not be repeated");
     assert.equal(calls(harness, "tar"), 1);
     assert.doesNotMatch(result.stderr, /retry 1\/1/);
+    assert.equal(readFileSync(harness.download, "utf8"), "node-tarball\n");
     const curlLines = readFileSync(harness.log, "utf8")
       .split("\n")
       .filter((line) => line.startsWith("curl "));
@@ -130,6 +135,7 @@ test("retries the Node download exactly once for each confirmed network curl cod
       assert.equal(calls(harness, "curl"), 2, `curl ${code} should be retried once`);
       assert.match(result.stderr, new RegExp(`node download network error \\(curl ${code}\\), retry 1/1`));
       assert.equal(calls(harness, "tar"), 1, `curl ${code} retry should continue the install`);
+      assert.equal(readFileSync(harness.download, "utf8"), "node-tarball\n");
       const curlLines = readFileSync(harness.log, "utf8")
         .split("\n")
         .filter((line) => line.startsWith("curl "));
@@ -148,6 +154,7 @@ test("does not retry deterministic curl failures", () => {
       assert.match(result.stderr, new RegExp(`curl: \\(${code}\\) simulated first failure`));
       assert.doesNotMatch(result.stderr, /retry 1\/1/);
       assert.equal(calls(harness, "tar"), 0);
+      assert.equal(existsSync(harness.download), false);
     });
   }
 });
@@ -160,5 +167,17 @@ test("a failed retry preserves the second attempt's exit code and stderr", () =>
     assert.match(result.stderr, /node download network error \(curl 56\), retry 1\/1/);
     assert.match(result.stderr, /curl: \(28\) simulated second failure/);
     assert.equal(calls(harness, "tar"), 0, "a failed download must not continue the install");
+    assert.equal(existsSync(harness.download), false);
+  });
+});
+
+test("a second 56 failure is still reported as 56", () => {
+  withHarness({ firstCode: 56, secondCode: 56 }, (harness) => {
+    const result = runInstall(harness);
+    assert.equal(result.status, 56);
+    assert.equal(calls(harness, "curl"), 2);
+    assert.equal((result.stderr.match(/curl: \(56\)/g) || []).length, 2);
+    assert.equal(calls(harness, "tar"), 0);
+    assert.equal(existsSync(harness.download), false);
   });
 });
