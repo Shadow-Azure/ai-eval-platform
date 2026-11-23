@@ -6,7 +6,7 @@
 kind: issue
 milestone: m8
 priority: P2
-status: in-progress
+status: done
 scope:
   - web/src/pages/EvalsPage.tsx
   - web/src/components/TemplateBits.tsx
@@ -40,3 +40,7 @@ github:
 - 1200×837 下最近启动隐藏、名称不覆盖相邻列、无水平重叠。
 - 原型在相同数据与视口下呈现同一结构；修改前后截图同视口、同主题并附在实现 PR。
 - `npm test`、`npm run verify:flow`、`npm run verify:docs` 与 `web` 构建通过。
+
+## 参考
+
+- 实现 PR：#389（检视记录见 `plans/2026-11-23-pr389-review.md`）。
