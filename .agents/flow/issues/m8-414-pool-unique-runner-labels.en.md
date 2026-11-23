@@ -6,7 +6,7 @@ English | [中文](m8-414-pool-unique-runner-labels.md)
 kind: issue
 milestone: m8
 priority: P2
-status: in-progress
+status: done
 scope:
   - .agents/flow/issues/m8-414-pool-unique-runner-labels.*
   - backend/**
