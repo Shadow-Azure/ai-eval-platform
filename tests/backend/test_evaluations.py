@@ -607,6 +607,8 @@ def test_api_lists_evaluations_with_counts(seeded: Session, client: TestClient) 
     assert body["stats"]["total"] == 2
     assert body["stats"]["active"] == 2
     assert body["stats"]["avg_resolve_rate"] is None
+    # M10 (#410): a custom run has no source template to label.
+    assert all(item["template"] is None for item in body["items"])
 
 
 def test_api_list_filters_and_searches_on_server(seeded: Session, client: TestClient) -> None:

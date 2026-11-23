@@ -536,20 +536,25 @@ def list_evaluations(
         template_id=template_id,
     )
     totals = evaluation_service.evaluation_case_totals(session, [row[0].id for row in rows])
+    # M10 (#410): resolve each visible run's source template in one batched
+    # query so the list can label template-launched runs without N+1 reads.
+    templates = template_service.template_briefs(
+        session, [row[0].template_id for row in rows]
+    )
     now = datetime.now(UTC)
     items = []
     for run, dataset_name, dataset_version in rows:
         resolved_count, scored_count = totals.get(run.id, (0, 0))
-        items.append(
-            evaluation_service.evaluation_summary(
-                run,
-                dataset_name=dataset_name,
-                dataset_version=dataset_version,
-                resolved_count=resolved_count,
-                scored_count=scored_count,
-                now=now,
-            )
+        summary = evaluation_service.evaluation_summary(
+            run,
+            dataset_name=dataset_name,
+            dataset_version=dataset_version,
+            resolved_count=resolved_count,
+            scored_count=scored_count,
+            now=now,
         )
+        summary["template"] = templates.get(run.template_id) if run.template_id else None
+        items.append(summary)
     response = {
         "status": "ok",
         "total": total,
