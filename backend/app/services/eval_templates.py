@@ -88,11 +88,6 @@ class TemplateConflict(TemplateError):
     code = "template_version_conflict"
 
 
-class TemplateInUse(TemplateError):
-    status = 409
-    code = "template_in_use"
-
-
 class TemplateInvalid(TemplateError):
     status = 422
     code = "template_invalid"
@@ -591,23 +586,15 @@ def update_template(
 
 
 def delete_template(session: Session, template_id: str) -> None:
+    """Delete only the template row; started evaluations and traces stay.
+
+    ``EvalRun.template_id`` is a provenance string without a foreign key, so a
+    run keeps its template id and version after the template is gone. The
+    template name simply stops resolving in evaluation summaries and detail
+    pages; nothing in the execution or trace chain is removed.
+    """
+
     template = get_template(session, template_id)
-    run_count = int(
-        session.scalar(
-            select(func.count())
-            .select_from(EvalRun)
-            .where(
-                EvalRun.template_id == template.id,
-                EvalRun.tenant_id == str(DEFAULT_TENANT_ID),
-            )
-        )
-        or 0
-    )
-    if run_count:
-        raise TemplateInUse(
-            f"模板已有 {run_count} 个评测运行，不能删除；请改为停用",
-            details={"run_count": run_count},
-        )
     session.delete(template)
     session.commit()
 

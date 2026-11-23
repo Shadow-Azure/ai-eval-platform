@@ -9,6 +9,17 @@ priority: P2
 status: ready
 scope:
   - prototype/**
+  - web/src/components/TemplateActions.tsx
+  - web/src/pages/EvalTemplatesPage.tsx
+  - web/src/pages/EvalsPage.tsx
+  - web/src/styles/templates.css
+  - backend/app/services/eval_templates.py
+  - tests/backend/test_eval_templates.py
+  - docs/design/eval-platform-architecture.md
+  - docs/design/eval-platform-architecture.en.md
+  - docs/design/eval-platform-architecture.i18n.yaml
+  - scripts/doc-budgets.manifest.json
+  - plans/**
   - .agents/flow/issues/m10-template-delete-confirm.md
   - .agents/flow/issues/m10-template-delete-confirm.en.md
   - .agents/flow/issues/m10-template-delete-confirm.i18n.yaml
