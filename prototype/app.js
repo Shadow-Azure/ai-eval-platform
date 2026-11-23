@@ -925,6 +925,7 @@ const ui = {
   templateStatus: "all",
   templatePage: 1,
   templatePageSize: 10,
+  templateHistory: { templateId: null, status: "all", page: 1, pageSize: 10 },
   showLoginError: false,
 };
 
@@ -996,6 +997,7 @@ function statusTag(status, label) {
     unresolved: "未解决",
     failed: "失败",
     queued: "排队中",
+    cancelled: "已取消",
     timeout: "超时",
     active: "可用",
     healthy: "健康",
@@ -1010,6 +1012,7 @@ function statusTag(status, label) {
     unresolved: "tag-warning",
     failed: "tag-danger",
     queued: "tag-neutral",
+    cancelled: "tag-neutral",
     timeout: "tag-danger",
     active: "tag-success",
     healthy: "tag-success",
@@ -1232,6 +1235,211 @@ function templateSelfEvolutionTag(template) {
   return '<span class="tag tag-violet" style="margin-left:6px" title="自进化上报已启用">上报</span>';
 }
 
+const TEMPLATE_HISTORY_STATUSES = ["running", "completed", "partial", "failed", "cancelled"];
+const TEMPLATE_HISTORY_PATTERN = ["completed", "completed", "partial", "completed", "failed", "completed", "partial", "cancelled", "completed", "completed"];
+
+function templateHistoryStatusLabel(status) {
+  return { running: "运行中", completed: "已完成", partial: "部分成功", failed: "失败", cancelled: "已取消" }[status] || status;
+}
+
+function templateHistoryResolved(value) {
+  const match = /(\d+)\s*\/\s*\d+/.exec(String(value || ""));
+  return match ? Number(match[1]) : 0;
+}
+
+function templateHistoryDate(index) {
+  const date = new Date("2026-11-23T14:18:00+08:00");
+  date.setDate(date.getDate() - (index + 1) * 2);
+  date.setHours(9 + (index % 8), (index * 13) % 60, 0, 0);
+  return `${date.getMonth() + 1} 月 ${date.getDate()} 日 ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
+// 模板详情只内嵌最近 5 条；完整历史按启动次数确定性生成，供浮窗分页、状态
+// 筛选和详情跳转使用，避免手工维护几十条重复数据。
+function templateHistoryRuns(template) {
+  const total = Math.max(0, Number(template.launches) || 0);
+  if (!total) return [];
+  const templateNumber = Number(String(template.id).replace(/\D/g, "")) || 0;
+  const seeded = (template.recentRuns || []).slice(0, total).map((run, index) => ({
+    ...run,
+    templateVersion: Math.max(1, 3 - Math.floor(index / 4)),
+    resolved: templateHistoryResolved(run.result),
+    progress: Number(run.progress) || (run.status === "running" ? 46 : 100),
+  }));
+  const runs = [...seeded];
+  for (let index = seeded.length; index < total; index += 1) {
+    const status = TEMPLATE_HISTORY_PATTERN[index % TEMPLATE_HISTORY_PATTERN.length];
+    const rate = [38.4, 41.2, 36.8, 39.6, 34.2, 40.4][(index + templateNumber) % 6];
+    const progress = status === "running" ? 46 : status === "cancelled" ? 8 : 100;
+    const completed = Math.round((template.datasetCount * progress) / 100);
+    const resolved = status === "cancelled" ? 0 : Math.round((template.datasetCount * rate) / 100);
+    runs.push({
+      id: `eval-${1000 + templateNumber * 100 + index}`,
+      status,
+      progress,
+      resolved,
+      result:
+        status === "running"
+          ? `${resolved} / ${completed} 已解决`
+          : status === "cancelled"
+            ? `已取消 · ${completed} / ${template.datasetCount} 已执行`
+            : `${resolved} / ${template.datasetCount} · ${rate.toFixed(1)}%`,
+      at: templateHistoryDate(index),
+      duration:
+        status === "running"
+          ? "1h 26m"
+          : status === "cancelled"
+            ? "0h 42m"
+            : ["2h 51m", "3h 04m", "2h 37m", "3h 22m", "1h 58m"][(index + templateNumber) % 5],
+      templateVersion: Math.max(1, 3 - Math.floor(index / 4)),
+    });
+  }
+  return runs;
+}
+
+function templateHistoryRun(template, record) {
+  const submitted = template.datasetCount;
+  const progress = Number(record.progress) || (record.status === "running" ? 46 : 100);
+  const completed = Math.round((submitted * progress) / 100);
+  const resolved = record.resolved ?? templateHistoryResolved(record.result);
+  const failed = record.status === "failed" ? 7 : record.status === "partial" ? 5 : record.status === "running" ? 2 : 0;
+  const runningCases = record.status === "running" ? 9 : 0;
+  return {
+    id: record.id,
+    name: `${template.name} · ${record.at}`,
+    templateId: template.id,
+    dataset: template.dataset,
+    datasetVersion: template.datasetVersion,
+    agent: template.agent,
+    agentVersion: template.agentVersion,
+    model: template.model,
+    provider: template.provider,
+    pool: template.pool,
+    status: record.status,
+    progress,
+    submitted,
+    completed,
+    resolved,
+    runningCases,
+    failed,
+    queued: Math.max(0, submitted - completed - runningCases),
+    started: record.at,
+    duration: record.duration,
+    cost: `¥${(submitted * 0.146).toFixed(2)}`,
+  };
+}
+
+function templateHistoryRunById(runId) {
+  for (const template of ui.templates) {
+    const record = templateHistoryRuns(template).find((item) => item.id === runId);
+    if (record) return templateHistoryRun(template, record);
+  }
+  return null;
+}
+
+function templateHistoryStatusOptions(records) {
+  const counts = records.reduce((accumulator, record) => {
+    accumulator[record.status] = (accumulator[record.status] || 0) + 1;
+    return accumulator;
+  }, {});
+  return TEMPLATE_HISTORY_STATUSES.filter((status) => counts[status]).map((status) => ({
+    status,
+    count: counts[status],
+    label: templateHistoryStatusLabel(status),
+  }));
+}
+
+function openTemplateHistory(templateId) {
+  const template = evalTemplateById(templateId);
+  const state = ui.templateHistory;
+  state.templateId = template.id;
+  const all = templateHistoryRuns(template);
+  const filtered = state.status === "all" ? all : all.filter((record) => record.status === state.status);
+  const pageCount = Math.max(1, Math.ceil(filtered.length / state.pageSize));
+  state.page = Math.min(Math.max(1, state.page || 1), pageCount);
+  const start = (state.page - 1) * state.pageSize;
+  const rows = filtered.slice(start, start + state.pageSize);
+  const options = templateHistoryStatusOptions(all);
+  const pageItems = paginationWindow(state.page, pageCount);
+  const hasFilter = state.status !== "all";
+  modal({
+    title: `启动历史 · ${esc(template.name)}`,
+    subtitle: `${esc(template.dataset)} ${esc(template.datasetVersion)} · ${esc(template.agent)} · ${esc(template.model)} · 共 ${template.launches} 次启动`,
+    wide: true,
+    className: "template-history-modal",
+    body: `
+      <div class="template-history-summary">
+        <div class="template-history-summary-main">
+          <span class="template-history-kicker">固定组合</span>
+          <strong>${esc(template.dataset)} ${esc(template.datasetVersion)} · ${esc(template.agent)} · ${esc(template.model)}</strong>
+          <span class="small muted">${esc(template.pool)} · ${esc(template.caseSelection)} · 每次启动创建独立评测</span>
+        </div>
+        <div class="template-history-summary-side">
+          ${templateStatusTag(template)}
+          <span class="small muted">最近一次 ${esc(template.lastRun && template.lastRun.at ? template.lastRun.at : "尚未启动")}</span>
+        </div>
+      </div>
+      <div class="template-history-panel">
+        <div class="template-history-toolbar">
+          <select class="select" id="template-history-status" style="width:160px" aria-label="按状态筛选启动历史">
+            <option value="all" ${state.status === "all" ? "selected" : ""}>全部状态 (${all.length})</option>
+            ${options.map((option) => `<option value="${option.status}" ${state.status === option.status ? "selected" : ""}>${option.label} (${option.count})</option>`).join("")}
+          </select>
+          <span class="small muted">匹配 ${filtered.length} 条 · 服务端分页</span>
+          <label class="small muted template-history-page-size">每页
+            <select class="select table-page-size" id="template-history-page-size">
+              ${[10, 20, 50].map((size) => `<option value="${size}" ${state.pageSize === size ? "selected" : ""}>${size}</option>`).join("")}
+            </select>
+          </label>
+          ${hasFilter ? `<button class="btn btn-sm" data-action="template-history-filter-reset">清除筛选</button>` : ""}
+        </div>
+        ${
+          rows.length
+            ? `<div class="table-wrap"><table class="template-history-table">
+                <thead><tr><th>运行</th><th>状态</th><th>结果</th><th>启动时间</th><th>耗时</th><th></th></tr></thead>
+                <tbody>${rows
+                  .map(
+                    (record) => `
+                      <tr class="clickable" data-route="/evals/${record.id}?fromTemplate=${template.id}">
+                        <td><div class="template-history-run"><span class="table-primary mono">${record.id}</span><span class="tag tag-neutral" title="模板版本">v${record.templateVersion}</span></div></td>
+                        <td>${statusTag(record.status)}</td>
+                        <td><strong>${esc(record.result)}</strong></td>
+                        <td>${esc(record.at)}</td>
+                        <td>${esc(record.duration)}</td>
+                        <td><button class="btn btn-sm" data-route="/evals/${record.id}?fromTemplate=${template.id}">查看 ${icon("arrowRight", 12)}</button></td>
+                      </tr>
+                    `,
+                  )
+                  .join("")}</tbody>
+              </table></div>`
+            : `<div class="table-empty template-history-empty">
+                <div class="empty-mark">${icon("clock", 20)}</div>
+                <strong>${hasFilter ? "没有符合状态的启动记录" : "还没有启动记录"}</strong>
+                <div class="small muted">${hasFilter ? "清除状态筛选查看全部历史。" : "从该模板一键启动后，运行会在这里按时间倒序出现。"}</div>
+                ${hasFilter ? `<button class="btn btn-sm" style="margin-top:12px" data-action="template-history-filter-reset">清除筛选</button>` : ""}
+              </div>`
+        }
+        <div class="table-pagination template-history-pagination">
+          <div class="row small muted">
+            <span>显示 ${filtered.length ? start + 1 : 0}–${Math.min(start + state.pageSize, filtered.length)} / ${filtered.length}</span>
+            <span>·</span><span>共 ${pageCount} 页</span>
+          </div>
+          <div class="pagination-buttons">
+            <button class="page-button" data-action="template-history-page" data-page="${state.page - 1}" ${state.page === 1 ? "disabled" : ""}>${icon("arrowLeft", 12)}</button>
+            ${pageItems.map((page) => page === null ? '<span class="pagination-ellipsis">…</span>' : `<button class="page-button ${state.page === page ? "active" : ""}" data-action="template-history-page" data-page="${page}">${page}</button>`).join("")}
+            <button class="page-button" data-action="template-history-page" data-page="${state.page + 1}" ${state.page === pageCount ? "disabled" : ""}>${icon("arrowRight", 12)}</button>
+          </div>
+        </div>
+      </div>
+      <div class="template-history-api small muted">
+        <span class="mono">GET /api/v1/evaluations?template_id=${template.id}&amp;status=&amp;limit=&amp;offset=</span>
+        <span>按启动时间倒序；点击任意一行进入评测详情</span>
+      </div>
+    `,
+    footer: `<button class="btn" data-action="close-modal">关闭</button>`,
+  });
+}
+
 function createTemplateFromWizard() {
   const isLite = ui.newEval.dataset === "lite";
   const dataset = isLite ? "SWE-bench Lite" : "SWE-bench Verified";
@@ -1342,6 +1550,7 @@ function templateListRow(template) {
         <div class="row template-list-actions">
           <button class="btn btn-sm" data-action="template-detail" data-template="${template.id}">详情</button>
           <button class="btn btn-sm" data-action="template-api" data-template="${template.id}">接口</button>
+          <button class="btn btn-sm" data-action="template-history" data-template="${template.id}">历史</button>
           ${launchButton}
         </div>
       </td>
@@ -3542,7 +3751,7 @@ function evalTemplateDetailPage(id) {
         eyebrow: `Template · ${template.id}`,
         title: `<span class="eval-title-row">${esc(template.name)} ${templateStatusTag(template)}</span>`,
         description: `${esc(template.dataset)} ${esc(template.datasetVersion)} · ${esc(template.agent)} · ${esc(template.model)} · ${esc(template.pool)}`,
-        actions: `<button class="btn" data-action="template-api" data-template="${template.id}">${icon("link", 14)} 接口</button><button class="btn btn-primary" data-action="template-launch" data-template="${template.id}">${icon("play", 14)} 一键启动</button>`,
+        actions: `<button class="btn" data-action="template-history" data-template="${template.id}">${icon("clock", 14)} 启动历史</button><button class="btn" data-action="template-api" data-template="${template.id}">${icon("link", 14)} 接口</button><button class="btn btn-primary" data-action="template-launch" data-template="${template.id}">${icon("play", 14)} 一键启动</button>`,
       })}
       <div class="template-detail-layout">
         <div class="stack">
@@ -3570,7 +3779,7 @@ function evalTemplateDetailPage(id) {
             </div>
           </section>
           <section class="card">
-            <div class="card-header"><div><h2 class="card-title">最近运行</h2><p class="card-subtitle">每次启动创建独立评测，模板编辑不回溯修改</p></div><button class="btn btn-sm" data-action="template-launch" data-template="${template.id}">${icon("play", 13)} 再启动一次</button></div>
+            <div class="card-header"><div><h2 class="card-title">最近运行</h2><p class="card-subtitle">每次启动创建独立评测，模板编辑不回溯修改</p></div><div class="row" style="gap:6px"><button class="btn btn-sm" data-action="template-history" data-template="${template.id}">${icon("clock", 13)} 全部历史</button><button class="btn btn-sm" data-action="template-launch" data-template="${template.id}">${icon("play", 13)} 再启动一次</button></div></div>
             <div class="table-wrap"><table>
               <thead><tr><th>运行</th><th>状态</th><th>结果</th><th>启动</th><th>耗时</th><th></th></tr></thead>
               <tbody>
@@ -3627,7 +3836,7 @@ function evalTemplateDetailPage(id) {
 
 
 function evalDetailPage(id) {
-  const run = mock.evalRuns.find((item) => item.id === id) || mock.evalRuns[0];
+  const run = mock.evalRuns.find((item) => item.id === id) || templateHistoryRunById(id) || mock.evalRuns[0];
   const route = currentRoute();
   const tab = route.query.get("tab") || "overview";
   const fromTemplate = route.query.get("fromTemplate");
@@ -5081,6 +5290,23 @@ function handleAction(action, target) {
     openTemplateApi(target.dataset.template);
     return;
   }
+  if (action === "template-history") {
+    ui.templateHistory.status = "all";
+    ui.templateHistory.page = 1;
+    openTemplateHistory(target.dataset.template);
+    return;
+  }
+  if (action === "template-history-page") {
+    ui.templateHistory.page = Number(target.dataset.page) || 1;
+    openTemplateHistory(ui.templateHistory.templateId);
+    return;
+  }
+  if (action === "template-history-filter-reset") {
+    ui.templateHistory.status = "all";
+    ui.templateHistory.page = 1;
+    openTemplateHistory(ui.templateHistory.templateId);
+    return;
+  }
   if (action === "template-launch") {
     openTemplateLaunch(target.dataset.template);
     return;
@@ -5618,6 +5844,18 @@ document.addEventListener("change", (event) => {
     ui.templatePageSize = Number(event.target.value);
     ui.templatePage = 1;
     render({ preserveScroll: true });
+  }
+  if (event.target.id === "template-history-status") {
+    ui.templateHistory.status = event.target.value;
+    ui.templateHistory.page = 1;
+    openTemplateHistory(ui.templateHistory.templateId);
+    return;
+  }
+  if (event.target.id === "template-history-page-size") {
+    ui.templateHistory.pageSize = Number(event.target.value);
+    ui.templateHistory.page = 1;
+    openTemplateHistory(ui.templateHistory.templateId);
+    return;
   }
   if (event.target.id === "asset-page-size") {
     ui.newEval.assetPageSize = Number(event.target.value);
