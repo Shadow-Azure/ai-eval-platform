@@ -6,7 +6,7 @@ English | [中文](m8-eval-template-api-modal.md)
 kind: issue
 milestone: m8
 priority: P2
-status: in-progress
+status: done
 scope:
   - web/src/components/TemplateApiModal.tsx
   - web/src/pages/EvalTemplateDetailPage.tsx
@@ -43,3 +43,7 @@ The production "template API" dialog diverges from `prototype` in six places: th
 - The footer "close" button closes the dialog and "one-click launch" opens the launch confirmation dialog.
 - The prototype shows the same structure with the same data and viewport; before/after screenshots use the same viewport and theme and are attached to the implementation PR.
 - `npm test`, `npm run verify:flow`, `npm run lint:docs`, `npm run verify:docs` and the `web` build pass.
+
+## References
+
+- Implementation PR: #393 (review record: `plans/2026-11-23-pr393-review.md`).
