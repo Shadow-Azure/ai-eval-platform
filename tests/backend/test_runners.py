@@ -857,8 +857,8 @@ def test_heartbeat_adopts_runner_row_left_in_stale_pool(
     assert json.loads(json.dumps(adopted.labels_json)) == ["self-hosted", "linux", "eval"]
 
 
-def test_ensure_fixed_pool_registers_explicit_runner_labels(seeded: Session) -> None:
-    """A new system pool must not store the legacy provider marker as a label."""
+def test_ensure_fixed_pool_registers_unique_runner_labels(seeded: Session) -> None:
+    """The system fixed pool must own a label no other pool registers."""
 
     from app.services.runners import ensure_fixed_pool
 
@@ -866,7 +866,7 @@ def test_ensure_fixed_pool_registers_explicit_runner_labels(seeded: Session) -> 
     seeded.flush()
 
     assert json.loads(json.dumps(pool.labels_json)) == {
-        "runs_on": ["self-hosted", "linux", "eval"]
+        "runs_on": ["self-hosted", "linux", "eval", "pool-fixed-linux"]
     }
 
 

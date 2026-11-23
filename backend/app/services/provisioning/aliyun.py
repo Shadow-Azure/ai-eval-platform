@@ -504,10 +504,7 @@ def _pool_config(pool: ResourcePool) -> dict[str, Any]:
 
 
 def _runner_labels(settings: Settings, pool: ResourcePool) -> list[str]:
-    return pool_runner_labels(
-        pool,
-        fallback=[item.strip() for item in settings.runner_spot_labels.split(",") if item.strip()],
-    )
+    return pool_runner_labels(pool)
 
 
 def _config_str(config: dict[str, Any], key: str) -> str | None:

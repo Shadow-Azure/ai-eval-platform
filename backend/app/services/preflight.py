@@ -32,6 +32,11 @@ from ..runtimes.base import AssetSnapshot
 from ..runtimes.claude_code import get_runtime_adapter
 from . import capacity
 from .agent_assets import runtime_setup_view
+from .runner_labels import (
+    RunnerLabelsMissing,
+    pool_runner_labels,
+    resolve_pool_labels,
+)
 
 
 @dataclass(frozen=True)
@@ -309,6 +314,78 @@ def check_preparation(
                 )
             )
         )
+        try:
+            pool_runs_on = pool_runner_labels(pool)
+        except RunnerLabelsMissing:
+            pool_runs_on = []
+            blockers.append(
+                PreflightIssue(
+                    "pool_runs_on_missing",
+                    "资源池未配置唯一的 runs_on Runner 标签，评测无法安全派发",
+                    "resource_pool_id",
+                )
+            )
+        if pool_runs_on:
+            pool_required = {label.lower() for label in pool_runs_on}
+            compatible = [
+                runner
+                for runner in runners
+                if pool_required <= {label.lower() for label in _runner_labels(runner)}
+            ]
+            stale = [runner.name for runner in runners if runner not in compatible]
+            if runners and not compatible:
+                issue = PreflightIssue(
+                    "runner_pool_labels_mismatch",
+                    "资源池内在线 Runner 缺少池唯一标签，作业会排队或落到其他池",
+                    "resource_pool_id",
+                    {"required": pool_runs_on, "runners": [runner.name for runner in runners]},
+                )
+                # A fixed runner must be re-registered with the pool label;
+                # spot runners get it from the next cloud-init registration.
+                if pool.provisioning_mode == "fixed":
+                    blockers.append(issue)
+                else:
+                    warnings.append(issue)
+            elif stale:
+                warnings.append(
+                    PreflightIssue(
+                        "runner_pool_labels_mismatch",
+                        "部分已有 Runner 缺少池唯一标签，不会被本池调度",
+                        "resource_pool_id",
+                        {"required": pool_runs_on, "runners": stale},
+                    )
+                )
+        other_pools = list(
+            session.scalars(
+                select(ResourcePool).where(
+                    ResourcePool.tenant_id == tenant_id,
+                    ResourcePool.id != pool.id,
+                    ResourcePool.status == "active",
+                )
+            )
+        )
+        for other in other_pools:
+            other_labels = resolve_pool_labels(other)
+            if not other_labels:
+                continue
+            other_set = {label.lower() for label in other_labels}
+            current_set = {label.lower() for label in pool_runs_on}
+            if not current_set or not (current_set <= other_set or other_set <= current_set):
+                continue
+            blockers.append(
+                PreflightIssue(
+                    "pool_runs_on_overlap",
+                    "资源池 Runner 标签与另一个资源池重叠，会导致跨池调度",
+                    "resource_pool_id",
+                    {
+                        "other_pool_id": other.id,
+                        "other_pool_name": other.name,
+                        "other_runs_on": other_labels,
+                        "runs_on": pool_runs_on,
+                    },
+                )
+            )
+            break
         required = set(adapter.required_runner_labels)
         if runners:
             incompatible = [runner.name for runner in runners if not required <= _runner_labels(runner)]

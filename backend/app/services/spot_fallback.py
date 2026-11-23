@@ -49,7 +49,7 @@ from ..models import (
 )
 from ..money import Money, MoneyError
 from .evaluations import SHARD_DISPATCH_TOPIC
-from .runner_labels import DEFAULT_RUNS_ON, pool_runner_labels
+from .runner_labels import pool_runner_labels
 
 SNAPSHOT_KEY = "spot_fallback"
 REASON_PROVIDER_RECLAIM = "provider_spot_reclaim"
@@ -308,15 +308,7 @@ def fallback_reference_price(pool: ResourcePool) -> Decimal | None:
 def _fallback_labels(
     session: Session, run: EvalRun, target: ResourcePool, settings: Settings
 ) -> list[str]:
-    if target.provisioning_mode == "spot":
-        fallback = [
-            item.strip()
-            for item in settings.runner_spot_labels.split(",")
-            if item.strip()
-        ]
-    else:
-        fallback = list(DEFAULT_RUNS_ON)
-    return pool_runner_labels(target, fallback=fallback)
+    return pool_runner_labels(target)
 
 
 def _retarget_pending_dispatches(
