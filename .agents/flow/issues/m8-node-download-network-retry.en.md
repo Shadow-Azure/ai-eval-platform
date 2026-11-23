@@ -11,6 +11,7 @@ scope:
   - .agents/flow/issues/m8-node-download-network-retry.*
   - runner/adapters/runtimes/claude-code.mjs
   - tests/runner/node-download-retry.test.mjs
+  - plans/2026-11-23-pr400-review.md
 adr: []
 github:
   number: 397

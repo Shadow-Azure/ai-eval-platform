@@ -107,6 +107,21 @@ test("install script does not use curl's own retry flags", () => {
   assert.match(script, /node_url/);
 });
 
+test("does not retry when the first download succeeds", () => {
+  withHarness({}, (harness) => {
+    const result = runInstall(harness);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(calls(harness, "curl"), 1, "a successful download must not be repeated");
+    assert.equal(calls(harness, "tar"), 1);
+    assert.doesNotMatch(result.stderr, /retry 1\/1/);
+    const curlLines = readFileSync(harness.log, "utf8")
+      .split("\n")
+      .filter((line) => line.startsWith("curl "));
+    assert.equal(curlLines.length, 1);
+    assert.match(curlLines[0], /node-v22\.14\.0-linux-x64\.tar\.xz/);
+  });
+});
+
 test("retries the Node download exactly once for each confirmed network curl code", () => {
   for (const code of NETWORK_CODES) {
     withHarness({ firstCode: code }, (harness) => {
@@ -115,6 +130,11 @@ test("retries the Node download exactly once for each confirmed network curl cod
       assert.equal(calls(harness, "curl"), 2, `curl ${code} should be retried once`);
       assert.match(result.stderr, new RegExp(`node download network error \\(curl ${code}\\), retry 1/1`));
       assert.equal(calls(harness, "tar"), 1, `curl ${code} retry should continue the install`);
+      const curlLines = readFileSync(harness.log, "utf8")
+        .split("\n")
+        .filter((line) => line.startsWith("curl "));
+      assert.equal(curlLines.length, 2);
+      assert.ok(curlLines.every((line) => line.includes("node-v22.14.0-linux-x64.tar.xz")));
     });
   }
 });
