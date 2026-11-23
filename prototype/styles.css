@@ -4599,11 +4599,11 @@ tbody tr.clickable {
 }
 
 .template-list-table th:nth-child(1) {
-  width: 24%;
+  width: 20%;
 }
 
 .template-list-table th:nth-child(2) {
-  width: 27%;
+  width: 25%;
 }
 
 .template-list-table th:nth-child(3) {
@@ -4611,19 +4611,23 @@ tbody tr.clickable {
 }
 
 .template-list-table th:nth-child(4) {
-  width: 11%;
+  width: 10%;
 }
 
 .template-list-table th:nth-child(5) {
-  width: 8%;
+  width: 7%;
 }
 
 .template-list-table th:nth-child(6) {
-  width: 8%;
+  width: 7%;
 }
 
 .template-list-table th:nth-child(7) {
-  width: 14%;
+  width: 7%;
+}
+
+.template-list-table th:nth-child(8) {
+  width: 16%;
 }
 
 .template-list-table td {
@@ -4642,16 +4646,15 @@ tbody tr.clickable {
 }
 
 .template-list-desc {
+  display: -webkit-box;
   overflow: hidden;
   margin-top: 3px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
 }
 
 .template-combo-line {
-  display: flex;
-  align-items: baseline;
-  gap: 5px;
   overflow: hidden;
   color: var(--muted);
   font-size: 10px;
@@ -4661,6 +4664,7 @@ tbody tr.clickable {
 }
 
 .template-combo-line strong {
+  margin-right: 5px;
   color: var(--ink);
   font-size: 11px;
 }
@@ -4741,10 +4745,11 @@ tbody tr.clickable {
 @media (max-width: 1240px) {
   .template-list-table th:nth-child(1),
   .template-list-table th:nth-child(2) {
-    width: 28%;
+    width: 26%;
   }
 
-  .template-list-table th:nth-child(6) {
+  .template-list-table th:nth-child(6),
+  .template-list-table td:nth-child(6) {
     display: none;
   }
 

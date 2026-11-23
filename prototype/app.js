@@ -642,8 +642,10 @@ const mock = {
 };
 
 function buildTemplateCatalog() {
-  const seeds = mock.evalTemplates.map((template) => ({
+  const seedCostEstimates = ["¥126–158", "¥48–62", "¥180–220"];
+  const seeds = mock.evalTemplates.map((template, index) => ({
     ...template,
+    costEstimate: seedCostEstimates[index] ?? null,
     recentRuns: (template.recentRuns || []).map((run) => ({ ...run })),
   }));
   const names = [
@@ -734,6 +736,8 @@ function buildTemplateCatalog() {
       updated: `11 月 ${day} 日 ${clock}`,
       createdBy: index % 5 === 0 ? "李雷" : "张宁",
       launches: Math.max(1, 18 - index),
+      costEstimate:
+        index % 6 === 0 ? null : dataset.count === 500 ? "¥126–158" : "¥76–95",
       lastRun: {
         id: `eval-${100 + index}`,
         status,
@@ -1329,6 +1333,10 @@ function templateListRow(template) {
       <td>${templateStatusTag(template)}${templateSelfEvolutionTag(template)}</td>
       <td>${templateLastRunTag(last)}<div class="table-secondary">${esc(last.at)}</div></td>
       <td>${template.launches} 次</td>
+      <td>
+        <div>${template.costEstimate ? esc(template.costEstimate) : "—"}</div>
+        <div class="table-secondary">${template.costEstimate ? "启动时重新计算" : "未填写定价"}</div>
+      </td>
       <td class="small muted">${esc(template.updated)}</td>
       <td>
         <div class="row template-list-actions">
@@ -3496,7 +3504,7 @@ function evalTemplatesPage() {
         ${
           rows.length
             ? `<div class="table-wrap"><table class="template-list-table">
-                <thead><tr><th>模板</th><th>固定组合</th><th>状态</th><th>最近启动</th><th>累计启动</th><th>更新</th><th>操作</th></tr></thead>
+                <thead><tr><th>模板</th><th>固定组合</th><th>状态</th><th>最近启动</th><th>累计启动</th><th>费用估算</th><th>更新</th><th>操作</th></tr></thead>
                 <tbody>${rows.map(templateListRow).join("")}</tbody>
               </table></div>`
             : `<div class="table-empty"><div class="empty-mark">${icon("search", 20)}</div><strong>没有匹配的评测模板</strong><div class="small muted">调整搜索词或状态筛选，或清空条件查看全部模板。</div><button class="btn btn-primary btn-sm" style="margin-top:14px" data-action="template-clear-filters">清除筛选</button></div>`

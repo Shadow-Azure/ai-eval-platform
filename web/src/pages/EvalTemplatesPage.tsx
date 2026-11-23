@@ -104,45 +104,57 @@ export function EvalTemplatesPage() {
     {
       title: "模板",
       key: "name",
+      width: "20%",
+      className: "template-name-cell",
       render: (_value, row) => (
-        <div>
+        <div className="template-name-cell-inner">
           <Button
             type="link"
             size="small"
             className="template-name-link"
+            title={row.name}
             onClick={() => navigate(`/evals/templates/${row.id}`)}
           >
             {row.name}
           </Button>
-          <div className="table-secondary">{row.description || "—"}</div>
+          <div className="table-secondary template-name-desc" title={row.description ?? undefined}>
+            {row.description || "—"}
+          </div>
         </div>
       ),
     },
     {
       title: "固定组合",
       key: "combo",
-      render: (_value, row) => (
-        <div className="template-combo">
-          <div>
-            <strong>{row.dataset_name ?? "—"}</strong>
-            <span className="table-secondary">
-              {" "}
-              · {row.dataset_version ?? "—"} · {row.case_count} 用例
-            </span>
+      width: "25%",
+      className: "template-combo-cell",
+      render: (_value, row) => {
+        const datasetLine = `${row.dataset_name ?? "—"} · ${row.dataset_version ?? "—"} · ${row.case_count} 用例`;
+        const agentLine = `${row.runtime_key} · ${row.model_provider ?? "—"} ${row.model_name ?? "—"}`;
+        const poolLine = `${row.resource_pool_name ?? "—"} · ${row.asset_source_name ?? "无资产源"}`;
+        return (
+          <div className="template-combo">
+            <div className="table-secondary template-combo-line" title={datasetLine}>
+              <strong>{row.dataset_name ?? "—"}</strong>
+              <span>
+                {" "}
+                · {row.dataset_version ?? "—"} · {row.case_count} 用例
+              </span>
+            </div>
+            <div className="table-secondary template-combo-line" title={agentLine}>
+              {agentLine}
+            </div>
+            <div className="table-secondary template-combo-line" title={poolLine}>
+              {poolLine}
+            </div>
           </div>
-          <div className="table-secondary">
-            {row.runtime_key} · {row.model_provider ?? "—"} {row.model_name ?? "—"}
-          </div>
-          <div className="table-secondary">
-            {row.resource_pool_name ?? "—"} · {row.asset_source_name ?? "无资产源"}
-          </div>
-        </div>
-      ),
+        );
+      },
     },
     {
       title: "状态",
       key: "enabled",
-      width: 130,
+      width: "8%",
       render: (_value, row) => (
         <>
           <TemplateStatusTag enabled={row.enabled} />
@@ -153,7 +165,7 @@ export function EvalTemplatesPage() {
     {
       title: "最近启动",
       key: "last_launched",
-      width: 150,
+      width: "10%",
       render: (_value, row) => (
         <div>
           <div>{templateLastRunLabel(row)}</div>
@@ -164,13 +176,13 @@ export function EvalTemplatesPage() {
     {
       title: "累计启动",
       key: "launch_count",
-      width: 92,
+      width: "7%",
       render: (_value, row) => `${row.launch_count} 次`,
     },
     {
       title: "费用估算",
       key: "cost",
-      width: 130,
+      width: "7%",
       render: (_value, row) => (
         <div>
           <div>{formatCostRange(row.estimated_cost?.total_cny)}</div>
@@ -183,7 +195,7 @@ export function EvalTemplatesPage() {
     {
       title: "更新",
       key: "updated_at",
-      width: 120,
+      width: "7%",
       render: (_value, row) => (
         <div className="small muted">{dateTimeLabel(row.updated_at)}</div>
       ),
@@ -191,7 +203,7 @@ export function EvalTemplatesPage() {
     {
       title: "操作",
       key: "actions",
-      width: 250,
+      width: "16%",
       render: (_value, row) => (
         <Space size={4} wrap>
           <Button size="small" onClick={() => navigate(`/evals/templates/${row.id}`)}>
@@ -294,6 +306,8 @@ export function EvalTemplatesPage() {
           <Table
             rowKey="id"
             size="small"
+            tableLayout="fixed"
+            scroll={{ x: 1180 }}
             loading={listQuery.isLoading}
             columns={columns}
             dataSource={listQuery.data?.items ?? []}
