@@ -159,7 +159,7 @@ function ingestionCopy(
   const status = asText(payload.trace_status);
   const contextBits: string[] = [];
   if (status) contextBits.push(`轨迹${TRACE_STATUS_TEXT[status] ?? status}`);
-  if (event.attempt_no !== null) contextBits.push(`attempt ${event.attempt_no}`);
+  if (typeof event.attempt_no === "number") contextBits.push(`attempt ${event.attempt_no}`);
   if (expected !== null && expected !== ready + pending + failed + degraded) {
     contextBits.push(`预期 ${expected} 个文件`);
   }
@@ -185,7 +185,7 @@ export function describeEvent(
 ): EventCopy {
   const payload = event.payload;
   const caseKey = caseSubject(event, caseKeys);
-  const attempt = event.attempt_no !== null ? `attempt ${event.attempt_no}` : "";
+  const attempt = typeof event.attempt_no === "number" ? `attempt ${event.attempt_no}` : "";
   const result = asText(payload.result_status);
 
   switch (event.event_type) {
