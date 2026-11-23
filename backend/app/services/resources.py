@@ -12,11 +12,19 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..models import Connection, Credential, ResourcePool
 from ..money import Money, MoneyError, money_str
 from .provisioning import CAPABILITY_ECS_SPOT, Provisioner, ProvisionerError
+from .runner_labels import (
+    DEFAULT_RUNS_ON,
+    LABEL_KEYS,
+    MAX_LABELS,
+    resolve_labels,
+    resolve_pool_labels,
+)
 
 PROVISIONING_MODE_FIXED = "fixed"
 PROVISIONING_MODE_SPOT = "spot"
@@ -260,6 +268,123 @@ def validate_pool_configuration(
         reason = _credential_failure_reason(session, connection, tenant_id)
         if reason is not None:
             raise _credential_error(connection.credential_id, reason)
+
+
+def validate_pool_runs_on(
+    session: Session | None,
+    *,
+    tenant_id: str | None,
+    pool_id: str | None,
+    labels_json: dict[str, Any] | None,
+    instance_config_json: dict[str, Any] | None,
+) -> list[str]:
+    """Validate and return the explicit Runner labels of a pool.
+
+    A pool must carry a non-empty ``runs_on`` set that includes the automatic
+    GitHub ``self-hosted`` label and at least one pool-specific label. When a
+    session is available, a set that is a subset or superset of another pool's
+    labels is rejected: GitHub matches a job to every runner owning all of its
+    labels, so overlapping sets make cross-pool scheduling possible again.
+    """
+
+    labels = resolve_labels(labels_json, instance_config_json) or []
+    if not labels:
+        raise ResourceValidationError(
+            "pool_runs_on_required",
+            "资源池必须配置唯一的 runs_on Runner 标签；例如 self-hosted, linux, eval, pool-fixed-linux",
+            field="labels",
+        )
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for label in labels:
+        key = label.lower()
+        if key in seen:
+            raise ResourceValidationError(
+                "pool_runs_on_invalid",
+                "Runner 标签不能重复",
+                field="labels",
+                details={"duplicate": label},
+            )
+        seen.add(key)
+        deduped.append(label)
+    if len(deduped) > MAX_LABELS:
+        raise ResourceValidationError(
+            "pool_runs_on_invalid",
+            f"Runner 标签不能超过 {MAX_LABELS} 个",
+            field="labels",
+            details={"max_labels": MAX_LABELS},
+        )
+    if "self-hosted" not in seen:
+        raise ResourceValidationError(
+            "pool_runs_on_invalid",
+            "Runner 标签必须包含 self-hosted，否则 GitHub Actions 无法匹配自托管 Runner",
+            field="labels",
+        )
+    if seen <= {label.lower() for label in DEFAULT_RUNS_ON}:
+        raise ResourceValidationError(
+            "pool_runs_on_required",
+            "Runner 标签必须包含至少一个池唯一标签，不能只使用 self-hosted, linux, eval",
+            field="labels",
+        )
+
+    if session is not None and tenant_id is not None:
+        other_pools = list(
+            session.scalars(
+                select(ResourcePool).where(
+                    ResourcePool.tenant_id == tenant_id,
+                    ResourcePool.id != (pool_id or ""),
+                )
+            )
+        )
+        for other in other_pools:
+            other_labels = resolve_pool_labels(other)
+            if not other_labels:
+                continue
+            other_set = {label.lower() for label in other_labels}
+            if not (seen <= other_set or other_set <= seen):
+                continue
+            relation = (
+                "identical"
+                if seen == other_set
+                else ("subset" if seen < other_set else "superset")
+            )
+            raise ResourceValidationError(
+                "pool_runs_on_conflict",
+                "Runner 标签与另一个资源池重叠，会导致跨池调度",
+                field="labels",
+                details={
+                    "other_pool_id": other.id,
+                    "other_pool_name": other.name,
+                    "relation": relation,
+                    "other_labels": other_labels,
+                },
+            )
+    return deduped
+
+
+def normalize_pool_label_storage(
+    labels_json: dict[str, Any] | None,
+    instance_config_json: dict[str, Any] | None,
+    runs_on: list[str],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Persist labels once, as ``labels_json.runs_on``.
+
+    Console-created pools used to store ``{label: true}`` maps; an operator can
+    also pin labels in ``instance_config_json``. Both are folded into the
+    single documented key so the detail page and dispatch read the same list.
+    """
+
+    stored_labels = {
+        str(key): value
+        for key, value in dict(labels_json or {}).items()
+        if key not in LABEL_KEYS
+    }
+    stored_labels["runs_on"] = list(runs_on)
+    stored_config = dict(instance_config_json or {})
+    for key in LABEL_KEYS:
+        stored_config.pop(key, None)
+    return stored_labels, stored_config
 
 
 def connection_payload(

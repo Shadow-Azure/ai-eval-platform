@@ -34,6 +34,7 @@ def _seed(
     runner_labels: tuple[str, ...] = ("self-hosted", "linux", "eval"),
     runner_status: str = "online",
     runner_count: int = 1,
+    include_pool_label: bool = True,
     pool_status: str = "active",
     execution_image_digest: str | None = None,
     scoring_image_digest: str | None = None,
@@ -103,11 +104,16 @@ def _seed(
         project_id=project.id,
         name=f"pool-{suffix}",
         provider_key="fixed",
-        labels_json={"kind": "fixed"},
+        labels_json={
+            "runs_on": ["self-hosted", "linux", "eval", f"pool-{suffix}"]
+        },
         status=pool_status,
     )
     session.add(pool)
     session.flush()
+    effective_runner_labels = list(runner_labels)
+    if include_pool_label and f"pool-{suffix}" not in effective_runner_labels:
+        effective_runner_labels.append(f"pool-{suffix}")
     for index in range(runner_count):
         session.add(
             Runner(
@@ -115,7 +121,7 @@ def _seed(
                 resource_pool_id=pool.id,
                 provider_runner_id=f"runner-{suffix}-{index}",
                 name=f"fixed-linux-{suffix}-{index}",
-                labels_json=list(runner_labels),
+                labels_json=list(effective_runner_labels),
                 status=runner_status,
             )
         )
@@ -285,6 +291,9 @@ def test_missing_pool_and_runner_labels_block(session: Session) -> None:
 
     ids = _seed(session, runner_labels=("windows",))
     assert "runner_labels_mismatch" in _codes(_check(session, ids))
+
+    ids = _seed(session, include_pool_label=False)
+    assert "runner_pool_labels_mismatch" in _codes(_check(session, ids))
 
 
 def test_scoring_image_and_assets_block(session: Session) -> None:

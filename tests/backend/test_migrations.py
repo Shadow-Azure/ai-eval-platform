@@ -6,6 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import sqlalchemy as sa
 from app.models import Project, Tenant, Workspace
 from sqlalchemy import create_engine, func, inspect, select
 from sqlalchemy.orm import Session
@@ -96,6 +97,90 @@ def test_empty_database_migrates_to_head(database_url: str) -> None:
             assert session.scalar(select(func.count()).select_from(Workspace)) == 1
             assert session.scalar(select(func.count()).select_from(Project)) == 1
             assert session.scalar(select(Tenant.slug)) == "default"
+    finally:
+        engine.dispose()
+
+
+def test_pool_unique_label_migration_backfills_legacy_pools(database_url: str) -> None:
+    """#414: legacy ``{"kind": "fixed"}`` pools get an explicit unique label."""
+
+    # The session template is already at head; move back one revision so the
+    # inserted legacy rows are present when 0034 runs again.
+    run_alembic(database_url, "downgrade", "0033_template_reporting")
+    engine = create_engine(database_url, future=True)
+    try:
+        metadata = sa.MetaData()
+        pool = sa.Table("resource_pool", metadata, autoload_with=engine)
+        with engine.begin() as connection:
+            tenant_id = connection.execute(sa.text("SELECT id FROM tenant LIMIT 1")).scalar_one()
+            project_id = connection.execute(sa.text("SELECT id FROM project LIMIT 1")).scalar_one()
+            connection.execute(
+                pool.insert(),
+                [
+                    {
+                        "id": "legacy-fixed",
+                        "tenant_id": tenant_id,
+                        "project_id": project_id,
+                        "name": "fixed-linux",
+                        "provider_key": "fixed",
+                        "labels_json": {"kind": "fixed"},
+                        "status": "active",
+                    },
+                    {
+                        "id": "legacy-spot",
+                        "tenant_id": tenant_id,
+                        "project_id": project_id,
+                        "name": "aliyun-spot",
+                        "provider_key": "aliyun",
+                        "provisioning_mode": "spot",
+                        "labels_json": {
+                            "runs_on": [
+                                "self-hosted",
+                                "linux",
+                                "eval",
+                                "m5-08-spot",
+                            ]
+                        },
+                        "status": "active",
+                    },
+                    {
+                        "id": "legacy-custom",
+                        "tenant_id": tenant_id,
+                        "project_id": project_id,
+                        "name": "gpu-custom",
+                        "provider_key": "fixed",
+                        "labels_json": {"runs_on": ["gpu-only"]},
+                        "status": "active",
+                    },
+                ],
+            )
+    finally:
+        engine.dispose()
+
+    run_alembic(database_url, "upgrade", "head")
+    engine = create_engine(database_url, future=True)
+    try:
+        metadata = sa.MetaData()
+        pool = sa.Table("resource_pool", metadata, autoload_with=engine)
+        with engine.connect() as connection:
+            fixed = connection.execute(
+                sa.select(pool.c.labels_json).where(pool.c.id == "legacy-fixed")
+            ).scalar_one()
+            spot = connection.execute(
+                sa.select(pool.c.labels_json).where(pool.c.id == "legacy-spot")
+            ).scalar_one()
+        assert fixed["runs_on"] == [
+            "self-hosted",
+            "linux",
+            "eval",
+            "pool-fixed-linux",
+        ]
+        assert spot["runs_on"] == ["self-hosted", "linux", "eval", "m5-08-spot"]
+        with engine.connect() as connection:
+            custom = connection.execute(
+                sa.select(pool.c.labels_json).where(pool.c.id == "legacy-custom")
+            ).scalar_one()
+        assert custom["runs_on"] == ["self-hosted", "gpu-only"]
     finally:
         engine.dispose()
 

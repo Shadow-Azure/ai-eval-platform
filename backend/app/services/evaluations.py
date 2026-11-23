@@ -52,7 +52,7 @@ from ..money import money_str
 from ..runner_contracts import ContractInvalid, validate_payload
 from . import token_usage
 from .dataset_images import effective_sources, source_records
-from .runner_labels import DEFAULT_RUNS_ON, pool_runner_labels
+from .runner_labels import RunnerLabelsMissing, pool_runner_labels
 
 logger = logging.getLogger(__name__)
 
@@ -249,6 +249,15 @@ def create_synthetic_evaluation(
     )
     if existing is not None:
         return existing, False
+
+    if resource_pool_id:
+        pool = session.get(ResourcePool, resource_pool_id)
+        if pool is None:
+            raise EvaluationInvalid("资源池不存在", field="resource_pool_id")
+        try:
+            pool_runner_labels(pool)
+        except RunnerLabelsMissing as exc:
+            raise EvaluationInvalid(str(exc), field="resource_pool_id") from exc
 
     case_specs: list[dict] = []
     dataset_agent_timeout: int | None = None
@@ -453,17 +462,15 @@ def build_shard_dispatches(
 def run_runs_on(session: Session, run: EvalRun, settings: Settings) -> list[str]:
     """Labels the shard jobs of ``run`` must target.
 
-    A spot pool may register custom labels; evaluating without the pool's
-    labels makes the job wait on the fixed runner forever. Fixed pools and
-    synthetic runs without a pool fall back to the fixed-runner defaults.
+    A run with a resource pool always dispatches with that pool's explicit
+    ``runs_on`` labels; registration uses the same list. Only a synthetic run
+    without a pool may use :data:`DEFAULT_RUNS_ON`. A pool without labels
+    raises :class:`RunnerLabelsMissing` instead of silently borrowing another
+    pool's default labels.
     """
 
     pool = session.get(ResourcePool, run.resource_pool_id) if run.resource_pool_id else None
-    if pool is not None and pool.provisioning_mode == "spot":
-        fallback = [item.strip() for item in settings.runner_spot_labels.split(",") if item.strip()]
-    else:
-        fallback = list(DEFAULT_RUNS_ON)
-    return pool_runner_labels(pool, fallback=fallback)
+    return pool_runner_labels(pool)
 
 
 def build_case_dispatches(

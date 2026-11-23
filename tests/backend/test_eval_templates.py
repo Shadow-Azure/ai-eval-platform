@@ -116,12 +116,15 @@ def seed_launch(
         pricing_json={"input_per_1m": 0.27, "output_per_1m": 1.1},
     )
     session.add(config)
+    pool_label = f"pool-{suffix}"
     pool = ResourcePool(
         tenant_id=tenant.id,
         project_id=project.id,
         name=f"Linux Spot {suffix}",
         provider_key="fixed",
-        labels_json={"kind": "fixed"},
+        labels_json={
+            "runs_on": ["self-hosted", "linux", "eval", pool_label]
+        },
         status="active",
         max_capacity=4,
         price_cny=2.5,
@@ -135,7 +138,7 @@ def seed_launch(
                 resource_pool_id=pool.id,
                 provider_runner_id=f"runner-{suffix}-{index}",
                 name=f"fixed-linux-{suffix}-{index}",
-                labels_json=["self-hosted", "linux", "eval"],
+                labels_json=["self-hosted", "linux", "eval", pool_label],
                 status="online",
             )
         )
@@ -555,6 +558,11 @@ def test_evaluation_list_filters_by_template_history(
     }
     assert all(item["template_id"] == template["id"] for item in body["items"])
     assert all(item["template_version"] == 1 for item in body["items"])
+    # M10 (#410): each row carries the resolved template name for the list
+    # origin line, not just the opaque id.
+    assert all(item["template"]["id"] == template["id"] for item in body["items"])
+    assert all(item["template"]["name"] == template["name"] for item in body["items"])
+    assert all(item["template"]["version"] == 1 for item in body["items"])
     assert body["stats"]["total"] == 2
 
     page = client.get(

@@ -66,6 +66,11 @@ import { PageHeading } from "../components/PageHeading";
 import { QueryError } from "../components/QueryError";
 import { StatusCard } from "../components/StatusCard";
 import { TokenComposition } from "../components/TokenComposition";
+import {
+  EVENT_TYPE_LABELS,
+  eventSummary,
+  recentTimeline,
+} from "../features/evaluations/eventTimeline";
 import { copyText } from "../utils/clipboard";
 import { EVAL_STATUS_META } from "../utils/evalStatus";
 import { FAILURE_LABELS, failureLabel, failureView } from "../utils/failure";
@@ -148,29 +153,6 @@ const attemptStatusMeta: Record<string, { label: string; color: string }> = {
   cancelled: { label: "已取消", color: "default" },
   artifact_missing: { label: "产物缺失", color: "error" },
   dispatch_failed: { label: "派发失败", color: "error" },
-};
-
-const eventTypeLabels: Record<string, string> = {
-  "eval.created": "评测已创建",
-  "eval.dispatched": "分片已派发",
-  "eval.dispatch_failed": "分片派发失败",
-  "eval.cancelling": "取消处理中",
-  "eval.cancelled": "评测已取消",
-  "eval.budget_pausing": "预算用尽，暂停收口",
-  "eval.budget_paused": "进入预算暂停",
-  "eval.budget_resumed": "增加预算并恢复",
-  "eval.retry_failed": "批量重试失败用例",
-  "case.started": "用例开始执行",
-  "case.heartbeat": "用例心跳",
-  "case.uploaded": "对象上传清单",
-  "case.completed": "用例完成",
-  "case.failed": "用例失败",
-  "case.timeout": "用例超时",
-  "case.retry_queued": "自动重试已排队",
-  "case.retry_requested": "手动重试已排队",
-  "case.artifact_missing": "结果对象缺失",
-  "case.started_late": "迟到 started（保留审计）",
-  "case.started_rejected": "启动被拒绝",
 };
 
 const retryBlockedLabels: Record<string, string> = {
@@ -460,52 +442,6 @@ function payloadValue(value: unknown): string {
     return JSON.stringify(value);
   }
   return String(value);
-}
-
-function eventSummary(event: EvaluationEvent, caseKeys: Map<string, string>): string {
-  const payload = event.payload;
-  const caseKey = event.case_run_id ? caseKeys.get(event.case_run_id) : null;
-  const payloadCaseKey = typeof payload.case_key === "string" ? payload.case_key : null;
-  const subject = payloadCaseKey ?? caseKey ?? event.case_run_id ?? "评测";
-  switch (event.event_type) {
-    case "eval.created":
-      return `创建 ${payload.case_count ?? "?"} 个用例，${payload.shard_count ?? "?"} 个分片`;
-    case "eval.dispatched":
-      return `分片 ${payload.shard_id ?? "—"} 派发成功`;
-    case "eval.dispatch_failed":
-      return `分片 ${payload.shard_id ?? "—"} 派发失败：${payload.last_error ?? "未知原因"}`;
-    case "eval.cancelling":
-    case "eval.cancelled":
-      return `取消原因：${payload.reason ?? "client_requested"}`;
-    case "eval.budget_paused":
-      return `已花费 ${formatMoney(payload.spent_cny as string | number | undefined)}，等待增加预算`;
-    case "eval.budget_resumed":
-      return `增加 ${formatMoney(payload.additional_budget_cny as string | number | undefined)} 预算，恢复 ${payload.attempts_created ?? "?"} 个用例`;
-    case "eval.retry_failed":
-      return `批量重试 ${payload.retried ?? 0} 个用例，跳过 ${payload.skipped ?? 0} 个`;
-    case "case.retry_requested":
-      return `${subject} attempt ${payload.previous_attempt_no ?? "?"} → ${event.attempt_no ?? "?"}，操作人 ${payload.requested_by ?? "—"}`;
-    case "case.retry_queued":
-      return `${subject} 自动重试 attempt ${payload.new_attempt_no ?? event.attempt_no ?? "?"}`;
-    case "case.failed":
-    case "case.timeout":
-      return `${subject} ${payload.error_code ?? event.event_type}：${payload.error_summary ?? "无摘要"}`;
-    case "case.completed":
-      return `${subject} 执行完成`;
-    case "case.artifact_missing":
-      return `${subject} 结果对象缺失`;
-    case "case.heartbeat":
-      return `${subject} attempt ${event.attempt_no ?? "?"} · 序号 ${payloadValue(payload.sequence)}${payload.progress ? ` · 进度 ${payloadValue(payload.progress)}` : ""}`;
-    default: {
-      const keys = Object.keys(payload);
-      return keys.length
-        ? `${keys
-            .slice(0, 3)
-            .map((key) => `${key}=${payloadValue(payload[key])}`)
-            .join(" · ")}`
-        : "—";
-    }
-  }
 }
 
 export function EvalDetailPage() {
@@ -1656,7 +1592,7 @@ function OverviewPanel(props: OverviewPanelProps) {
     .filter(([, count]) => count > 0)
     .sort((a, b) => b[1] - a[1]);
   const failureMax = failureEntries.reduce((max, [, count]) => Math.max(max, count), 1);
-  const recentEvents = events.slice(-6).reverse();
+  const recentEvents = useMemo(() => recentTimeline(events, caseKeys), [events, caseKeys]);
   const datasetLabel = config?.dataset
     ? `${config.dataset.dataset_name ?? config.dataset.dataset_slug} · ${config.dataset.version}`
     : detail.dataset_version_id ?? "合成评测";
@@ -1926,21 +1862,18 @@ function OverviewPanel(props: OverviewPanelProps) {
               <div className="eval-event-list">
                 {recentEvents.map((event) => (
                   <div className="eval-event-row" key={event.id}>
-                    <span
-                      className={`eval-event-dot ${
-                        event.event_type.includes("failed") || event.event_type.includes("timeout")
-                          ? "danger"
-                          : event.event_type.includes("completed") || event.event_type.includes("resumed")
-                            ? "success"
-                            : ""
-                      }`}
-                    />
+                    <span className={`eval-event-dot ${event.tone === "default" ? "" : event.tone}`} />
                     <div className="eval-event-copy">
-                      <div>{eventSummary(event, caseKeys)}</div>
-                      <div className="muted small">
-                        {eventTypeLabels[event.event_type] ?? event.event_type} · {formatTime(event.occurred_at)}
+                      <div className="eval-event-action">
+                        <strong>{event.subject}</strong> {event.action}
                       </div>
+                      {event.context ? (
+                        <div className="eval-event-context">{event.context}</div>
+                      ) : null}
                     </div>
+                    <time className="eval-event-time" dateTime={event.occurredAt ?? undefined} title={event.typeLabel}>
+                      {event.clock}
+                    </time>
                   </div>
                 ))}
               </div>
@@ -2972,11 +2905,11 @@ function EventsPanel({ runId, state, caseKeys, shards, terminal, onOpenCase }: E
       dataIndex: "event_type",
       width: 190,
       render: (value: string) => (
-        <Space size={4}>
+        <Space direction="vertical" size={0}>
           <Tag color={value.includes("failed") || value.includes("timeout") ? "error" : value.includes("completed") || value.includes("resumed") ? "success" : "processing"}>
             {value}
           </Tag>
-          <span className="small muted">{eventTypeLabels[value] ?? ""}</span>
+          <span className="small muted">{EVENT_TYPE_LABELS[value] ?? ""}</span>
         </Space>
       ),
     },

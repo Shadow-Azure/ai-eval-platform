@@ -29,6 +29,7 @@ from app.models import (
 from app.runner_contracts import validate_payload
 from app.seed import ensure_default_scope
 from app.services import evaluations
+from app.services.runner_labels import RunnerLabelsMissing
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -249,7 +250,7 @@ def test_dispatch_freezes_custom_pool_labels(seeded: Session, configure_settings
 def test_dispatch_ignores_legacy_fixed_pool_marker(
     seeded: Session, configure_settings
 ) -> None:
-    """A legacy ``{"kind": "fixed"}`` marker must not become the execute label."""
+    """A legacy ``{"kind": "fixed"}`` marker must fail, not borrow defaults."""
 
     configure_settings()
     run, _ = create_eval(seeded, shard_size=8, idempotency_key="legacy-fixed-labels")
@@ -274,25 +275,98 @@ def test_dispatch_ignores_legacy_fixed_pool_marker(
             .order_by(EvalCaseRun.ordinal)
         )
     )
+    with pytest.raises(RunnerLabelsMissing):
+        evaluations.build_case_dispatches(
+            seeded,
+            run=run,
+            case_runs=cases,
+            attempt_no=2,
+            shard_size=8,
+            shard_prefix="legacy-fixed",
+            settings=get_settings(),
+            now=datetime.now(UTC),
+        )
+
+
+def test_fixed_and_spot_job_labels_are_not_subsets(
+    seeded: Session, configure_settings
+) -> None:
+    """#414 regression: fixed jobs must not match any spot runner labels."""
+
+    configure_settings()
+    fixed = ResourcePool(
+        id="pool-fixed-regression",
+        tenant_id=str(DEFAULT_TENANT_ID),
+        project_id=str(DEFAULT_PROJECT_ID),
+        name="fixed-regression",
+        provider_key="fixed",
+        provisioning_mode="fixed",
+        labels_json={"runs_on": ["self-hosted", "linux", "eval", "pool-fixed-regression"]},
+    )
+    spot = ResourcePool(
+        id="pool-spot-regression",
+        tenant_id=str(DEFAULT_TENANT_ID),
+        project_id=str(DEFAULT_PROJECT_ID),
+        name="spot-regression",
+        provider_key="aliyun",
+        provisioning_mode="spot",
+        labels_json={"runs_on": ["self-hosted", "linux", "eval", "m5-08-spot"]},
+    )
+    seeded.add_all([fixed, spot])
+    seeded.flush()
+
+    run, _ = create_eval(seeded, shard_size=8, idempotency_key="pool-subset-regression")
+    run.resource_pool_id = fixed.id
+    seeded.flush()
+    cases = list(
+        seeded.scalars(
+            select(EvalCaseRun)
+            .where(EvalCaseRun.eval_run_id == run.id)
+            .order_by(EvalCaseRun.ordinal)
+        )
+    )
     bundle = evaluations.build_case_dispatches(
         seeded,
         run=run,
         case_runs=cases,
         attempt_no=2,
         shard_size=8,
-        shard_prefix="legacy-fixed",
+        shard_prefix="pool-subset",
         settings=get_settings(),
         now=datetime.now(UTC),
     )
 
-    assert bundle.outbox_rows
-    for row in bundle.outbox_rows:
-        client_payload = row.payload_json["client_payload"]
-        manifest = json.loads(row.payload_json["manifest_text"])
-        validate_payload("dispatch", client_payload)
-        validate_payload("manifest", manifest)
-        assert client_payload["runs_on"] == ["self-hosted", "linux", "eval"]
-        assert manifest["runs_on"] == ["self-hosted", "linux", "eval"]
+    fixed_labels = set(bundle.outbox_rows[0].payload_json["client_payload"]["runs_on"])
+    spot_labels = set(spot.labels_json["runs_on"])
+    assert not fixed_labels <= spot_labels
+    assert not spot_labels <= fixed_labels
+
+
+def test_create_with_pool_without_labels_is_invalid(
+    seeded: Session, configure_settings
+) -> None:
+    configure_settings()
+    pool = ResourcePool(
+        tenant_id=str(DEFAULT_TENANT_ID),
+        project_id=str(DEFAULT_PROJECT_ID),
+        name="pool-no-labels",
+        provider_key="fixed",
+        provisioning_mode="fixed",
+        labels_json={"kind": "fixed"},
+    )
+    seeded.add(pool)
+    seeded.flush()
+
+    with pytest.raises(evaluations.EvaluationInvalid):
+        evaluations.create_synthetic_evaluation(
+            seeded,
+            name="无标签池",
+            case_keys=["case-a"],
+            idempotency_key="pool-no-labels",
+            created_by="agent",
+            resource_pool_id=pool.id,
+            settings=get_settings(),
+        )
 
 
 def test_create_is_idempotent_on_client_key(seeded: Session, configure_settings) -> None:
@@ -607,6 +681,8 @@ def test_api_lists_evaluations_with_counts(seeded: Session, client: TestClient) 
     assert body["stats"]["total"] == 2
     assert body["stats"]["active"] == 2
     assert body["stats"]["avg_resolve_rate"] is None
+    # M10 (#410): a custom run has no source template to label.
+    assert all(item["template"] is None for item in body["items"])
 
 
 def test_api_list_filters_and_searches_on_server(seeded: Session, client: TestClient) -> None:

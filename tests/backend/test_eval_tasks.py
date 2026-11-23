@@ -99,12 +99,15 @@ def _seed_dataset(
             expected_metrics_json={"FAIL_TO_PASS": ["a"]},
         )
     )
+    pool_label = f"pool-{suffix}"
     pool = ResourcePool(
         tenant_id=tenant.id,
         project_id=project.id,
         name=f"pool-{suffix}",
         provider_key="fixed",
-        labels_json={"kind": "fixed"},
+        labels_json={
+            "runs_on": ["self-hosted", "linux", "eval", pool_label]
+        },
         status="active",
     )
     session.add(pool)
@@ -115,7 +118,7 @@ def _seed_dataset(
             resource_pool_id=pool.id,
             provider_runner_id=f"runner-{suffix}",
             name="fixed-linux-eval",
-            labels_json=["self-hosted", "linux", "eval"],
+            labels_json=["self-hosted", "linux", "eval", pool_label],
             status="online",
             last_heartbeat_at=datetime.now(UTC),
         )

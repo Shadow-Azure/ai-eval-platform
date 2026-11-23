@@ -536,12 +536,24 @@ export async function testProvisioning(
 
 /** Labels may be an object or an array depending on the writer. */
 export function labelList(labels: unknown): string[] {
+  if (typeof labels === "string") {
+    return labels
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
   if (Array.isArray(labels)) {
     return labels.filter((item): item is string => typeof item === "string" && item.length > 0);
   }
   const item = record(labels);
   if (!item) return [];
-  return Object.entries(item).map(([key, value]) =>
-    value === true || value === "" ? key : `${key}=${String(value)}`,
-  );
+  // #414: pool labels are now stored once as ``runs_on`` (the same list used
+  // for dispatch and cloud-init registration). Older rows may still use the
+  // alias keys or a bare ``{label: true}`` map; ``kind`` is metadata.
+  for (const key of ["runs_on", "runner_labels", "labels"]) {
+    if (key in item) return labelList(item[key]);
+  }
+  return Object.entries(item)
+    .filter(([key]) => key !== "kind")
+    .map(([key, value]) => (value === true || value === "" ? key : `${key}=${String(value)}`));
 }
