@@ -668,11 +668,17 @@ def _run_search_pattern(search: str) -> str:
 
 
 def _run_filter_conditions(
-    *, search: str | None = None, status: str | None = None, dataset_id: str | None = None
+    *,
+    search: str | None = None,
+    status: str | None = None,
+    dataset_id: str | None = None,
+    template_id: str | None = None,
 ) -> list:
     conditions = []
     if status:
         conditions.append(EvalRun.status == status)
+    if template_id:
+        conditions.append(EvalRun.template_id == template_id)
     if dataset_id:
         conditions.append(Dataset.id == dataset_id)
     if search and search.strip():
@@ -710,14 +716,19 @@ def list_evaluations(
     search: str | None = None,
     status: str | None = None,
     dataset_id: str | None = None,
+    template_id: str | None = None,
 ) -> tuple[list[tuple[EvalRun, str | None, str | None]], int]:
     """Server-side filtered run list plus the dataset labels the table shows.
 
     Search covers the visible identity fields (name, runtime, model, dataset
     name/version) so the filter bar never needs client-side post-filtering.
+    ``template_id`` is the read-only template-history filter: the caller has
+    already proved the template is visible in this tenant.
     """
 
-    conditions = _run_filter_conditions(search=search, status=status, dataset_id=dataset_id)
+    conditions = _run_filter_conditions(
+        search=search, status=status, dataset_id=dataset_id, template_id=template_id
+    )
     joins = True  # the page always renders dataset name/version
     rows = session.execute(
         _run_select(EvalRun, Dataset.name, DatasetVersion.version, joins=joins)
@@ -737,6 +748,34 @@ def list_evaluations(
         or 0
     )
     return items, total
+
+
+def evaluation_status_counts(
+    session: Session,
+    *,
+    search: str | None = None,
+    dataset_id: str | None = None,
+    template_id: str | None = None,
+) -> dict[str, int]:
+    """Zero-filled status counts for the template-history filter selector.
+
+    The counts deliberately ignore ``status``: the selector must keep showing
+    every status with its unfiltered count while the table below is filtered.
+    """
+
+    conditions = _run_filter_conditions(
+        search=search, dataset_id=dataset_id, template_id=template_id
+    )
+    joins = _needs_dataset_join(search=search, dataset_id=dataset_id)
+    rows = session.execute(
+        _run_select(EvalRun.status, func.count(), joins=joins)
+        .where(*conditions)
+        .group_by(EvalRun.status)
+    ).all()
+    counts = {status: 0 for status in EVAL_RUN_STATUSES}
+    for status, count in rows:
+        counts[str(status)] = int(count)
+    return counts
 
 
 def evaluation_case_totals(
@@ -771,6 +810,7 @@ def evaluation_list_stats(
     search: str | None = None,
     status: str | None = None,
     dataset_id: str | None = None,
+    template_id: str | None = None,
 ) -> dict:
     """Aggregates for the four stat cards, computed over the filtered set.
 
@@ -778,7 +818,9 @@ def evaluation_list_stats(
     per-run percentages, so a 3-case run cannot outweigh a 500-case run.
     """
 
-    conditions = _run_filter_conditions(search=search, status=status, dataset_id=dataset_id)
+    conditions = _run_filter_conditions(
+        search=search, status=status, dataset_id=dataset_id, template_id=template_id
+    )
     joins = _needs_dataset_join(search=search, dataset_id=dataset_id)
     total = int(
         session.scalar(_run_select(func.count(), joins=joins).where(*conditions)) or 0
