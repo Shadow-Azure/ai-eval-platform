@@ -8,6 +8,7 @@ stable status/results read models.
 
 from __future__ import annotations
 
+import json
 from uuid import uuid4
 
 from app.models import (
@@ -17,15 +18,30 @@ from app.models import (
     DatasetCase,
     DatasetVersion,
     EvalRun,
+    EvalTemplate,
     ModelConfig,
     ResourcePool,
     Runner,
 )
+from app.secrets import get_secret_box
 from app.seed import ensure_default_scope
 from app.services import identity
 from fastapi.testclient import TestClient
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
+
+SELF_EVOLUTION_TOKEN = "whk_" + "a1B2c3D4e5" * 3
+SELF_EVOLUTION = {
+    "enabled": True,
+    "base_url": "https://harness.example.com",
+    "workspace_id": "ws-prod-01",
+    "token": SELF_EVOLUTION_TOKEN,
+}
+
+
+def _decrypt(ciphertext: str) -> str:
+    box = get_secret_box()
+    return box.decrypt(ciphertext, box.version)
 
 
 def seed_launch(
@@ -539,3 +555,335 @@ def test_status_and_results_read_models(client: TestClient, session: Session) ->
 
     missing = client.get("/api/v1/eval-runs/missing/status")
     assert missing.status_code == 404
+
+
+def test_create_template_self_evolution_is_write_only(
+    client: TestClient, session: Session
+) -> None:
+    ids = seed_launch(session)
+    response = client.post(
+        "/api/v1/eval-templates",
+        json=template_body(ids, self_evolution=SELF_EVOLUTION),
+    )
+    assert response.status_code == 201, response.text
+    assert SELF_EVOLUTION_TOKEN not in response.text
+    template = response.json()["template"]
+    assert template["self_evolution"] == {
+        "enabled": True,
+        "base_url": "https://harness.example.com",
+        "workspace_id": "ws-prod-01",
+        "has_token": True,
+    }
+    assert "token" not in template["self_evolution"]
+
+    stored = session.get(EvalTemplate, template["id"])
+    assert stored is not None
+    assert stored.self_evolution_enabled is True
+    assert stored.self_evolution_base_url == "https://harness.example.com"
+    assert stored.self_evolution_workspace_id == "ws-prod-01"
+    assert stored.self_evolution_token_encrypted
+    assert SELF_EVOLUTION_TOKEN not in stored.self_evolution_token_encrypted
+    assert _decrypt(stored.self_evolution_token_encrypted) == SELF_EVOLUTION_TOKEN
+
+
+def test_create_template_rejects_incomplete_self_evolution(
+    client: TestClient, session: Session
+) -> None:
+    ids = seed_launch(session)
+    invalid_configs = [
+        {"enabled": True},
+        {
+            "enabled": True,
+            "base_url": "https://harness.example.com",
+            "workspace_id": "ws-prod-01",
+        },
+        {"enabled": True, "base_url": "https://harness.example.com", "workspace_id": "ws-1"},
+        {**SELF_EVOLUTION, "base_url": "ftp://harness.example.com"},
+        {**SELF_EVOLUTION, "workspace_id": "-ws"},
+        {**SELF_EVOLUTION, "token": "gk_abc123"},
+        {**SELF_EVOLUTION, "token": "whk_"},
+    ]
+    for config in invalid_configs:
+        response = client.post(
+            "/api/v1/eval-templates",
+            json=template_body(ids, self_evolution=config),
+        )
+        assert response.status_code == 422, (config, response.text)
+        error = response.json()["detail"]["error"]
+        assert error["code"] == "template_invalid", config
+        assert error["details"]["fields"]["self_evolution"] == "invalid", config
+        assert SELF_EVOLUTION_TOKEN not in response.text
+
+
+def test_create_template_rejects_disabled_self_evolution_with_fields(
+    client: TestClient, session: Session
+) -> None:
+    ids = seed_launch(session)
+    response = client.post(
+        "/api/v1/eval-templates",
+        json=template_body(
+            ids,
+            self_evolution={
+                "enabled": False,
+                "base_url": "https://harness.example.com",
+                "workspace_id": "ws-prod-01",
+                "token": SELF_EVOLUTION_TOKEN,
+            },
+        ),
+    )
+    assert response.status_code == 422, response.text
+    error = response.json()["detail"]["error"]
+    assert error["code"] == "template_invalid"
+    assert error["details"]["fields"]["self_evolution"] == "invalid"
+    assert SELF_EVOLUTION_TOKEN not in response.text
+
+
+def test_update_self_evolution_keeps_token_when_omitted(
+    client: TestClient, session: Session
+) -> None:
+    ids = seed_launch(session)
+    template = create_template(client, ids, self_evolution=SELF_EVOLUTION)
+    stored = session.get(EvalTemplate, template["id"])
+    assert stored is not None
+    original_ciphertext = stored.self_evolution_token_encrypted
+
+    response = client.patch(
+        f"/api/v1/eval-templates/{template['id']}",
+        json={
+            "self_evolution": {
+                "enabled": True,
+                "base_url": "https://harness-2.example.com",
+                "workspace_id": "ws-prod-02",
+            }
+        },
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()["template"]["self_evolution"]
+    assert body == {
+        "enabled": True,
+        "base_url": "https://harness-2.example.com",
+        "workspace_id": "ws-prod-02",
+        "has_token": True,
+    }
+
+    session.expire_all()
+    stored = session.get(EvalTemplate, template["id"])
+    assert stored is not None
+    assert stored.self_evolution_token_encrypted == original_ciphertext
+    assert _decrypt(stored.self_evolution_token_encrypted) == SELF_EVOLUTION_TOKEN
+
+
+def test_update_self_evolution_replaces_token_and_disable_clears(
+    client: TestClient, session: Session
+) -> None:
+    ids = seed_launch(session)
+    template = create_template(client, ids, self_evolution=SELF_EVOLUTION)
+    stored = session.get(EvalTemplate, template["id"])
+    assert stored is not None
+    original_ciphertext = stored.self_evolution_token_encrypted
+    replacement = "whk_" + "z9Y8x7W6v5" * 2
+
+    replaced = client.patch(
+        f"/api/v1/eval-templates/{template['id']}",
+        json={"self_evolution": {**SELF_EVOLUTION, "token": replacement}},
+    )
+    assert replaced.status_code == 200, replaced.text
+    assert replaced.json()["template"]["self_evolution"]["has_token"] is True
+    assert replacement not in replaced.text
+
+    session.expire_all()
+    stored = session.get(EvalTemplate, template["id"])
+    assert stored is not None
+    assert stored.self_evolution_token_encrypted != original_ciphertext
+    assert _decrypt(stored.self_evolution_token_encrypted) == replacement
+
+    disabled = client.patch(
+        f"/api/v1/eval-templates/{template['id']}",
+        json={"self_evolution": {"enabled": False}},
+    )
+    assert disabled.status_code == 200, disabled.text
+    assert disabled.json()["template"]["self_evolution"] == {
+        "enabled": False,
+        "base_url": None,
+        "workspace_id": None,
+        "has_token": False,
+    }
+
+    session.expire_all()
+    stored = session.get(EvalTemplate, template["id"])
+    assert stored is not None
+    assert stored.self_evolution_enabled is False
+    assert stored.self_evolution_base_url is None
+    assert stored.self_evolution_workspace_id is None
+    assert stored.self_evolution_token_encrypted is None
+
+
+def test_update_without_self_evolution_keeps_config(
+    client: TestClient, session: Session
+) -> None:
+    ids = seed_launch(session)
+    template = create_template(client, ids, self_evolution=SELF_EVOLUTION)
+    stored = session.get(EvalTemplate, template["id"])
+    assert stored is not None
+    original_ciphertext = stored.self_evolution_token_encrypted
+
+    response = client.patch(
+        f"/api/v1/eval-templates/{template['id']}",
+        json={"name": "改名后的模板"},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()["template"]
+    assert body["name"] == "改名后的模板"
+    assert body["self_evolution"] == {
+        "enabled": True,
+        "base_url": "https://harness.example.com",
+        "workspace_id": "ws-prod-01",
+        "has_token": True,
+    }
+
+    session.expire_all()
+    stored = session.get(EvalTemplate, template["id"])
+    assert stored is not None
+    assert stored.self_evolution_token_encrypted == original_ciphertext
+
+
+def test_update_self_evolution_rejects_invalid_config(
+    client: TestClient, session: Session
+) -> None:
+    ids = seed_launch(session)
+    template = create_template(client, ids, self_evolution=SELF_EVOLUTION)
+    response = client.patch(
+        f"/api/v1/eval-templates/{template['id']}",
+        json={"self_evolution": {"enabled": True}},
+    )
+    assert response.status_code == 422, response.text
+    error = response.json()["detail"]["error"]
+    assert error["code"] == "template_invalid"
+    assert error["details"]["fields"]["self_evolution"] == "invalid"
+
+    # The rejected update must not have touched the stored target.
+    session.expire_all()
+    stored = session.get(EvalTemplate, template["id"])
+    assert stored is not None
+    assert stored.self_evolution_enabled is True
+    assert stored.self_evolution_token_encrypted is not None
+
+
+def test_update_enabling_self_evolution_requires_a_token(
+    client: TestClient, session: Session
+) -> None:
+    ids = seed_launch(session)
+    template = create_template(client, ids)
+    response = client.patch(
+        f"/api/v1/eval-templates/{template['id']}",
+        json={
+            "self_evolution": {
+                "enabled": True,
+                "base_url": "https://harness.example.com",
+                "workspace_id": "ws-prod-01",
+            }
+        },
+    )
+    assert response.status_code == 422, response.text
+    error = response.json()["detail"]["error"]
+    assert error["code"] == "template_invalid"
+    assert error["details"]["fields"]["self_evolution"] == "invalid"
+
+    # A rejected enable must leave the template disabled with no ciphertext.
+    session.expire_all()
+    stored = session.get(EvalTemplate, template["id"])
+    assert stored is not None
+    assert stored.self_evolution_enabled is False
+    assert stored.self_evolution_base_url is None
+    assert stored.self_evolution_workspace_id is None
+    assert stored.self_evolution_token_encrypted is None
+
+
+def test_launch_rejects_broken_self_evolution_target(
+    client: TestClient, session: Session
+) -> None:
+    ids = seed_launch(session)
+    missing = create_template(client, ids, name="缺少令牌", self_evolution=SELF_EVOLUTION)
+    corrupted = create_template(client, ids, name="令牌损坏", self_evolution=SELF_EVOLUTION)
+    session.execute(
+        text(
+            "UPDATE eval_template SET self_evolution_token_encrypted = NULL "
+            "WHERE id = :id"
+        ),
+        {"id": missing["id"]},
+    )
+    session.execute(
+        text(
+            "UPDATE eval_template SET self_evolution_token_encrypted = 'not-a-token' "
+            "WHERE id = :id"
+        ),
+        {"id": corrupted["id"]},
+    )
+    session.commit()
+
+    for template in (missing, corrupted):
+        response = client.post(
+            f"/api/v1/eval-templates/{template['id']}/launch",
+            headers={"Idempotency-Key": f"broken-{template['id']}"},
+            json={},
+        )
+        assert response.status_code == 422, response.text
+        error = response.json()["detail"]["error"]
+        assert error["code"] == "template_invalid"
+        assert error["details"]["fields"]["self_evolution"] == "invalid"
+        assert session.scalar(
+            text("SELECT count(*) FROM eval_run WHERE template_id = :id"),
+            {"id": template["id"]},
+        ) == 0
+
+
+def test_launch_from_reporting_template_sets_run_self_evolution(
+    client: TestClient, session: Session
+) -> None:
+    ids = seed_launch(session)
+    template = create_template(client, ids, self_evolution=SELF_EVOLUTION)
+
+    response = client.post(
+        f"/api/v1/eval-templates/{template['id']}/launch",
+        headers={"Idempotency-Key": "self-evolution-launch"},
+        json={},
+    )
+    assert response.status_code == 202, response.text
+    run = session.get(EvalRun, response.json()["run_id"])
+    assert run is not None
+    assert run.self_evolution_enabled is True
+    assert run.self_evolution_base_url == "https://harness.example.com"
+    assert run.self_evolution_workspace_id == "ws-prod-01"
+    assert run.self_evolution_token_encrypted
+    assert _decrypt(run.self_evolution_token_encrypted) == SELF_EVOLUTION_TOKEN
+
+    snapshot = run.template_snapshot_json
+    assert snapshot["self_evolution"] == {
+        "enabled": True,
+        "base_url": "https://harness.example.com",
+        "workspace_id": "ws-prod-01",
+        "has_token": True,
+    }
+    assert "token" not in snapshot["self_evolution"]
+    assert SELF_EVOLUTION_TOKEN not in json.dumps(snapshot)
+    assert SELF_EVOLUTION_TOKEN not in response.text
+
+
+def test_existing_templates_default_to_self_evolution_disabled(
+    client: TestClient, session: Session
+) -> None:
+    ids = seed_launch(session)
+    template = create_template(client, ids)
+    assert template["self_evolution"] == {
+        "enabled": False,
+        "base_url": None,
+        "workspace_id": None,
+        "has_token": False,
+    }
+
+    stored = session.get(EvalTemplate, template["id"])
+    assert stored is not None
+    assert stored.self_evolution_enabled is False
+    assert stored.self_evolution_base_url is None
+    assert stored.self_evolution_workspace_id is None
+    assert stored.self_evolution_token_encrypted is None

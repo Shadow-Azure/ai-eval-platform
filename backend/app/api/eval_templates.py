@@ -20,6 +20,22 @@ from .evaluations import CaseSelectionRequest, ExecutionPolicyRequest
 router = APIRouter(tags=["eval-templates"])
 
 
+class TemplateSelfEvolutionRequest(BaseModel):
+    """M8 (#382): template-level bad-case reporting target.
+
+    Field-level rules are validated in the template service so every failure
+    maps to the same ``template_invalid`` envelope with
+    ``details.fields.self_evolution = "invalid"`` as the rest of the launch
+    selection. On update, ``token`` is optional: an omitted value keeps the
+    stored ciphertext, while disabling clears it.
+    """
+
+    enabled: bool = False
+    base_url: str | None = None
+    workspace_id: str | None = None
+    token: str | None = None
+
+
 class TemplateCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     description: str | None = Field(default=None, max_length=1000)
@@ -40,6 +56,7 @@ class TemplateCreateRequest(BaseModel):
     agent_timeout_seconds: int | None = Field(
         default=None, ge=MIN_AGENT_TIMEOUT_SECONDS, le=MAX_AGENT_TIMEOUT_SECONDS
     )
+    self_evolution: TemplateSelfEvolutionRequest | None = None
     enabled: bool = True
 
 
@@ -65,6 +82,7 @@ class TemplateUpdateRequest(BaseModel):
     agent_timeout_seconds: int | None = Field(
         default=None, ge=MIN_AGENT_TIMEOUT_SECONDS, le=MAX_AGENT_TIMEOUT_SECONDS
     )
+    self_evolution: TemplateSelfEvolutionRequest | None = None
     enabled: bool | None = None
 
 

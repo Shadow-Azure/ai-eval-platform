@@ -39,7 +39,10 @@ import {
   type DatasetCaseSummary,
   type DatasetVersion,
 } from "../api/datasets";
-import { createEvalTemplate } from "../api/evalTemplates";
+import {
+  createEvalTemplate,
+  type CreateEvalTemplateRequest,
+} from "../api/evalTemplates";
 import {
   createEvaluation,
   ensureImageReadiness,
@@ -1058,12 +1061,22 @@ export function EvalWizardPage() {
     };
   }
 
-  function buildTemplatePayload() {
+  function buildTemplatePayload(): CreateEvalTemplateRequest {
     if (!draft.versionId || !draft.modelConfigId || !draft.poolId) {
       throw new Error("先选择数据集版本、模型配置和资源池");
     }
     if (!templateName.trim()) {
       throw new Error("请填写模板名称");
+    }
+    const reporting = draft.selfEvolution;
+    if (reporting.enabled && !reporting.token.trim()) {
+      // Drafts deliberately drop the token, so a restored draft has to
+      // re-enter it before the target can be saved to a template.
+      throw new Error("浏览器草稿不保存上报令牌，请重新输入上报令牌后再保存模板");
+    }
+    const reportingError = selfEvolutionError(reporting);
+    if (reportingError) {
+      throw new Error(reportingError);
     }
     return {
       name: templateName.trim(),
@@ -1086,6 +1099,16 @@ export function EvalWizardPage() {
       ...(agentTimeout.seconds !== null
         ? { agent_timeout_seconds: agentTimeout.seconds }
         : {}),
+      // Enabled sends the full target; disabled sends only the flag so the
+      // backend can clear any previously stored target and token.
+      self_evolution: reporting.enabled
+        ? {
+            enabled: true,
+            base_url: reporting.baseUrl.trim(),
+            workspace_id: reporting.workspaceId.trim(),
+            token: reporting.token.trim(),
+          }
+        : { enabled: false },
     };
   }
 

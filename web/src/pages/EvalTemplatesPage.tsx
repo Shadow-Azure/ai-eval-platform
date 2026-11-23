@@ -16,6 +16,7 @@ import { PageHeading } from "../components/PageHeading";
 import { QueryError } from "../components/QueryError";
 import { TemplateApiModal } from "../components/TemplateApiModal";
 import {
+  TemplateSelfEvolutionTag,
   TemplateStatusTag,
   formatCostRange,
   templateLastRunLabel,
@@ -141,8 +142,13 @@ export function EvalTemplatesPage() {
     {
       title: "状态",
       key: "enabled",
-      width: 90,
-      render: (_value, row) => <TemplateStatusTag enabled={row.enabled} />,
+      width: 130,
+      render: (_value, row) => (
+        <>
+          <TemplateStatusTag enabled={row.enabled} />
+          <TemplateSelfEvolutionTag template={row} />
+        </>
+      ),
     },
     {
       title: "最近启动",

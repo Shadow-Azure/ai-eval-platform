@@ -288,6 +288,48 @@ def _normalise_asset_selection(
     return ref, paths, types
 
 
+def _self_evolution_columns(
+    config: dict | None,
+    *,
+    existing_ciphertext: str | None = None,
+    require_token: bool = False,
+) -> dict[str, Any]:
+    """Validate a template reporting target into ``EvalTemplate`` columns.
+
+    The stored form mirrors the run-level columns: only the enabled flag and
+    the two non-secret target fields are directly readable, while the token is
+    Fernet ciphertext. An update that omits the token keeps the existing
+    ciphertext; disabling clears every target field and the ciphertext.
+    """
+
+    try:
+        view, token = preparation_service.normalise_self_evolution(
+            config, require_token=require_token
+        )
+        if not view["enabled"]:
+            ciphertext = None
+        elif token:
+            ciphertext = preparation_service.encrypt_self_evolution_token(token)
+        elif existing_ciphertext:
+            ciphertext = existing_ciphertext
+        else:
+            # An update may omit the token only when it already has one to
+            # keep; enabling from scratch without a token would create a
+            # template that can never report, so reject it here instead of
+            # deferring the failure to launch time.
+            raise TemplateInvalid(
+                "启用自进化上报时必须提供上报令牌", field="self_evolution"
+            )
+    except preparation_service.PreparationInvalid as error:
+        raise TemplateInvalid(str(error), field="self_evolution") from error
+    return {
+        "self_evolution_enabled": view["enabled"],
+        "self_evolution_base_url": view["base_url"],
+        "self_evolution_workspace_id": view["workspace_id"],
+        "self_evolution_token_encrypted": ciphertext,
+    }
+
+
 def _validate_fields(session: Session, data: dict, settings: Settings) -> dict:
     name = _text(data.get("name"), field="name", max_length=200, required=True)
     description = _text(data.get("description"), field="description", max_length=1000)
@@ -368,6 +410,9 @@ def create_template(
 ) -> EvalTemplate:
     settings = settings or get_settings()
     fields = _validate_fields(session, data, settings)
+    fields.update(
+        _self_evolution_columns(data.get("self_evolution"), require_token=True)
+    )
     template = EvalTemplate(
         tenant_id=str(DEFAULT_TENANT_ID),
         project_id=str(DEFAULT_PROJECT_ID),
@@ -448,6 +493,17 @@ def update_template(
         if key in changes:
             current[key] = changes[key]
     fields = _validate_fields(session, current, settings)
+    # ``self_evolution`` is patched as a whole: an omitted target (or an
+    # explicit null) keeps the stored config/ciphertext, while a provided
+    # target replaces every field. Its token stays optional on update.
+    if changes.get("self_evolution") is not None:
+        fields.update(
+            _self_evolution_columns(
+                changes["self_evolution"],
+                existing_ciphertext=template.self_evolution_token_encrypted,
+                require_token=False,
+            )
+        )
     for key, value in fields.items():
         setattr(template, key, value)
     template.version = int(template.version or 1) + 1
@@ -652,6 +708,14 @@ def template_view(
         "prompt_suffix": template.prompt_suffix or "",
         "max_turns": template.max_turns,
         "agent_timeout_seconds": template.agent_timeout_seconds,
+        # M8 (#382): the write-only reporting target, same shape as the run
+        # detail: the token itself never leaves the encrypted column.
+        "self_evolution": {
+            "enabled": bool(template.self_evolution_enabled),
+            "base_url": template.self_evolution_base_url,
+            "workspace_id": template.self_evolution_workspace_id,
+            "has_token": bool(template.self_evolution_token_encrypted),
+        },
         "estimated_cost": estimate,
         "status_url": "/api/v1/eval-runs/{run_id}/status",
         "result_url": "/api/v1/eval-runs/{run_id}/results",
@@ -780,6 +844,43 @@ def _preparation_error(error: Exception) -> TemplateLaunchError:
     )
 
 
+def _self_evolution_launch_payload(template: EvalTemplate) -> dict:
+    """Resolve the frozen reporting target for a template launch.
+
+    A disabled template passes ``{"enabled": False}``. An enabled template
+    must still hold a complete target and a decryptable token; a half-cleared
+    or corrupted row is a 422 before any run exists instead of a launch that
+    silently stops reporting bad cases.
+    """
+
+    if not template.self_evolution_enabled:
+        return {"enabled": False}
+    if not (
+        template.self_evolution_base_url
+        and template.self_evolution_workspace_id
+        and template.self_evolution_token_encrypted
+    ):
+        raise TemplateInvalid(
+            "模板已启用自进化上报，但缺少平台地址、工作区或令牌；请更新模板后重试",
+            field="self_evolution",
+        )
+    try:
+        token = preparation_service.decrypt_self_evolution_token(
+            template.self_evolution_token_encrypted
+        )
+    except preparation_service.PreparationInvalid as error:
+        raise TemplateInvalid(
+            "模板自进化上报令牌无法解密，请重新保存模板",
+            field="self_evolution",
+        ) from error
+    return {
+        "enabled": True,
+        "base_url": template.self_evolution_base_url,
+        "workspace_id": template.self_evolution_workspace_id,
+        "token": token,
+    }
+
+
 def launch_template(
     session: Session,
     template_id: str,
@@ -824,6 +925,9 @@ def launch_template(
     if not template.enabled:
         raise TemplateDisabled("模板已停用，不能启动")
 
+    # Validate/decrypt the reporting target before resolving assets or
+    # preparing: a broken target must never yield a partially launched run.
+    self_evolution = _self_evolution_launch_payload(template)
     asset_snapshot_id = _resolve_template_assets(
         session, template, created_by=created_by, settings=settings
     )
@@ -842,6 +946,7 @@ def launch_template(
             prompt_suffix=template.prompt_suffix or None,
             max_turns=template.max_turns,
             agent_timeout_seconds=template.agent_timeout_seconds,
+            self_evolution=self_evolution,
             created_by=created_by,
             settings=settings,
             now=now,
