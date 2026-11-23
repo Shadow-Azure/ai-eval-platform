@@ -1,10 +1,9 @@
 import { Alert, Tag } from "antd";
 import type { EvalTemplate, EvalTemplatePreflightBlocker } from "../api/evalTemplates";
-import type { EvaluationTemplateBrief } from "../api/evaluations";
 import { Icon } from "./Icon";
 import { durationLabel, rateLabel } from "../utils/evaluationDisplay";
 import { evalStatusMeta } from "../utils/evalStatus";
-import type { CostEstimate } from "../api/evaluations";
+import type { CostEstimate, EvaluationTemplateBrief } from "../api/evaluations";
 
 export function TemplateStatusTag({ enabled }: { enabled: boolean }) {
   return enabled ? <Tag color="success">启用</Tag> : <Tag>已停用</Tag>;
