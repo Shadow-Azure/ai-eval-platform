@@ -63,10 +63,51 @@
 }
 
 .template-name-link {
+  display: block;
+  width: 100%;
   height: auto;
+  overflow: hidden;
   padding: 0;
   font-weight: 650;
   text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.template-name-link > span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.template-name-desc {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+.template-list-card .ant-table-tbody > tr > td {
+  padding-top: 6px;
+  padding-bottom: 6px;
+  vertical-align: top;
+}
+
+.template-name-cell,
+.template-combo-cell {
+  overflow: hidden;
+}
+
+.template-list-card .ant-table-tbody .ant-btn-sm {
+  padding-inline: 6px;
+}
+
+.template-combo-line {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .template-list-card {
