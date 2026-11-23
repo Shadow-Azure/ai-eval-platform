@@ -377,7 +377,13 @@ def _self_evolution_columns(
     }
 
 
-def _validate_fields(session: Session, data: dict, settings: Settings) -> dict:
+def _validate_fields(
+    session: Session,
+    data: dict,
+    settings: Settings,
+    *,
+    validate_image_dependencies: bool = True,
+) -> dict:
     name = _text(data.get("name"), field="name", max_length=200, required=True)
     description = _text(data.get("description"), field="description", max_length=1000)
     if not data.get("dataset_version_id"):
@@ -397,7 +403,11 @@ def _validate_fields(session: Session, data: dict, settings: Settings) -> dict:
     )
     case_selection = _normalise_case_selection(session, data.get("case_selection"), version)
     execution = _normalise_execution(data.get("execution"), settings)
-    image_blockers = _image_dependency_blockers(version, execution, settings)
+    image_blockers = (
+        _image_dependency_blockers(version, execution, settings)
+        if validate_image_dependencies
+        else []
+    )
     if image_blockers:
         raise TemplateInvalid(
             "模板保存前镜像依赖校验未通过："
@@ -550,7 +560,18 @@ def update_template(
     ):
         if key in changes:
             current[key] = changes[key]
-    fields = _validate_fields(session, current, settings)
+    # A rename, description edit or enable/disable must not be trapped by an
+    # image dependency that was already missing before the request. Only a
+    # change to the launch fields that can alter digest resolution re-checks
+    # the deterministic save-time gate.
+    fields = _validate_fields(
+        session,
+        current,
+        settings,
+        validate_image_dependencies=(
+            "dataset_version_id" in changes or "execution" in changes
+        ),
+    )
     # ``self_evolution`` is patched as a whole: an omitted target (or an
     # explicit null) keeps the stored config/ciphertext, while a provided
     # target replaces every field. Its token stays optional on update.

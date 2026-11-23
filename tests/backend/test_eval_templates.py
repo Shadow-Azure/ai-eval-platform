@@ -405,10 +405,27 @@ def test_template_preflight_blocks_existing_template_and_recovers(
     assert stored["preflight"]["status"] == "blocked"
 
     rejected = client.patch(
-        f"/api/v1/eval-templates/{template['id']}", json={"name": "改名"}
+        f"/api/v1/eval-templates/{template['id']}",
+        json={"dataset_version_id": ids["dataset_version_id"]},
     )
     assert rejected.status_code == 422
     assert rejected.json()["detail"]["error"]["code"] == "template_save_blocked"
+
+    # A blocked template must still be renameable/disableable: those edits do
+    # not create a new blocked launch configuration.
+    renamed = client.patch(
+        f"/api/v1/eval-templates/{template['id']}", json={"name": "阻塞中改名"}
+    )
+    assert renamed.status_code == 200, renamed.text
+    disabled = client.patch(
+        f"/api/v1/eval-templates/{template['id']}", json={"enabled": False}
+    )
+    assert disabled.status_code == 200, disabled.text
+    assert disabled.json()["template"]["enabled"] is False
+    reenabled = client.patch(
+        f"/api/v1/eval-templates/{template['id']}", json={"enabled": True}
+    )
+    assert reenabled.status_code == 200, reenabled.text
 
     blocked_launch = client.post(
         f"/api/v1/eval-templates/{template['id']}/launch",
@@ -428,6 +445,12 @@ def test_template_preflight_blocks_existing_template_and_recovers(
     session.commit()
     recovered = client.get(f"/api/v1/eval-templates/{template['id']}").json()["template"]
     assert recovered["preflight"] == {"status": "ready", "blockers": []}
+    assert (
+        client.patch(
+            f"/api/v1/eval-templates/{template['id']}", json={"enabled": True}
+        ).status_code
+        == 200
+    )
     assert (
         client.patch(
             f"/api/v1/eval-templates/{template['id']}", json={"name": "恢复后可保存"}

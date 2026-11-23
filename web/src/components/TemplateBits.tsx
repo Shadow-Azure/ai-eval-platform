@@ -33,7 +33,7 @@ export function blockerFixHint(code: string): string {
     case "runner_labels_mismatch":
       return "资源池 Runner 标签不满足 Runtime 要求；请检查并修正 Runner 标签。";
     default:
-      return "按上面的原因修正配置后重试；本次没有创建评测。";
+      return "按上面的原因修正配置后重试。";
   }
 }
 
