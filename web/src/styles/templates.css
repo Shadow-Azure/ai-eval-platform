@@ -250,16 +250,19 @@
   font-size: 10px;
 }
 
-.template-api-summary code,
-.template-api-summary-value {
+.template-api-summary code {
   overflow: hidden;
+  font-family: var(--mono);
   font-size: 10px;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
 
-.template-api-summary code {
-  font-family: var(--mono);
+.template-api-summary-value {
+  overflow-wrap: anywhere;
+  font-size: 10px;
+  line-height: 1.5;
+  white-space: normal;
 }
 
 .template-api-list {

@@ -436,8 +436,9 @@ export function EvalTemplateDetailPage() {
               </div>
             </div>
             <div className="card-body small muted">
-              启动请求不能覆盖固定字段；模板停用或引用被删除时返回明确错误。每次启动都重新解析资产 Ref
-              并冻结新的不可变快照，已启动的评测不受后续编辑影响。
+              控制台一键启动不能覆盖固定字段；机器触发（服务令牌，eval:launch）可携带
+              asset_override 把评测钉在指定候选 commit。模板停用或引用被删除时返回明确错误；
+              每次启动都重新解析资产 Ref 并冻结新的不可变快照，已启动的评测不受后续编辑影响。
             </div>
           </section>
         </aside>
