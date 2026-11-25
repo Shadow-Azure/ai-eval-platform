@@ -1755,7 +1755,7 @@ function templateApiBody(template) {
     <div class="api-summary">
       <div><span>Base URL</span><code>https://eval.acme.internal</code></div>
       <div><span>模板 ID</span><code>${template.id}</code></div>
-      <div><span>鉴权</span><span>控制台会话 Cookie；启动需管理员权限</span></div>
+      <div><span>鉴权</span><span>控制台会话 Cookie 或服务令牌 Bearer（hev_…）；启动需管理员权限或 eval:launch 令牌</span></div>
     </div>
     <div class="api-list">
       <div class="api-item">
@@ -1766,28 +1766,41 @@ function templateApiBody(template) {
       </div>
       <div class="api-item">
         <div class="api-item-head"><span class="api-method post">POST</span><code>/api/v1/eval-templates/${template.id}/launch</code></div>
-        <p>按模板触发一次评测，返回 run_id 与状态/结果地址；固定字段不可在启动时覆盖，幂等键重放返回同一 run。</p>
+        <p>按模板触发一次评测，返回 run_id 与状态/结果地址；幂等键重放返回同一 run。控制台一键启动不携带覆盖；机器触发（持 <code>eval:launch</code> 的服务令牌）可在 body 传可选 <code>asset_override</code>（repo_url、ref、commit、asset_paths、asset_types，缺省继承模板）与 <code>lineage</code>，把评测钉在指定候选 commit 上，202 回显 <code>asset.resolved_commit</code> 供比对。</p>
         <pre class="api-code">curl -sS -X POST "https://eval.acme.internal/api/v1/eval-templates/${template.id}/launch" \\
   -H 'Content-Type: application/json' \\
   -b 'ep_session=&lt;session&gt;' \\
   -d '{"idempotency_key":"nightly-20261122"}'</pre>
+        <pre class="api-code">curl -sS -X POST "https://eval.acme.internal/api/v1/eval-templates/${template.id}/launch" \\
+  -H 'Content-Type: application/json' \\
+  -H 'Authorization: Bearer hev_&lt;service-token&gt;' \\
+  -d '{"idempotency_key":"evo-round-12","asset_override":{"repo_url":"https://github.com/acme/agent-assets","ref":"candidate","commit":"a82a590ade533b9ce8cc46f9be250e1a726da2d3","asset_paths":["skills/reviewer"]},"lineage":{"evolutionRunId":"evo-12","evolutionRoundId":"round-3","roundSeq":3,"parentCommit":"bff0c1e29a44e0a1c3d5e6f708192a3b4c5d6e7f"}}'</pre>
         <pre class="api-code">HTTP/1.1 202 Accepted
-{"run_id":"eval-007","template_id":"${template.id}","status":"queued","status_url":"/api/v1/eval-runs/eval-007/status","result_url":"/api/v1/eval-runs/eval-007/results","created":true}</pre>
+{"run_id":"eval-007","template_id":"${template.id}","status":"queued","status_url":"/api/v1/eval-runs/eval-007/status","result_url":"/api/v1/eval-runs/eval-007/results","created":true,"asset":{"repo_url":"https://github.com/acme/agent-assets","requested_ref":"candidate","requested_commit":"a82a590ade533b9ce8cc46f9be250e1a726da2d3","resolved_commit":"a82a590ade533b9ce8cc46f9be250e1a726da2d3","asset_snapshot_id":"snap-042","bundle_digest":"sha256:5d87e384133a42874f3b09458c3efef6c1b05bc46036364cbd7a05b2cae59920"}}</pre>
       </div>
       <div class="api-item">
         <div class="api-item-head"><span class="api-method get">GET</span><code>/api/v1/eval-runs/{run_id}/status</code></div>
-        <p>轮询执行状态、进度与是否终态；terminal=true 后停止轮询，再读取结果。</p>
+        <p>轮询执行状态、进度与是否终态；terminal=true 后停止轮询，再读取结果。控制台会话或持 eval:read 的服务令牌均可读取；冻结过资产快照的 run 回显 asset（resolved_commit、asset_snapshot_id、requested_ref）。</p>
         <pre class="api-code">GET /api/v1/eval-runs/eval-004/status
-{"status":"running","terminal":false,"progress":{"finished":231,"total":500}}</pre>
+{"status":"running","terminal":false,"progress":{"finished":231,"total":500},"asset":{"resolved_commit":"a82a590ade533b9ce8cc46f9be250e1a726da2d3","asset_snapshot_id":"snap-042","requested_ref":"candidate"}}</pre>
       </div>
       <div class="api-item">
         <div class="api-item-head"><span class="api-method get">GET</span><code>/api/v1/eval-runs/{run_id}/results</code></div>
-        <p>读取指标快照；运行中 is_final=false，终态后返回完整指标与 token 摘要。</p>
+        <p>读取指标快照；运行中 is_final=false，终态后返回完整指标与 token 摘要。鉴权同 status；launch 提供 lineage 时原样回显。</p>
         <pre class="api-code">GET /api/v1/eval-runs/eval-004/results
-{"status":"completed","is_final":true,"items":[{"metric_key":"resolve_rate","value":0.412}]}</pre>
+{"status":"completed","is_final":true,"items":[{"metric_key":"resolve_rate","value":0.412}],"asset":{"resolved_commit":"a82a590ade533b9ce8cc46f9be250e1a726da2d3","asset_snapshot_id":"snap-042","requested_ref":"candidate"},"lineage":{"evolutionRunId":"evo-12","evolutionRoundId":"round-3","roundSeq":3}}</pre>
+      </div>
+      <div class="api-item">
+        <div class="api-item-head"><span class="api-method post">POST</span><code>/api/v1/service-tokens</code></div>
+        <p>机器身份（仅管理员会话）：创建/列表/撤销服务令牌，scope 取 <code>eval:launch</code> / <code>eval:read</code>，可配模板白名单与并发/预算上限；明文仅在创建响应返回一次，库内只存哈希，机器启动的 <code>created_by</code> 落 <code>svc:&lt;name&gt;</code>。无凭据 401、scope 或白名单不足 403、达到上限 429 service_token_limit_exceeded；撤销用 <code>DELETE /api/v1/service-tokens/{token_id}</code>。</p>
+        <pre class="api-code">curl -sS -X POST "https://eval.acme.internal/api/v1/service-tokens" \\
+  -H 'Content-Type: application/json' \\
+  -b 'ep_session=&lt;session&gt;' \\
+  -d '{"name":"harness-evolution","scopes":["eval:launch","eval:read"],"template_allowlist":["${template.id}"],"max_concurrent_runs":2}'
+{"status":"ok","service_token":{"id":"tok-01","name":"harness-evolution","scopes":["eval:launch","eval:read"],"template_allowlist":["${template.id}"],"active":true},"token":"hev_x8…（仅此一次返回，撤销后名称不复用）"}</pre>
       </div>
     </div>
-    <div class="banner">${icon("share", 15)}<div><strong>自进化上报随模板保存。</strong> 创建/更新模板时传 <code>self_evolution</code>（<code>base_url</code>、<code>workspace_id</code>、<code>token</code>）；令牌加密存储、任何响应不回显。一键启动沿用模板配置，不在启动请求里覆盖。</div></div>
+    <div class="banner">${icon("share", 15)}<div><strong>自进化上报随模板保存。</strong> 创建/更新模板时传 <code>self_evolution</code>（<code>base_url</code>、<code>workspace_id</code>、<code>token</code>）；令牌加密存储、任何响应不回显。一键启动沿用模板配置，不在启动请求里覆盖；机器触发的 <code>asset_override</code> 只注入资产来源，不改上报开关，模板启用上报时随响应 <code>warnings</code> 提示一次。</div></div>
     <div class="banner">${icon("shield", 15)}<div><strong>模板只固化选择，不固化执行结果。</strong> 每次启动都会重新解析资产 Ref 并冻结新的快照；模板后续编辑不会改变已启动的评测。</div></div>
   `;
 }
@@ -4121,7 +4134,7 @@ function evalTemplateDetailPage(id) {
           <section class="card">
             <div class="card-header"><div><h2 class="card-title">边界</h2><p class="card-subtitle">一键启动不改变执行链路</p></div></div>
             <div class="card-body small muted">
-              启动请求不能覆盖固定字段；模板停用或引用被删除时返回明确错误。每次启动都重新解析资产 Ref 并冻结新的不可变快照，已启动的评测不受后续编辑影响。
+              控制台一键启动不能覆盖固定字段；机器触发（服务令牌，eval:launch）可携带 asset_override 把评测钉在指定候选 commit。模板停用或引用被删除时返回明确错误；每次启动都重新解析资产 Ref 并冻结新的不可变快照，已启动的评测不受后续编辑影响。
             </div>
           </section>
         </aside>
