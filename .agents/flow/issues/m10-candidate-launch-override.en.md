@@ -6,7 +6,7 @@ English | [中文](m10-candidate-launch-override.md)
 kind: issue
 milestone: m10
 priority: P0
-status: in-progress
+status: done
 scope:
   - .agents/flow/issues/m10-candidate-launch-override.md
   - .agents/flow/issues/m10-candidate-launch-override.en.md
