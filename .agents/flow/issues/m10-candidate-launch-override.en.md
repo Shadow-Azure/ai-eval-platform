@@ -26,6 +26,8 @@ scope:
   - tests/backend/test_eval_templates.py
   - tests/backend/test_results.py
   - tests/backend/test_service_tokens.py
+  - tests/backend/test_operations.py
+  - tests/backend/test_deployment_migration.py
   - docs/design/eval-platform-architecture.md
   - docs/design/eval-platform-architecture.en.md
   - docs/design/eval-platform-architecture.i18n.yaml

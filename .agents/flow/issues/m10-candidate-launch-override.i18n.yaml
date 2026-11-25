@@ -1,5 +1,5 @@
 # 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
 # git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
 #   pnpm run record:i18n -- .agents/flow/issues/m10-candidate-launch-override.md
-m10-candidate-launch-override.md: 9c020b1fed4b19ef8baf1616eaa107bbeda5f28d
-m10-candidate-launch-override.en.md: 984f22654df2c29fe3cfc523abcbfa974ddea202
+m10-candidate-launch-override.md: cf52aa9ceff0fcbea8254179f77b7caadac15ebf
+m10-candidate-launch-override.en.md: 0d5cbf761a09a97dc2d245ab64094d2573ea37c7
