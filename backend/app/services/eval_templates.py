@@ -22,6 +22,7 @@ leaking a foreign-key failure.
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from typing import Any
 
@@ -35,6 +36,7 @@ from ..agent_timeout import (
 from ..config import Settings, get_settings
 from ..defaults import DEFAULT_PROJECT_ID, DEFAULT_TENANT_ID
 from ..models import (
+    AgentAssetSnapshot,
     AgentAssetSource,
     Dataset,
     DatasetVersion,
@@ -42,14 +44,30 @@ from ..models import (
     EvalTemplate,
     ModelConfig,
     ResourcePool,
+    ServiceToken,
 )
 from ..money import money_str
 from . import agent_assets as asset_service
 from . import evaluations as evaluation_service
 from . import preparations as preparation_service
+from . import service_tokens as token_service
+from .git_client import GitClientError
 
 TEMPLATE_STATUSES = ("enabled", "disabled")
 TEMPLATE_SEARCH_LIMIT = 100
+
+# M10 (#429): the launch override resolves a candidate asset selection. ``commit``
+# is the authoritative identity (40-hex), while ``ref`` is display/audit only.
+# The asset domain's own selection errors keep their code so a caller sees the
+# same contract as the run-level asset endpoints.
+ASSET_OVERRIDE_FIELD = "asset_override"
+ASSET_OVERRIDE_PATH_LIMIT = 500
+ASSET_OVERRIDE_MAX_URL_LENGTH = 500
+ASSET_OVERRIDE_MAX_REF_LENGTH = 200
+PASSTHROUGH_ASSET_CODES = frozenset(
+    {"asset_path_not_found", "asset_selection_empty", "asset_type_invalid"}
+)
+_COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 
 
 class TemplateError(Exception):
@@ -110,6 +128,27 @@ class TemplateLaunchError(TemplateError):
     ) -> None:
         super().__init__(message, field=field, details=details, code=code)
         self.status = status
+
+
+class AssetSourceUnresolved(TemplateError):
+    """``asset_override.repo_url`` cannot be matched to a registered source."""
+
+    status = 422
+    code = "asset_source_unresolved"
+
+
+class AssetRefUnresolved(TemplateError):
+    """The requested commit/ref cannot be resolved in the asset repository."""
+
+    status = 422
+    code = "asset_ref_unresolved"
+
+
+class CandidateCommitMismatch(TemplateError):
+    """The resolved commit differs from the requested candidate commit."""
+
+    status = 422
+    code = "candidate_commit_mismatch"
 
 
 def _now(now: datetime | None) -> datetime:
@@ -973,6 +1012,296 @@ def _self_evolution_launch_payload(template: EvalTemplate) -> dict:
     }
 
 
+def _override_text(override: dict, key: str, *, max_length: int) -> str | None:
+    """Read one optional override string; ``None`` means the field is absent."""
+
+    value = override.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise TemplateInvalid(
+            f"asset_override.{key} 必须是字符串", field=ASSET_OVERRIDE_FIELD
+        )
+    text = value.strip()
+    if len(text) > max_length:
+        raise TemplateInvalid(
+            f"asset_override.{key} 不能超过 {max_length} 个字符",
+            field=ASSET_OVERRIDE_FIELD,
+        )
+    return text or None
+
+
+def _override_paths(override: dict) -> list[str] | None:
+    """Whole-field ``asset_paths``; ``None`` inherits the template value."""
+
+    value = override.get("asset_paths")
+    if value is None:
+        return None
+    if not isinstance(value, (list, tuple)):
+        raise TemplateInvalid(
+            "asset_override.asset_paths 必须是字符串列表", field=ASSET_OVERRIDE_FIELD
+        )
+    paths: list[str] = []
+    for path in value:
+        if (
+            not isinstance(path, str)
+            or not path.strip()
+            or len(path) > ASSET_OVERRIDE_PATH_LIMIT
+        ):
+            raise TemplateInvalid(
+                "asset_override.asset_paths 每项必须是 "
+                f"1..{ASSET_OVERRIDE_PATH_LIMIT} 字符的字符串",
+                field=ASSET_OVERRIDE_FIELD,
+            )
+        paths.append(path)
+    return paths
+
+
+def _override_types(override: dict) -> dict[str, str] | None:
+    """Whole-field ``asset_types``; ``None`` inherits the template value."""
+
+    value = override.get("asset_types")
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise TemplateInvalid(
+            "asset_override.asset_types 必须是对象", field=ASSET_OVERRIDE_FIELD
+        )
+    return {
+        str(key): str(item)
+        for key, item in value.items()
+        if isinstance(key, str) and isinstance(item, str)
+    }
+
+
+def _override_source(
+    session: Session, template: EvalTemplate, override: dict
+) -> AgentAssetSource:
+    """Resolve the asset source an override pins its commit in.
+
+    ``repo_url`` must exactly match a registered tenant source, because only a
+    registered source carries the credential and scan paths used to read the
+    candidate commit. Without ``repo_url`` the template's own source is used.
+    """
+
+    repo_url = _override_text(
+        override, "repo_url", max_length=ASSET_OVERRIDE_MAX_URL_LENGTH
+    )
+    if repo_url:
+        source = session.scalar(
+            select(AgentAssetSource)
+            .where(
+                AgentAssetSource.tenant_id == str(DEFAULT_TENANT_ID),
+                AgentAssetSource.repo_url == repo_url,
+            )
+            .order_by(AgentAssetSource.created_at, AgentAssetSource.id)
+        )
+        if source is None:
+            raise AssetSourceUnresolved(
+                f"资产覆盖的仓库未登记为资产源：{repo_url}",
+                field=ASSET_OVERRIDE_FIELD,
+                details={"field": ASSET_OVERRIDE_FIELD, "repo_url": repo_url},
+            )
+        return source
+    if not template.asset_source_id:
+        raise AssetSourceUnresolved(
+            "资产覆盖未指定 repo_url，且模板未绑定资产源",
+            field=ASSET_OVERRIDE_FIELD,
+            details={"field": ASSET_OVERRIDE_FIELD, "template_id": template.id},
+        )
+    source = _get_tenant_row(
+        session, AgentAssetSource, template.asset_source_id, field="asset_source_id"
+    )
+    if source is None:
+        raise AssetSourceUnresolved(
+            "模板绑定的资产源不存在或已删除",
+            field=ASSET_OVERRIDE_FIELD,
+            details={
+                "field": ASSET_OVERRIDE_FIELD,
+                "template_id": template.id,
+                "asset_source_id": template.asset_source_id,
+            },
+        )
+    return source
+
+
+def launch_asset_identity(effective: dict | None) -> dict | None:
+    """The 202 ``asset`` block built from a normalized effective identity."""
+
+    if not effective:
+        return None
+    return {
+        "repo_url": effective.get("repo_url"),
+        "requested_ref": effective.get("requested_ref"),
+        "requested_commit": effective.get("requested_commit"),
+        "resolved_commit": effective.get("resolved_commit"),
+        "asset_snapshot_id": effective.get("asset_snapshot_id"),
+        "bundle_digest": effective.get("bundle_digest"),
+    }
+
+
+def run_asset_identity(session: Session, run: EvalRun) -> dict | None:
+    """The stable status/results ``asset`` echo for an asset-frozen run.
+
+    Reads the snapshot referenced by ``run.asset_snapshot_id`` so the echo
+    always reflects the frozen identity, never the live source or template.
+    Synthetic runs and rows whose snapshot no longer resolves return ``None``
+    so both read models keep their previous shape for them.
+    """
+
+    snapshot_id = run.asset_snapshot_id
+    if not snapshot_id:
+        return None
+    snapshot = session.get(AgentAssetSnapshot, snapshot_id)
+    if snapshot is None or snapshot.tenant_id != str(DEFAULT_TENANT_ID):
+        return None
+    effective = (run.asset_override_json or {}).get("effective") or {}
+    return {
+        "resolved_commit": snapshot.resolved_commit,
+        "asset_snapshot_id": snapshot.id,
+        # A stored override echo wins: ``commit`` only launches report the
+        # commit here, while the snapshot itself recorded the resolution ref.
+        "requested_ref": effective.get("requested_ref") or snapshot.requested_ref,
+    }
+
+
+def _resolve_override_assets(
+    session: Session,
+    template: EvalTemplate,
+    override: dict,
+    *,
+    created_by: str,
+    settings: Settings,
+) -> tuple[str, dict, dict]:
+    """Resolve an explicit ``asset_override`` into a frozen snapshot.
+
+    Returns ``(snapshot_id, launch_asset, effective)``. ``commit`` is the
+    authoritative identity: it is resolved as-is and the resulting commit is
+    asserted before any preparation exists, so a drifting ref or a replaced
+    object can never be silently evaluated (``candidate_commit_mismatch``).
+    ``ref`` only shapes the audit echo.
+    """
+
+    source = _override_source(session, template, override)
+    commit = _override_text(override, "commit", max_length=40)
+    if commit is not None and _COMMIT_PATTERN.fullmatch(commit) is None:
+        raise TemplateInvalid(
+            "asset_override.commit 必须是 40 位小写十六进制 commit",
+            field=ASSET_OVERRIDE_FIELD,
+        )
+    display_ref = _override_text(
+        override, "ref", max_length=ASSET_OVERRIDE_MAX_REF_LENGTH
+    )
+    resolution_ref = (
+        commit
+        or display_ref
+        or (template.asset_ref or source.default_ref or "").strip()
+    )
+    if not resolution_ref:
+        raise AssetRefUnresolved(
+            "资产 Ref 未解析：请提供 commit/ref，或为模板/资产源设置 Ref",
+            field=ASSET_OVERRIDE_FIELD,
+            details={"field": ASSET_OVERRIDE_FIELD, "requested_ref": None},
+        )
+    raw_ref = override.get("ref")
+    if isinstance(raw_ref, str) and raw_ref.strip():
+        # Display/audit only: echo the request verbatim, never the resolution.
+        requested_ref: str | None = raw_ref
+    elif commit:
+        requested_ref = commit
+    else:
+        requested_ref = resolution_ref
+    paths = _override_paths(override)
+    types = _override_types(override)
+    if paths is None:
+        paths = list(template.asset_paths_json or [])
+    if types is None:
+        types = dict(template.asset_types_json or {})
+    try:
+        snapshot, _assets, _snapshot_created = asset_service.resolve_assets(
+            session,
+            source_id=source.id,
+            requested_ref=resolution_ref,
+            paths=paths,
+            types=types,
+            runtime_key=template.runtime_key,
+            created_by=created_by,
+            settings=settings,
+        )
+    except asset_service.AgentAssetError as error:
+        if error.code in PASSTHROUGH_ASSET_CODES:
+            raise TemplateInvalid(
+                str(error),
+                field=ASSET_OVERRIDE_FIELD,
+                details=dict(error.details or {}),
+                code=error.code,
+            ) from error
+        raise TemplateInvalid(
+            f"资产解析失败：{error}",
+            field=ASSET_OVERRIDE_FIELD,
+            code="template_reference_invalid",
+        ) from error
+    except GitClientError as error:
+        raise AssetRefUnresolved(
+            f"资产 Ref 解析失败：{error}",
+            field=ASSET_OVERRIDE_FIELD,
+            details={
+                "field": ASSET_OVERRIDE_FIELD,
+                "requested_ref": resolution_ref,
+                "git_code": error.code,
+            },
+        ) from error
+    except TemplateError:
+        raise
+    except Exception as error:  # network or object-store failure after resolve
+        raise TemplateInvalid(
+            f"资产解析失败：{error}",
+            field=ASSET_OVERRIDE_FIELD,
+            code="template_reference_invalid",
+        ) from error
+    if commit and snapshot.resolved_commit != commit:
+        raise CandidateCommitMismatch(
+            f"候选 commit 解析不一致：请求 {commit}，解析 {snapshot.resolved_commit}",
+            field=ASSET_OVERRIDE_FIELD,
+            details={"requested": commit, "resolved": snapshot.resolved_commit},
+        )
+    effective = {
+        "repo_url": source.repo_url,
+        "source_id": source.id,
+        "requested_ref": requested_ref,
+        "requested_commit": commit,
+        "resolved_commit": snapshot.resolved_commit,
+        "asset_snapshot_id": snapshot.id,
+        "bundle_digest": snapshot.bundle_digest,
+        "asset_paths": list(paths),
+        "asset_types": dict(types),
+    }
+    return snapshot.id, launch_asset_identity(effective), effective
+
+
+def _override_warnings(template: EvalTemplate) -> list[str]:
+    """Non-blocking D5 hint when a candidate launch hits a reporting template."""
+
+    if not template.self_evolution_enabled:
+        return []
+    return [
+        "该模板已开启自进化 bad case 上报；候选 commit 评测会向模板工作区回传"
+        "失败用例，建议为候选评测使用关闭上报的模板。"
+    ]
+
+
+def _replay_launch_meta(template: EvalTemplate, run: EvalRun) -> dict:
+    """Echo a replayed launch from the stored run; no asset work happens."""
+
+    effective = (run.asset_override_json or {}).get("effective") or {}
+    if not effective:
+        return {"asset": None, "warnings": []}
+    return {
+        "asset": launch_asset_identity(effective),
+        "warnings": _override_warnings(template),
+    }
+
+
 def launch_template(
     session: Session,
     template_id: str,
@@ -980,13 +1309,23 @@ def launch_template(
     idempotency_key: str,
     created_by: str,
     name: str | None = None,
+    asset_override: dict | None = None,
+    lineage: dict | None = None,
+    service_token: ServiceToken | None = None,
     settings: Settings | None = None,
     now: datetime | None = None,
-) -> tuple[EvalRun, bool]:
+) -> tuple[EvalRun, bool, dict]:
     """Launch a template through the existing prepare/create path.
 
-    Returns ``(run, created)``. A replayed idempotency key returns the original
-    run of the same template; reusing a key for a different template is a 409.
+    Returns ``(run, created, launch_meta)``. A replayed idempotency key returns
+    the original run of the same template; reusing a key for a different
+    template is a 409.
+
+    M10 (#429): a machine caller passes ``service_token`` so its concurrency and
+    budget caps are enforced before any asset work, and may pin the run to a
+    candidate commit through ``asset_override``. ``launch_meta`` carries the
+    202 ``asset`` block plus non-blocking warnings; the console one-click path
+    (no override) leaves both empty.
     """
 
     settings = settings or get_settings()
@@ -996,9 +1335,9 @@ def launch_template(
         raise TemplateInvalid("启动必须提供幂等键", field="idempotency_key")
     key = key[:128]
     template = get_template(session, template_id)
-    # Replay wins over the enabled check: a client that retries the same
-    # idempotent launch after the template was disabled must still receive the
-    # original run instead of a conflicting 409.
+    # Replay wins over every live check: a client that retries the same
+    # idempotent launch after the template was disabled (or after its caps were
+    # reached by this very run) must still receive the original run.
     existing = session.scalar(
         select(EvalRun).where(
             EvalRun.tenant_id == str(DEFAULT_TENANT_ID),
@@ -1013,16 +1352,31 @@ def launch_template(
                 details={"run_id": existing.id, "template_id": existing.template_id},
                 code="idempotency_conflict",
             )
-        return existing, False
+        return existing, False, _replay_launch_meta(template, existing)
+    if service_token is not None:
+        token_service.enforce_launch_caps(session, service_token)
     if not template.enabled:
         raise TemplateDisabled("模板已停用，不能启动")
 
     # Validate/decrypt the reporting target before resolving assets or
     # preparing: a broken target must never yield a partially launched run.
     self_evolution = _self_evolution_launch_payload(template)
-    asset_snapshot_id = _resolve_template_assets(
-        session, template, created_by=created_by, settings=settings
-    )
+    launch_asset: dict | None = None
+    warnings: list[str] = []
+    effective: dict = {}
+    if asset_override is None:
+        asset_snapshot_id = _resolve_template_assets(
+            session, template, created_by=created_by, settings=settings
+        )
+    else:
+        asset_snapshot_id, launch_asset, effective = _resolve_override_assets(
+            session,
+            template,
+            asset_override,
+            created_by=created_by,
+            settings=settings,
+        )
+        warnings = _override_warnings(template)
     try:
         preparation = preparation_service.build_preparation(
             session,
@@ -1076,7 +1430,18 @@ def launch_template(
     run.template_id = template.id
     run.template_version = template.version
     run.template_snapshot_json = template_view(session, template, settings=settings)
+    if asset_override is not None:
+        # Freeze both the raw request and the normalized identity so status,
+        # results and a later replay echo what was actually measured.
+        run.asset_override_json = {
+            "requested": dict(asset_override),
+            "effective": effective,
+        }
+    if lineage:
+        # Caller provenance only: it never participates in evaluation
+        # semantics, so it is stored verbatim and echoed by results.
+        run.evolution_lineage_json = dict(lineage)
     template.launch_count = int(template.launch_count or 0) + 1
     template.last_launched_at = now
     session.commit()
-    return run, created
+    return run, created, {"asset": launch_asset, "warnings": warnings}

@@ -16,9 +16,11 @@ from ..models import (
 )
 from ..scoring.service import case_test_summary
 from ..seed import ensure_default_scope
-from ..services import comparison, token_usage
+from ..services import comparison, identity, token_usage
 from ..services import evaluations as evaluation_service
+from ..services.eval_templates import run_asset_identity
 from ..services.evaluations import TERMINAL_RUN_STATUSES, iso_utc
+from .dependencies import Actor, require_session, require_session_or_service
 
 router = APIRouter(tags=["results"])
 
@@ -174,7 +176,9 @@ def _token_metric_items(
 
 @router.get("/api/v1/eval-runs/{run_id}/results")
 def get_eval_results(
-    run_id: str, session: Session = Depends(get_session)
+    run_id: str,
+    session: Session = Depends(get_session),
+    _actor: Actor = Depends(require_session_or_service("eval:read")),
 ) -> dict[str, object]:
     tenant_id = _scope(session)
     run = _run_or_404(session, tenant_id, run_id)
@@ -229,7 +233,7 @@ def get_eval_results(
             generated_at=iso_utc(run.finished_at or utcnow()),
         )
     )
-    return {
+    response: dict[str, object] = {
         "run_id": run.id,
         "template_id": run.template_id,
         "status": run.status,
@@ -239,11 +243,22 @@ def get_eval_results(
         "items": items,
         "token_summary": token_summary,
     }
+    # M10 (#429): the frozen asset identity and the caller lineage are additive
+    # fields, present only for runs that actually carry them.
+    asset = run_asset_identity(session, run)
+    if asset is not None:
+        response["asset"] = asset
+    lineage = run.evolution_lineage_json or {}
+    if lineage:
+        response["lineage"] = lineage
+    return response
 
 
 @router.get("/api/v1/eval-runs/{run_id}/status")
 def get_eval_status(
-    run_id: str, session: Session = Depends(get_session)
+    run_id: str,
+    session: Session = Depends(get_session),
+    _actor: Actor = Depends(require_session_or_service("eval:read")),
 ) -> dict[str, object]:
     """M10 (#378): the stable poll read model for template-launched runs.
 
@@ -264,7 +279,7 @@ def get_eval_status(
         else (min(99, round(finished / total * 100)) if total else 0)
     )
     duration = evaluation_service.run_duration_seconds(run)
-    return {
+    response: dict[str, object] = {
         "run_id": run.id,
         "template_id": run.template_id,
         "template_version": run.template_version,
@@ -290,6 +305,11 @@ def get_eval_status(
         "status_url": f"/api/v1/eval-runs/{run.id}/status",
         "result_url": f"/api/v1/eval-runs/{run.id}/results",
     }
+    # M10 (#429): additive asset echo, present only when the run froze assets.
+    asset = run_asset_identity(session, run)
+    if asset is not None:
+        response["asset"] = asset
+    return response
 
 
 @router.get("/api/v1/eval-runs/{run_id}/compare")
@@ -297,6 +317,7 @@ def compare_eval_run(
     run_id: str,
     baseline_run_id: str | None = Query(default=None, max_length=36),
     session: Session = Depends(get_session),
+    _context: identity.AuthContext = Depends(require_session),
 ) -> dict[str, object]:
     tenant_id = _scope(session)
     run = _run_or_404(session, tenant_id, run_id)
@@ -316,6 +337,7 @@ def get_case_tests(
     case_run_id: str,
     attempt: int | None = Query(default=None, ge=1),
     session: Session = Depends(get_session),
+    _context: identity.AuthContext = Depends(require_session),
 ) -> dict[str, object]:
     tenant_id = _scope(session)
     case_run = session.scalar(

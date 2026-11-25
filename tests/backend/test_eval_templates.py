@@ -8,11 +8,16 @@ stable status/results read models.
 
 from __future__ import annotations
 
+import hashlib
 import json
+from dataclasses import dataclass
+from decimal import Decimal
 from uuid import uuid4
 
+import pytest
 from app.config import get_settings
 from app.models import (
+    AgentAssetSnapshot,
     AgentAssetSource,
     Credential,
     Dataset,
@@ -26,10 +31,13 @@ from app.models import (
 )
 from app.secrets import get_secret_box
 from app.seed import ensure_default_scope
+from app.services import agent_assets, identity
 from app.services import eval_templates as template_service
-from app.services import identity
+from app.services.git_client import GitClientError, TreeEntry
+from conftest import TEST_ADMIN_EMAIL, TEST_ADMIN_PASSWORD
 from fastapi.testclient import TestClient
-from sqlalchemy import select, text
+from object_stub import StubObjectStore
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 SELF_EVOLUTION_TOKEN = "whk_" + "a1B2c3D4e5" * 3
@@ -1100,6 +1108,742 @@ def test_launch_from_reporting_template_sets_run_self_evolution(
     assert "token" not in snapshot["self_evolution"]
     assert SELF_EVOLUTION_TOKEN not in json.dumps(snapshot)
     assert SELF_EVOLUTION_TOKEN not in response.text
+
+
+# ---------------------------------------------------------------------------
+# M10 (#429): candidate commit injection + service-token launches
+# ---------------------------------------------------------------------------
+
+SOURCE_REPO = "https://github.com/acme/candidate-skills"
+CANDIDATE_REPO = "https://github.com/acme/candidate-repo"
+CANDIDATE_COMMIT = "c" * 40
+BASE_COMMIT = "a" * 40
+SKILL_PATH = "skills/candidate"
+SKILL_MANIFEST = f"{SKILL_PATH}/SKILL.md"
+SKILL_CONTENT = (
+    b"---\nname: candidate\ndescription: Candidate skill\n---\n# Candidate\n"
+)
+
+
+@dataclass
+class FakeRepo:
+    """A tiny commit tree served by :class:`FakeGitHubClient` (no network)."""
+
+    commit: str = CANDIDATE_COMMIT
+    files: dict[str, bytes] | None = None
+
+    def __post_init__(self) -> None:
+        if self.files is None:
+            self.files = {
+                SKILL_MANIFEST: SKILL_CONTENT,
+                f"{SKILL_PATH}/reference.md": b"reference\n",
+            }
+
+
+class FakeGitHubClient:
+    """Minimal GitHub surface with failure and commit-drift injection."""
+
+    def __init__(
+        self,
+        repo: FakeRepo,
+        token: str | None = None,
+        *,
+        resolve_error: Exception | None = None,
+        resolved_commit: str | None = None,
+    ) -> None:
+        self.repo = repo
+        self.token = token
+        self.resolve_error = resolve_error
+        self.resolved_commit = resolved_commit
+        self.blobs = {
+            hashlib.sha1(path.encode()).hexdigest(): content
+            for path, content in repo.files.items()
+        }
+
+    def close(self) -> None:
+        return None
+
+    def resolve_commit(self, owner: str, repo: str, ref: str) -> str:
+        if self.resolve_error is not None:
+            raise self.resolve_error
+        return self.resolved_commit or self.repo.commit
+
+    def tree(self, owner: str, repo: str, commit: str) -> list[TreeEntry]:
+        return [
+            TreeEntry(
+                path=path,
+                entry_type="blob",
+                sha=hashlib.sha1(path.encode()).hexdigest(),
+                size=len(content),
+            )
+            for path, content in self.repo.files.items()
+        ]
+
+    def blob(self, owner: str, repo: str, sha: str) -> bytes:
+        return self.blobs[sha]
+
+
+def install_fake_github(
+    monkeypatch: pytest.MonkeyPatch,
+    repo: FakeRepo | None = None,
+    **client_kwargs: object,
+) -> FakeRepo:
+    repo = repo or FakeRepo()
+    monkeypatch.setattr(
+        agent_assets,
+        "GitHubClient",
+        lambda token=None, **_kwargs: FakeGitHubClient(repo, token, **client_kwargs),
+    )
+    return repo
+
+
+@pytest.fixture
+def asset_store(configure_settings):
+    """Local S3-shaped store so ``resolve_assets`` exercises the real path."""
+
+    with StubObjectStore() as store:
+        configure_settings(
+            S3_ENDPOINT=store.endpoint,
+            S3_BUCKET="eval-artifacts",
+            S3_ACCESS_KEY="ak",
+            S3_SECRET_KEY="sk",
+            S3_ADDRESSING_STYLE="path",
+        )
+        yield store
+
+
+def create_asset_source(
+    session: Session,
+    repo_url: str = SOURCE_REPO,
+    *,
+    default_ref: str = "main",
+) -> AgentAssetSource:
+    tenant, _workspace, project = ensure_default_scope(session)
+    source = AgentAssetSource(
+        tenant_id=tenant.id,
+        project_id=project.id,
+        name=f"assets-{uuid4().hex[:8]}",
+        repo_url=repo_url,
+        provider="github",
+        default_ref=default_ref,
+        scan_paths_json=[],
+        selection_mode="explicit",
+        runtime_prerequisites_json={},
+        last_scan_json={},
+        status="ready",
+    )
+    session.add(source)
+    session.commit()
+    return source
+
+
+def seed_candidate_template(
+    client: TestClient, session: Session, *, repo_url: str = SOURCE_REPO
+) -> tuple[dict, AgentAssetSource, dict]:
+    ids = seed_launch(session)
+    source = create_asset_source(session, repo_url)
+    template = create_template(
+        client,
+        ids,
+        asset_source_id=source.id,
+        asset_ref="main",
+        asset_paths=[SKILL_PATH],
+    )
+    return ids, source, template
+
+
+def launch_override(
+    client: TestClient,
+    template_id: str,
+    *,
+    key: str,
+    override: dict | None = None,
+    lineage: dict | None = None,
+    headers: dict | None = None,
+):
+    body: dict = {}
+    if override is not None:
+        body["asset_override"] = override
+    if lineage is not None:
+        body["lineage"] = lineage
+    request_headers = {"Idempotency-Key": key}
+    request_headers.update(headers or {})
+    return client.post(
+        f"/api/v1/eval-templates/{template_id}/launch",
+        headers=request_headers,
+        json=body,
+    )
+
+
+def _run_count(session: Session, template_id: str) -> int:
+    return int(
+        session.scalar(
+            select(func.count())
+            .select_from(EvalRun)
+            .where(EvalRun.template_id == template_id)
+        )
+        or 0
+    )
+
+
+def _create_service_token(client: TestClient, **overrides: object) -> tuple[dict, str]:
+    payload = {"name": f"bot-{uuid4().hex[:8]}", "scopes": ["eval:launch"]}
+    payload.update(overrides)
+    response = client.post("/api/v1/service-tokens", json=payload)
+    assert response.status_code == 201, response.text
+    body = response.json()
+    return body["service_token"], body["token"]
+
+
+def _record_spend(
+    session: Session, *, created_by: str, budget_spent_cny: Decimal
+) -> None:
+    tenant, _workspace, project = ensure_default_scope(session)
+    session.add(
+        EvalRun(
+            tenant_id=tenant.id,
+            project_id=project.id,
+            name="spend-record",
+            idempotency_key=f"spend-{uuid4().hex[:8]}",
+            created_by=created_by,
+            budget_spent_cny=budget_spent_cny,
+            status="completed",
+        )
+    )
+    session.commit()
+
+
+def test_launch_asset_override_pins_candidate_commit_and_echoes(
+    client: TestClient,
+    session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    asset_store: StubObjectStore,
+) -> None:
+    install_fake_github(monkeypatch)
+    _ids, source, template = seed_candidate_template(client, session)
+    lineage = {
+        "evolutionRunId": "evo-1",
+        "evolutionRoundId": "round-7",
+        "roundSeq": 7,
+        "parentCommit": BASE_COMMIT,
+    }
+
+    response = launch_override(
+        client,
+        template["id"],
+        key="candidate-launch",
+        override={
+            "repo_url": SOURCE_REPO,
+            "ref": "refs/heads/candidate",
+            "commit": CANDIDATE_COMMIT,
+            "asset_paths": [SKILL_PATH],
+            "asset_types": {SKILL_PATH: "skill"},
+        },
+        lineage=lineage,
+    )
+    assert response.status_code == 202, response.text
+    body = response.json()
+    asset = body["asset"]
+    assert asset["repo_url"] == SOURCE_REPO
+    # ``ref`` is display/audit only and must echo verbatim.
+    assert asset["requested_ref"] == "refs/heads/candidate"
+    assert asset["requested_commit"] == CANDIDATE_COMMIT
+    assert asset["resolved_commit"] == CANDIDATE_COMMIT
+    assert asset["asset_snapshot_id"]
+    assert asset["bundle_digest"].startswith("sha256:")
+    assert "warnings" not in body
+
+    run = session.get(EvalRun, body["run_id"])
+    assert run is not None
+    assert run.asset_snapshot_id == asset["asset_snapshot_id"]
+    assert run.asset_override_json["requested"]["commit"] == CANDIDATE_COMMIT
+    assert run.asset_override_json["requested"]["ref"] == "refs/heads/candidate"
+    assert run.asset_override_json["effective"] == {
+        "repo_url": SOURCE_REPO,
+        "source_id": source.id,
+        "requested_ref": "refs/heads/candidate",
+        "requested_commit": CANDIDATE_COMMIT,
+        "resolved_commit": CANDIDATE_COMMIT,
+        "asset_snapshot_id": asset["asset_snapshot_id"],
+        "bundle_digest": asset["bundle_digest"],
+        "asset_paths": [SKILL_PATH],
+        "asset_types": {SKILL_PATH: "skill"},
+    }
+    assert run.evolution_lineage_json == lineage
+
+    status = client.get(f"/api/v1/eval-runs/{body['run_id']}/status").json()
+    assert status["asset"] == {
+        "resolved_commit": CANDIDATE_COMMIT,
+        "asset_snapshot_id": asset["asset_snapshot_id"],
+        "requested_ref": "refs/heads/candidate",
+    }
+    results = client.get(f"/api/v1/eval-runs/{body['run_id']}/results").json()
+    assert results["asset"] == status["asset"]
+    assert results["lineage"] == lineage
+    assert _run_count(session, template["id"]) == 1
+
+    # The replay echoes the stored identity and never resolves assets again.
+    replay = launch_override(
+        client,
+        template["id"],
+        key="candidate-launch",
+        override={"commit": CANDIDATE_COMMIT},
+        lineage=lineage,
+    )
+    assert replay.status_code == 202, replay.text
+    assert replay.json()["created"] is False
+    assert replay.json()["run_id"] == body["run_id"]
+    assert replay.json()["asset"] == asset
+    assert _run_count(session, template["id"]) == 1
+
+
+def test_launch_without_override_keeps_the_console_response_shape(
+    client: TestClient,
+    session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    asset_store: StubObjectStore,
+) -> None:
+    install_fake_github(monkeypatch)
+    _ids, _source, template = seed_candidate_template(client, session)
+
+    response = client.post(
+        f"/api/v1/eval-templates/{template['id']}/launch",
+        headers={"Idempotency-Key": "console-launch"},
+        json={"name": "控制台一键启动"},
+    )
+    assert response.status_code == 202, response.text
+    body = response.json()
+    assert "asset" not in body
+    assert "warnings" not in body
+
+    run = session.get(EvalRun, body["run_id"])
+    assert run is not None
+    assert run.asset_snapshot_id
+    assert run.asset_override_json == {}
+    assert run.evolution_lineage_json == {}
+
+    # The read models still echo the frozen legacy asset identity.
+    status = client.get(f"/api/v1/eval-runs/{body['run_id']}/status").json()
+    assert status["asset"] == {
+        "resolved_commit": CANDIDATE_COMMIT,
+        "asset_snapshot_id": run.asset_snapshot_id,
+        "requested_ref": "main",
+    }
+
+    replay = client.post(
+        f"/api/v1/eval-templates/{template['id']}/launch",
+        headers={"Idempotency-Key": "console-launch"},
+        json={"name": "控制台一键启动"},
+    )
+    assert replay.status_code == 202
+    assert replay.json()["created"] is False
+    assert "asset" not in replay.json()
+
+
+def test_override_repo_url_must_be_a_registered_source(
+    client: TestClient,
+    session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    asset_store: StubObjectStore,
+) -> None:
+    install_fake_github(monkeypatch)
+    _ids, _source, template = seed_candidate_template(client, session)
+    override = {"repo_url": CANDIDATE_REPO, "commit": CANDIDATE_COMMIT}
+
+    unregistered = launch_override(
+        client, template["id"], key="cross-repo", override=override
+    )
+    assert unregistered.status_code == 422, unregistered.text
+    error = unregistered.json()["detail"]["error"]
+    assert error["code"] == "asset_source_unresolved"
+    assert error["details"]["fields"]["asset_override"] == "invalid"
+    assert error["details"]["repo_url"] == CANDIDATE_REPO
+    assert _run_count(session, template["id"]) == 0
+
+    registered = create_asset_source(session, CANDIDATE_REPO)
+    # The exact same request succeeds once the source is registered: the
+    # override chooses the source by exact repo_url.
+    retried = launch_override(
+        client, template["id"], key="cross-repo", override=override
+    )
+    assert retried.status_code == 202, retried.text
+    assert retried.json()["asset"]["repo_url"] == CANDIDATE_REPO
+    run = session.get(EvalRun, retried.json()["run_id"])
+    assert run is not None
+    assert run.asset_override_json["effective"]["source_id"] == registered.id
+
+
+def test_override_unresolvable_commit_is_a_ref_error(
+    client: TestClient,
+    session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    install_fake_github(
+        monkeypatch,
+        resolve_error=GitClientError("ref_unresolved", "无法解析 Ref"),
+    )
+    _ids, _source, template = seed_candidate_template(client, session)
+
+    response = launch_override(
+        client,
+        template["id"],
+        key="unresolvable-commit",
+        override={"commit": CANDIDATE_COMMIT},
+    )
+    assert response.status_code == 422, response.text
+    error = response.json()["detail"]["error"]
+    assert error["code"] == "asset_ref_unresolved"
+    assert error["details"]["fields"]["asset_override"] == "invalid"
+    assert error["details"]["requested_ref"] == CANDIDATE_COMMIT
+    assert _run_count(session, template["id"]) == 0
+
+
+def test_override_selection_errors_keep_the_existing_asset_codes(
+    client: TestClient,
+    session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    install_fake_github(monkeypatch)
+    _ids, _source, template = seed_candidate_template(client, session)
+
+    missing_path = launch_override(
+        client,
+        template["id"],
+        key="missing-path",
+        override={
+            "commit": CANDIDATE_COMMIT,
+            "asset_paths": ["missing/command.md"],
+            "asset_types": {"missing/command.md": "command"},
+        },
+    )
+    assert missing_path.status_code == 422, missing_path.text
+    assert missing_path.json()["detail"]["error"]["code"] == "asset_path_not_found"
+
+    # An explicitly empty list replaces the template selection wholesale.
+    empty_selection = launch_override(
+        client,
+        template["id"],
+        key="empty-selection",
+        override={"commit": CANDIDATE_COMMIT, "asset_paths": []},
+    )
+    assert empty_selection.status_code == 422, empty_selection.text
+    assert (
+        empty_selection.json()["detail"]["error"]["code"] == "asset_selection_empty"
+    )
+    assert _run_count(session, template["id"]) == 0
+
+
+def test_override_commit_mismatch_never_creates_a_run(
+    client: TestClient,
+    session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    asset_store: StubObjectStore,
+) -> None:
+    # The source resolves the requested commit to a different object: the
+    # authoritative assertion must fail the launch instead of measuring drift.
+    install_fake_github(monkeypatch, resolved_commit=BASE_COMMIT)
+    _ids, _source, template = seed_candidate_template(client, session)
+
+    response = launch_override(
+        client,
+        template["id"],
+        key="commit-mismatch",
+        override={"commit": CANDIDATE_COMMIT},
+    )
+    assert response.status_code == 422, response.text
+    error = response.json()["detail"]["error"]
+    assert error["code"] == "candidate_commit_mismatch"
+    assert error["details"]["requested"] == CANDIDATE_COMMIT
+    assert error["details"]["resolved"] == BASE_COMMIT
+    assert _run_count(session, template["id"]) == 0
+
+
+def test_override_snapshot_manifest_proves_golden_injection(
+    client: TestClient,
+    session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    asset_store: StubObjectStore,
+) -> None:
+    repo = install_fake_github(monkeypatch)
+    _ids, _source, template = seed_candidate_template(client, session)
+
+    response = launch_override(
+        client,
+        template["id"],
+        key="golden-injection",
+        override={"ref": "candidate", "commit": CANDIDATE_COMMIT},
+    )
+    assert response.status_code == 202, response.text
+    snapshot_id = response.json()["asset"]["asset_snapshot_id"]
+    snapshot = session.get(AgentAssetSnapshot, snapshot_id)
+    assert snapshot is not None
+    assert snapshot.resolved_commit == CANDIDATE_COMMIT
+
+    expected = "sha256:" + hashlib.sha256(SKILL_CONTENT).hexdigest()
+    manifest = {
+        item["path"]: item for item in (snapshot.manifest_json or {}).get("files", [])
+    }
+    assert manifest[SKILL_MANIFEST]["sha256"] == expected
+
+    # The manifest path is the same blob the pinned commit's tree serves.
+    reader = FakeGitHubClient(repo)
+    entries = {
+        entry.path: entry
+        for entry in reader.tree("acme", "candidate-skills", CANDIDATE_COMMIT)
+    }
+    assert entries[SKILL_MANIFEST].sha == hashlib.sha1(
+        SKILL_MANIFEST.encode()
+    ).hexdigest()
+    assert (
+        reader.blob("acme", "candidate-skills", entries[SKILL_MANIFEST].sha)
+        == SKILL_CONTENT
+    )
+
+
+def test_override_on_reporting_template_warns_without_blocking(
+    client: TestClient,
+    session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    asset_store: StubObjectStore,
+) -> None:
+    install_fake_github(monkeypatch)
+    ids = seed_launch(session)
+    source = create_asset_source(session)
+    template = create_template(
+        client,
+        ids,
+        asset_source_id=source.id,
+        asset_ref="main",
+        asset_paths=[SKILL_PATH],
+        self_evolution=SELF_EVOLUTION,
+    )
+
+    response = launch_override(
+        client,
+        template["id"],
+        key="reporting-override",
+        override={"commit": CANDIDATE_COMMIT},
+    )
+    assert response.status_code == 202, response.text
+    warnings = response.json()["warnings"]
+    assert len(warnings) == 1
+    assert "自进化" in warnings[0]
+
+    # The console one-click launch of the same reporting template stays quiet.
+    console = client.post(
+        f"/api/v1/eval-templates/{template['id']}/launch",
+        headers={"Idempotency-Key": "reporting-console"},
+        json={},
+    )
+    assert console.status_code == 202, console.text
+    assert "warnings" not in console.json()
+
+
+def test_service_token_launch_records_machine_actor_and_replays(
+    client: TestClient, session: Session
+) -> None:
+    ids = seed_launch(session)
+    template = create_template(client, ids)
+    token, plaintext = _create_service_token(
+        client, name="launch-bot", scopes=["eval:launch"]
+    )
+    headers = {"Authorization": f"Bearer {plaintext}", "Idempotency-Key": "svc-key"}
+
+    first = client.post(
+        f"/api/v1/eval-templates/{template['id']}/launch", headers=headers, json={}
+    )
+    assert first.status_code == 202, first.text
+    run_id = first.json()["run_id"]
+    run = session.get(EvalRun, run_id)
+    assert run is not None
+    assert run.created_by == "svc:launch-bot"
+
+    detail = client.get(f"/api/v1/evaluations/{run_id}")
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["created_by"] == "svc:launch-bot"
+    assert detail.json()["template"]["id"] == template["id"]
+
+    replay = client.post(
+        f"/api/v1/eval-templates/{template['id']}/launch", headers=headers, json={}
+    )
+    assert replay.status_code == 202, replay.text
+    assert replay.json()["run_id"] == run_id
+    assert replay.json()["created"] is False
+    # The machine identity is isolated from the console actor's idempotency.
+    assert token["name"] == "launch-bot"
+    assert _run_count(session, template["id"]) == 1
+
+
+def test_service_token_scope_and_allowlist_are_enforced(
+    client: TestClient, session: Session
+) -> None:
+    ids = seed_launch(session)
+    template = create_template(client, ids)
+    other = create_template(client, ids, name="另一个模板")
+
+    _read_token, read_plaintext = _create_service_token(
+        client, name="scope-read-bot", scopes=["eval:read"]
+    )
+    wrong_scope = client.post(
+        f"/api/v1/eval-templates/{template['id']}/launch",
+        headers={"Authorization": f"Bearer {read_plaintext}"},
+        json={},
+    )
+    assert wrong_scope.status_code == 403, wrong_scope.text
+    assert wrong_scope.json()["detail"]["error"]["code"] == "forbidden"
+
+    _scoped, scoped_plaintext = _create_service_token(
+        client,
+        name="allowlist-bot",
+        scopes=["eval:launch"],
+        template_allowlist=[other["id"]],
+    )
+    allowed = client.post(
+        f"/api/v1/eval-templates/{other['id']}/launch",
+        headers={
+            "Authorization": f"Bearer {scoped_plaintext}",
+            "Idempotency-Key": "allowlisted",
+        },
+        json={},
+    )
+    assert allowed.status_code == 202, allowed.text
+    denied = client.post(
+        f"/api/v1/eval-templates/{template['id']}/launch",
+        headers={"Authorization": f"Bearer {scoped_plaintext}"},
+        json={},
+    )
+    assert denied.status_code == 403, denied.text
+    assert _run_count(session, template["id"]) == 0
+
+
+def test_revoked_service_token_cannot_launch(
+    client: TestClient, session: Session
+) -> None:
+    ids = seed_launch(session)
+    template = create_template(client, ids)
+    token, plaintext = _create_service_token(
+        client, name="revoked-bot", scopes=["eval:launch"]
+    )
+    assert client.delete(f"/api/v1/service-tokens/{token['id']}").status_code == 204
+
+    response = client.post(
+        f"/api/v1/eval-templates/{template['id']}/launch",
+        headers={"Authorization": f"Bearer {plaintext}"},
+        json={},
+    )
+    assert response.status_code == 401, response.text
+    assert response.json()["detail"]["error"]["code"] == "unauthenticated"
+    assert _run_count(session, template["id"]) == 0
+
+
+def test_service_token_concurrency_cap_blocks_launch(
+    client: TestClient, session: Session
+) -> None:
+    ids = seed_launch(session)
+    template = create_template(client, ids)
+    _token, plaintext = _create_service_token(
+        client,
+        name="cap-bot",
+        scopes=["eval:launch"],
+        max_concurrent_runs=1,
+    )
+    auth = {"Authorization": f"Bearer {plaintext}"}
+
+    first = client.post(
+        f"/api/v1/eval-templates/{template['id']}/launch",
+        headers={**auth, "Idempotency-Key": "cap-1"},
+        json={},
+    )
+    assert first.status_code == 202, first.text
+
+    blocked = client.post(
+        f"/api/v1/eval-templates/{template['id']}/launch",
+        headers={**auth, "Idempotency-Key": "cap-2"},
+        json={},
+    )
+    assert blocked.status_code == 429, blocked.text
+    error = blocked.json()["detail"]["error"]
+    assert error["code"] == "service_token_limit_exceeded"
+    assert error["details"]["limit"] == "max_concurrent_runs"
+    assert _run_count(session, template["id"]) == 1
+
+
+def test_service_token_daily_budget_cap_blocks_launch(
+    client: TestClient, session: Session
+) -> None:
+    ids = seed_launch(session)
+    template = create_template(client, ids)
+    _token, plaintext = _create_service_token(
+        client,
+        name="budget-bot",
+        scopes=["eval:launch"],
+        daily_budget_cny=5,
+    )
+    _record_spend(session, created_by="svc:budget-bot", budget_spent_cny=Decimal("5"))
+
+    blocked = client.post(
+        f"/api/v1/eval-templates/{template['id']}/launch",
+        headers={"Authorization": f"Bearer {plaintext}"},
+        json={},
+    )
+    assert blocked.status_code == 429, blocked.text
+    error = blocked.json()["detail"]["error"]
+    assert error["code"] == "service_token_limit_exceeded"
+    assert error["details"]["limit"] == "daily_budget_cny"
+    assert Decimal(str(error["details"]["spent"])) == Decimal("5")
+    assert _run_count(session, template["id"]) == 0
+
+
+def test_eval_read_token_reads_status_results_and_compare_stays_session_only(
+    client: TestClient, session: Session
+) -> None:
+    ids = seed_launch(session)
+    template = create_template(client, ids)
+    launched = client.post(
+        f"/api/v1/eval-templates/{template['id']}/launch",
+        headers={"Idempotency-Key": "read-scope"},
+        json={},
+    )
+    assert launched.status_code == 202, launched.text
+    run_id = launched.json()["run_id"]
+
+    _read_token, read_plaintext = _create_service_token(
+        client, name="reader-bot", scopes=["eval:read"]
+    )
+    read_auth = {"Authorization": f"Bearer {read_plaintext}"}
+    status = client.get(f"/api/v1/eval-runs/{run_id}/status", headers=read_auth)
+    assert status.status_code == 200, status.text
+    results = client.get(f"/api/v1/eval-runs/{run_id}/results", headers=read_auth)
+    assert results.status_code == 200, results.text
+
+    _launch_token, launch_plaintext = _create_service_token(
+        client, name="launch-only-bot", scopes=["eval:launch"]
+    )
+    launch_auth = {"Authorization": f"Bearer {launch_plaintext}"}
+    assert (
+        client.get(f"/api/v1/eval-runs/{run_id}/status", headers=launch_auth).status_code
+        == 403
+    )
+    assert (
+        client.get(
+            f"/api/v1/eval-runs/{run_id}/results", headers=launch_auth
+        ).status_code
+        == 403
+    )
+
+    # compare/case-tests kept their session-only dependency: a bearer token
+    # alone (no cookie) must not reach them, while a console session still can.
+    client.cookies.clear()
+    denied = client.get(f"/api/v1/eval-runs/{run_id}/compare", headers=read_auth)
+    assert denied.status_code == 401, denied.text
+    assert denied.json()["detail"]["error"]["code"] == "unauthenticated"
+    login = client.post(
+        "/api/v1/auth/login",
+        json={"email": TEST_ADMIN_EMAIL, "password": TEST_ADMIN_PASSWORD},
+    )
+    assert login.status_code == 200, login.text
+    assert client.get(f"/api/v1/eval-runs/{run_id}/compare").status_code == 200
+    assert client.get(f"/api/v1/eval-runs/{run_id}/status").status_code == 200
 
 
 def test_existing_templates_default_to_self_evolution_disabled(
