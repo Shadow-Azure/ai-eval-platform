@@ -1,23 +1,17 @@
-# [m11] Template machine launch: candidate-commit injection and service tokens
+# [m10] Template machine launch: candidate-commit injection and service tokens
 
-English | [中文](m11-candidate-launch-override.md)
+English | [中文](m10-candidate-launch-override.md)
 
 ```yaml flow
 kind: issue
-milestone: m11
+milestone: m10
 priority: P0
 status: ready
 scope:
-  - .agents/flow/roadmap.md
-  - .agents/flow/roadmap.en.md
-  - .agents/flow/roadmap.i18n.yaml
-  - .agents/flow/milestones/m11-self-evolution-trigger.md
-  - .agents/flow/milestones/m11-self-evolution-trigger.en.md
-  - .agents/flow/milestones/m11-self-evolution-trigger.i18n.yaml
-  - .agents/flow/issues/m11-candidate-launch-override.md
-  - .agents/flow/issues/m11-candidate-launch-override.en.md
-  - .agents/flow/issues/m11-candidate-launch-override.i18n.yaml
-  - plans/2026-11-25-m11-candidate-launch-override/**
+  - .agents/flow/issues/m10-candidate-launch-override.md
+  - .agents/flow/issues/m10-candidate-launch-override.en.md
+  - .agents/flow/issues/m10-candidate-launch-override.i18n.yaml
+  - plans/2026-11-25-m10-candidate-launch-override/**
   - backend/app/api/eval_templates.py
   - backend/app/services/eval_templates.py
   - backend/app/api/results.py
@@ -34,7 +28,6 @@ scope:
   - docs/design/eval-platform-architecture.md
   - docs/design/eval-platform-architecture.en.md
   - docs/design/eval-platform-architecture.i18n.yaml
-  - scripts/doc-budgets.manifest.json
 adr: []
 github:
   number: 429
@@ -164,8 +157,8 @@ GET /api/v1/eval-runs/{run_id}/results
 
 ## Deliverables
 
-- [OpenAPI change draft](../../../plans/2026-11-25-m11-candidate-launch-override/openapi-change.md): schema-level diff (request models, response extensions, error codes, service-token endpoints).
-- [Docs §5.14 revision text](../../../plans/2026-11-25-m11-candidate-launch-override/docs-5-14-revision.md): replacement paragraphs in Chinese and English, to be applied through the platform documentation flow during implementation.
+- [OpenAPI change draft](../../../plans/2026-11-25-m10-candidate-launch-override/openapi-change.md): schema-level diff (request models, response extensions, error codes, service-token endpoints).
+- [Docs §5.14 revision text](../../../plans/2026-11-25-m10-candidate-launch-override/docs-5-14-revision.md): replacement paragraphs in Chinese and English, to be applied through the platform documentation flow during implementation.
 
 ## Acceptance
 

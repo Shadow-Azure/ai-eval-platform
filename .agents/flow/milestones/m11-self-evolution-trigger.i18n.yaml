@@ -1,5 +1,0 @@
-# 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
-# git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
-#   pnpm run record:i18n -- .agents\flow\milestones\m11-self-evolution-trigger.md
-m11-self-evolution-trigger.md: b387bdd02bd86c8daf520bfabc3fb72fe1f9b38b
-m11-self-evolution-trigger.en.md: c8ef38668336cde7e54734a210402ebb489540bf

@@ -1,23 +1,17 @@
-# [m11] 评测模板机器触发：可选参数注入候选 commit 与服务令牌
+# [m10] 评测模板机器触发：可选参数注入候选 commit 与服务令牌
 
-[English](m11-candidate-launch-override.en.md) | 中文
+[English](m10-candidate-launch-override.en.md) | 中文
 
 ```yaml flow
 kind: issue
-milestone: m11
+milestone: m10
 priority: P0
 status: ready
 scope:
-  - .agents/flow/roadmap.md
-  - .agents/flow/roadmap.en.md
-  - .agents/flow/roadmap.i18n.yaml
-  - .agents/flow/milestones/m11-self-evolution-trigger.md
-  - .agents/flow/milestones/m11-self-evolution-trigger.en.md
-  - .agents/flow/milestones/m11-self-evolution-trigger.i18n.yaml
-  - .agents/flow/issues/m11-candidate-launch-override.md
-  - .agents/flow/issues/m11-candidate-launch-override.en.md
-  - .agents/flow/issues/m11-candidate-launch-override.i18n.yaml
-  - plans/2026-11-25-m11-candidate-launch-override/**
+  - .agents/flow/issues/m10-candidate-launch-override.md
+  - .agents/flow/issues/m10-candidate-launch-override.en.md
+  - .agents/flow/issues/m10-candidate-launch-override.i18n.yaml
+  - plans/2026-11-25-m10-candidate-launch-override/**
   - backend/app/api/eval_templates.py
   - backend/app/services/eval_templates.py
   - backend/app/api/results.py
@@ -34,7 +28,6 @@ scope:
   - docs/design/eval-platform-architecture.md
   - docs/design/eval-platform-architecture.en.md
   - docs/design/eval-platform-architecture.i18n.yaml
-  - scripts/doc-budgets.manifest.json
 adr: []
 github:
   number: 429
@@ -164,8 +157,8 @@ GET /api/v1/eval-runs/{run_id}/results
 
 ## 交付物
 
-- [OpenAPI 变更稿](../../../plans/2026-11-25-m11-candidate-launch-override/openapi-change.md)：schema 级 diff（请求模型、响应扩展、错误码、服务令牌端点）。
-- [文档 §5.14 修订文案](../../../plans/2026-11-25-m11-candidate-launch-override/docs-5-14-revision.md)：中英对照的替换段落，实施时按平台文档流程落库。
+- [OpenAPI 变更稿](../../../plans/2026-11-25-m10-candidate-launch-override/openapi-change.md)：schema 级 diff（请求模型、响应扩展、错误码、服务令牌端点）。
+- [文档 §5.14 修订文案](../../../plans/2026-11-25-m10-candidate-launch-override/docs-5-14-revision.md)：中英对照的替换段落，实施时按平台文档流程落库。
 
 ## 验收
 
