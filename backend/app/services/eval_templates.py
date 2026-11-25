@@ -1091,21 +1091,43 @@ def _override_source(
         override, "repo_url", max_length=ASSET_OVERRIDE_MAX_URL_LENGTH
     )
     if repo_url:
-        source = session.scalar(
-            select(AgentAssetSource)
-            .where(
-                AgentAssetSource.tenant_id == str(DEFAULT_TENANT_ID),
-                AgentAssetSource.repo_url == repo_url,
+        matches = list(
+            session.scalars(
+                select(AgentAssetSource)
+                .where(
+                    AgentAssetSource.tenant_id == str(DEFAULT_TENANT_ID),
+                    AgentAssetSource.repo_url == repo_url,
+                )
+                .order_by(AgentAssetSource.created_at, AgentAssetSource.id)
             )
-            .order_by(AgentAssetSource.created_at, AgentAssetSource.id)
         )
-        if source is None:
+        if not matches:
             raise AssetSourceUnresolved(
                 f"资产覆盖的仓库未登记为资产源：{repo_url}",
                 field=ASSET_OVERRIDE_FIELD,
                 details={"field": ASSET_OVERRIDE_FIELD, "repo_url": repo_url},
             )
-        return source
+        if len(matches) > 1:
+            # ``repo_url`` has no uniqueness constraint: the same repository may
+            # be registered twice with different credentials or scan paths.
+            # Prefer the template's own source when it is one of the matches;
+            # otherwise refuse to guess instead of silently using the oldest.
+            for candidate in matches:
+                if candidate.id == template.asset_source_id:
+                    return candidate
+            raise AssetSourceUnresolved(
+                f"资产覆盖的仓库登记了多个资产源，无法确定使用哪一个：{repo_url}",
+                field=ASSET_OVERRIDE_FIELD,
+                details={
+                    "field": ASSET_OVERRIDE_FIELD,
+                    "repo_url": repo_url,
+                    "candidates": [
+                        {"id": candidate.id, "name": candidate.name}
+                        for candidate in matches
+                    ],
+                },
+            )
+        return matches[0]
     if not template.asset_source_id:
         raise AssetSourceUnresolved(
             "资产覆盖未指定 repo_url，且模板未绑定资产源",

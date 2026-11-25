@@ -225,6 +225,10 @@ def create_token(
 
     The plaintext is the only copy that will ever exist outside the caller's
     hands: it is not stored, not logged and not derivable from ``token_hash``.
+
+    Names are unique per tenant and are not reused after revocation. That keeps
+    ``svc:<name>`` a stable audit and idempotency identity: rotation creates a
+    new name, so old and new machine actors never share `created_by`.
     """
 
     if not isinstance(data, dict):

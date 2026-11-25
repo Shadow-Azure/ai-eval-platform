@@ -1570,6 +1570,62 @@ def test_override_repo_url_must_be_a_registered_source(
     assert run.asset_override_json["effective"]["source_id"] == registered.id
 
 
+def test_override_prefers_the_template_source_when_repo_url_has_candidates(
+    client: TestClient,
+    session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    asset_store: StubObjectStore,
+) -> None:
+    """Same repo_url registered twice: the template's own source wins."""
+
+    install_fake_github(monkeypatch)
+    ids = seed_launch(session)
+    create_asset_source(session, SOURCE_REPO)  # older, not bound to the template
+    bound = create_asset_source(session, SOURCE_REPO)
+    template = create_template(
+        client,
+        ids,
+        asset_source_id=bound.id,
+        asset_ref="main",
+        asset_paths=[SKILL_PATH],
+    )
+
+    response = launch_override(
+        client,
+        template["id"],
+        key="multi-source-template",
+        override={"repo_url": SOURCE_REPO, "commit": CANDIDATE_COMMIT},
+    )
+    assert response.status_code == 202, response.text
+    run = session.get(EvalRun, response.json()["run_id"])
+    assert run is not None
+    assert run.asset_override_json["effective"]["source_id"] == bound.id
+
+
+def test_override_rejects_ambiguous_repo_url_without_a_template_source(
+    client: TestClient, session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two candidates and no bound source: refuse to guess, never pick silently."""
+
+    install_fake_github(monkeypatch)
+    ids = seed_launch(session)
+    create_asset_source(session, SOURCE_REPO)
+    create_asset_source(session, SOURCE_REPO)
+    template = create_template(client, ids)
+
+    response = launch_override(
+        client,
+        template["id"],
+        key="ambiguous-source",
+        override={"repo_url": SOURCE_REPO, "commit": CANDIDATE_COMMIT},
+    )
+    assert response.status_code == 422, response.text
+    error = response.json()["detail"]["error"]
+    assert error["code"] == "asset_source_unresolved"
+    assert len(error["details"]["candidates"]) == 2
+    assert _run_count(session, template["id"]) == 0
+
+
 def test_override_unresolvable_commit_is_a_ref_error(
     client: TestClient,
     session: Session,

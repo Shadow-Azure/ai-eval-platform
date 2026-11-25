@@ -194,7 +194,7 @@ Skill、Command 与 Subagent 统一归入可配置的 Agent 资产源。资产�
 
 模板的启动历史复用评测列表读接口，不新增专用执行接口：`GET /api/v1/evaluations` 接受可选 `template_id` 过滤，与 `status`、`limit`、`offset` 组合，按启动时间倒序返回 `items`、`total`、`limit` 与 `offset`；模板不存在时返回 404，模板历史未显式传 `limit` 时默认 10，并附带 `status_counts` 计数映射。模板列表每行的“历史”和模板详情页的“启动历史”都通过该过滤分页读取，默认每页 10 条并支持 10/20/50 切换，状态筛选沿用评测状态枚举并显示计数（0 也保留），条目复用评测摘要并链接到评测详情；模板详情内嵌的 `recent_runs` 仍只保留最近 5 条预览。该过滤只读，不改变执行链路。评测列表的摘要同时返回解析后的来源模板 `template`（id、模板名、版本与启用状态），列表行据此对模板启动的评测显示“来自模板 · 模板名”并链接到模板详情，自定义发起的评测不显示来源行。
 
-三个稳定接口见表 12。三个接口复用「控制台会话或服务令牌」鉴权：启动需要管理员权限或持 `eval:launch` 的服务令牌，状态与结果对已登录用户或持 `eval:read` 的服务令牌只读；服务令牌由管理员在 `/api/v1/service-tokens` 创建、列表与撤销，支持 scope、模板白名单与并发/预算上限，明文仅在创建响应返回一次，库内只存哈希，机器启动的 `created_by` 落 `svc:<名称>` 并进入既有审计与幂等约束。
+三个稳定接口见表 12。三个接口复用「控制台会话或服务令牌」鉴权：启动需要管理员权限或持 `eval:launch` 的服务令牌，状态与结果对已登录用户或持 `eval:read` 的服务令牌只读；服务令牌由管理员在 `/api/v1/service-tokens` 创建、列表与撤销，支持 scope、模板白名单与并发/预算上限，明文仅在创建响应返回一次，库内只存哈希，机器启动的 `created_by` 落 `svc:<名称>` 并进入既有审计与幂等约束。无有效凭据返回 401，scope 或白名单不足返回 403，达到并发或当日预算上限返回 429；上限是尽力而为的准入守卫，预算按该令牌已结算花费、UTC 自然日计算，令牌名在租户内唯一且撤销后不复用。
 
 表 12 评测模板的三个执行接口
 
@@ -204,7 +204,7 @@ Skill、Command 与 Subagent 统一归入可配置的 Agent 资产源。资产�
 | 查询状态 | GET /api/v1/eval-runs/{run_id}/status | 无 | `run_id`、`template_id`、`status`、`terminal`、进度计数、起止时间与解决率 |
 | 查询结果 | GET /api/v1/eval-runs/{run_id}/results | 无 | `run_id`、`status`、`is_final`、指标项与 token 摘要；运行中返回部分快照 |
 
-启动接口先校验模板存在且启用、引用对象仍可用，再走既有的 prepare/create 流程；返回 404 表示模板或评测不存在，409 表示模板停用或幂等键冲突，422 表示引用对象失效或字段不可用，403 表示当前账号没有启动权限。状态接口在终态返回 `terminal=true`；结果接口在终态前返回 `is_final=false`，客户端据此决定是否继续轮询。带覆盖的启动在 202 响应回显 `asset`（resolved_commit、asset_snapshot_id、bundle_digest），status 与 results 同样回显该身份供调用方比对，新增 422 错误码 `candidate_commit_mismatch`、`asset_source_unresolved`、`asset_ref_unresolved`（`asset_selection_empty` 与 `asset_path_not_found` 复用既有码），任一命中即不创建评测。
+启动接口先校验模板存在且启用、引用对象仍可用，再走既有的 prepare/create 流程；返回 404 表示模板或评测不存在，409 表示模板停用或幂等键冲突，422 表示引用对象失效或字段不可用，403 表示当前账号没有启动权限。状态接口在终态返回 `terminal=true`；结果接口在终态前返回 `is_final=false`，客户端据此决定是否继续轮询。任何冻结过资产快照的 run 都在 status 与 results 回显 `asset`（resolved_commit、asset_snapshot_id、requested_ref）；带覆盖的启动在 202 响应也回显 `asset`（另含 repo_url、requested_commit、bundle_digest）供调用方比对，新增 422 错误码 `candidate_commit_mismatch`、`asset_source_unresolved`、`asset_ref_unresolved`（`asset_selection_empty` 与 `asset_path_not_found` 复用既有码），任一命中即不创建评测。
 
 模板启动不改变调度与执行链路：它只是在服务端把固定选择转换为一次普通的 prepare 与 create 调用，后续分片、Runner、评分、轨迹与结果聚合与自定义发起完全一致。因此模板不会绕过容量准入、预算、镜像预检或权限校验；失败发生在创建运行之前，不会留下半创建的任务。
 
