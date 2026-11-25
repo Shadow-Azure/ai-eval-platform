@@ -183,15 +183,19 @@ components:
         - asset_path_not_found          # 422（既有码，launch 场景复用）
         - image_not_ready               # 409（既有）
         - forbidden                     # 403（既有；服务令牌 scope/白名单不足）
+        - unauthenticated               # 401（既有；无凭据或令牌无效/撤销/过期）
+        - service_token_limit_exceeded  # 429（新增；并发或当日预算上限）
 ```
 
-新增三个码的触发条件：
+新增三个 422 码的触发条件：
 
 | code | HTTP | 触发条件 |
 |---|---|---|
 | `candidate_commit_mismatch` | 422 | 解析到的 `resolved_commit` 与请求 `commit` 不一致（ref 漂移、对象被替换）。绝不静默评测。 |
-| `asset_source_unresolved` | 422 | `asset_override.repo_url` 在同租户已登记资产源中无精确 `repo_url` 匹配，凭据不可确定。 |
+| `asset_source_unresolved` | 422 | `asset_override.repo_url` 在同租户已登记资产源中无精确 `repo_url` 匹配，或同仓登记了多个源且无法确定用哪一个（模板自身的源优先），凭据不可确定。 |
 | `asset_ref_unresolved` | 422 | commit/ref 在资产源仓库不可解析（仓库不可达、凭据失效、对象不存在）。 |
+
+鉴权与上限补充：launch 的「管理员会话或服务令牌」统一按 401（无有效凭据）与 403（scope/白名单不足）区分；服务令牌的并发/当日预算上限为尽力而为的准入守卫（预算按该令牌已结算的运行花费、UTC 自然日），达到上限返回 429 `service_token_limit_exceeded`。该 429 码属于服务令牌扩展，不改变无覆盖控制台启动的既有错误面。
 
 带 `details`：`{ "field": "asset_override", "requested": ..., "resolved": ... }`，便于 HE 定位。
 
@@ -272,6 +276,7 @@ paths:
 ## 6. 兼容性说明
 
 - 全部为增量：不删字段、不改既有字段语义、不改既有错误码含义；旧客户端（控制台）零感知。
-- `asset` 块只对「模板启动且解析过资产」的 run 输出；合成评测与旧 run 不输出（字段可空或省略，实现 PR 定稿）。
-- 幂等键唯一约束仍是 `(tenant_id, created_by, idempotency_key)`；服务令牌主体 `svc:<name>` 与真人会话天然隔离。
+- launch 202 的 `asset` 块只在带 `asset_override`（或重放了这样的 run）时输出，控制台一键启动的响应逐字节不变；status/results 的 `asset` 对「解析并冻结过资产快照」的 run 输出（含既有模板启动与 run 级资产评测），属于纯增量回显。
+- 无覆盖控制台启动不经过服务令牌上限检查，不会出现 401/429 的新错误面；401/403 的区分只影响带凭据的机器调用。
+- 幂等键唯一约束仍是 `(tenant_id, created_by, idempotency_key)`；服务令牌主体 `svc:<name>` 与真人会话天然隔离。服务令牌名称在租户内唯一且撤销后不复用，保证 `svc:<name>` 审计标签不会指向另一个主体。
 - 平台不给 verdict/策略字段（D4）；HE 依据 `results` 的指标项与 `status` 计数自行换算裁决输入。

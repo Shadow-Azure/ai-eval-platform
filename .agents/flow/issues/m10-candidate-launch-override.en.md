@@ -6,7 +6,7 @@ English | [中文](m10-candidate-launch-override.md)
 kind: issue
 milestone: m10
 priority: P0
-status: ready
+status: in-progress
 scope:
   - .agents/flow/issues/m10-candidate-launch-override.md
   - .agents/flow/issues/m10-candidate-launch-override.en.md
@@ -18,6 +18,7 @@ scope:
   - backend/app/api/dependencies.py
   - backend/app/models/evaluation.py
   - backend/app/models/identity.py
+  - backend/app/models/__init__.py
   - backend/app/services/service_tokens.py
   - backend/app/api/service_tokens.py
   - backend/app/main.py
@@ -25,9 +26,12 @@ scope:
   - tests/backend/test_eval_templates.py
   - tests/backend/test_results.py
   - tests/backend/test_service_tokens.py
+  - tests/backend/test_operations.py
+  - tests/backend/test_deployment_migration.py
   - docs/design/eval-platform-architecture.md
   - docs/design/eval-platform-architecture.en.md
   - docs/design/eval-platform-architecture.i18n.yaml
+  - scripts/doc-budgets.manifest.json
 adr: []
 github:
   number: 429
@@ -168,7 +172,7 @@ GET /api/v1/eval-runs/{run_id}/results
 - Cross-repository injection: an unregistered `repo_url` answers 422 `asset_source_unresolved`; after registration the same request succeeds.
 - Empty selection or a missing path after override: 422 `asset_selection_empty / asset_path_not_found`, and no run is created.
 - Console one-click launches without `asset_override` behave unchanged: no `asset` block in the response, and permission, idempotency, and validation semantics stay the same.
-- Service token: no token, wrong scope, or a template outside the allowlist → 403; audit records `created_by=svc:<name>`; an idempotent replay returns the same run; `npm test`, `npm run verify:flow`, `npm run lint:docs`, `npm run verify:docs`, and PR CI pass.
+- Service token: no valid credential (no token, invalid, revoked, or expired) → 401 `unauthenticated`; an insufficient scope or a template outside the allowlist → 403 `forbidden`; reaching the concurrency or daily-budget cap → 429 `service_token_limit_exceeded`; audit records `created_by=svc:<name>`; an idempotent replay returns the same run; `npm test`, `npm run verify:flow`, `npm run lint:docs`, `npm run verify:docs`, and PR CI pass.
 
 ## Non-goals
 

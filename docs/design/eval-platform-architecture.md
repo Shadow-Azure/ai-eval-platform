@@ -182,7 +182,7 @@ Skill、Command 与 Subagent 统一归入可配置的 Agent 资产源。资产�
 
 评测模板（eval_template）是项目级的可复用启动预设，把数据集版本、Agent 运行时、Agent 资产源与 Ref、资产选择、模型凭据、资源池、用例范围、执行策略、附加指令、最大轮次、Agent 超时与自进化上报目标保存为一组固定选择。模板只固化选择，不固化执行结果：每次启动都由 API 服务按模板重新解析资产 Ref、校验引用并生成新的不可变快照，评测记录保存 `template_id`、模板版本与启动快照，模板后续编辑不会改变已启动的评测。需要锁定内容时把 Ref 填成 commit；否则每次启动都解析该分支或 tag 的当时提交。
 
-模板的生命周期是创建、编辑、停用和删除；删除只从停用状态发起，删除模板不会级联删除已启动的评测与轨迹，运行记录保留模板标识与版本，模板名无法解析后来源处不再显示链接；删除接口为 `DELETE /api/v1/eval-templates/{template_id}`，需要管理员权限。停用或删除引用对象的模板不能启动，平台在创建运行前统一校验数据集版本、模型凭据、资源池与资产源是否仍可用。模板启动不接受配置覆盖，保证“一键”语义与结果可复现；需要不同组合时复制模板再编辑，或走现有的自定义发起流程。
+模板的生命周期是创建、编辑、停用和删除；删除只从停用状态发起，删除模板不会级联删除已启动的评测与轨迹，运行记录保留模板标识与版本，模板名无法解析后来源处不再显示链接；删除接口为 `DELETE /api/v1/eval-templates/{template_id}`，需要管理员权限。停用或删除引用对象的模板不能启动，平台在创建运行前统一校验数据集版本、模型凭据、资源池与资产源是否仍可用。控制台一键启动不接受配置覆盖，保证“一键”语义与结果可复现，需要不同组合时复制模板再编辑或走自定义发起流程；机器触发（服务令牌）可在启动请求携带可选 `asset_override`（repo_url、ref、commit、asset_paths、asset_types），把一次评测钉在指定代码仓的指定候选 commit 上，字段整体替换、缺省继承模板，commit 为权威身份且平台必须断言解析出的 `resolved_commit` 与请求 commit 一致，不一致即 422 拒绝、绝不静默评测，`ref` 仅作展示审计。
 
 模板保存/更新时先校验确定性镜像依赖：执行与评分 digest 按「本次覆盖 → 数据集版本 → 平台默认」解析，三处皆空时返回 422，定位到 `execution.execution_image_digest` 与 `execution.scoring_image_digest`，提示补录 digest 或配置平台默认值。资产 Ref、容量与凭据仍在启动时检查。启动被 blocker 阻断时返回 `details.blockers`，界面逐条展示 code、message、字段与修复建议。
 
@@ -194,7 +194,7 @@ Skill、Command 与 Subagent 统一归入可配置的 Agent 资产源。资产�
 
 模板的启动历史复用评测列表读接口，不新增专用执行接口：`GET /api/v1/evaluations` 接受可选 `template_id` 过滤，与 `status`、`limit`、`offset` 组合，按启动时间倒序返回 `items`、`total`、`limit` 与 `offset`；模板不存在时返回 404，模板历史未显式传 `limit` 时默认 10，并附带 `status_counts` 计数映射。模板列表每行的“历史”和模板详情页的“启动历史”都通过该过滤分页读取，默认每页 10 条并支持 10/20/50 切换，状态筛选沿用评测状态枚举并显示计数（0 也保留），条目复用评测摘要并链接到评测详情；模板详情内嵌的 `recent_runs` 仍只保留最近 5 条预览。该过滤只读，不改变执行链路。评测列表的摘要同时返回解析后的来源模板 `template`（id、模板名、版本与启用状态），列表行据此对模板启动的评测显示“来自模板 · 模板名”并链接到模板详情，自定义发起的评测不显示来源行。
 
-三个稳定接口见表 12。三个接口都复用控制台会话鉴权：启动需要管理员权限，状态与结果对已登录用户只读；首期不提供独立的机器令牌。
+三个稳定接口见表 12。三个接口复用「控制台会话或服务令牌」鉴权：启动需要管理员权限或持 `eval:launch` 的服务令牌，状态与结果对已登录用户或持 `eval:read` 的服务令牌只读；服务令牌由管理员在 `/api/v1/service-tokens` 创建、列表与撤销，支持 scope、模板白名单与并发/预算上限，明文仅在创建响应返回一次，库内只存哈希，机器启动的 `created_by` 落 `svc:<名称>` 并进入既有审计与幂等约束。无有效凭据返回 401，scope 或白名单不足返回 403，达到并发或当日预算上限返回 429；上限是尽力而为的准入守卫，预算按该令牌已结算花费、UTC 自然日计算，令牌名在租户内唯一且撤销后不复用。
 
 表 12 评测模板的三个执行接口
 
@@ -204,11 +204,11 @@ Skill、Command 与 Subagent 统一归入可配置的 Agent 资产源。资产�
 | 查询状态 | GET /api/v1/eval-runs/{run_id}/status | 无 | `run_id`、`template_id`、`status`、`terminal`、进度计数、起止时间与解决率 |
 | 查询结果 | GET /api/v1/eval-runs/{run_id}/results | 无 | `run_id`、`status`、`is_final`、指标项与 token 摘要；运行中返回部分快照 |
 
-启动接口先校验模板存在且启用、引用对象仍可用，再走既有的 prepare/create 流程；返回 404 表示模板或评测不存在，409 表示模板停用或幂等键冲突，422 表示引用对象失效或字段不可用，403 表示当前账号没有启动权限。状态接口在终态返回 `terminal=true`；结果接口在终态前返回 `is_final=false`，客户端据此决定是否继续轮询。
+启动接口先校验模板存在且启用、引用对象仍可用，再走既有的 prepare/create 流程；返回 404 表示模板或评测不存在，409 表示模板停用或幂等键冲突，422 表示引用对象失效或字段不可用，403 表示当前账号没有启动权限。状态接口在终态返回 `terminal=true`；结果接口在终态前返回 `is_final=false`，客户端据此决定是否继续轮询。任何冻结过资产快照的 run 都在 status 与 results 回显 `asset`（resolved_commit、asset_snapshot_id、requested_ref）；带覆盖的启动在 202 响应也回显 `asset`（另含 repo_url、requested_commit、bundle_digest）供调用方比对，新增 422 错误码 `candidate_commit_mismatch`、`asset_source_unresolved`、`asset_ref_unresolved`（`asset_selection_empty` 与 `asset_path_not_found` 复用既有码），任一命中即不创建评测。
 
 模板启动不改变调度与执行链路：它只是在服务端把固定选择转换为一次普通的 prepare 与 create 调用，后续分片、Runner、评分、轨迹与结果聚合与自定义发起完全一致。因此模板不会绕过容量准入、预算、镜像预检或权限校验；失败发生在创建运行之前，不会留下半创建的任务。
 
-启动在创建运行前解密保存的令牌，把它与其他上报字段一并传入既有 prepare/create 链路，从模板启动的评测在终态按 M9 #266/#341 outbox 上报 bad case；启用但配置不完整或密文无法解密时，启动在创建运行前返回 422。
+启动在创建运行前解密保存的令牌，把它与其他上报字段一并传入既有 prepare/create 链路，从模板启动的评测在终态按 M9 #266/#341 outbox 上报 bad case；启用但配置不完整或密文无法解密时，启动在创建运行前返回 422。带 `asset_override` 的机器触发沿用模板的上报语义，不自增开关也不做去重；自进化候选评测应使用未启用上报的模板，模板启用上报时带覆盖启动在响应 `warnings` 中提示一次。
 
 ## 6. 核心数据模型
 
@@ -228,8 +228,9 @@ Skill、Command 与 Subagent 统一归入可配置的 Agent 资产源。资产�
 | agent_asset_snapshot / agent_asset | 不可变资产快照与资产 | resolved commit、tree 摘要、OSS 地址、内容哈希 |
 | resource_pool / runner | 资源池登记 | 连接标识、供给模式、标签、状态、最近心跳 |
 | eval_template | 评测模板（可复用启动预设） | 固定字段与引用、执行策略、自进化上报配置与密文令牌、启用状态、版本、最近启动时间、创建人 |
-| eval_run / eval_case_run | 评测与用例执行 | 状态机、指标快照、资产快照、模板标识与启动快照、会话标识、超时时间 |
+| eval_run / eval_case_run | 评测与用例执行 | 状态机、指标快照、资产快照、模板标识与启动快照、会话标识、超时时间、资产覆盖与血缘（asset_override、evolution lineage） |
 | session / span | 归一化轨迹 | 父会话、span 类型、属性 JSONB、token 与成本 |
+| service_token | 机器触发身份 | 哈希令牌、scope、模板白名单、并发/预算上限、最近使用与撤销状态 |
 
 ## 7. 并发能力
 

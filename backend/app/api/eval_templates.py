@@ -13,7 +13,8 @@ from ..agent_timeout import MAX_AGENT_TIMEOUT_SECONDS, MIN_AGENT_TIMEOUT_SECONDS
 from ..db import get_session
 from ..services import eval_templates as template_service
 from ..services import identity
-from .dependencies import require_admin, require_session
+from ..services import service_tokens as token_service
+from .dependencies import Actor, require_admin, require_session, require_session_or_service
 from .errors import error_detail
 from .evaluations import CaseSelectionRequest, ExecutionPolicyRequest
 
@@ -86,12 +87,41 @@ class TemplateUpdateRequest(BaseModel):
     enabled: bool | None = None
 
 
+class AssetOverrideRequest(BaseModel):
+    """M10 (#429): optional candidate asset selection for a machine launch.
+
+    Whole-field replacement semantics: a field that is absent inherits the
+    template; a field that is present replaces the template value entirely (no
+    merging). ``commit`` is the authoritative identity and ``ref`` is display
+    and audit only, so a candidate is always pinned by commit.
+    """
+
+    repo_url: str | None = Field(default=None, max_length=500)
+    ref: str | None = Field(default=None, max_length=200)
+    commit: str | None = Field(default=None, pattern="^[0-9a-f]{40}$")
+    asset_paths: list[str] | None = None
+    asset_types: dict[str, str] | None = None
+
+
+class LaunchLineageRequest(BaseModel):
+    """Caller provenance stored on the run; never part of evaluation semantics."""
+
+    evolutionRunId: str | None = Field(default=None, max_length=64)
+    evolutionRoundId: str | None = Field(default=None, max_length=64)
+    roundSeq: int | None = Field(default=None, ge=1)
+    parentCommit: str | None = Field(default=None, max_length=40)
+
+
 class LaunchTemplateRequest(BaseModel):
     idempotency_key: str | None = Field(default=None, max_length=128)
     name: str | None = Field(default=None, max_length=200)
+    asset_override: AssetOverrideRequest | None = None
+    lineage: LaunchLineageRequest | None = None
 
 
-def _http_error(error: template_service.TemplateError) -> HTTPException:
+def _http_error(
+    error: template_service.TemplateError | token_service.ServiceTokenError,
+) -> HTTPException:
     details = dict(error.details or {})
     if error.field:
         fields = dict(details.get("fields") or {})
@@ -238,22 +268,38 @@ def launch_eval_template(
     payload: LaunchTemplateRequest,
     idempotency_header: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
     session: Session = Depends(get_session),
-    context: identity.AuthContext = Depends(require_admin),
+    context: Actor = Depends(require_session_or_service("eval:launch")),
 ) -> dict:
     key = (idempotency_header or payload.idempotency_key or "").strip()
     if not key:
         key = str(uuid.uuid4())
+    asset_override = (
+        payload.asset_override.model_dump(exclude_unset=True)
+        if payload.asset_override is not None
+        else None
+    )
+    lineage = (
+        payload.lineage.model_dump(exclude_unset=True)
+        if payload.lineage is not None
+        else None
+    )
     try:
-        run, created = template_service.launch_template(
+        run, created, launch_meta = template_service.launch_template(
             session,
             template_id,
             idempotency_key=key,
-            created_by=context.user.email,
+            created_by=context.label,
             name=(payload.name or "").strip() or None,
+            asset_override=asset_override,
+            lineage=lineage,
+            service_token=context.service_token,
         )
-    except template_service.TemplateError as error:
+    except (
+        template_service.TemplateError,
+        token_service.ServiceTokenError,
+    ) as error:
         raise _http_error(error) from error
-    return {
+    body = {
         "run_id": run.id,
         "template_id": template_id,
         "status": run.status,
@@ -261,3 +307,14 @@ def launch_eval_template(
         "result_url": f"/api/v1/eval-runs/{run.id}/results",
         "created": created,
     }
+    # Console compatibility: the one-click launch never received an override,
+    # so its 202 body stays byte-for-byte identical to the pre-#429 contract.
+    # An empty override object carries no intent and is normalized to absent by
+    # the service, so keying off the resolved identity (not the request field)
+    # also keeps a mismatched replay from emitting ``"asset": null``.
+    if launch_meta.get("asset") is not None:
+        body["asset"] = launch_meta["asset"]
+    warnings = launch_meta.get("warnings") or []
+    if warnings:
+        body["warnings"] = warnings
+    return body

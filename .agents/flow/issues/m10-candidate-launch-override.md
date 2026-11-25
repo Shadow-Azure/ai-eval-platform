@@ -6,7 +6,7 @@
 kind: issue
 milestone: m10
 priority: P0
-status: ready
+status: in-progress
 scope:
   - .agents/flow/issues/m10-candidate-launch-override.md
   - .agents/flow/issues/m10-candidate-launch-override.en.md
@@ -18,6 +18,7 @@ scope:
   - backend/app/api/dependencies.py
   - backend/app/models/evaluation.py
   - backend/app/models/identity.py
+  - backend/app/models/__init__.py
   - backend/app/services/service_tokens.py
   - backend/app/api/service_tokens.py
   - backend/app/main.py
@@ -25,9 +26,12 @@ scope:
   - tests/backend/test_eval_templates.py
   - tests/backend/test_results.py
   - tests/backend/test_service_tokens.py
+  - tests/backend/test_operations.py
+  - tests/backend/test_deployment_migration.py
   - docs/design/eval-platform-architecture.md
   - docs/design/eval-platform-architecture.en.md
   - docs/design/eval-platform-architecture.i18n.yaml
+  - scripts/doc-budgets.manifest.json
 adr: []
 github:
   number: 429
@@ -168,7 +172,7 @@ GET /api/v1/eval-runs/{run_id}/results
 - 跨仓注入：`repo_url` 未登记时 422 `asset_source_unresolved`；登记后同一请求成功。
 - 覆盖后选择为空或路径不存在：422 `asset_selection_empty / asset_path_not_found`，不创建 run。
 - 不带 `asset_override` 的控制台一键启动行为不变：响应无 `asset` 块，权限、幂等与校验语义不变。
-- 服务令牌：无令牌/错 scope/模板不在白名单 → 403；审计记录 `created_by=svc:<name>`；幂等重放返回同一 run；`npm test`、`npm run verify:flow`、`npm run lint:docs`、`npm run verify:docs` 与 PR CI 通过。
+- 服务令牌：无有效凭据（无令牌/无效/已撤销/已过期）→ 401 `unauthenticated`；scope 不足或模板不在白名单 → 403 `forbidden`；达到并发或当日预算上限 → 429 `service_token_limit_exceeded`；审计记录 `created_by=svc:<name>`；幂等重放返回同一 run；`npm test`、`npm run verify:flow`、`npm run lint:docs`、`npm run verify:docs` 与 PR CI 通过。
 
 ## 非目标
 

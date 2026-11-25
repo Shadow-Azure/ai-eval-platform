@@ -156,6 +156,16 @@ class EvalRun(Base, TimestampMixin):
     template_snapshot_json: Mapped[dict] = mapped_column(
         json_type(), default=dict, nullable=False, server_default="{}"
     )
+    # M10 (#429): machine-triggered launches may pin the run to a candidate
+    # commit and carry evolution provenance. Both are frozen on the run so a
+    # later template edit or token rotation cannot rewrite what was measured;
+    # ``{}`` keeps runs created by the console one-click path unchanged.
+    asset_override_json: Mapped[dict] = mapped_column(
+        json_type(), default=dict, nullable=False, server_default="{}"
+    )
+    evolution_lineage_json: Mapped[dict] = mapped_column(
+        json_type(), default=dict, nullable=False, server_default="{}"
+    )
     # M4-02 cancellation/reconciliation: the dispatched GitHub workflow run and
     # the client cancellation request are tracked on the run (A2 consumes both).
     github_run_id: Mapped[str | None] = mapped_column(String(64), nullable=True)

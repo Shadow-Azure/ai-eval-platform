@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 
 from sqlalchemy import (
     Boolean,
@@ -9,6 +10,8 @@ from sqlalchemy import (
     ForeignKey,
     ForeignKeyConstraint,
     Index,
+    Integer,
+    Numeric,
     String,
     UniqueConstraint,
     text,
@@ -133,6 +136,50 @@ class AuthSession(Base, CreatedAtMixin):
     __table_args__ = (
         Index("ix_auth_session_user_expiry", "user_id", "expires_at"),
         Index("ix_auth_session_expires_at", "expires_at"),
+    )
+
+
+SERVICE_TOKEN_SCOPES = ("eval:launch", "eval:read")
+
+
+class ServiceToken(Base, TimestampMixin):
+    """M10 (#429): machine identity for template launches and result reads.
+
+    Automation (harness-evolution) cannot hold a browser session, so template
+    launch and the stable status/results reads also accept a bearer service
+    token. Only the SHA-256 hex of the full plaintext is persisted; the
+    plaintext is returned exactly once by the creation call. Scopes, an optional
+    template allowlist and optional concurrency/budget caps are stored per token
+    so the API can enforce the caller's authority without another lookup table.
+    """
+
+    __tablename__ = "service_token"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    tenant_id: Mapped[str] = tenant_fk()
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    scopes_json: Mapped[list] = mapped_column(json_type(), default=list, nullable=False)
+    # Empty means every template; otherwise the ids the token may launch.
+    template_allowlist_json: Mapped[list] = mapped_column(
+        json_type(), default=list, nullable=False
+    )
+    max_concurrent_runs: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    daily_budget_cny: Mapped[Decimal | None] = mapped_column(Numeric(12, 6), nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="uq_service_token_tenant_name"),
+        UniqueConstraint("tenant_id", "id", name="uq_service_token_tenant_id_id"),
+        Index(
+            "ix_service_token_tenant_revoked_created",
+            "tenant_id",
+            "revoked_at",
+            "created_at",
+        ),
     )
 
 
