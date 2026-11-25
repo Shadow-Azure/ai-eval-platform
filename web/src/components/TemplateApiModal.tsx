@@ -131,8 +131,8 @@ ${JSON.stringify({
           <p>
             按模板触发一次评测，返回 run_id 与状态/结果地址；幂等键重放返回同一 run。控制台一键启动不携带覆盖；机器触发（持{" "}
             <code>eval:launch</code> 的服务令牌）可在 body 传可选 <code>asset_override</code>
-            （repo_url、ref、commit、asset_paths、asset_types，缺省继承模板）与 <code>lineage</code>
-            ，把评测钉在指定候选 commit 上，202 回显 <code>asset.resolved_commit</code> 供比对。
+            （repo_url、ref、commit、asset_paths、asset_types，缺省继承模板）与 <code>lineage</code>，把评测钉在指定候选
+            commit 上，202 回显 <code>asset.resolved_commit</code> 供比对。
           </p>
           <pre className="template-api-code">{`curl -sS -X POST "${base}/api/v1/eval-templates/${template.id}/launch" \\
   -H 'Content-Type: application/json' \\
