@@ -25,6 +25,7 @@ from .api.results import router as results_router
 from .api.runners import router as runners_router
 from .api.runtimes import router as runtimes_router
 from .api.self_evolution import router as self_evolution_router
+from .api.service_tokens import router as service_tokens_router
 from .api.traces import router as traces_router
 from .api.webhooks import router as webhooks_router
 from .config import get_settings
@@ -75,9 +76,13 @@ def create_app() -> FastAPI:
     app.include_router(overview_router, dependencies=[Depends(require_session)])
     app.include_router(runners_router)
     app.include_router(evaluations_router, dependencies=[Depends(require_session)])
-    # M10 (#378): reusable launch presets; launch requires the admin role and
-    # is enforced inside the router, list/detail stay session-readable.
-    app.include_router(eval_templates_router, dependencies=[Depends(require_session)])
+    # M10 (#378): reusable launch presets. The router declares authentication
+    # per route: launch requires the admin role (M10 #429: or an eval:launch
+    # service token), list/detail any console session.
+    app.include_router(eval_templates_router)
+    # M10 (#429): service tokens are managed by console administrators only;
+    # every route declares ``require_admin`` itself.
+    app.include_router(service_tokens_router)
     app.include_router(datasets_router, dependencies=[Depends(require_session)])
     app.include_router(dataset_image_sources_router, dependencies=[Depends(require_session)])
     # M8 (#290): per-preparation tarball readiness/ensure/retry polling.
@@ -85,7 +90,9 @@ def create_app() -> FastAPI:
         dataset_image_artifacts_router, dependencies=[Depends(require_session)]
     )
     app.include_router(agent_assets_router, dependencies=[Depends(require_session)])
-    app.include_router(results_router, dependencies=[Depends(require_session)])
+    # M10 (#378): stable status/results read models. Authentication is declared
+    # per route (console session, or an eval:read service token in M10 #429).
+    app.include_router(results_router)
     app.include_router(traces_router, dependencies=[Depends(require_session)])
     app.include_router(eval_workbench_router, dependencies=[Depends(require_session)])
     app.include_router(runtimes_router, dependencies=[Depends(require_session)])

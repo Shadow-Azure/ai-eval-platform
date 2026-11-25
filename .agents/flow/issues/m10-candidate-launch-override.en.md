@@ -6,7 +6,7 @@ English | [中文](m10-candidate-launch-override.md)
 kind: issue
 milestone: m10
 priority: P0
-status: ready
+status: in-progress
 scope:
   - .agents/flow/issues/m10-candidate-launch-override.md
   - .agents/flow/issues/m10-candidate-launch-override.en.md
@@ -18,6 +18,7 @@ scope:
   - backend/app/api/dependencies.py
   - backend/app/models/evaluation.py
   - backend/app/models/identity.py
+  - backend/app/models/__init__.py
   - backend/app/services/service_tokens.py
   - backend/app/api/service_tokens.py
   - backend/app/main.py
@@ -28,6 +29,7 @@ scope:
   - docs/design/eval-platform-architecture.md
   - docs/design/eval-platform-architecture.en.md
   - docs/design/eval-platform-architecture.i18n.yaml
+  - scripts/doc-budgets.manifest.json
 adr: []
 github:
   number: 429

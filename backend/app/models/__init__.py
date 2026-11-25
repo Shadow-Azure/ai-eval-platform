@@ -39,10 +39,12 @@ from .evaluation import (
     EvalTemplate,
 )
 from .identity import (
+    SERVICE_TOKEN_SCOPES,
     AuditLog,
     AuthSession,
     Membership,
     Project,
+    ServiceToken,
     Tenant,
     User,
     Workspace,
@@ -91,6 +93,8 @@ __all__ = [
     "Membership",
     "AuthSession",
     "AuditLog",
+    "ServiceToken",
+    "SERVICE_TOKEN_SCOPES",
     "Outbox",
     "ServiceHeartbeat",
     "Deployment",
