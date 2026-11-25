@@ -269,7 +269,7 @@ HE 超时重发同一 `Idempotency-Key`：`launch_template` 先查 `(tenant, cre
 - **现象**：覆盖给了 `repo_url` 时，按 `(tenant_id, repo_url)` 查 `AgentAssetSource`，`order_by(created_at, id)` 取**第一条**。而 `AgentAssetSource` 只保证 `name` 唯一，`repo_url` 没有唯一约束——同一仓库可以登记多个源（不同凭据、不同 `scan_paths`、不同 `default_ref`）。
 - **问题**：模板本身明明绑定了某个源（含它的凭据与扫描路径），但覆盖只传了同一个 `repo_url` 时，平台会静默改用“最早登记的那个源”，而不是模板自己的源。对“同一 repo 两个源、凭据权限不同”的现场，解析结果可能不是调用方预期的那个；且没有任何提示。
 - **预判**：不是本 PR 的功能缺陷（issue 只要求“按 repo_url 匹配已登记源”），但属于可低成本收紧的健壮性问题。建议：若 `template.asset_source_id` 对应的源 `repo_url` 与请求相等，**优先用它**；否则再退回“最早登记”。或者退一步，在 `_override_source` 命中多条时把 `source_id` 记进审计（现在 `effective.source_id` 已经有，但调用方看不到）。
-- **结论**：（留空）
+- **结论**：2026-11-25 已修：`_override_source` 命中多个源时优先模板自身的源；仍有歧义则 422 `asset_source_unresolved` 并在 `details.candidates` 返回候选，不再静默取最早。新增两条用例（`test_override_prefers_the_template_source_when_repo_url_has_candidates`、`test_override_rejects_ambiguous_repo_url_without_a_template_source`），提交 `74c4eff`。
 
 ### 6.2 缺凭据返回 401 而非 issue 验收写的 403
 
@@ -277,7 +277,7 @@ HE 超时重发同一 `Idempotency-Key`：`launch_template` 先查 `(tenant, cre
 - **现象**：实现把“没令牌、令牌格式错、无效、撤销、过期”统一映射为 **401 `unauthenticated`**；“scope 不足、模板不在白名单”映射为 **403 `forbidden`**。冒烟证据也是 `anonymous_read_401` + `wrong_scope_403`。
 - **问题**：与 issue 验收文字不一致。若只看验收单，会以为“无令牌 = 403”。好处是 401/403 的语义分工更清晰（认证失败 vs 授权不足），也与平台既有会话语义一致（`require_session` 一直返回 401）。
 - **预判**：**保留 401**（改实现会把“认证 vs 授权”混回一锅），但应当把 issue 验收文字改成与新口径一致，并在常驻文档补一句“401 表示未认证或令牌无效/已撤销/已过期”。这属于“文字对齐”，不是代码修复。
-- **结论**：（留空）
+- **结论**：2026-11-25 保留 401；issue 验收改为“无有效凭据 → 401；scope/白名单不足 → 403；达到并发/预算上限 → 429”，§5.14 与 `openapi-change.md` 同步，提交 `74c4eff`。
 
 ### 6.3 调用方契约缺口：429 / 401 与 OpenAPI 的 bearer scheme 没进文档
 
@@ -288,7 +288,7 @@ HE 超时重发同一 `Idempotency-Key`：`launch_template` 先查 `(tenant, cre
   3. 实现用普通 `Depends` 而不是 `Security`/`HTTPBearer`，`securitySchemes.serviceToken`（计划 §1 明确要求）不会出现在运行时生成的 OpenAPI 里。
 - **问题**：HE 是外部集成方，读的是文档与 OpenAPI。429 是它必须处理的**可重试/需退避**信号，401 是它刷新令牌的信号；这两个码没写进文档，会让适配器把“限额”当未知错误。Bearer scheme 缺失则让“生成的 OpenAPI”无法表达机器鉴权。
 - **预判**：429/401 段落在本 PR 或紧跟的一个 `docs:` 小 PR 补（§5.14 加两句即可，预算已到 13800，建议压缩别处或按门禁登记）；`openapi-change.md` 是历史设计稿，可不回改，但要接受“archive 与实现有偏差”。OpenAPI securityScheme 属“要不要对外暴露机器鉴权”的产品决定，本 PR 不做也说得过去，建议登记为后续项。**PR body 的“冒烟/门禁待补”也建议一并回填**——证据已在仓库外留档，描述里还是“待补”，会让合并记录与事实脱节。
-- **结论**：（留空）
+- **结论**：2026-11-25 已补：§5.14 增加 401/403/429、best-effort、回显范围与令牌名复用；`openapi-change.md` 的枚举与触发条件同步 429/401；issue 验收同步；PR body 已回填冒烟与 CI（截图见 release `m10-429-machine-trigger-evidence-20261125`）。提交 `74c4eff`。`securitySchemes` 仍缺，登记为后续 issue（HE 以文档适配，不依赖生成式 schema）。
 
 ### 6.4 上限是 best-effort；令牌名一旦撤销就永久占用
 
@@ -296,7 +296,7 @@ HE 超时重发同一 `Idempotency-Key`：`launch_template` 先查 `(tenant, cre
 - **现象**：并发/预算在“计数 → 建 run”之间没有锁（docstring `:352` 明说 best-effort）；预算只统计已结算到 `budget_spent_cny` 的 run，所以同一毫秒的多个 launch 可以一起越过上限。另一方面，`create_token` 按 `(tenant, name)` 查重时**包含已撤销的行**，撤销 `he-bot` 后不能再建同名令牌，只能换名——换名会让 `created_by` 从 `svc:he-bot` 变成 `svc:he-bot-2`，历史 run 的归属在审计视角下“断代”。
 - **问题**：两个都是“可接受但要知道”的取舍：上限是准入守卫而不是账单；名称是令牌的**永久标识**（好处是 `svc:<name>` 不会被复用冒充，坏处是运维得接受改名）。
 - **预判**：上限语义按 docstring 接受，但建议在常驻文档补一句“上限为 best-effort 准入守卫，不是硬配额；预算按已结算花费统计”。名称永久占用也值得写成运维事实（或提供“允许复用已撤销名称”的显式开关，由管理员确认——但那会削弱审计可读性，不建议首期做）。另外 `enforce_launch_caps` 排在 `template.enabled` 之前（`:1379` vs `:1381`），所以“上限已满 + 模板停用”会先返回 429 而不是 409；无实害，但如果希望错误优先级稳定，可把 enabled 校验提前。
-- **结论**：（留空）
+- **结论**：2026-11-25 接受：上限维持 best-effort（预算按已结算花费、UTC 自然日），§5.14 已写明；`create_token` docstring 与 `openapi-change.md` 写明“名称租户内唯一且撤销后不复用，保证 `svc:<name>` 审计稳定”；错误优先级不变（429 先于 409，无实害）。提交 `74c4eff`。
 
 ### 6.5 空覆盖的边界：`{}` 等于“没意图”，`{"asset_paths": []}` 等于“就要空选择”
 
@@ -304,7 +304,7 @@ HE 超时重发同一 `Idempotency-Key`：`launch_template` 先查 `(tenant, cre
 - **现象**：`launch_template` 用 `not any(value is not None ...)` 判断“空覆盖”，所以 `{}`、`{"ref": null}`、`{"commit": null, "repo_url": null}` 都退化为控制台语义（不要求模板绑源、202 无 `asset`）；但 `{"asset_paths": []}` 因为值是 `[]`（非 None）被当作**有意图**，整字段替换成空列表，最终 422 `asset_selection_empty`。
 - **问题**：两种“看起来都像空请求”的输入行为完全不同。这是“整字段替换”语义的正确推论（显式空列表就是“什么都不要”），但对 HE 的适配器是个坑：序列化时把 `None` 写成 `[]` 或把 `[]` 写成 `None`，结果一个是“继承模板”一个是“422”。
 - **预判**：实现正确，不建议改语义；建议在文档/接口示例里给一组对照（`{}` = 一键启动、`{"asset_paths": []}` = 选择为空被拒），并在 HE 适配器里对“未设置”统一省略字段而不是发 `null`/`[]`。
-- **结论**：（留空）
+- **结论**：2026-11-25 接受：语义不变（`{}`/全 null 按无覆盖，显式空列表按整字段替换并 422 `asset_selection_empty`）；HE 适配器应省略未设置字段。§5.14 未逐例展开，示例留给 OpenAPI 适配稿。
 
 ### 6.6 重放的 `warnings` 用“当前模板”重算，不是冻结值
 
@@ -312,7 +312,7 @@ HE 超时重发同一 `Idempotency-Key`：`launch_template` 先查 `(tenant, cre
 - **现象**：重放时不重新解析资产（正确），但 `warnings` 由 `_override_warnings(template)` 按**此刻**的模板 `self_evolution_enabled` 重新生成。于是：启动时模板未开上报（202 无 warnings）→ 模板后来开启上报 → 同一个幂等键重放，202 突然多出 `warnings`。
 - **问题**：严格幂等通常意味着“同一请求同一响应”。这里多出的只是一条**非阻断提示**，不会改变 run 或执行语义；但确实让“重放响应逐字节一致”不再成立。
 - **预判**：无实害，可接受。若以后要求严格幂等，可把 `warnings` 一并冻结进 `asset_override_json`（或 run 的另一个 JSON 列），重放直接回放。当前不建议为它扩列。
-- **结论**：（留空）
+- **结论**：2026-11-25 接受（无实害）：重放提示按当前模板重算，不扩冻结列；已在 §7 留档。
 
 ### 6.7 `asset` 回显范围扩大到“所有冻结过快照的 run”（additive）
 
@@ -320,7 +320,7 @@ HE 超时重发同一 `Idempotency-Key`：`launch_template` 先查 `(tenant, cre
 - **现象**：`run_asset_identity` 只看 `run.asset_snapshot_id`，不区分“覆盖启动 / 控制台模板启动 / run 级资产评测”。因此控制台一键启动的 run、以及既有的 `POST /api/v1/evaluations` 资产评测，status/results 也会多出 `asset`（而它们的 202 没有 `asset`，这是有意的）。
 - **问题**：字段是**纯增量**，控制台不读，旧 run 也不因此改变其它行为。唯一“不一致”是：控制台 run 的 202 没有 `asset`，但 status 有——这不是同一契约内的矛盾（202 只对带覆盖的调用方承诺 `asset`），但对读代码的人是理解成本。
 - **预判**：接受。建议在文档 §5.14 把“回显范围”写成一句话（任何冻结过资产快照的 run 都会回显），省得后人以为只有覆盖启动才有。
-- **结论**：（留空）
+- **结论**：2026-11-25 接受：§5.14 已写明“任何冻结过资产快照的 run 都在 status 与 results 回显 `asset`”，`openapi-change.md` 兼容性段同步。
 
 ### 6.8 控制台文案仍写“启动请求不能覆盖固定字段”（`web/` 不在 scope）
 
@@ -328,7 +328,7 @@ HE 超时重发同一 `Idempotency-Key`：`launch_template` 先查 `(tenant, cre
 - **现象**：机器启动已经可以覆盖资产选择，但控制台“边界”说明还写“启动请求不能覆盖固定字段”。对控制台用户而言这句话仍基本成立（UI 没有覆盖入口），对读文档/API 的机器调用者则是过期信息。
 - **问题**：issue #429 的 scope 明确不含 `web/`，所以本 PR 不改是对的；但这条文案迟早要改，否则“文档说能覆盖、控制台说不能覆盖”会同时存在。
 - **预判**：开一个 `web` 小 PR 改成“控制台一键启动不可覆盖；机器触发（服务令牌）可携带候选覆盖”，并顺带在“接口”弹窗里补 `/api/v1/service-tokens` 的存在。不建议塞进本 PR（会破坏 scope 门禁的一致性）。
-- **结论**：（留空）
+- **结论**：2026-11-25 记录为后续 `web` 小 PR；本 PR 不改 `web/`。
 
 ---
 
@@ -336,16 +336,16 @@ HE 超时重发同一 `Idempotency-Key`：`launch_template` 先查 `(tenant, cre
 
 | 发现 | 定性 | 去处 | 状态 |
 |---|---|---|---|
-| 401（未认证/令牌无效）取代 issue 验收写的 403 | 文字对齐，非 bug | 更新 issue #429 验收措辞 + 文档补 401 一句 | ✅ 已决（2026-11-25，PR 描述已按 401 口径声明，issue 文字待同步） |
-| 429 `service_token_limit_exceeded` 未进常驻文档与设计稿枚举 | 文档缺口 | 本 PR 或紧跟的 `docs:` 小 PR 补 §5.14 两句 | ◻ 待办（见 §6.3） |
-| 上限 best-effort、预算按已结算花费 | 已知取舍（docstring 已写） | 常驻文档补一句语义说明，理由留在本检视文档 | ✅ 已决（2026-11-25，接受） |
-| 撤销后令牌名不可复用（`svc:` 标签断代） | 可接受的运维事实 | 文档/运维说明；不建重复 Note | ◻ 待拍板（见 §6.4） |
-| `repo_url` 多条匹配时静默取最早源 | 健壮性可收紧 | 讨论后再定是否开 follow-up issue；若改，只动 `_override_source` | ◻ 待拍板（见 §6.1） |
+| 401（未认证/令牌无效）取代 issue 验收写的 403 | 文字对齐，非 bug | 更新 issue #429 验收措辞 + §5.14/openapi 补 401 一句 | ✅ 已决（2026-11-25，issue 与文档已同步，`74c4eff`） |
+| 429 `service_token_limit_exceeded` 未进常驻文档与设计稿枚举 | 文档缺口 | §5.14 与 `openapi-change.md` 补 429/401 | ✅ 已决（2026-11-25，`74c4eff`；预算 13800 → 13900） |
+| 上限 best-effort、预算按已结算花费 | 已知取舍（docstring 已写） | 常驻文档补一句语义说明，理由留在本检视文档 | ✅ 已决（2026-11-25，§5.14 已写明，`74c4eff`） |
+| 撤销后令牌名不可复用（`svc:` 标签断代） | 可接受的运维事实 | 文档与 `create_token` docstring 写明；不建重复 Note | ✅ 已决（2026-11-25，`74c4eff`） |
+| `repo_url` 多条匹配时静默取最早源 | 健壮性收紧 | 优先模板源；仍歧义则 422 返回 candidates | ✅ 已修（2026-11-25，两条用例，`74c4eff`） |
 | 重放 `warnings` 按当前模板重算 | 无实害的幂等瑕疵 | 本检视文档留档；将来重构时冻结 | ✅ 已决（2026-11-25，接受） |
-| `asset` 回显覆盖所有冻结 run | 纯增量、有意为之 | 文档补“回显范围”一句 | ✅ 已决（2026-11-25，接受） |
-| OpenAPI 未声明 `serviceToken` securityScheme | 契约完整性问题 | 后续 issue（若 HE 依赖生成式 schema） | ◻ 待拍板（见 §6.3） |
-| 控制台“不能覆盖固定字段”文案过期 | 文档/UI 债 | 单独 `web` 小 PR（`web/` 不在 #429 scope） | ◻ 待办（见 §6.8） |
-| 冒烟证据在仓库外、未入库；PR body 仍写“待补” | 过程记录 | 回填 PR 描述；证据不入库 | ◻ 待办（见 §6.3） |
+| `asset` 回显覆盖所有冻结 run | 纯增量、有意为之 | §5.14 与 openapi 兼容性段补“回显范围” | ✅ 已决（2026-11-25，`74c4eff`） |
+| OpenAPI 未声明 `serviceToken` securityScheme | 契约完整性问题 | 后续 issue（HE 以文档适配，不依赖生成式 schema） | ◻ 后续 issue（2026-11-25 拍板） |
+| 控制台“不能覆盖固定字段”文案过期 | 文档/UI 债 | 单独 `web` 小 PR（`web/` 不在 #429 scope） | ◻ 后续 web issue（2026-11-25 记录） |
+| 冒烟证据在仓库外、未入库；PR body 仍写“待补” | 过程记录 | 回填 PR 描述；证据不入库 | ✅ 已办（2026-11-25，PR body 已回填；截图在 release `m10-429-machine-trigger-evidence-20261125`） |
 
 ---
 
