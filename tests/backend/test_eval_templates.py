@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 from uuid import uuid4
 
@@ -1131,6 +1131,9 @@ class FakeRepo:
 
     commit: str = CANDIDATE_COMMIT
     files: dict[str, bytes] | None = None
+    # Every ref the server asked to resolve, in order. A commit-only launch
+    # must never ask the provider to resolve the display ref.
+    resolved_refs: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if self.files is None:
@@ -1150,11 +1153,13 @@ class FakeGitHubClient:
         *,
         resolve_error: Exception | None = None,
         resolved_commit: str | None = None,
+        ref_commit: str | None = None,
     ) -> None:
         self.repo = repo
         self.token = token
         self.resolve_error = resolve_error
         self.resolved_commit = resolved_commit
+        self.ref_commit = ref_commit
         self.blobs = {
             hashlib.sha1(path.encode()).hexdigest(): content
             for path, content in repo.files.items()
@@ -1166,7 +1171,14 @@ class FakeGitHubClient:
     def resolve_commit(self, owner: str, repo: str, ref: str) -> str:
         if self.resolve_error is not None:
             raise self.resolve_error
-        return self.resolved_commit or self.repo.commit
+        self.repo.resolved_refs.append(ref)
+        if ref == self.repo.commit:
+            # A full SHA resolves to itself; ``resolved_commit`` can force a
+            # drift so the candidate_commit_mismatch assertion is exercised.
+            return self.resolved_commit or self.repo.commit
+        # A non-SHA ref resolves to the configured branch commit: a test that
+        # supplies both ref and commit can prove the ref was never consulted.
+        return self.ref_commit or self.repo.commit
 
     def tree(self, owner: str, repo: str, commit: str) -> list[TreeEntry]:
         return [
@@ -1440,6 +1452,91 @@ def test_launch_without_override_keeps_the_console_response_shape(
     assert "asset" not in replay.json()
 
 
+def test_empty_asset_override_is_the_console_contract(
+    client: TestClient, session: Session
+) -> None:
+    """``asset_override: {}`` has no intent: it must not demand an asset source."""
+
+    ids = seed_launch(session)
+    template = create_template(client, ids)
+
+    response = launch_override(
+        client, template["id"], key="empty-override", override={}
+    )
+    assert response.status_code == 202, response.text
+    body = response.json()
+    assert "asset" not in body
+    run = session.get(EvalRun, body["run_id"])
+    assert run is not None
+    assert run.asset_override_json == {}
+    # Still a replayable idempotent launch with the console response shape.
+    assert body["created"] is True
+
+
+def test_commit_is_authoritative_even_when_ref_is_supplied(
+    client: TestClient,
+    session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    asset_store: StubObjectStore,
+) -> None:
+    # ``main`` resolves to the base commit; only the candidate SHA may win.
+    repo = install_fake_github(monkeypatch, ref_commit=BASE_COMMIT)
+    _ids, _source, template = seed_candidate_template(client, session)
+
+    response = launch_override(
+        client,
+        template["id"],
+        key="commit-beats-ref",
+        override={"ref": "main", "commit": CANDIDATE_COMMIT},
+    )
+    assert response.status_code == 202, response.text
+    asset = response.json()["asset"]
+    assert asset["resolved_commit"] == CANDIDATE_COMMIT
+    assert asset["requested_ref"] == "main"
+    # The provider was asked to resolve the commit, never the display ref.
+    assert repo.resolved_refs == [CANDIDATE_COMMIT]
+    status = client.get(f"/api/v1/eval-runs/{response.json()['run_id']}/status").json()
+    assert status["asset"]["resolved_commit"] == CANDIDATE_COMMIT
+    assert status["asset"]["requested_ref"] == "main"
+
+
+def test_routes_that_dropped_router_dependencies_require_auth(
+    client: TestClient, session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No route lost its guard when the router-level dependencies were removed."""
+
+    install_fake_github(monkeypatch)
+    ids = seed_launch(session)
+    template = create_template(client, ids)
+    launched = client.post(
+        f"/api/v1/eval-templates/{template['id']}/launch",
+        headers={"Idempotency-Key": "anonymous-guard"},
+        json={},
+    )
+    assert launched.status_code == 202, launched.text
+    run_id = launched.json()["run_id"]
+
+    client.cookies.clear()
+    protected = [
+        ("GET", "/api/v1/eval-templates"),
+        ("GET", f"/api/v1/eval-templates/{template['id']}"),
+        ("PATCH", f"/api/v1/eval-templates/{template['id']}"),
+        ("DELETE", f"/api/v1/eval-templates/{template['id']}"),
+        ("POST", f"/api/v1/eval-templates/{template['id']}/launch"),
+        ("GET", f"/api/v1/eval-runs/{run_id}/status"),
+        ("GET", f"/api/v1/eval-runs/{run_id}/results"),
+        ("GET", f"/api/v1/eval-runs/{run_id}/compare"),
+        ("GET", "/api/v1/eval-case-runs/missing/tests"),
+        ("GET", "/api/v1/service-tokens"),
+        ("POST", "/api/v1/service-tokens"),
+        ("DELETE", "/api/v1/service-tokens/missing"),
+    ]
+    for method, path in protected:
+        response = client.request(method, path, json={})
+        assert response.status_code == 401, (method, path, response.text)
+        assert response.json()["detail"]["error"]["code"] == "unauthenticated"
+
+
 def test_override_repo_url_must_be_a_registered_source(
     client: TestClient,
     session: Session,
@@ -1495,6 +1592,34 @@ def test_override_unresolvable_commit_is_a_ref_error(
     assert error["code"] == "asset_ref_unresolved"
     assert error["details"]["fields"]["asset_override"] == "invalid"
     assert error["details"]["requested_ref"] == CANDIDATE_COMMIT
+    assert _run_count(session, template["id"]) == 0
+
+
+def test_override_credential_failure_maps_to_ref_unresolved(
+    client: TestClient,
+    session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    asset_store: StubObjectStore,
+) -> None:
+    """A broken source credential is a reference-resolution failure (issue 429)."""
+
+    install_fake_github(monkeypatch)
+    _ids, _source, template = seed_candidate_template(client, session)
+
+    def fail_resolve(*_args: object, **_kwargs: object):
+        raise agent_assets.AgentAssetError("credential_invalid", "Git 访问令牌无效")
+
+    monkeypatch.setattr(template_service.asset_service, "resolve_assets", fail_resolve)
+    response = launch_override(
+        client,
+        template["id"],
+        key="credential-invalid",
+        override={"commit": CANDIDATE_COMMIT},
+    )
+    assert response.status_code == 422, response.text
+    error = response.json()["detail"]["error"]
+    assert error["code"] == "asset_ref_unresolved"
+    assert error["details"]["asset_code"] == "credential_invalid"
     assert _run_count(session, template["id"]) == 0
 
 

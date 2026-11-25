@@ -46,6 +46,9 @@ MAX_NAME_LENGTH = 100
 MAX_ALLOWLIST_ITEMS = 100
 MAX_TEMPLATE_ID_LENGTH = 36
 MAX_CREATED_BY_LENGTH = 128
+# Audit refresh interval for ``last_used_at``: frequent status polls must not
+# commit a row update on every read.
+LAST_USED_WRITE_INTERVAL_SECONDS = 60.0
 
 
 class ServiceTokenError(Exception):
@@ -327,8 +330,13 @@ def authenticate(
     current = _now(now)
     if not _is_active(token, now=current):
         return None
-    token.last_used_at = current
-    session.commit()
+    # ``last_used_at`` is an audit hint, not a lease: a status poll should not
+    # turn a read into a write on every request. Refresh it at most once per
+    # interval; a fresh token records its first use immediately.
+    previous = _as_utc(token.last_used_at)
+    if previous is None or (current - previous).total_seconds() >= LAST_USED_WRITE_INTERVAL_SECONDS:
+        token.last_used_at = current
+        session.commit()
     return token
 
 
@@ -340,6 +348,14 @@ def enforce_launch_caps(
     Both caps count the runs the token itself created (``created_by`` is the
     ``svc:<name>`` actor label), so a console user with the same template is
     never charged to the machine identity.
+
+    The check is an admission guard, not a hard quota: two launches can race
+    between the count and the run insert. Serializing it would need a token
+    row lock held across the whole launch transaction, which the prepare/create
+    path deliberately keeps short; the documented contract is best-effort.
+    The budget cap compares spend already reconciled on the token's runs, so a
+    launch that is still running is counted by the concurrency cap, not the
+    budget cap.
     """
 
     current = _now(now)

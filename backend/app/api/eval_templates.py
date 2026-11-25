@@ -309,8 +309,11 @@ def launch_eval_template(
     }
     # Console compatibility: the one-click launch never received an override,
     # so its 202 body stays byte-for-byte identical to the pre-#429 contract.
-    if payload.asset_override is not None or run.asset_override_json:
-        body["asset"] = launch_meta.get("asset")
+    # An empty override object carries no intent and is normalized to absent by
+    # the service, so keying off the resolved identity (not the request field)
+    # also keeps a mismatched replay from emitting ``"asset": null``.
+    if launch_meta.get("asset") is not None:
+        body["asset"] = launch_meta["asset"]
     warnings = launch_meta.get("warnings") or []
     if warnings:
         body["warnings"] = warnings

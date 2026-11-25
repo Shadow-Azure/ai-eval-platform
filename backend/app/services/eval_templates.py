@@ -67,6 +67,9 @@ ASSET_OVERRIDE_MAX_REF_LENGTH = 200
 PASSTHROUGH_ASSET_CODES = frozenset(
     {"asset_path_not_found", "asset_selection_empty", "asset_type_invalid"}
 )
+# Credential problems make the referenced Git objects unresolvable, so the
+# launch maps them to ``asset_ref_unresolved`` (issue #429 error table).
+UNRESOLVED_REFERENCE_CODES = frozenset({"credential_not_found", "credential_invalid"})
 _COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 
 
@@ -1236,6 +1239,19 @@ def _resolve_override_assets(
                 details=dict(error.details or {}),
                 code=error.code,
             ) from error
+        if error.code in UNRESOLVED_REFERENCE_CODES:
+            # A missing/invalid credential makes the repository objects
+            # unresolvable exactly like an unreachable repository: the issue
+            # contract maps that to ``asset_ref_unresolved``.
+            raise AssetRefUnresolved(
+                f"资产 Ref 解析失败：{error}",
+                field=ASSET_OVERRIDE_FIELD,
+                details={
+                    "field": ASSET_OVERRIDE_FIELD,
+                    "requested_ref": resolution_ref,
+                    "asset_code": error.code,
+                },
+            ) from error
         raise TemplateInvalid(
             f"资产解析失败：{error}",
             field=ASSET_OVERRIDE_FIELD,
@@ -1330,6 +1346,13 @@ def launch_template(
 
     settings = settings or get_settings()
     now = _now(now)
+    # ``asset_override: {}`` (or only explicit nulls) carries no intent: every
+    # field is absent, so it must behave exactly like a console one-click launch
+    # instead of failing because an inherited template has no asset source.
+    if asset_override is not None and not any(
+        value is not None for value in asset_override.values()
+    ):
+        asset_override = None
     key = (idempotency_key or "").strip()
     if not key:
         raise TemplateInvalid("启动必须提供幂等键", field="idempotency_key")
