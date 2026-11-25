@@ -45,7 +45,26 @@ ${JSON.stringify({
   status_url: `/api/v1/eval-runs/${runId}/status`,
   result_url: `/api/v1/eval-runs/${runId}/results`,
   created: true,
+  asset: {
+    repo_url: "https://github.com/acme/agent-assets",
+    requested_ref: "candidate",
+    requested_commit: "a82a590ade533b9ce8cc46f9be250e1a726da2d3",
+    resolved_commit: "a82a590ade533b9ce8cc46f9be250e1a726da2d3",
+    asset_snapshot_id: "snap-042",
+    bundle_digest: "sha256:5d87e384133a42874f3b09458c3efef6c1b05bc46036364cbd7a05b2cae59920",
+  },
 })}`;
+  const serviceTokenResponse = JSON.stringify({
+    status: "ok",
+    service_token: {
+      id: "tok-01",
+      name: "harness-evolution",
+      scopes: ["eval:launch", "eval:read"],
+      template_allowlist: [template.id],
+      active: true,
+    },
+    token: "hev_x8…（仅此一次返回，撤销后名称不复用）",
+  });
   return (
     <Modal
       open={open}
@@ -87,7 +106,9 @@ ${JSON.stringify({
         </div>
         <div>
           <span>鉴权</span>
-          <span className="template-api-summary-value">会话 Cookie；启动需管理员权限</span>
+          <span className="template-api-summary-value">
+            控制台会话 Cookie 或服务令牌 Bearer（hev_…）；启动需管理员权限或 eval:launch 令牌
+          </span>
         </div>
       </div>
       <div className="template-api-list">
@@ -108,12 +129,19 @@ ${JSON.stringify({
             <code>/api/v1/eval-templates/{template.id}/launch</code>
           </div>
           <p>
-            按模板触发一次评测，返回 run_id 与状态/结果地址；固定字段不可覆盖，幂等键重放返回同一 run。
+            按模板触发一次评测，返回 run_id 与状态/结果地址；幂等键重放返回同一 run。控制台一键启动不携带覆盖；机器触发（持{" "}
+            <code>eval:launch</code> 的服务令牌）可在 body 传可选 <code>asset_override</code>
+            （repo_url、ref、commit、asset_paths、asset_types，缺省继承模板）与 <code>lineage</code>
+            ，把评测钉在指定候选 commit 上，202 回显 <code>asset.resolved_commit</code> 供比对。
           </p>
           <pre className="template-api-code">{`curl -sS -X POST "${base}/api/v1/eval-templates/${template.id}/launch" \\
   -H 'Content-Type: application/json' \\
   -b 'ep_session=<session>' \\
   -d '{"idempotency_key":"nightly-20261122"}'`}</pre>
+          <pre className="template-api-code">{`curl -sS -X POST "${base}/api/v1/eval-templates/${template.id}/launch" \\
+  -H 'Content-Type: application/json' \\
+  -H 'Authorization: Bearer hev_<service-token>' \\
+  -d '{"idempotency_key":"evo-round-12","asset_override":{"repo_url":"https://github.com/acme/agent-assets","ref":"candidate","commit":"a82a590ade533b9ce8cc46f9be250e1a726da2d3","asset_paths":["skills/reviewer"]},"lineage":{"evolutionRunId":"evo-12","evolutionRoundId":"round-3","roundSeq":3,"parentCommit":"bff0c1e29a44e0a1c3d5e6f708192a3b4c5d6e7f"}}'`}</pre>
           <pre className="template-api-code">{launchResponse}</pre>
         </div>
         <div className="template-api-item">
@@ -121,18 +149,43 @@ ${JSON.stringify({
             <MethodBadge method="GET" />
             <code>/api/v1/eval-runs/{"{run_id}"}/status</code>
           </div>
-          <p>轮询执行状态、进度与是否终态；terminal=true 后停止轮询，再读取结果。</p>
+          <p>
+            轮询执行状态、进度与是否终态；terminal=true 后停止轮询，再读取结果。控制台会话或持
+            eval:read 的服务令牌均可读取；冻结过资产快照的 run 回显 asset（resolved_commit、
+            asset_snapshot_id、requested_ref）。
+          </p>
           <pre className="template-api-code">{`GET /api/v1/eval-runs/<run_id>/status
-{"status":"running","terminal":false,"progress":{"finished":231,"total":500}}`}</pre>
+{"status":"running","terminal":false,"progress":{"finished":231,"total":500},"asset":{"resolved_commit":"a82a590ade533b9ce8cc46f9be250e1a726da2d3","asset_snapshot_id":"snap-042","requested_ref":"candidate"}}`}</pre>
         </div>
         <div className="template-api-item">
           <div className="template-api-head">
             <MethodBadge method="GET" />
             <code>/api/v1/eval-runs/{"{run_id}"}/results</code>
           </div>
-          <p>读取指标快照；运行中 is_final=false，终态后返回完整指标与 token 摘要。</p>
+          <p>
+            读取指标快照；运行中 is_final=false，终态后返回完整指标与 token
+            摘要。鉴权同 status；launch 提供 lineage 时原样回显。
+          </p>
           <pre className="template-api-code">{`GET /api/v1/eval-runs/<run_id>/results
-{"status":"completed","is_final":true,"items":[{"metric_key":"resolve_rate","value":0.412}]}`}</pre>
+{"status":"completed","is_final":true,"items":[{"metric_key":"resolve_rate","value":0.412}],"asset":{"resolved_commit":"a82a590ade533b9ce8cc46f9be250e1a726da2d3","asset_snapshot_id":"snap-042","requested_ref":"candidate"},"lineage":{"evolutionRunId":"evo-12","evolutionRoundId":"round-3","roundSeq":3}}`}</pre>
+        </div>
+        <div className="template-api-item">
+          <div className="template-api-head">
+            <MethodBadge method="POST" />
+            <code>/api/v1/service-tokens</code>
+          </div>
+          <p>
+            机器身份（仅管理员会话）：创建/列表/撤销服务令牌，scope 取 <code>eval:launch</code> /{" "}
+            <code>eval:read</code>，可配模板白名单与并发/预算上限；明文仅在创建响应返回一次，库内只存哈希，机器启动的{" "}
+            <code>created_by</code> 落 <code>svc:&lt;name&gt;</code>。无凭据 401、scope
+            或白名单不足 403、达到上限 429 service_token_limit_exceeded；撤销用{" "}
+            <code>DELETE /api/v1/service-tokens/{"{token_id}"}</code>。
+          </p>
+          <pre className="template-api-code">{`curl -sS -X POST "${base}/api/v1/service-tokens" \\
+  -H 'Content-Type: application/json' \\
+  -b 'ep_session=<session>' \\
+  -d '{"name":"harness-evolution","scopes":["eval:launch","eval:read"],"template_allowlist":["${template.id}"],"max_concurrent_runs":2}'
+${serviceTokenResponse}`}</pre>
         </div>
       </div>
       <div className="banner" style={{ marginBottom: 12 }}>
@@ -140,7 +193,8 @@ ${JSON.stringify({
           <strong>自进化上报随模板保存。</strong> 创建/更新模板时传{" "}
           <code>self_evolution</code>（<code>base_url</code>、<code>workspace_id</code>、
           <code>token</code>）；令牌加密存储、任何响应不回显，更新时省略令牌会保留已存值。
-          一键启动沿用模板配置，不在启动请求里覆盖。
+          一键启动沿用模板配置，不在启动请求里覆盖；机器触发的 <code>asset_override</code>{" "}
+          只注入资产来源，不改上报开关，模板启用上报时随响应 <code>warnings</code> 提示一次。
         </div>
       </div>
       <div className="banner">
