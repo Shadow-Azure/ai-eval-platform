@@ -63,14 +63,15 @@ Conclusion: the main cause is not a missing proxy but a serial single worker, sl
 4. Queue priority: order by dataset/run/case need instead of UUID; expose queue position and ETA; prefetch on dataset import/version creation.
 5. Registry/proxy: evaluate Harbor proxy cache or a private registry as the VPC distribution layer; if a proxy is required, deploy a dedicated registry proxy and measure throughput/cost; do not reuse the GitHub-only Squid.
 
-## Expected speedup (estimate, to be validated by benchmark)
+## Expected speedup (measured revision, further validation needed)
 
-Baseline: 30 images × ~1.2GB at the current 2MB/s single source ≈ 5h of pull, plus save/upload/cleanup ≈ 5.5–6.5h total.
+Deployment ECS temp-DinD measurements while the production worker was pulling: a 48.5MB layer took 28.0s on VVVV (1.73MB/s), 55.9s on HubFast (0.87MB/s), and >120s on 1Panel/1ms (<0.40MB/s); a 1.2GB dataset image on VVVV downloaded about 801MB in 10.7min (1.25MB/s) and did not finish; a 100MB domestic mirror test reached 7.57MB/s, so the host egress is not the 2MB/s cap and the bottleneck is the registry upstream; two concurrent pulls (1Panel + VVVV) showed about 3.8MB/s host rx, so concurrency can aggregate bandwidth.
 
-- Conservative (only move to a 4–6MB/s source, concurrency limited by host egress): 2–3x, about 2–3h.
-- Base (8–12MB/s + 2–3 concurrent preparations + direct tarball): 4–6x, about 1–1.5h.
-- Aggressive (20MB/s+ + 4 concurrent + shared-layer reuse): 8–10x, about 30–45min.
-- Prewarm does not change total preparation time but moves it off the acceptance critical path; if completed before launch, acceptance-side wait can approach 0; validate with a 3-image benchmark.
+- Source selection/health: about 1.2-1.5x; no measured 8-12MB/s source, so the main benefit is avoiding dead sources and failed retries.
+- 2-4 concurrent pulls: about 2-3x; at 3.8-6MB/s aggregate, 36GB drops from ~5h to 1.7-2.6h, plus save/upload, about 2-3h total.
+- Shared-layer reuse (not measured): if the 30 images share base layers, another 10-30% of transferred bytes can be saved.
+- Prewarm: total preparation time is unchanged, but it moves off the acceptance critical path; if completed early, acceptance-side wait can approach 0.
+- A dedicated proxy/ACR/GA could reach 4x+ only if it raises a single source from 2MB/s to 10MB/s+; the current same-host Squid does not.
 
 ## Acceptance
 
