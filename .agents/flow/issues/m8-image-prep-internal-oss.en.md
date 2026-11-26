@@ -14,6 +14,7 @@ scope:
   - deploy/**
   - scripts/**
   - .agents/flow/**
+  - plans/**
 adr: []
 github:
   number: 436

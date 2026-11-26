@@ -1,5 +1,5 @@
 # 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
 # git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
 #   pnpm run record:i18n -- .agents/flow/issues/m8-image-prep-internal-oss.md
-m8-image-prep-internal-oss.md: e2072d0c3efe2b2d68705bc1d78d6d64dc3ac107
-m8-image-prep-internal-oss.en.md: 93468b08ab07dbf6c11e5c0526f588c44b29c521
+m8-image-prep-internal-oss.md: d9e778484fee9b45870a86693f589176c902b342
+m8-image-prep-internal-oss.en.md: ed6c89ed2dfaa77c24b89a4532ec0f1990c2e172
