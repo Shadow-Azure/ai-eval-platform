@@ -152,6 +152,17 @@ class Settings(BaseSettings):
     # one 4.16GB image plus its tar cannot fit on the system disk.
     dataset_image_prep_min_free_bytes: int = 8 * 1024**3
     dataset_image_prep_poll_seconds: float = 5.0
+    # M8 (#439): image-level concurrency. The production compose profile sets 2;
+    # the code default stays 1 so direct runs keep the historical serial path.
+    # Values are clamped to 1..4 by the worker.
+    dataset_image_prep_concurrency: int = 1
+    # Probe each target image's manifest on every configured source before the
+    # pull, then try the fastest healthy source first and skip sources that
+    # explicitly do not carry the image. Off by default so tests and direct runs
+    # stay offline; the production compose profile enables it.
+    dataset_image_prep_source_probe_enabled: bool = False
+    dataset_image_prep_source_probe_timeout_seconds: float = 4.0
+    dataset_image_prep_source_probe_concurrency: int = 8
     dataset_image_prep_heartbeat_path: str = "/tmp/image-prep-heartbeat"
     # M8 (#436): the DB heartbeat is what the API/launch gate reads. The worker
     # writes it every 30s, so a 120s window survives a slow pull without

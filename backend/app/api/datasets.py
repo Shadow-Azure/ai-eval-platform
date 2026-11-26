@@ -23,11 +23,12 @@ from ..agent_timeout import (
     MAX_AGENT_TIMEOUT_SECONDS,
     MIN_AGENT_TIMEOUT_SECONDS,
 )
-from ..config import get_settings
+from ..config import Settings, get_settings
 from ..datasets import AdapterNotFound, get_adapter
 from ..db import get_session
 from ..defaults import DEFAULT_TENANT_ID
 from ..models import Dataset, DatasetCase, DatasetImport, DatasetVersion, MetricDefinition
+from ..services import dataset_image_artifacts as artifact_service
 from ..services import dataset_imports as import_service
 from ..services import datasets as dataset_service
 from ..services import identity, token_usage
@@ -612,6 +613,29 @@ def get_dataset_version(version_id: str, session: Session = Depends(get_session)
         "metrics": [metric_summary(definition) for definition in metrics],
         "validation": dataset_service.version_import_validation(session, version),
     }
+
+
+@router.post("/api/v1/dataset-versions/{version_id}/images/warmup")
+def warmup_dataset_version_images(
+    version_id: str,
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+    _context: identity.AuthContext = Depends(require_admin),
+) -> dict:
+    """Prewarm every image of a dataset version before an evaluation starts.
+
+    #439: the queue used to be filled only by prepare/create, so a dataset that
+    had not been launched never warmed. This explicit admin entry resolves the
+    version's cases, HEAD-checks the tarballs and enqueues the missing ones.
+    """
+
+    try:
+        version = dataset_service.get_dataset_version(session, version_id)
+    except dataset_service.DatasetVersionNotFound as exc:
+        raise _not_found("dataset_version_not_found", "数据集版本不存在") from exc
+    result = artifact_service.warmup_version_images(session, version, settings)
+    session.commit()
+    return result
 
 
 @router.get("/api/v1/dataset-versions/{version_id}/cases")

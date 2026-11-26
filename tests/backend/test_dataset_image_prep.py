@@ -21,6 +21,13 @@ from app.seed import ensure_default_scope
 from app.services import dataset_image_artifacts as artifacts
 from app.services import dataset_image_prep as prep
 from app.services.dataset_image_prep import DockerCommandError, prepare_one, sweep
+from app.services.dataset_images import (
+    FOUND,
+    NOT_FOUND,
+    RegistrySource,
+    SourceOrdering,
+    SourceProbe,
+)
 from app.services.object_store import ObjectMissing
 from app.worker import image_prep as worker
 from object_stub import StubObjectStore
@@ -41,11 +48,13 @@ class FakeDocker:
         fail_pull_refs: set[str] | None = None,
         fail_removes: bool = False,
         export_bytes: bytes = PAYLOAD,
+        image_size_bytes: int | None = None,
     ) -> None:
         self.fail_pulls = fail_pulls
         self.fail_pull_refs = fail_pull_refs or set()
         self.fail_removes = fail_removes
         self.export_bytes = export_bytes
+        self.image_size_bytes = image_size_bytes
         self.pull_calls: list[tuple[str, str]] = []
         self.tag_calls: list[tuple[str, str]] = []
         self.export_calls: list[tuple[str, str]] = []
@@ -67,6 +76,9 @@ class FakeDocker:
         target.write_bytes(self.export_bytes)
         self.export_calls.append((ref, str(target)))
         return len(self.export_bytes)
+
+    def image_size(self, ref: str) -> int | None:
+        return self.image_size_bytes
 
     def remove_image(self, ref: str) -> None:
         self.remove_calls.append(ref)
@@ -199,6 +211,44 @@ def test_prepare_one_pulls_saves_uploads_and_cleans_up(
         assert stub.known[f"/{stub.bucket}/{key}"] == len(PAYLOAD)
         assert docker.images == set()
         assert list(work_dir.glob("dataset-image-*.tar.gz")) == []
+
+
+def test_prepare_one_uses_the_manifest_probe_order_and_records_phase_metrics(
+    session: Session, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = _settings(
+        tmp_path / "work",
+        sources="docker.io,ghcr.io/acme",
+        dataset_image_prep_source_probe_enabled=True,
+        dataset_image_prep_source_probe_timeout_seconds=0.1,
+    )
+    hub = RegistrySource(name="Docker Hub", registry="registry-1.docker.io")
+    ghcr = RegistrySource(name="ghcr.io/acme", registry="ghcr.io", prefix="acme")
+    ordering = SourceOrdering(
+        sources=[ghcr, hub],
+        probes=[
+            SourceProbe(source=hub, status=NOT_FOUND),
+            SourceProbe(source=ghcr, status=FOUND, elapsed_ms=12),
+        ],
+        skipped=["Docker Hub"],
+    )
+    monkeypatch.setattr(prep, "order_sources_by_health", lambda *_args, **_kwargs: ordering)
+    _queue(session, settings)
+    docker = FakeDocker(image_size_bytes=12_345)
+
+    outcome = prepare_one(session, settings, docker=docker, store=FakeStore())
+
+    assert outcome.status == "ready"
+    assert [ref for ref, _platform in docker.pull_calls] == [MIRROR]
+    assert outcome.source == "ghcr.io/acme"
+    assert outcome.source_order == ["ghcr.io/acme", "Docker Hub"]
+    assert outcome.source_skipped == ["Docker Hub"]
+    assert outcome.source_probes is not None
+    assert outcome.pull_seconds is not None
+    assert outcome.pull_bytes == 12_345
+    assert outcome.save_seconds is not None
+    assert outcome.tar_bytes == len(PAYLOAD)
+    assert outcome.upload_seconds is not None
 
 
 def test_prepare_one_falls_back_to_a_mirror_and_tags_the_canonical_ref(
@@ -820,3 +870,9 @@ def test_cli_preparer_treats_an_already_removed_image_as_clean(
 
     # The desired end state is "image absent", so a missing image is success.
     prep.DockerCliImagePreparer(settings).remove_image(IMAGE)
+
+
+def test_preparation_concurrency_is_bounded() -> None:
+    assert worker.preparation_concurrency(SimpleNamespace(dataset_image_prep_concurrency=0)) == 1
+    assert worker.preparation_concurrency(SimpleNamespace(dataset_image_prep_concurrency=2)) == 2
+    assert worker.preparation_concurrency(SimpleNamespace(dataset_image_prep_concurrency=9)) == 4

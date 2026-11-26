@@ -16,6 +16,7 @@ the resolved per-case image and how to surface the report.
 from __future__ import annotations
 
 import re
+import threading
 from collections.abc import Iterable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -40,6 +41,9 @@ ERROR = "error"
 SKIPPED = "skipped"
 BLOCKED = "blocked"
 PASSED = "passed"
+# A manifest probe with one of these statuses means the source cannot serve the
+# image; the preparation worker skips it instead of spending a full pull timeout.
+UNUSABLE_SOURCE_STATUSES = frozenset({NOT_FOUND, AUTH_REQUIRED, RATE_LIMITED})
 MAX_REPORT_CASES = 200
 _DOCKER_HUB_HOSTS = {"docker.io", "index.docker.io", "registry-1.docker.io"}
 _INSTANCE_RE = re.compile(r"^(?P<org>[^_]+)__(?P<repo>.+)-(?P<issue>[0-9]+)$")
@@ -109,6 +113,93 @@ class ImageProbe:
             "status": self.status,
             "source": self.source,
             "results": [result.as_dict() for result in self.results],
+        }
+
+
+# M8 (#439): in-process rolling source statistics. Manifest probes measure
+# TTFB, while a real pull measures bytes/second; keeping both lets the worker
+# demote a source that answers quickly but transfers slowly. The state is
+# intentionally per-process: a restart starts a fresh measurement window.
+_SOURCE_STATS_LOCK = threading.Lock()
+_SOURCE_STATS: dict[str, dict[str, Any]] = {}
+
+
+def reset_source_stats() -> None:
+    """Clear the in-process rolling stats (tests and worker restarts)."""
+
+    with _SOURCE_STATS_LOCK:
+        _SOURCE_STATS.clear()
+
+
+def source_stats_snapshot() -> dict[str, dict[str, Any]]:
+    with _SOURCE_STATS_LOCK:
+        return {name: dict(entry) for name, entry in _SOURCE_STATS.items()}
+
+
+def record_source_result(
+    name: str,
+    *,
+    seconds: float,
+    bytes_transferred: int,
+    success: bool,
+) -> None:
+    """Record one completed pull attempt for source ordering."""
+
+    key = (name or "").strip()
+    if not key:
+        return
+    with _SOURCE_STATS_LOCK:
+        entry = _SOURCE_STATS.setdefault(
+            key,
+            {
+                "successes": 0,
+                "failures": 0,
+                "total_seconds": 0.0,
+                "total_bytes": 0,
+            },
+        )
+        if success:
+            entry["successes"] = int(entry["successes"]) + 1
+            entry["total_seconds"] = float(entry["total_seconds"]) + max(0.0, seconds)
+            entry["total_bytes"] = int(entry["total_bytes"]) + max(0, bytes_transferred)
+        else:
+            entry["failures"] = int(entry["failures"]) + 1
+
+
+def _source_rank(probe: SourceProbe, stats: Mapping[str, Mapping[str, Any]] | None):
+    """Sort key: success rate, measured throughput, then probe TTFB."""
+
+    entry = (stats or {}).get(probe.source.name) or {}
+    successes = int(entry.get("successes") or 0)
+    failures = int(entry.get("failures") or 0)
+    attempts = successes + failures
+    success_rate = successes / attempts if attempts else 0.5
+    seconds = float(entry.get("total_seconds") or 0.0)
+    bytes_transferred = int(entry.get("total_bytes") or 0)
+    mbps = bytes_transferred / seconds / 1_000_000 if seconds > 0 and bytes_transferred > 0 else 0.0
+    return (
+        -success_rate,
+        -mbps,
+        probe.elapsed_ms is None,
+        probe.elapsed_ms or 0,
+    )
+
+
+@dataclass
+class SourceOrdering:
+    """Manifest-probe ordering used by the image preparation worker (#439)."""
+
+    sources: list[RegistrySource]
+    probes: list[SourceProbe] = field(default_factory=list)
+    skipped: list[str] = field(default_factory=list)
+    fallback: bool = False
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "order": [source.name for source in self.sources],
+            "skipped": list(self.skipped),
+            "fallback": self.fallback,
+            "probes": [probe.as_dict() for probe in self.probes],
         }
 
 
@@ -502,6 +593,62 @@ def probe_source(
     finally:
         if owns_client:
             client.close()
+
+
+def order_sources_by_health(
+    image: str,
+    sources: Iterable[RegistrySource],
+    *,
+    timeout: float,
+    concurrency: int = 8,
+    stats: Mapping[str, Mapping[str, Any]] | None = None,
+) -> SourceOrdering:
+    """Order sources by a manifest probe of the image about to be pulled.
+
+    Each enabled source is probed in parallel with a short timeout. Sources that
+    answer 200 are tried first, ranked by measured success rate and throughput
+    when ``stats`` has history, then by TTFB; transient probe errors follow as
+    fallbacks because the probe may be a false negative. Sources that explicitly
+    do not carry the image (404, auth, rate limit) are skipped. If every source
+    is unusable the configured order is kept as a fallback so a transient probe
+    outage never produces "no candidates".
+    """
+
+    enabled = [source for source in sources or [] if source.enabled]
+    if len(enabled) <= 1:
+        return SourceOrdering(sources=enabled)
+    workers = max(1, min(32, int(concurrency or 1), len(enabled)))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        probes = list(
+            pool.map(
+                lambda source: probe_source(
+                    image, source, timeout=max(0.1, float(timeout))
+                ),
+                enabled,
+            )
+        )
+    found = sorted(
+        (probe for probe in probes if probe.status == FOUND),
+        key=lambda probe: _source_rank(probe, stats),
+    )
+    transient = sorted(
+        (
+            probe
+            for probe in probes
+            if probe.status != FOUND and probe.status not in UNUSABLE_SOURCE_STATUSES
+        ),
+        key=lambda probe: _source_rank(probe, stats),
+    )
+    unusable = [
+        probe for probe in probes if probe.status in UNUSABLE_SOURCE_STATUSES
+    ]
+    ordered = [probe.source for probe in (*found, *transient)]
+    skipped = [probe.source.name for probe in unusable]
+    if not ordered:
+        return SourceOrdering(
+            sources=enabled, probes=probes, skipped=skipped, fallback=True
+        )
+    return SourceOrdering(sources=ordered, probes=probes, skipped=skipped)
 
 
 def probe_image(

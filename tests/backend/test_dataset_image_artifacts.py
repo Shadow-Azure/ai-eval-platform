@@ -1134,3 +1134,54 @@ def test_create_returns_503_when_the_image_prep_worker_is_offline(
     )
     assert blocked.status_code == 409, blocked.text
     assert blocked.json()["detail"]["error"]["code"] == "image_not_ready"
+
+
+def test_warmup_version_enqueues_all_images_without_a_preparation(
+    session: Session, client: TestClient
+) -> None:
+    version = _seed_dataset(
+        session,
+        cases=[
+            {"case_key": "case-a", "environment_image": IMAGE_A},
+            {"case_key": "case-b", "environment_image": IMAGE_B},
+        ],
+    )
+
+    response = client.post(f"/api/v1/dataset-versions/{version.id}/images/warmup")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["total"] == 2
+    assert body["enqueued_count"] == 2
+    assert body["queued_count"] == 2
+    assert {item["status"] for item in body["images"]} == {"preparing"}
+    assert {item["phase"] for item in body["images"]} == {"queued"}
+    assert _artifact(session, IMAGE_A).status == "preparing"
+    assert _artifact(session, IMAGE_B).status == "preparing"
+
+    again = client.post(f"/api/v1/dataset-versions/{version.id}/images/warmup")
+    assert again.status_code == 200, again.text
+    assert again.json()["enqueued_count"] == 0
+    assert again.json()["queued_count"] == 2
+
+
+def test_warmup_version_requires_admin(session: Session, client: TestClient) -> None:
+    version = _seed_dataset(
+        session, cases=[{"case_key": "case-a", "environment_image": IMAGE_A}]
+    )
+    _add_viewer(session)
+    client.cookies.clear()
+    login = client.post(
+        "/api/v1/auth/login",
+        json={"email": TEST_VIEWER_EMAIL, "password": TEST_VIEWER_PASSWORD},
+    )
+    assert login.status_code == 200, login.text
+
+    response = client.post(f"/api/v1/dataset-versions/{version.id}/images/warmup")
+
+    assert response.status_code == 403
+
+
+def test_warmup_version_returns_404_for_an_unknown_version(client: TestClient) -> None:
+    response = client.post("/api/v1/dataset-versions/does-not-exist/images/warmup")
+    assert response.status_code == 404

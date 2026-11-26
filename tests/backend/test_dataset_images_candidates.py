@@ -70,3 +70,140 @@ def test_pairs_keep_the_source_that_produced_each_candidate() -> None:
         ("Docker Hub", "swebench/example:1.0"),
         ("ghcr.io/acme", "ghcr.io/acme/swebench/example:1.0"),
     ]
+
+
+def test_source_health_ordering_prefers_fastest_found_source(monkeypatch) -> None:
+    import app.services.dataset_images as dataset_images
+
+    sources = [HUB, GHCR, MIRROR]
+    probes = {
+        HUB.name: dataset_images.SourceProbe(source=HUB, status=dataset_images.NOT_FOUND),
+        GHCR.name: dataset_images.SourceProbe(
+            source=GHCR, status=dataset_images.FOUND, elapsed_ms=120
+        ),
+        MIRROR.name: dataset_images.SourceProbe(
+            source=MIRROR, status=dataset_images.FOUND, elapsed_ms=40
+        ),
+    }
+    monkeypatch.setattr(
+        dataset_images,
+        "probe_source",
+        lambda _image, source, **_kwargs: probes[source.name],
+    )
+
+    ordering = dataset_images.order_sources_by_health(
+        "swebench/example:1.0", sources, timeout=1.0
+    )
+
+    assert [source.name for source in ordering.sources] == ["docker.m.daocloud.io", "ghcr.io/acme"]
+    assert ordering.skipped == ["Docker Hub"]
+    assert ordering.fallback is False
+
+
+def test_source_health_ordering_keeps_transient_errors_as_fallbacks(monkeypatch) -> None:
+    import app.services.dataset_images as dataset_images
+
+    sources = [HUB, GHCR, MIRROR]
+    probes = {
+        HUB.name: dataset_images.SourceProbe(
+            source=HUB, status=dataset_images.ERROR, error="ConnectError"
+        ),
+        GHCR.name: dataset_images.SourceProbe(source=GHCR, status=dataset_images.AUTH_REQUIRED),
+        MIRROR.name: dataset_images.SourceProbe(
+            source=MIRROR, status=dataset_images.FOUND, elapsed_ms=80
+        ),
+    }
+    monkeypatch.setattr(
+        dataset_images,
+        "probe_source",
+        lambda _image, source, **_kwargs: probes[source.name],
+    )
+
+    ordering = dataset_images.order_sources_by_health(
+        "swebench/example:1.0", sources, timeout=1.0
+    )
+
+    # A found source is first; a transient probe failure remains a fallback
+    # because the manifest probe may be wrong, but a 401 source is skipped.
+    assert [source.name for source in ordering.sources] == ["docker.m.daocloud.io", "Docker Hub"]
+    assert ordering.skipped == ["ghcr.io/acme"]
+
+
+def test_source_health_ordering_falls_back_when_every_source_is_unusable(monkeypatch) -> None:
+    import app.services.dataset_images as dataset_images
+
+    probes = {
+        HUB.name: dataset_images.SourceProbe(source=HUB, status=dataset_images.NOT_FOUND),
+        GHCR.name: dataset_images.SourceProbe(source=GHCR, status=dataset_images.RATE_LIMITED),
+    }
+    monkeypatch.setattr(
+        dataset_images,
+        "probe_source",
+        lambda _image, source, **_kwargs: probes[source.name],
+    )
+
+    ordering = dataset_images.order_sources_by_health(
+        "swebench/example:1.0", [HUB, GHCR], timeout=1.0
+    )
+
+    assert [source.name for source in ordering.sources] == ["Docker Hub", "ghcr.io/acme"]
+    assert ordering.skipped == ["Docker Hub", "ghcr.io/acme"]
+    assert ordering.fallback is True
+
+
+def test_source_health_ordering_prefers_measured_throughput_over_ttfb(monkeypatch) -> None:
+    import app.services.dataset_images as dataset_images
+
+    slow_but_fast_ttfb = dataset_images.SourceProbe(
+        source=HUB, status=dataset_images.FOUND, elapsed_ms=5
+    )
+    fast_but_slow_ttfb = dataset_images.SourceProbe(
+        source=GHCR, status=dataset_images.FOUND, elapsed_ms=200
+    )
+    monkeypatch.setattr(
+        dataset_images,
+        "probe_source",
+        lambda _image, source, **_kwargs: (
+            slow_but_fast_ttfb if source.name == HUB.name else fast_but_slow_ttfb
+        ),
+    )
+    stats = {
+        HUB.name: {
+            "successes": 1,
+            "failures": 0,
+            "total_seconds": 100.0,
+            "total_bytes": 10_000_000,
+        },
+        GHCR.name: {
+            "successes": 1,
+            "failures": 0,
+            "total_seconds": 10.0,
+            "total_bytes": 100_000_000,
+        },
+    }
+
+    ordering = dataset_images.order_sources_by_health(
+        "swebench/example:1.0", [HUB, GHCR], timeout=1.0, stats=stats
+    )
+
+    assert [source.name for source in ordering.sources] == [GHCR.name, HUB.name]
+
+
+def test_source_stats_record_success_rate_and_bytes() -> None:
+    import app.services.dataset_images as dataset_images
+
+    dataset_images.reset_source_stats()
+    try:
+        dataset_images.record_source_result(
+            "mirror", seconds=2.0, bytes_transferred=4_000_000, success=True
+        )
+        dataset_images.record_source_result(
+            "mirror", seconds=1.0, bytes_transferred=0, success=False
+        )
+        snapshot = dataset_images.source_stats_snapshot()["mirror"]
+        assert snapshot["successes"] == 1
+        assert snapshot["failures"] == 1
+        assert snapshot["total_seconds"] == 2.0
+        assert snapshot["total_bytes"] == 4_000_000
+    finally:
+        dataset_images.reset_source_stats()

@@ -53,7 +53,7 @@ docker compose --env-file .env -f deploy/docker-compose.prod.yml \
   --profile image-prep up -d image-prep-dind image-prep
 ```
 
-`DATASET_IMAGE_PREP_DATA_DIR` overrides the data disk root (default `/data/ai-eval-image-prep`); `IMAGE_PREP_DIND_IMAGE` overrides the DinD image (a DaoCloud mirror by default); `DATASET_IMAGE_PREP_PLATFORM` defaults to `linux/amd64`, `DATASET_IMAGE_PREP_MAX_ATTEMPTS` to 3, and `DATASET_IMAGE_PREP_HEARTBEAT_TIMEOUT_SECONDS` to 120. Below the free-space threshold the worker marks the image `failed` without pulling. Uploads use the internal OSS endpoint by default and fall back to the public endpoint for non-Aliyun or cross-region deployments.
+`DATASET_IMAGE_PREP_DATA_DIR` overrides the data disk root (default `/data/ai-eval-image-prep`); `IMAGE_PREP_DIND_IMAGE` overrides the DinD image (a DaoCloud mirror by default); `DATASET_IMAGE_PREP_PLATFORM` defaults to `linux/amd64`, `DATASET_IMAGE_PREP_MAX_ATTEMPTS` to 3, and `DATASET_IMAGE_PREP_HEARTBEAT_TIMEOUT_SECONDS` to 120. `DATASET_IMAGE_PREP_CONCURRENCY` defaults to 1 in code and 2 in the production compose profile; DinD's `IMAGE_PREP_DIND_MAX_CONCURRENT_DOWNLOADS` defaults to 8. Below the free-space threshold the worker marks the image `failed` without pulling. Uploads use the internal OSS endpoint by default and fall back to the public endpoint for non-Aliyun or cross-region deployments.
 
 Check status and residue:
 

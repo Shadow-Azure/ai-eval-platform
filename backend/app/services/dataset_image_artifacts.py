@@ -136,6 +136,47 @@ def resolve_preparation_images(
     return sorted(images)
 
 
+def resolve_version_images(
+    session: Session,
+    version,
+    settings: Settings | None = None,
+) -> list[str]:
+    """Resolve every case image of an immutable dataset version.
+
+    This is the dataset-level counterpart of ``resolve_preparation_images`` and
+    powers the explicit prewarm entry: it does not require an eval preparation,
+    so a dataset that has not been launched can still enqueue its images.
+    """
+
+    if version is None:
+        return []
+    case_keys = list(
+        session.scalars(
+            select(DatasetCase.case_key).where(
+                DatasetCase.tenant_id == _tenant_id(),
+                DatasetCase.dataset_version_id == version.id,
+            )
+        )
+    )
+    return resolve_preparation_images(session, version, case_keys, settings)
+
+
+def warmup_version_images(
+    session: Session,
+    version,
+    settings: Settings | None = None,
+) -> dict:
+    """HEAD-check and enqueue every image of a dataset version.
+
+    This is the P0 prewarm path from #439: operators can move a dataset's
+    missing images into the prepare queue before launching an evaluation, so the
+    first launch is not blocked by ``409 image_not_ready``.
+    """
+
+    refs = resolve_version_images(session, version, settings)
+    return readiness(session, refs, settings, recheck=True, enqueue=True)
+
+
 def _select_artifact(session: Session, image: str) -> DatasetImageArtifact | None:
     return session.scalar(
         select(DatasetImageArtifact).where(
@@ -368,9 +409,14 @@ def readiness(
                         if row.status != "ready":
                             row.status = "failed"
 
+    enqueued_count = 0
     if enqueue:
         for row in rows:
             if _needs_enqueue(row, now, max_attempts):
+                # Count only rows that actually entered the queue; an already
+                # queued row may have its due timestamp refreshed by ensure.
+                if row.status != "preparing":
+                    enqueued_count += 1
                 row.status = "preparing"
                 row.next_attempt_at = now
                 # A re-enqueued row is waiting again; the next worker claim sets
@@ -415,6 +461,7 @@ def readiness(
         "failed_count": failed_count,
         "missing_count": missing_count,
         "cleanup_failed_count": cleanup_failed_count,
+        "enqueued_count": enqueued_count,
         "worker": image_prep_health(session, settings, now),
         "images": [
             {

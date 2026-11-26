@@ -60,7 +60,7 @@ M2 把执行与数据集、Agent 解耦：平台经 repository_dispatch 传 8 �
 
 冷启动的竞价 Runner 没有本地镜像；除了在任务 payload 中按 `image_sources` 顺序回退公开源，平台还支持把数据集镜像的压缩 `docker save` tar 发布到私有 OSS。对象 key 由镜像引用确定性派生（默认 `dataset-images/<sha256>.tar.gz`），任务接口在 Runner 收到 `started` 2xx、拿到容量后按 case 签发短时 presign 的内网 GET URL（阿里云 OSS 从 `s3_endpoint` 自动派生 `-internal`，`S3_INTERNAL_ENDPOINT` 可覆盖；不把 OSS 凭据下发到实例）。URL 有效期只覆盖一次下载（默认 1200s，即 15 分钟下载预算加 5 分钟余量），不覆盖容量排队。Spot Runner 先下载、`docker load` 并校验镜像，再进入执行；首次下载返回 401/403 时刷新一次 `/tasks` 并重试一次，仍失败才回退 `image_sources`，404、超时、tar 损坏或 load 失败直接回退，诊断区分鉴权失败与对象缺失。发布在固定主机执行 `scripts/publish-dataset-image.sh`，与 `python -m app.manage dataset-image` 共用同一 key 派生和 presign 逻辑；OSS 保持私有。
 
-评测预检记录每个用例镜像的 OSS tar 是否就绪；缺失的 tar 由 compose `image-prep` Worker 串行补齐。部署脚本在数据盘满足门槛时启动或更新该 profile，有镜像正在领取处理时跳过。Worker 使用独立 Docker-in-Docker 且不挂宿主 Docker socket，领取租约后按公开源顺序 `docker pull`，`docker save` 流式写入临时 tar，默认经内网 OSS endpoint 上传（非阿里云或跨 region 回退公网），HEAD 校验后清理。Worker 每 30 秒把心跳写入 `service_heartbeat`；`image_readiness` 带心跳与 `queued` / `processing`，`GET artifacts` 只读，`ensure` 仅在 worker 离线时回收从未领取的逾期行。未就绪的 create 返回 `409 image_not_ready`，worker 离线返回 `503 image_prep_unavailable`。
+评测预检记录每个用例镜像的 OSS tar 是否就绪；缺失的 tar 由 compose `image-prep` Worker 按 `DATASET_IMAGE_PREP_CONCURRENCY` 并发补齐，管理员也可用 `POST /api/v1/dataset-versions/{id}/images/warmup` 按版本预热。租约用 `FOR UPDATE SKIP LOCKED` 防重复拉取；sweep 只在无任务时运行。Worker 使用独立 Docker-in-Docker 且不挂宿主 socket；开启源探测时并行探测各源 manifest，跳过无镜像、要求认证或限流的源，再 `docker pull`；`docker save` 流式写临时 tar，经内网 OSS 上传。每次尝试记录 pull/save/upload 秒数、tar 大小与源到 Worker 日志；DinD `max-concurrent-downloads=8`。Worker 每 30 秒把心跳写入 `service_heartbeat`；`ensure` 仅在 worker 离线时回收从未领取的逾期行。未就绪的 create 返回 `409 image_not_ready`，worker 离线返回 `503 image_prep_unavailable`。
 
 ## GitHub 出口代理
 
@@ -70,7 +70,7 @@ API 的 `RUNNER_EGRESS_PROXY` 只接受不含凭据的 http(s) URL，配置后�
 
 Runner 仅在 `egress_proxy` 非空时给资产 install 与 Agent 的 `docker exec` 注入 `HTTPS_PROXY`、`HTTP_PROXY` 与 `NO_PROXY`；有 token 时把地址组合成 `http://<token>:@<proxy-host>:<port>`（token 只含 `[A-Za-z0-9._-]`，无需转义），无 token 时沿用不带凭据的地址（私网监听）。未配置时命令参数与直连行为不变。`NO_PROXY` 从 payload 派生平台回调/模型网关主机与 OSS 资产包主机，并固定包含 `localhost`、`127.0.0.1`、`::1`、npm 镜像 `registry.npmmirror.com` 与默认源 `registry.npmjs.org`。
 
-代理只放行 GitHub：设置代理 env 后，非白名单外部请求会被 Squid 直接拒绝（`http_access deny all`），不会回退直连；因此只有确实需要 GitHub 的评测才应配置 `RUNNER_EGRESS_PROXY`，不需要时保持为空、完全不注入。白名单在 `deploy/proxy/squid.conf`：只允许 `.github.com` 与 `.githubusercontent.com` 两个通配（分别覆盖 github.com 及其子域、全部 GitHub 资产域名）的 443 端口，允许/拒绝都写入访问日志。改白名单或 CIDR 后重建 `proxy` 服务。
+代理只放行 GitHub：设置代理 env 后，非白名单外部请求会被 Squid 直接拒绝（`http_access deny all`），不会回退直连；因此只有确实需要 GitHub 的评测才应配置 `RUNNER_EGRESS_PROXY`，不需要时保持为空、完全不注入。白名单在 `deploy/proxy/squid.conf`：只允许 `.github.com` 与 `.githubusercontent.com` 两个通配（分别覆盖 github.com 及其子域、全部 GitHub 资产域名）的 443 端口，允许/拒绝都写入访问日志。改白名单或 CIDR 后重建 `proxy` 服务。该代理与 image-prep 同机同出口且不做缓存，Docker registry 的 CONNECT 会被拒绝；镜像拉取不走此代理，放开域名也不能增加拉取带宽。
 
 验证命令（token 取一次真实 payload 的 `egress_token`，或按 v1 格式自签一个过期/错 scope 的 token）：
 

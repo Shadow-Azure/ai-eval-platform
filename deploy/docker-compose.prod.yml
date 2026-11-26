@@ -242,6 +242,10 @@ services:
       - "--host=tcp://0.0.0.0:2375"
       - "--host=unix:///var/run/docker.sock"
       - "--data-root=/var/lib/docker"
+      # M8 (#439): one image pull is limited by per-layer parallelism; the
+      # daemon default is 3. Raising it to 8 lets a single layer-rich image
+      # use more of the source's bandwidth. Override for a smaller disk/host.
+      - "--max-concurrent-downloads=${IMAGE_PREP_DIND_MAX_CONCURRENT_DOWNLOADS:-8}"
     volumes:
       - ${DATASET_IMAGE_PREP_DATA_DIR:-/data/ai-eval-image-prep}/docker:/var/lib/docker
     healthcheck:
@@ -276,6 +280,13 @@ services:
       DATASET_IMAGE_PREP_PLATFORM: ${DATASET_IMAGE_PREP_PLATFORM:-linux/amd64}
       DATASET_IMAGE_PREP_MIN_FREE_BYTES: ${DATASET_IMAGE_PREP_MIN_FREE_BYTES:-8589934592}
       DATASET_IMAGE_PREP_POLL_SECONDS: ${DATASET_IMAGE_PREP_POLL_SECONDS:-5}
+      # M8 (#439): two 1-2GB image preparations at once aggregate upstream
+      # bandwidth; the worker caps this at 4 and checks free disk per pull.
+      DATASET_IMAGE_PREP_CONCURRENCY: ${DATASET_IMAGE_PREP_CONCURRENCY:-2}
+      # Probe each image's manifest on the configured sources first, then try
+      # the fastest healthy source and skip sources that explicitly lack it.
+      DATASET_IMAGE_PREP_SOURCE_PROBE_ENABLED: ${DATASET_IMAGE_PREP_SOURCE_PROBE_ENABLED:-true}
+      DATASET_IMAGE_PREP_SOURCE_PROBE_TIMEOUT_SECONDS: ${DATASET_IMAGE_PREP_SOURCE_PROBE_TIMEOUT_SECONDS:-4}
       DATASET_IMAGE_PREP_HEARTBEAT_PATH: /tmp/image-prep-heartbeat
       DATASET_IMAGE_PREP_HEARTBEAT_TIMEOUT_SECONDS: ${DATASET_IMAGE_PREP_HEARTBEAT_TIMEOUT_SECONDS:-120}
       DATASET_IMAGE_PREP_MAX_ATTEMPTS: ${DATASET_IMAGE_PREP_MAX_ATTEMPTS:-3}

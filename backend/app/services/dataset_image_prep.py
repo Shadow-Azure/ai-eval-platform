@@ -24,6 +24,7 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -36,7 +37,14 @@ from ..config import Settings, get_settings
 from ..defaults import DEFAULT_TENANT_ID
 from ..models import DatasetImageArtifact
 from .dataset_image_artifacts import claim_preparing_artifact, requeue_due_failed_artifacts
-from .dataset_images import RegistrySource, candidate_ref_pairs, effective_sources
+from .dataset_images import (
+    RegistrySource,
+    candidate_ref_pairs,
+    effective_sources,
+    order_sources_by_health,
+    record_source_result,
+    source_stats_snapshot,
+)
 from .object_store import ObjectMissing, ObjectStoreError, object_store_from_settings
 
 PULL_TIMEOUT_SECONDS = 1800.0
@@ -72,6 +80,8 @@ class ImagePreparer(Protocol):
     def tag(self, src: str, dst: str) -> None: ...
 
     def export_gzip(self, ref: str, path: str) -> int: ...
+
+    def image_size(self, ref: str) -> int | None: ...
 
     def remove_image(self, ref: str) -> None: ...
 
@@ -183,6 +193,26 @@ class DockerCliImagePreparer:
                 if process.stdout is not None:
                     process.stdout.close()
 
+    def image_size(self, ref: str) -> int | None:
+        """Local image size in bytes, used for pull throughput observability.
+
+        ``docker image inspect`` is cheap and best-effort: a missing image or an
+        unexpected output returns ``None`` instead of failing a successful pull.
+        """
+
+        result = self._run(
+            ["image", "inspect", "--format", "{{.Size}}", ref],
+            timeout=TAG_TIMEOUT_SECONDS,
+            action=f"读取镜像大小 {ref} ",
+        )
+        if result.returncode != 0:
+            return None
+        try:
+            size = int((result.stdout or "").strip())
+        except ValueError:
+            return None
+        return size if size > 0 else None
+
     def remove_image(self, ref: str) -> None:
         result = self._run(
             ["image", "rm", "-f", ref],
@@ -213,6 +243,19 @@ class PrepareOutcome:
     cleanup_error: str | None = None
     error: str | None = None
     endpoint: str | None = None
+    # M8 (#439): per-attempt observability. Times are wall-clock seconds for the
+    # phase that actually ran; ``pull_bytes`` is the local image size reported by
+    # ``docker image inspect`` after the pull (an approximation of downloaded
+    # compressed bytes).
+    pull_seconds: float | None = None
+    pull_bytes: int | None = None
+    save_seconds: float | None = None
+    upload_seconds: float | None = None
+    tar_bytes: int | None = None
+    source_order: list[str] | None = None
+    source_skipped: list[str] | None = None
+    source_probes: list[dict] | None = None
+    source_stats: dict[str, dict] | None = None
 
 
 @dataclass
@@ -230,6 +273,19 @@ def _free_bytes(path: str | os.PathLike[str]) -> int:
 
 def _image_digest(image: str) -> str:
     return hashlib.sha256((image or "").strip().encode("utf-8")).hexdigest()
+
+
+def _image_size(docker: ImagePreparer, ref: str) -> int | None:
+    """Best-effort local image size; old/fake preparers may not implement it."""
+
+    getter = getattr(docker, "image_size", None)
+    if getter is None:
+        return None
+    try:
+        size = getter(ref)
+    except Exception:
+        return None
+    return int(size) if size else None
 
 
 def temp_tarball_path(work_dir: str | os.PathLike[str], image: str) -> Path:
@@ -381,10 +437,11 @@ def prepare_one(
             )
         outcome.endpoint = getattr(store, "endpoint", None)
 
-        candidates = candidate_ref_pairs(image, effective_sources(session, settings))
+        sources = effective_sources(session, settings)
         # ``effective_sources`` opens a read transaction; release it before the
-        # multi-minute pull so no database transaction stays open meanwhile.
+        # manifest probes and multi-minute pull so no transaction stays open.
         session.rollback()
+        outcome.source_order = [source.name for source in sources]
 
         if existing_size is not None:
             # A previous worker or the manual publish script already uploaded
@@ -393,6 +450,27 @@ def prepare_one(
             size_bytes = existing_size
             outcome.already_exists = True
         else:
+            if settings.dataset_image_prep_source_probe_enabled and sources:
+                try:
+                    ordering = order_sources_by_health(
+                        image,
+                        sources,
+                        timeout=settings.dataset_image_prep_source_probe_timeout_seconds,
+                        concurrency=settings.dataset_image_prep_source_probe_concurrency,
+                        stats=source_stats_snapshot(),
+                    )
+                except Exception as exc:  # a probe must never block the pull
+                    outcome.source_probes = [
+                        {"error": f"镜像源探测失败：{exc}"}
+                    ]
+                else:
+                    sources = ordering.sources
+                    outcome.source_order = [source.name for source in sources]
+                    outcome.source_skipped = ordering.skipped or None
+                    outcome.source_probes = [
+                        probe.as_dict() for probe in ordering.probes
+                    ]
+            candidates = candidate_ref_pairs(image, sources)
             try:
                 work_dir.mkdir(parents=True, exist_ok=True)
             except OSError as exc:
@@ -412,14 +490,24 @@ def prepare_one(
 
             platform = (settings.dataset_image_prep_platform or "").strip()
             pull_errors: list[str] = []
+            pull_started = time.monotonic()
+            pull_attempt_seconds = 0.0
             for source, candidate in candidates:
                 if source.name not in attempted_sources:
                     attempted_sources.append(source.name)
+                attempt_started = time.monotonic()
                 try:
                     docker.pull(candidate, platform)
                 except Exception as exc:
+                    record_source_result(
+                        source.name,
+                        seconds=time.monotonic() - attempt_started,
+                        bytes_transferred=0,
+                        success=False,
+                    )
                     pull_errors.append(f"{source.name} ({candidate})：{exc}")
                     continue
+                pull_attempt_seconds = time.monotonic() - attempt_started
                 pulled_ref = candidate
                 source_name = source.name
                 break
@@ -427,19 +515,34 @@ def prepare_one(
                 raise PrepareError(
                     "所有公开源均拉取失败：" + "；".join(pull_errors)
                 )
+            outcome.pull_seconds = time.monotonic() - pull_started
 
             canonical = image
             if pulled_ref != canonical:
                 docker.tag(pulled_ref, canonical)
+            outcome.pull_bytes = _image_size(docker, canonical)
+            if source_name:
+                record_source_result(
+                    source_name,
+                    seconds=pull_attempt_seconds,
+                    bytes_transferred=outcome.pull_bytes or 0,
+                    success=True,
+                )
+            outcome.source_stats = source_stats_snapshot()
+            save_started = time.monotonic()
             local_size = docker.export_gzip(canonical, str(tar_path))
+            outcome.save_seconds = time.monotonic() - save_started
+            outcome.tar_bytes = local_size
             if local_size <= 0:
                 raise PrepareError("导出的镜像 tar 为空")
+            upload_started = time.monotonic()
             store.put_file(
                 object_key,
                 tar_path,
                 content_type=TARBALL_CONTENT_TYPE,
                 timeout=UPLOAD_TIMEOUT_SECONDS,
             )
+            outcome.upload_seconds = time.monotonic() - upload_started
             try:
                 remote_size = store.head_object(object_key)
             except ObjectMissing as exc:
@@ -496,6 +599,7 @@ def prepare_one(
         outcome.local_cleanup = cleanup_status
         outcome.cleanup_error = cleanup_error
         outcome.error = row.error
+        outcome.source_stats = source_stats_snapshot()
     return outcome
 
 
