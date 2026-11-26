@@ -1,5 +1,5 @@
 # 双语配对一致性记录（docs/i18n/README.md）：两侧在最后一次确认一致状态下的
 # git blob hash。两种语言同等权威；编辑任一侧后带上另一侧，然后重录：
 #   pnpm run record:i18n -- .agents/flow/issues/m8-image-pull-throughput.md
-m8-image-pull-throughput.md: 266c521cbca08aef42954da66a1352c6e1227eb4
-m8-image-pull-throughput.en.md: 0df37b73c338ec9f09998e9996ab5084bcd86b4c
+m8-image-pull-throughput.md: 9f45c54d075b6ea63280afcfe4c8456abdf3a9c5
+m8-image-pull-throughput.en.md: 6c45fb53f2c573234b19c91b3a4f9062d626e879

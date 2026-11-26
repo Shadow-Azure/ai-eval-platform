@@ -63,6 +63,15 @@ Conclusion: the main cause is not a missing proxy but a serial single worker, sl
 4. Queue priority: order by dataset/run/case need instead of UUID; expose queue position and ETA; prefetch on dataset import/version creation.
 5. Registry/proxy: evaluate Harbor proxy cache or a private registry as the VPC distribution layer; if a proxy is required, deploy a dedicated registry proxy and measure throughput/cost; do not reuse the GitHub-only Squid.
 
+## Expected speedup (estimate, to be validated by benchmark)
+
+Baseline: 30 images × ~1.2GB at the current 2MB/s single source ≈ 5h of pull, plus save/upload/cleanup ≈ 5.5–6.5h total.
+
+- Conservative (only move to a 4–6MB/s source, concurrency limited by host egress): 2–3x, about 2–3h.
+- Base (8–12MB/s + 2–3 concurrent preparations + direct tarball): 4–6x, about 1–1.5h.
+- Aggressive (20MB/s+ + 4 concurrent + shared-layer reuse): 8–10x, about 30–45min.
+- Prewarm does not change total preparation time but moves it off the acceptance critical path; if completed before launch, acceptance-side wait can approach 0; validate with a 3-image benchmark.
+
 ## Acceptance
 
 - Prewarm: all images for the pending datasets are enqueued before launch and visible in readiness; no 409 for unqueued images.
