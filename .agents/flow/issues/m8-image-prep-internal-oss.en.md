@@ -6,7 +6,7 @@ English | [中文](m8-image-prep-internal-oss.md)
 kind: issue
 milestone: m8
 priority: P2
-status: in-progress
+status: done
 scope:
   - backend/**
   - tests/**
