@@ -637,6 +637,7 @@ def sweep(
         )
     )
     work_dir = Path(settings.dataset_image_prep_work_dir)
+    max_attempts = max(1, int(settings.dataset_image_prep_max_attempts))
     sources: list[RegistrySource] = []
     if rows:
         try:
@@ -652,8 +653,22 @@ def sweep(
             except Exception:
                 pass
             cleanup_status, cleanup_error = _cleanup(docker, None, refs)
-            row.local_cleanup = cleanup_status
-            row.cleanup_error = cleanup_error
+            retained_tar = (
+                row.status == "failed"
+                and (row.attempts or 0) < max_attempts
+                and complete_tarball_size(
+                    temp_tarball_path(work_dir, row.image_ref)
+                )
+                is not None
+            )
+            if retained_tar and cleanup_status == "done":
+                # The local images are gone, but the complete tar is retained
+                # for the next upload attempt; the row is not fully cleaned.
+                row.local_cleanup = "pending"
+                row.cleanup_error = None
+            else:
+                row.local_cleanup = cleanup_status
+                row.cleanup_error = cleanup_error
             if cleanup_status == "done":
                 outcome.cleaned += 1
             else:

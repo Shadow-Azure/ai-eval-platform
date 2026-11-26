@@ -737,6 +737,42 @@ def test_periodic_sweep_cleans_an_expired_preparing_row_but_keeps_its_lease(
     assert _utc(row.next_attempt_at) == lease
 
 
+def test_sweep_keeps_a_complete_retry_tarball_pending_but_drops_a_ready_one(
+    session: Session, tmp_path: Path
+) -> None:
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+    settings = _settings(work_dir, sources="docker.io")
+    _queue(session, settings, image=IMAGE, status="failed")
+    failed_row = _row(session)
+    failed_row.attempts = 1
+    failed_row.local_cleanup = "pending"
+    session.commit()
+    failed_tar = prep.temp_tarball_path(work_dir, IMAGE)
+    failed_tar.write_bytes(PAYLOAD)
+    prep._mark_tarball_complete(failed_tar, len(PAYLOAD))
+
+    ready_image = "registry.example/eval/runtime-ready:latest"
+    _queue(session, settings, image=ready_image, status="ready")
+    ready_row = _row(session, ready_image)
+    ready_row.local_cleanup = "pending"
+    session.commit()
+    ready_tar = prep.temp_tarball_path(work_dir, ready_image)
+    ready_tar.write_bytes(PAYLOAD)
+    prep._mark_tarball_complete(ready_tar, len(PAYLOAD))
+
+    result = sweep(session, settings, docker=FakeDocker())
+
+    assert result.cleaned == 2
+    assert result.tarballs_removed == 1
+    # The failed row keeps its complete tar for the next upload attempt, so its
+    # cleanup stays pending; a ready row no longer needs its tar.
+    assert _row(session).local_cleanup == "pending"
+    assert failed_tar.exists()
+    assert not ready_tar.exists()
+    assert _row(session, ready_image).local_cleanup == "done"
+
+
 def test_run_sweep_passes_the_startup_flag(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[bool] = []
 
