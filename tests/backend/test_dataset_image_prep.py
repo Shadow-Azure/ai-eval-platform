@@ -248,6 +248,56 @@ def test_prepare_one_marks_ready_without_pulling_when_the_object_exists(
     assert row.next_attempt_at is None
 
 
+def test_prepare_one_uses_the_internal_oss_endpoint(session: Session, tmp_path: Path) -> None:
+    work_dir = tmp_path / "work"
+    with StubObjectStore() as stub:
+        settings = Settings(
+            dataset_image_prep_work_dir=str(work_dir),
+            dataset_image_prep_min_free_bytes=0,
+            dataset_image_registries="docker.io",
+            dataset_image_tarball_prefix="dataset-images/",
+            # The public endpoint is unreachable; only the internal one works,
+            # proving the worker did not fall back silently.
+            s3_endpoint="http://127.0.0.1:1",
+            s3_internal_endpoint=stub.endpoint,
+            s3_bucket=stub.bucket,
+            s3_access_key="ak",
+            s3_secret_key="sk",
+            s3_addressing_style="path",
+        )
+        _queue(session, settings)
+
+        outcome = prepare_one(session, settings, docker=FakeDocker())
+
+        key = artifacts.object_key_for_image(IMAGE, settings)
+        assert outcome.status == "ready"
+        assert outcome.endpoint == stub.endpoint
+        assert stub.known[f"/{stub.bucket}/{key}"] == len(PAYLOAD)
+
+
+def test_prepare_one_falls_back_to_the_public_endpoint(session: Session, tmp_path: Path) -> None:
+    work_dir = tmp_path / "work"
+    with StubObjectStore() as stub:
+        settings = Settings(
+            dataset_image_prep_work_dir=str(work_dir),
+            dataset_image_prep_min_free_bytes=0,
+            dataset_image_registries="docker.io",
+            dataset_image_tarball_prefix="dataset-images/",
+            s3_endpoint=stub.endpoint,
+            s3_internal_endpoint="http://127.0.0.1:1",
+            s3_bucket=stub.bucket,
+            s3_access_key="ak",
+            s3_secret_key="sk",
+            s3_addressing_style="path",
+        )
+        _queue(session, settings)
+
+        outcome = prepare_one(session, settings, docker=FakeDocker())
+
+        assert outcome.status == "ready"
+        assert outcome.endpoint == stub.endpoint
+
+
 # ---------------------------------------------------------------------------
 # Failure paths and cleanup
 # ---------------------------------------------------------------------------
@@ -527,6 +577,8 @@ def test_startup_sweep_cleans_an_interrupted_preparing_row_and_fresh_tarball(
     _queue(session, settings, status="preparing")
     row = _row(session)
     row.next_attempt_at = datetime.now(UTC) - timedelta(minutes=5)
+    row.claimed_at = datetime.now(UTC) - timedelta(minutes=5)
+    row.lease_owner = "old-host:1"
     row.local_cleanup = "pending"
     session.commit()
     # Interrupted pulls leave a fresh tar behind; startup must not wait for the
@@ -544,9 +596,12 @@ def test_startup_sweep_cleans_an_interrupted_preparing_row_and_fresh_tarball(
     assert IMAGE in docker.remove_calls
     assert row.status == "preparing"
     assert row.local_cleanup == "done"
-    # The row is immediately re-claimable by the worker.
+    # The row is immediately re-claimable by the worker, and the dead process
+    # no longer owns it.
     assert _utc(row.next_attempt_at) is not None
     assert abs((_utc(row.next_attempt_at) - now).total_seconds()) < 1
+    assert row.claimed_at is None
+    assert row.lease_owner is None
 
 
 def test_startup_sweep_reclaims_an_active_lease_but_periodic_does_not(
@@ -654,6 +709,35 @@ def test_heartbeat_thread_keeps_writing_until_stopped(
 
     assert calls and calls[0] == path
     assert not thread.is_alive()
+
+
+def test_write_db_heartbeat_uses_a_session_and_never_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[object] = []
+
+    class DummySession:
+        def __enter__(self) -> object:
+            return "session"
+
+        def __exit__(self, *_args) -> bool:
+            return False
+
+    monkeypatch.setattr(worker, "SessionLocal", lambda: DummySession())
+    monkeypatch.setattr(
+        worker,
+        "record_image_prep_heartbeat",
+        lambda session: calls.append(session),
+    )
+    worker.write_db_heartbeat()
+    assert calls == ["session"]
+
+    def fail(_session: object) -> None:
+        raise RuntimeError("database down")
+
+    monkeypatch.setattr(worker, "record_image_prep_heartbeat", fail)
+    worker.write_db_heartbeat()
+    assert calls == ["session"]
 
 
 def test_disabled_worker_writes_heartbeat_and_idles_until_stopped(

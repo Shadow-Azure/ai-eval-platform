@@ -152,6 +152,43 @@ class ImageNotReady(PreparationError):
         )
 
 
+class ImagePrepUnavailable(PreparationError):
+    """M8 (#436): images are missing and the image-prep worker is not running.
+
+    Returning an endless ``image_not_ready`` 409 was the reported failure mode:
+    the queue had no consumer, so callers kept relaunching the template. A 503
+    with the readiness snapshot and heartbeat age names the real prerequisite.
+    """
+
+    status = 503
+    code = "image_prep_unavailable"
+
+    def __init__(self, images: list[dict], readiness: dict) -> None:
+        total = int(readiness.get("total") or 0)
+        ready_count = int(readiness.get("ready_count") or 0)
+        pending_count = total - ready_count
+        details = {
+            "images": images,
+            "image_readiness": readiness,
+            "truncated": pending_count > len(images),
+            "total": total,
+            "pending_count": pending_count,
+            "counts": {
+                "ready": ready_count,
+                "preparing": int(readiness.get("preparing_count") or 0),
+                "failed": int(readiness.get("failed_count") or 0),
+                "missing": int(readiness.get("missing_count") or 0),
+            },
+            "worker": readiness.get("worker"),
+        }
+        worker = readiness.get("worker") or {}
+        reason = worker.get("message") or "镜像准备服务未运行"
+        super().__init__(
+            f"{reason}；请检查 image-prep 服务是否启动后重试",
+            details={key: value for key, value in details.items() if value is not None},
+        )
+
+
 def _now(now: datetime | None) -> datetime:
     return now or datetime.now(UTC)
 
@@ -1040,6 +1077,9 @@ def consume_preparation(
     # artifacts are enqueued for the prepare worker, then the launch is
     # rejected with the per-image state. The enqueue must survive the 409 so
     # the worker can actually fill the gaps.
+    # M8 (#436): if the worker heartbeat is stale, the queue has no consumer.
+    # Return a distinct 503 naming that prerequisite instead of an endless
+    # "preparing" 409 that invites repeated launches.
     image_readiness = image_artifacts.ensure_preparation_images(
         session, preparation, settings, enqueue=True
     )
@@ -1048,6 +1088,9 @@ def consume_preparation(
         pending = [
             item for item in image_readiness["images"] if item["status"] != "ready"
         ]
+        worker = image_readiness.get("worker") or {}
+        if not worker.get("online"):
+            raise ImagePrepUnavailable(pending, image_readiness)
         raise ImageNotReady(pending, image_readiness)
 
     resolved = snapshot.get("resolved") or {}

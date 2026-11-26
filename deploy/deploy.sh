@@ -108,6 +108,46 @@ if ! wait_ready 30; then
 fi
 stage_finish success "/readyz 通过"
 
+# M8 (#436): the image-prep worker is the only consumer of the dataset image
+# queue. Start it when the required data disk qualifies, and update it on deploy
+# only when no image is actively claimed: recreating the container mid-pull
+# would restart the queue from zero. A missing disk, too little free space or an
+# undecidable active-claim query stays a skipped stage (the launch gate reports
+# the offline worker explicitly) instead of failing the whole deployment.
+stage_begin image_prep_residency
+prep_data_dir="$(sed -n 's/^DATASET_IMAGE_PREP_DATA_DIR=//p' "$ENV_FILE" 2>/dev/null | tail -1)"
+prep_data_dir="${prep_data_dir:-/data/ai-eval-image-prep}"
+prep_min_free="$(sed -n 's/^DATASET_IMAGE_PREP_MIN_FREE_BYTES=//p' "$ENV_FILE" 2>/dev/null | tail -1)"
+prep_min_free="${prep_min_free:-8589934592}"
+prep_parent="$(dirname "$prep_data_dir")"
+prep_available="$(df -B1 --output=avail "$prep_parent" 2>/dev/null | tail -1 | tr -d ' ' || true)"
+prep_running=0
+if "${COMPOSE[@]}" --profile image-prep ps --status running --services image-prep 2>/dev/null | grep -qx 'image-prep'; then
+  prep_running=1
+fi
+prep_active=""
+if [ "$prep_running" = "1" ] && [ -d "$prep_parent" ]; then
+  prep_user="$(sed -n 's/^POSTGRES_USER=//p' "$ENV_FILE" 2>/dev/null | tail -1)"
+  prep_db="$(sed -n 's/^POSTGRES_DB=//p' "$ENV_FILE" 2>/dev/null | tail -1)"
+  prep_active="$("${COMPOSE[@]}" exec -T postgres psql -U "${prep_user:-eval}" -d "${prep_db:-eval}" -tAc "SELECT count(*) FROM dataset_image_artifact WHERE status='preparing' AND claimed_at IS NOT NULL AND next_attempt_at IS NOT NULL AND next_attempt_at > now()" 2>/dev/null | tr -d '[:space:]' || true)"
+  case "$prep_active" in
+    ''|*[!0-9]*) prep_active="" ;;
+  esac
+fi
+if [ -d "$prep_parent" ] && [ -n "$prep_available" ] && [ "$prep_available" -ge "$prep_min_free" ]; then
+  if [ "$prep_running" = "1" ] && [ -z "$prep_active" ]; then
+    stage_finish skipped "无法确认是否有进行中的镜像准备；保持现有 image-prep 不重建"
+  elif [ "${prep_active:-0}" -gt 0 ]; then
+    stage_finish skipped "${prep_active} 个镜像正在准备；保持现有 image-prep，下次部署再更新"
+  elif "${COMPOSE[@]}" --profile image-prep up -d image-prep-dind image-prep; then
+    stage_finish success "已启动/更新 image-prep（数据盘 ${prep_parent}，可用 ${prep_available} 字节）"
+  else
+    stage_finish failed "image-prep 启动失败；部署保持成功，请检查数据盘与 dind 日志"
+  fi
+else
+  stage_finish skipped "数据盘 ${prep_parent} 不存在或可用空间低于 ${prep_min_free} 字节；未启动 image-prep"
+fi
+
 # M8-23: bound the local image cache only after the new stack is healthy. The
 # cleanup keeps the running images, the rollback digest and the newest N
 # versions, and is called in a condition so its best-effort failures never

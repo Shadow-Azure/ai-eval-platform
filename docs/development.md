@@ -45,7 +45,7 @@ bash scripts/publish-dataset-image.sh swebench/sweb.eval.x86_64.astropy_1776_ast
 
 ## 数据集镜像自动准备 Worker
 
-镜像 tar 缺失由后台准备 Worker 自动补齐；它使用独立 Docker-in-Docker，不挂宿主 Docker socket，且默认不随普通部署启动。先在部署机挂载数据盘（示例为 `/data`），确认可用空间不低于 `DATASET_IMAGE_PREP_MIN_FREE_BYTES`（默认 8GiB），再显式启用 compose profile：
+镜像 tar 缺失由后台准备 Worker 自动补齐；它使用独立 Docker-in-Docker，不挂宿主 Docker socket。部署脚本在数据盘父目录存在且可用空间不低于 `DATASET_IMAGE_PREP_MIN_FREE_BYTES` 时自动启动或更新 `image-prep` profile，有镜像正在领取处理时跳过本次更新，避免普通部署中断拉取或上传。首次部署或手工排查仍可显式启动：
 
 ```sh
 sudo mkdir -p /data/ai-eval-image-prep/docker /data/ai-eval-image-prep/work
@@ -53,7 +53,7 @@ docker compose --env-file .env -f deploy/docker-compose.prod.yml \
   --profile image-prep up -d image-prep-dind image-prep
 ```
 
-`DATASET_IMAGE_PREP_DATA_DIR` 可覆盖数据盘根目录（默认 `/data/ai-eval-image-prep`）；`IMAGE_PREP_DIND_IMAGE` 可覆盖 DinD 镜像（默认使用 DaoCloud 公共镜像，避免宿主直连 Docker Hub）；`DATASET_IMAGE_PREP_PLATFORM` 默认 `linux/amd64`，`DATASET_IMAGE_PREP_MAX_ATTEMPTS` 默认 3。数据盘空间低于门槛时 Worker 不执行 pull，直接把该镜像标记为 `failed` 并给出扩容提示。
+`DATASET_IMAGE_PREP_DATA_DIR` 可覆盖数据盘根目录（默认 `/data/ai-eval-image-prep`）；`IMAGE_PREP_DIND_IMAGE` 可覆盖 DinD 镜像（默认 DaoCloud 公共镜像）；`DATASET_IMAGE_PREP_PLATFORM` 默认 `linux/amd64`，`DATASET_IMAGE_PREP_MAX_ATTEMPTS` 默认 3，`DATASET_IMAGE_PREP_HEARTBEAT_TIMEOUT_SECONDS` 默认 120。空间低于门槛时 Worker 不 pull，直接把镜像标记为 `failed` 并提示扩容。上传默认走内网 OSS endpoint，非阿里云或跨 region 时回退公网 endpoint。
 
 检查状态与残留：
 
@@ -63,7 +63,7 @@ docker compose --env-file .env -f deploy/docker-compose.prod.yml --profile image
 docker compose --env-file .env -f deploy/docker-compose.prod.yml --profile image-prep exec image-prep sh -c 'ls -l /work'
 ```
 
-每次上传通过 HEAD 校验后，`docker images` 不应再出现该镜像，`/work` 中也不应留下 `dataset-image-*.tar.gz`；进程启动会清理上次中断的本地镜像和全部临时 tar，之后每 10 分钟扫描只清理超过 1 小时的临时 tar。停止准备服务使用同一 profile 的 `down`，不要删除数据盘目录。由于 deploy/rollback 不再传 `--remove-orphans`，移除或重命名 compose 服务后需要手动清理旧容器（例如 `docker compose ... rm -f <service>`）；`image-prep` profile 会被有意保留。
+每次上传通过 HEAD 校验后，`docker images` 不应再出现该镜像，`/work` 中也不应留下 `dataset-image-*.tar.gz`；进程启动会清理上次中断的本地镜像和全部临时 tar，之后每 10 分钟扫描只清理超过 1 小时的临时 tar。Worker 每 30 秒把心跳和队列深度写入 `service_heartbeat`；`GET /api/v1/dataset-images/artifacts` 只读并返回 `worker` 心跳与 `queued` / `processing` 计数，worker 心跳失效时 launch 返回 `503 image_prep_unavailable` 而非无限 `preparing`；ensure 在 worker 离线时回收的逾期排队行保持 failed，直到显式 retry。停止准备服务使用同一 profile 的 `down`，不要删除数据盘目录。由于 deploy/rollback 不再传 `--remove-orphans`，移除或重命名 compose 服务后需要手动清理旧容器（例如 `docker compose ... rm -f <service>`）；`image-prep` profile 会被有意保留。
 
 ## 修改文档
 

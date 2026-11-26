@@ -27,9 +27,11 @@ from ..services.dataset_image_prep import (
     prepare_one,
     sweep,
 )
+from ..services.image_prep_health import record_image_prep_heartbeat
 
 SWEEP_INTERVAL_SECONDS = 600.0
 HEARTBEAT_INTERVAL_SECONDS = 10.0
+DB_HEARTBEAT_INTERVAL_SECONDS = 30.0
 
 _STOP = False
 
@@ -73,6 +75,42 @@ def start_heartbeat(
         args=(path, stop),
         kwargs={"interval": interval},
         name="image-prep-heartbeat",
+        daemon=True,
+    )
+    thread.start()
+    return thread, stop
+
+
+def write_db_heartbeat() -> None:
+    """Best-effort DB liveness row; the API/launch gate reads this instead of
+    the container-local healthcheck file. A failure is logged, never fatal."""
+
+    try:
+        with SessionLocal() as session:
+            record_image_prep_heartbeat(session)
+    except Exception as exc:  # pragma: no cover - retried every interval
+        print(f"image-prep: db heartbeat failed: {exc}", flush=True)
+
+
+def db_heartbeat_loop(
+    stop: threading.Event,
+    *,
+    interval: float = DB_HEARTBEAT_INTERVAL_SECONDS,
+) -> None:
+    while not stop.wait(interval):
+        write_db_heartbeat()
+
+
+def start_db_heartbeat(
+    *,
+    interval: float = DB_HEARTBEAT_INTERVAL_SECONDS,
+) -> tuple[threading.Thread, threading.Event]:
+    stop = threading.Event()
+    thread = threading.Thread(
+        target=db_heartbeat_loop,
+        args=(stop,),
+        kwargs={"interval": interval},
+        name="image-prep-db-heartbeat",
         daemon=True,
     )
     thread.start()
@@ -127,6 +165,10 @@ def main() -> int:
     docker = DockerCliImagePreparer(settings)
 
     heartbeat_thread, heartbeat_stop = start_heartbeat(heartbeat)
+    db_heartbeat_thread, db_heartbeat_stop = start_db_heartbeat()
+    # Make the worker visible to the launch gate immediately, before the first
+    # (potentially multi-minute) pull starts.
+    write_db_heartbeat()
     try:
         # Clear whatever a previous process left before claiming new work. The
         # startup sweep also reclaims preparing rows whose worker was killed.
@@ -142,6 +184,7 @@ def main() -> int:
                         "image-prep: prepare "
                         f"image={outcome.image} status={outcome.status} "
                         f"source={outcome.source} size={outcome.size_bytes} "
+                        f"endpoint={outcome.endpoint} "
                         f"cleanup={outcome.local_cleanup} "
                         f"error={(outcome.error or '')[:200]}",
                         flush=True,
@@ -158,6 +201,8 @@ def main() -> int:
         heartbeat_stop.set()
         heartbeat_thread.join(timeout=max(1.0, poll_seconds + 1.0))
         write_heartbeat(heartbeat)
+        db_heartbeat_stop.set()
+        db_heartbeat_thread.join(timeout=5.0)
     return 0
 
 

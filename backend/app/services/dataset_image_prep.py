@@ -212,6 +212,7 @@ class PrepareOutcome:
     local_cleanup: str | None = None
     cleanup_error: str | None = None
     error: str | None = None
+    endpoint: str | None = None
 
 
 @dataclass
@@ -235,6 +236,35 @@ def temp_tarball_path(work_dir: str | os.PathLike[str], image: str) -> Path:
     """Deterministic temporary tarball path under the worker work dir."""
 
     return Path(work_dir) / f"dataset-image-{_image_digest(image)}.tar.gz"
+
+
+def _select_store(settings: Settings, object_key: str):
+    """Pick the internal OSS endpoint, falling back to public when unreachable.
+
+    The worker uploads with the same internal endpoint as
+    ``python -m app.manage dataset-image`` / ``publish-dataset-image.sh``. A
+    deployment without an Aliyun internal host (MinIO, another S3 vendor, or a
+    cross-region bucket whose internal host is unreachable) falls back to the
+    configured public endpoint. The HEAD probe is cheap and happens before any
+    pull, so a broken internal route cannot waste a multi-GB download.
+    """
+
+    internal = object_store_from_settings(settings, internal=True)
+    if internal is None:
+        return None, None
+    public = object_store_from_settings(settings)
+    candidates = [internal]
+    if public is not None and public.endpoint != internal.endpoint:
+        candidates.append(public)
+    errors: list[str] = []
+    for candidate in candidates:
+        try:
+            return candidate, candidate.head_object(object_key)
+        except ObjectMissing:
+            return candidate, None
+        except ObjectStoreError as exc:
+            errors.append(f"{candidate.endpoint}: {exc}")
+    raise PrepareError(f"检查 OSS 对象 {object_key} 失败：" + "；".join(errors))
 
 
 def _retry_at(attempts: int, max_attempts: int, now: datetime) -> datetime | None:
@@ -310,7 +340,6 @@ def prepare_one(
 
     settings = settings or get_settings()
     docker = docker or DockerCliImagePreparer(settings)
-    store = store if store is not None else object_store_from_settings(settings)
     # Automatic retry: due failed rows become preparing again, then the normal
     # lease claim below serializes them. The update is one statement, so
     # concurrent workers cannot double-enqueue a row.
@@ -338,15 +367,19 @@ def prepare_one(
 
     try:
         if store is None:
+            store, existing_size = _select_store(settings, object_key)
+        else:
+            try:
+                existing_size = store.head_object(object_key)
+            except ObjectMissing:
+                existing_size = None
+            except ObjectStoreError as exc:
+                raise PrepareError(f"检查 OSS 对象 {object_key} 失败：{exc}") from exc
+        if store is None:
             raise PrepareError(
                 "未配置对象存储（S3_ENDPOINT/S3_ACCESS_KEY/S3_SECRET_KEY），无法上传镜像 tar"
             )
-        try:
-            existing_size = store.head_object(object_key)
-        except ObjectMissing:
-            existing_size = None
-        except ObjectStoreError as exc:
-            raise PrepareError(f"检查 OSS 对象 {object_key} 失败：{exc}") from exc
+        outcome.endpoint = getattr(store, "endpoint", None)
 
         candidates = candidate_ref_pairs(image, effective_sources(session, settings))
         # ``effective_sources`` opens a read transaction; release it before the
@@ -541,6 +574,8 @@ def sweep(
                 # not move it.
                 if startup:
                     row.next_attempt_at = now
+                    row.claimed_at = None
+                    row.lease_owner = None
             session.commit()
 
     work_dir = Path(settings.dataset_image_prep_work_dir)

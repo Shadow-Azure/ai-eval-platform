@@ -5,9 +5,9 @@ backend to enqueue missing images; administrators can retry failed ones.
 Responses are JSON-safe (no OSS credentials or signed URLs); the worker plane
 owns the Docker/OSS write path. Each image row carries ``next_attempt_at`` so the
 wizard knows whether a visible failure is still inside the worker's automatic
-retry window or terminal. Both read endpoints first reap stale ``preparing``
-rows, so an unstarted ``image-prep`` profile surfaces as a concrete failure
-instead of an endless spinner.
+retry window or terminal, plus the #436 queued/processing split and the worker
+heartbeat. GET is read-only; only the explicit ensure POST reaps a stale queue,
+so polling cannot write.
 """
 
 from __future__ import annotations
@@ -98,11 +98,9 @@ def get_dataset_image_artifacts(
     context: identity.AuthContext = Depends(require_session),
 ) -> dict:
     preparation = _load_preparation(session, preparation_id, context)
-    reaped = artifact_service.reap_stale_preparing(session, settings)
-    result = _readiness(session, preparation, settings)
-    if reaped:
-        session.commit()
-    return result
+    # Read-only by design (#436): an unstarted worker is reported via the
+    # ``worker`` block, not by writing a failed status on every 3s poll.
+    return _readiness(session, preparation, settings)
 
 
 @router.post("/api/v1/dataset-images/artifacts/ensure")
