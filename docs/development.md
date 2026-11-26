@@ -53,7 +53,7 @@ docker compose --env-file .env -f deploy/docker-compose.prod.yml \
   --profile image-prep up -d image-prep-dind image-prep
 ```
 
-`DATASET_IMAGE_PREP_DATA_DIR` 可覆盖数据盘根目录（默认 `/data/ai-eval-image-prep`）；`IMAGE_PREP_DIND_IMAGE` 可覆盖 DinD 镜像（默认 DaoCloud 公共镜像）；`DATASET_IMAGE_PREP_PLATFORM` 默认 `linux/amd64`，`DATASET_IMAGE_PREP_MAX_ATTEMPTS` 默认 3，`DATASET_IMAGE_PREP_HEARTBEAT_TIMEOUT_SECONDS` 默认 120。空间低于门槛时 Worker 不 pull，直接把镜像标记为 `failed` 并提示扩容。上传默认走内网 OSS endpoint，非阿里云或跨 region 时回退公网 endpoint。
+`DATASET_IMAGE_PREP_DATA_DIR` 可覆盖数据盘根目录（默认 `/data/ai-eval-image-prep`）；`IMAGE_PREP_DIND_IMAGE` 可覆盖 DinD 镜像（默认 DaoCloud 公共镜像）；`DATASET_IMAGE_PREP_PLATFORM` 默认 `linux/amd64`，`DATASET_IMAGE_PREP_MAX_ATTEMPTS` 默认 3，`DATASET_IMAGE_PREP_HEARTBEAT_TIMEOUT_SECONDS` 默认 120。`DATASET_IMAGE_PREP_CONCURRENCY` 代码默认 1、生产 compose 默认 2；DinD `max-concurrent-downloads` 默认 8。空间低于门槛时 Worker 不 pull，直接把镜像标记为 `failed` 并提示扩容。上传默认走内网 OSS endpoint，非阿里云或跨 region 时回退公网 endpoint。
 
 检查状态与残留：
 

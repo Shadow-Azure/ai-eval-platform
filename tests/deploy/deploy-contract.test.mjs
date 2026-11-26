@@ -85,6 +85,11 @@ test("image-prep profile survives deploys and is isolated from the app network",
   assert.ok(compose.includes("image_prep_internal:"));
   assert.ok(imagePrep.includes("DOCKER_HOST: tcp://image-prep-dind:2375"));
   assert.ok(imagePrep.includes("DATASET_IMAGE_PREP_HEARTBEAT_TIMEOUT_SECONDS"));
+  // M8 (#439): pull-layer parallelism and image-level concurrency are part of
+  // the deployed image-prep contract, not only a code default.
+  assert.ok(dind.includes("--max-concurrent-downloads=${IMAGE_PREP_DIND_MAX_CONCURRENT_DOWNLOADS:-8}"));
+  assert.ok(imagePrep.includes("DATASET_IMAGE_PREP_CONCURRENCY: ${DATASET_IMAGE_PREP_CONCURRENCY:-2}"));
+  assert.ok(imagePrep.includes("DATASET_IMAGE_PREP_SOURCE_PROBE_ENABLED: ${DATASET_IMAGE_PREP_SOURCE_PROBE_ENABLED:-true}"));
 });
 
 test("deploy updates image-prep only when no preparation is actively claimed", () => {
