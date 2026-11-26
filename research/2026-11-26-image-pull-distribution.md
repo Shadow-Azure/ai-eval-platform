@@ -1,6 +1,6 @@
 # 镜像拉取与分发优化调研
 
-> 2026-11-26 · 基于当前仓库的 image-prep / runner 链路与公开资料整理
+> 2026-11-26 · 基于当前仓库的 image-prep / runner 链路与公开资料整理；本文只做调研，不改变运行时。代码基线为 main 的 d5231fe。
 
 ## 0. 结论
 
@@ -43,7 +43,7 @@ runner 拿 presign 内网 GET URL → curl .tar.gz → docker load → 校验
 
 | 阶段 | 现状 | 可能的瓶颈 |
 |---|---|---|
-| 上游 pull | 单源约 2MB/s（1Panel），失败才切换 | 镜像站限速/跨境链路；单连接；Docker 层并发默认 3 |
+| 上游 pull | 单源带宽受限（示例约 2MB/s），失败才切换 | 镜像站限速/跨境链路；单连接；Docker 层并发默认 3 |
 | save | `docker save` 全量读盘 | 大镜像 I/O + 单线程 gzip CPU |
 | upload | 内网 OSS | 通常不是瓶颈；跨 region/公网会慢 |
 | runner load | 下载 tar + `docker load` | 冷 spot 下载预算 900s；gzip 解压 CPU |
@@ -81,7 +81,7 @@ runner 拿 presign 内网 GET URL → curl .tar.gz → docker load → 校验
 
 ### P0：今天可做（不改代码/只改配置）
 
-1. **重排镜像源并实测**：在同一台 image-prep 主机上，用 3 个代表性镜像分别测 Docker Hub、1Panel、DaoCloud 等；把最快且稳定的放第一。阿里云 ECS 上评估 ACR 制品订阅/GA；注意 ACR 加速器已停止同步最新镜像，且仅阿里云 ECS 可用。
+1. **重排镜像源并实测**：在同一台 image-prep 主机上，用 3 个代表性镜像分别测 Docker Hub、1Panel、DaoCloud 等；把最快且稳定的放第一。阿里云 ECS 上评估 ACR 制品订阅/镜像同步或 GA（按产品可用性）；注意 ACR 加速器已停止同步最新镜像，且仅阿里云 ECS 可用。
 2. **提前预热**：用现有 prepare/ensure 流程先把尚缺镜像的数据集冻结并入队（哪怕暂不启动评测），按批次/优先级推进；后续再加“一键预热数据集镜像”的入口。
 3. **提高层并发**：DinD 启动参数加 `--max-concurrent-downloads=8`（默认 3），重启后测 3 个镜像；若单镜像层数少，收益有限。
 4. **加计时**：记录每个镜像的 pull 秒数/字节、save 秒数、upload 秒数、tar 大小；先确认 2MB/s 是单源限速还是主机出口上限。
