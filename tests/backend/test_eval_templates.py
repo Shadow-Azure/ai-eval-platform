@@ -34,6 +34,7 @@ from app.seed import ensure_default_scope
 from app.services import agent_assets, identity
 from app.services import eval_templates as template_service
 from app.services.git_client import GitClientError, TreeEntry
+from app.services.image_prep_health import record_image_prep_heartbeat
 from conftest import TEST_ADMIN_EMAIL, TEST_ADMIN_PASSWORD
 from fastapi.testclient import TestClient
 from object_stub import StubObjectStore
@@ -712,6 +713,16 @@ def test_launch_maps_missing_image_tarball_to_conflict(
     session.commit()
     template = create_template(client, ids, case_selection={"mode": "count", "count": 1})
 
+    offline = client.post(
+        f"/api/v1/eval-templates/{template['id']}/launch",
+        headers={"Idempotency-Key": "image-gate-offline"},
+        json={},
+    )
+    assert offline.status_code == 503, offline.text
+    assert offline.json()["detail"]["error"]["code"] == "image_prep_unavailable"
+
+    # A live worker turns the same launch into the documented 409.
+    record_image_prep_heartbeat(session)
     response = client.post(
         f"/api/v1/eval-templates/{template['id']}/launch",
         headers={"Idempotency-Key": "image-gate"},

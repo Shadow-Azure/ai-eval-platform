@@ -21,7 +21,7 @@ from app.seed import ensure_default_scope
 from app.services import dataset_image_artifacts as artifacts
 from app.services import dataset_image_prep as prep
 from app.services.dataset_image_prep import DockerCommandError, prepare_one, sweep
-from app.services.object_store import ObjectMissing
+from app.services.object_store import ObjectMissing, ObjectStoreError
 from app.worker import image_prep as worker
 from object_stub import StubObjectStore
 from sqlalchemy.orm import Session
@@ -83,9 +83,11 @@ class FakeStore:
         *,
         objects: dict[str, bytes] | None = None,
         head_size_override: int | None = None,
+        fail_put: bool = False,
     ) -> None:
         self.objects = dict(objects or {})
         self.head_size_override = head_size_override
+        self.fail_put = fail_put
         self.put_calls: list[tuple[str, int, str]] = []
 
     def head_object(self, object_key: str) -> int:
@@ -96,6 +98,8 @@ class FakeStore:
         return len(self.objects[object_key])
 
     def put_file(self, object_key, path, *, content_type="application/octet-stream", timeout=1800):
+        if self.fail_put:
+            raise ObjectStoreError("模拟上传失败")
         data = Path(path).read_bytes()
         self.objects[object_key] = data
         self.put_calls.append((object_key, len(data), content_type))
@@ -248,6 +252,56 @@ def test_prepare_one_marks_ready_without_pulling_when_the_object_exists(
     assert row.next_attempt_at is None
 
 
+def test_prepare_one_uses_the_internal_oss_endpoint(session: Session, tmp_path: Path) -> None:
+    work_dir = tmp_path / "work"
+    with StubObjectStore() as stub:
+        settings = Settings(
+            dataset_image_prep_work_dir=str(work_dir),
+            dataset_image_prep_min_free_bytes=0,
+            dataset_image_registries="docker.io",
+            dataset_image_tarball_prefix="dataset-images/",
+            # The public endpoint is unreachable; only the internal one works,
+            # proving the worker did not fall back silently.
+            s3_endpoint="http://127.0.0.1:1",
+            s3_internal_endpoint=stub.endpoint,
+            s3_bucket=stub.bucket,
+            s3_access_key="ak",
+            s3_secret_key="sk",
+            s3_addressing_style="path",
+        )
+        _queue(session, settings)
+
+        outcome = prepare_one(session, settings, docker=FakeDocker())
+
+        key = artifacts.object_key_for_image(IMAGE, settings)
+        assert outcome.status == "ready"
+        assert outcome.endpoint == stub.endpoint
+        assert stub.known[f"/{stub.bucket}/{key}"] == len(PAYLOAD)
+
+
+def test_prepare_one_falls_back_to_the_public_endpoint(session: Session, tmp_path: Path) -> None:
+    work_dir = tmp_path / "work"
+    with StubObjectStore() as stub:
+        settings = Settings(
+            dataset_image_prep_work_dir=str(work_dir),
+            dataset_image_prep_min_free_bytes=0,
+            dataset_image_registries="docker.io",
+            dataset_image_tarball_prefix="dataset-images/",
+            s3_endpoint=stub.endpoint,
+            s3_internal_endpoint="http://127.0.0.1:1",
+            s3_bucket=stub.bucket,
+            s3_access_key="ak",
+            s3_secret_key="sk",
+            s3_addressing_style="path",
+        )
+        _queue(session, settings)
+
+        outcome = prepare_one(session, settings, docker=FakeDocker())
+
+        assert outcome.status == "ready"
+        assert outcome.endpoint == stub.endpoint
+
+
 # ---------------------------------------------------------------------------
 # Failure paths and cleanup
 # ---------------------------------------------------------------------------
@@ -341,10 +395,11 @@ def test_prepare_one_stays_ready_when_only_local_cleanup_fails(
     assert IMAGE in docker.images
 
 
-def test_prepare_one_fails_when_upload_head_size_mismatches(
+def test_prepare_one_keeps_a_complete_tar_when_upload_head_size_mismatches(
     session: Session, tmp_path: Path
 ) -> None:
-    settings = _settings(tmp_path / "work", sources="docker.io")
+    work_dir = tmp_path / "work"
+    settings = _settings(work_dir, sources="docker.io")
     store = FakeStore(head_size_override=len(PAYLOAD) + 1)
     docker = FakeDocker()
     _queue(session, settings)
@@ -352,12 +407,99 @@ def test_prepare_one_fails_when_upload_head_size_mismatches(
     outcome = prepare_one(session, settings, docker=docker, store=store)
 
     row = _row(session)
+    tar_path = prep.temp_tarball_path(work_dir, IMAGE)
     assert outcome.status == "failed"
     assert "上传校验失败" in (outcome.error or "")
     assert row.status == "failed"
-    assert row.local_cleanup == "done"
-    assert store.put_calls
+    # The export is complete; keeping it lets the next attempt retry the upload
+    # without another pull. Only a partial export is discarded.
+    assert tar_path.exists()
+    assert prep.temp_tarball_marker(tar_path).exists()
+    assert row.local_cleanup == "pending"
     assert docker.images == set()
+    assert store.put_calls
+
+
+def test_prepare_one_retries_a_failed_upload_from_the_complete_tarball(
+    session: Session, tmp_path: Path
+) -> None:
+    work_dir = tmp_path / "work"
+    settings = _settings(work_dir, sources="docker.io")
+    _queue(session, settings)
+    docker = FakeDocker()
+
+    first = prepare_one(session, settings, docker=docker, store=FakeStore(fail_put=True))
+
+    tar_path = prep.temp_tarball_path(work_dir, IMAGE)
+    assert first.status == "failed"
+    assert first.reused_tarball is False
+    assert tar_path.exists()
+    assert prep.complete_tarball_size(tar_path) == len(PAYLOAD)
+    assert docker.pull_calls == [(IMAGE, "linux/amd64")]
+    assert docker.images == set()
+
+    row = _row(session)
+    row.status = "preparing"
+    row.next_attempt_at = datetime.now(UTC) - timedelta(seconds=1)
+    row.claimed_at = None
+    row.lease_owner = None
+    session.commit()
+
+    retry_docker = FakeDocker()
+    second = prepare_one(
+        session, settings, docker=retry_docker, store=FakeStore()
+    )
+
+    assert second.status == "ready"
+    assert second.reused_tarball is True
+    assert retry_docker.pull_calls == []
+    assert retry_docker.export_calls == []
+    assert not tar_path.exists()
+    assert not prep.temp_tarball_marker(tar_path).exists()
+    row = _row(session)
+    assert row.status == "ready"
+    assert row.attempts == 2
+    assert row.local_cleanup == "done"
+
+
+def test_startup_sweep_keeps_a_complete_tarball_and_drops_the_partial(
+    session: Session, tmp_path: Path
+) -> None:
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+    settings = _settings(work_dir, sources="docker.io")
+    complete = work_dir / "dataset-image-complete.tar.gz"
+    complete.write_bytes(PAYLOAD)
+    prep._mark_tarball_complete(complete, len(PAYLOAD))
+    partial = work_dir / "dataset-image-partial.tar.gz"
+    partial.write_bytes(b"partial")
+
+    result = sweep(session, settings, docker=FakeDocker(), startup=True)
+
+    assert result.tarballs_removed == 1
+    assert complete.exists()
+    assert prep.complete_tarball_size(complete) == len(PAYLOAD)
+    assert not partial.exists()
+
+
+def test_periodic_sweep_expires_an_old_complete_tarball(
+    session: Session, tmp_path: Path
+) -> None:
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+    settings = _settings(work_dir, sources="docker.io")
+    complete = work_dir / "dataset-image-old.tar.gz"
+    complete.write_bytes(PAYLOAD)
+    prep._mark_tarball_complete(complete, len(PAYLOAD))
+    old = (datetime.now(UTC) - timedelta(hours=25)).timestamp()
+    os.utime(complete, (old, old))
+    os.utime(prep.temp_tarball_marker(complete), (old, old))
+
+    result = sweep(session, settings, docker=FakeDocker())
+
+    assert result.tarballs_removed == 1
+    assert not complete.exists()
+    assert not prep.temp_tarball_marker(complete).exists()
 
 
 # ---------------------------------------------------------------------------
@@ -654,6 +796,35 @@ def test_heartbeat_thread_keeps_writing_until_stopped(
 
     assert calls and calls[0] == path
     assert not thread.is_alive()
+
+
+def test_write_db_heartbeat_uses_a_session_and_never_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[object] = []
+
+    class DummySession:
+        def __enter__(self) -> object:
+            return "session"
+
+        def __exit__(self, *_args) -> bool:
+            return False
+
+    monkeypatch.setattr(worker, "SessionLocal", lambda: DummySession())
+    monkeypatch.setattr(
+        worker,
+        "record_image_prep_heartbeat",
+        lambda session: calls.append(session),
+    )
+    worker.write_db_heartbeat()
+    assert calls == ["session"]
+
+    def fail(_session: object) -> None:
+        raise RuntimeError("database down")
+
+    monkeypatch.setattr(worker, "record_image_prep_heartbeat", fail)
+    worker.write_db_heartbeat()
+    assert calls == ["session"]
 
 
 def test_disabled_worker_writes_heartbeat_and_idles_until_stopped(

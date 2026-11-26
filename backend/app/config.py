@@ -153,6 +153,11 @@ class Settings(BaseSettings):
     dataset_image_prep_min_free_bytes: int = 8 * 1024**3
     dataset_image_prep_poll_seconds: float = 5.0
     dataset_image_prep_heartbeat_path: str = "/tmp/image-prep-heartbeat"
+    # M8 (#436): the DB heartbeat is what the API/launch gate reads. The worker
+    # writes it every 30s, so a 120s window survives a slow pull without
+    # declaring a healthy worker dead. A missing/expired row is reported as
+    # "image prep service is not running" instead of an endless preparing 409.
+    dataset_image_prep_heartbeat_timeout_seconds: int = 120
     dataset_image_prep_max_attempts: int = 3
     # A preparing row whose ``next_attempt_at`` has been due for this long was
     # enqueued while no worker was claiming rows (profile not started or the
@@ -293,6 +298,12 @@ class Settings(BaseSettings):
     # snapshot TTL to this longer value so the operator can confirm the launch
     # after the worker finishes instead of losing the snapshot mid-preparation.
     eval_preparation_image_ttl_seconds: int = 3600
+    # M8 (#436): a fixed one-hour image window is shorter than the real serial
+    # queue (10 unique 1.2GB images took ~9h on the public endpoint). Derive the
+    # window from the frozen image count with a floor and a wall-clock cap; the
+    # ensure/retry paths also renew it while the worker is still progressing.
+    eval_preparation_image_ttl_per_image_seconds: int = 600
+    eval_preparation_image_ttl_max_seconds: int = 86400
     # Execution policy bounds accepted by prepare/create. The wizard renders
     # these as field errors; the server is the authority (never a fake success).
     eval_min_case_timeout_seconds: int = 60

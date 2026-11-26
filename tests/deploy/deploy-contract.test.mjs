@@ -84,6 +84,27 @@ test("image-prep profile survives deploys and is isolated from the app network",
   assert.ok(imagePrep.includes("- image_prep_internal"));
   assert.ok(compose.includes("image_prep_internal:"));
   assert.ok(imagePrep.includes("DOCKER_HOST: tcp://image-prep-dind:2375"));
+  assert.ok(imagePrep.includes("DATASET_IMAGE_PREP_HEARTBEAT_TIMEOUT_SECONDS"));
+});
+
+test("deploy updates image-prep only when no preparation is actively claimed", () => {
+  const script = read("deploy/deploy.sh");
+  assert.ok(script.includes("stage_begin image_prep_residency"));
+  // The active-claim probe must come before the update branch: a deploy must
+  // not recreate the worker and kill an in-progress pull/upload.
+  const activeCheck = script.indexOf("claimed_at IS NOT NULL");
+  const startBranch = script.indexOf(
+    "--profile image-prep up -d image-prep-dind image-prep",
+  );
+  assert.ok(activeCheck >= 0 && startBranch > activeCheck);
+  assert.ok(script.includes("next_attempt_at > now()"));
+  assert.ok(script.includes("DATASET_IMAGE_PREP_DATA_DIR"));
+  assert.ok(script.includes("DATASET_IMAGE_PREP_MIN_FREE_BYTES"));
+  assert.ok(
+    script.indexOf("stage_begin health_check") <
+      script.indexOf("stage_begin image_prep_residency"),
+    "image-prep start should run after the API health check",
+  );
 });
 
 test("production compose swaps object storage for OSS and keeps health checks", () => {

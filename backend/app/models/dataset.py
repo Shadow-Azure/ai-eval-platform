@@ -327,6 +327,11 @@ class DatasetImageArtifact(Base, TimestampMixin):
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     # Worker lease/backoff: a claimed row is invisible until this timestamp.
     next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # M8 (#436): distinguish a queued row (never claimed, ``claimed_at`` null)
+    # from one a worker is actively processing. The lease owner makes a stuck
+    # claim diagnosable instead of an anonymous ``preparing`` row.
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    lease_owner: Mapped[str | None] = mapped_column(String(200), nullable=True)
     local_cleanup: Mapped[str] = mapped_column(
         String(16), nullable=False, default="pending", server_default="pending"
     )

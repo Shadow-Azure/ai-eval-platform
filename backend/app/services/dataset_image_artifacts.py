@@ -21,6 +21,8 @@ console can show "后台本地残留 0".
 
 from __future__ import annotations
 
+import os
+import socket
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 
@@ -33,7 +35,9 @@ from ..defaults import DEFAULT_TENANT_ID
 from ..models import Dataset, DatasetCase, DatasetImageArtifact, EvalPreparation
 from .dataset_image_tarballs import tarball_key
 from .dataset_images import DEFAULT_ARCH, image_for_case
+from .image_prep_health import image_prep_health
 from .object_store import ObjectMissing, ObjectStoreError, object_store_from_settings
+from .preparation_ttl import renew_image_preparation_if_progressing
 
 READINESS_IMAGE_LIMIT = 200
 # HEAD checks are cheap but a dataset may select hundreds of cases; keep the
@@ -209,8 +213,18 @@ def _recheck_blocked(
 
     if row.status not in ("preparing", "failed"):
         return False
-    if row.status == "failed" and (row.attempts or 0) >= max_attempts:
+    if row.status == "preparing" and row.claimed_at is not None:
+        # A claimed row belongs to the worker even if the lease clock has
+        # passed; a slow upload must not be re-HEADed or re-enqueued by a
+        # console poll. The startup sweep reclaims it after a real crash.
         return True
+    if row.status == "failed":
+        if (row.attempts or 0) >= max_attempts:
+            return True
+        next_attempt = _as_utc(row.next_attempt_at)
+        # No retry time means terminal (reaped stale row or an exhausted
+        # legacy row); only the explicit retry resets it.
+        return next_attempt is None or next_attempt > now
     next_attempt = _as_utc(row.next_attempt_at)
     return next_attempt is not None and next_attempt > now
 
@@ -225,8 +239,15 @@ def _needs_enqueue(row: DatasetImageArtifact, now: datetime, max_attempts: int) 
         if (row.attempts or 0) >= max_attempts:
             return False
         next_attempt = _as_utc(row.next_attempt_at)
-        return next_attempt is None or next_attempt <= now
+        # A failed row without a retry time is terminal until the explicit
+        # retry; this also keeps a reaped stale row failed instead of letting
+        # the next ensure re-enqueue it immediately.
+        return next_attempt is not None and next_attempt <= now
     if row.status != "preparing":
+        return False
+    if row.claimed_at is not None:
+        # Do not steal a row the worker is processing; its lease/startup sweep
+        # owns recovery from a crash.
         return False
     next_attempt = _as_utc(row.next_attempt_at)
     return next_attempt is None or next_attempt <= now
@@ -237,21 +258,27 @@ def reap_stale_preparing(
     settings: Settings | None = None,
     now: datetime | None = None,
 ) -> int:
-    """Fail ``preparing`` rows that no worker has claimed for too long.
+    """Fail queued rows only when the worker itself is not running.
 
     ``prepare`` enqueues rows with ``next_attempt_at=now`` and the worker moves
-    them forward. If the ``image-prep`` profile is not running (or the worker
-    died before its claim), the row would otherwise stay ``preparing`` forever
-    and the wizard would poll an endless spinner. After
-    ``dataset_image_prep_stale_seconds`` the row becomes ``failed`` with an
-    operator-facing reason; ``local_cleanup`` is untouched because only the
-    worker owns local Docker state. A later job starts again from the normal
-    failed-row path (automatic retry when a worker returns, or the explicit
-    console retry).
+    them forward. A long but healthy queue must not be misread as a dead one, so
+    this reaper is a no-op while ``service_heartbeat['image-prep']`` is fresh.
+    When the heartbeat is missing/expired it fails rows that were *never
+    claimed* (``claimed_at IS NULL``) and have been due for longer than
+    ``dataset_image_prep_stale_seconds``. A claimed row is left alone: the
+    worker may still be pulling it, and the startup sweep reclaims it if the
+    process really died. A reaped row has no retry time, so it stays failed
+    until the explicit retry resets attempts and requeues it.
+
+    The API no longer calls this from polling GETs; the explicit ``ensure``
+    POST invokes it so a console poll never writes.
     """
 
     settings = settings or get_settings()
     now = _now(now)
+    health = image_prep_health(session, settings, now)
+    if health["online"]:
+        return 0
     stale_seconds = max(1, int(settings.dataset_image_prep_stale_seconds))
     stale_before = now - timedelta(seconds=stale_seconds)
     result = session.execute(
@@ -259,6 +286,7 @@ def reap_stale_preparing(
         .where(
             DatasetImageArtifact.tenant_id == _tenant_id(),
             DatasetImageArtifact.status == "preparing",
+            DatasetImageArtifact.claimed_at.is_(None),
             DatasetImageArtifact.next_attempt_at.is_not(None),
             DatasetImageArtifact.next_attempt_at <= stale_before,
         )
@@ -266,6 +294,7 @@ def reap_stale_preparing(
             status="failed",
             error=STALE_PREPARING_ERROR,
             next_attempt_at=None,
+            lease_owner=None,
         )
         # Bulk update: SQLite returns naive datetimes, so never evaluate the
         # comparison in Python (same reason as the requeue bulk update).
@@ -294,7 +323,8 @@ def readiness(
     with ``next_attempt_at=now`` so the worker can claim them; it never resets
     an active lease. ``checked_at`` is the newest ``last_checked_at`` for a
     read-only snapshot and ``now`` when this call performed a recheck, so the
-    console's "last checked" is not just the poll time.
+    console's "last checked" is not just the poll time. The response also
+    carries the worker heartbeat plus the queued/processing split (#436).
     """
 
     settings = settings or get_settings()
@@ -344,6 +374,11 @@ def readiness(
             if _needs_enqueue(row, now, max_attempts):
                 row.status = "preparing"
                 row.next_attempt_at = now
+                # A re-enqueued row is waiting again; the next worker claim sets
+                # these. Keeping a stale owner would make a queued row look
+                # claimed and hide it from the offline stale reaper.
+                row.claimed_at = None
+                row.lease_owner = None
 
     if rows:
         session.flush()
@@ -351,6 +386,10 @@ def readiness(
     ordered = sorted(rows, key=lambda row: (STATUS_ORDER.get(row.status, 9), row.image_ref))
     ready_count = sum(1 for row in rows if row.status == "ready")
     preparing_count = sum(1 for row in rows if row.status == "preparing")
+    queued_count = sum(
+        1 for row in rows if row.status == "preparing" and row.claimed_at is None
+    )
+    processing_count = preparing_count - queued_count
     failed_count = sum(1 for row in rows if row.status == "failed")
     missing_count = sum(1 for row in rows if row.status == "missing")
     cleanup_failed_count = sum(1 for row in rows if row.local_cleanup == "failed")
@@ -368,14 +407,27 @@ def readiness(
         "ready": total == ready_count,
         "total": total,
         "ready_count": ready_count,
+        # ``preparing_count`` keeps its #290 meaning (all rows in the preparing
+        # state) so existing clients keep polling; the split below is the #436
+        # queued/processing distinction.
         "preparing_count": preparing_count,
+        "queued_count": queued_count,
+        "processing_count": processing_count,
         "failed_count": failed_count,
         "missing_count": missing_count,
         "cleanup_failed_count": cleanup_failed_count,
+        "worker": image_prep_health(session, settings, now),
         "images": [
             {
                 "image": row.image_ref,
                 "status": row.status,
+                "phase": (
+                    "queued"
+                    if row.status == "preparing" and row.claimed_at is None
+                    else "processing"
+                    if row.status == "preparing"
+                    else row.status
+                ),
                 "object_key": row.object_key,
                 "size_bytes": row.size_bytes,
                 "source": row.source,
@@ -387,6 +439,8 @@ def readiness(
                 # image it is the automatic retry time, so the console keeps
                 # polling instead of treating the first failure as terminal.
                 "next_attempt_at": _iso(row.next_attempt_at),
+                "claimed_at": _iso(row.claimed_at),
+                "lease_owner": row.lease_owner,
                 "prepared_at": _iso(row.prepared_at),
                 "cleanup_status": row.local_cleanup,
                 "cleanup_error": row.cleanup_error,
@@ -424,7 +478,13 @@ def ensure_preparation_images(
     refs = snapshot_image_refs(preparation)
     if refs is None:
         return None
-    return readiness(session, refs, settings, recheck=True, enqueue=enqueue)
+    settings = settings or get_settings()
+    result = readiness(session, refs, settings, recheck=True, enqueue=enqueue)
+    # M8 (#436): renew the snapshot while the worker is actually progressing.
+    # The operator polls the console repeatedly; without this, a 10-image queue
+    # can outlive the snapshot between the last prepare and the launch click.
+    renew_image_preparation_if_progressing(preparation, settings, result)
+    return result
 
 
 def retry_preparation_images(
@@ -462,8 +522,12 @@ def retry_preparation_images(
             row.next_attempt_at = now
             row.attempts = 0
             row.error = None
+            row.claimed_at = None
+            row.lease_owner = None
         session.flush()
-    return readiness(session, refs, settings, recheck=False, enqueue=False)
+    result = readiness(session, refs, settings, recheck=False, enqueue=False)
+    renew_image_preparation_if_progressing(preparation, settings, result)
+    return result
 
 
 def requeue_due_failed_artifacts(
@@ -490,12 +554,15 @@ def requeue_due_failed_artifacts(
             DatasetImageArtifact.tenant_id == _tenant_id(),
             DatasetImageArtifact.status == "failed",
             DatasetImageArtifact.attempts < max_attempts,
-            or_(
-                DatasetImageArtifact.next_attempt_at.is_(None),
-                DatasetImageArtifact.next_attempt_at <= now,
-            ),
+            DatasetImageArtifact.next_attempt_at.is_not(None),
+            DatasetImageArtifact.next_attempt_at <= now,
         )
-        .values(status="preparing", next_attempt_at=now)
+        .values(
+            status="preparing",
+            next_attempt_at=now,
+            claimed_at=None,
+            lease_owner=None,
+        )
         # Bulk update: do not let SQLAlchemy evaluate the datetime comparison in
         # Python (SQLite returns naive datetimes and would raise).
         .execution_options(synchronize_session=False)
@@ -504,17 +571,24 @@ def requeue_due_failed_artifacts(
     return int(result.rowcount or 0)
 
 
+def worker_lease_owner() -> str:
+    """Human-readable owner for a claim (host + PID, bounded for the column)."""
+
+    return f"{socket.gethostname()}:{os.getpid()}"[:200]
+
+
 def claim_preparing_artifact(
     session: Session,
     settings: Settings | None = None,
     now: datetime | None = None,
+    owner: str | None = None,
 ) -> DatasetImageArtifact | None:
-    """Claim one due ``preparing`` row for the future prepare worker.
+    """Claim one due ``preparing`` row for the prepare worker.
 
     Uses ``FOR UPDATE SKIP LOCKED`` on PostgreSQL so concurrent workers never
     claim the same image; the lease (``next_attempt_at``) makes a crashed claim
-    reclaimable and ``attempts`` carries the retry count. Docker work is not
-    implemented in this slice.
+    reclaimable and ``attempts`` carries the retry count. ``claimed_at`` and
+    ``lease_owner`` distinguish this row from one that is still queued.
     """
 
     settings = settings or get_settings()
@@ -538,5 +612,7 @@ def claim_preparing_artifact(
         return None
     row.next_attempt_at = now + timedelta(seconds=lease)
     row.attempts = (row.attempts or 0) + 1
+    row.claimed_at = now
+    row.lease_owner = (owner or worker_lease_owner())[:200]
     session.flush()
     return row

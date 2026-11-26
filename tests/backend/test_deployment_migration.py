@@ -31,9 +31,15 @@ def test_deployment_table_and_revision(database_url: str) -> None:
             "rollback_of_id",
             "detail_json",
         } <= columns
+        # M8 #436: the preparation queue distinguishes a queued row
+        # (claimed_at NULL) from an actively claimed one.
+        artifact_columns = {
+            column["name"] for column in inspector.get_columns("dataset_image_artifact")
+        }
+        assert {"claimed_at", "lease_owner"} <= artifact_columns
         with Session(engine) as session:
             revision = session.scalar(text("SELECT version_num FROM alembic_version"))
-            assert revision == "0035_service_token"
+            assert revision == "0036_image_prep_claim_lease"
     finally:
         engine.dispose()
 

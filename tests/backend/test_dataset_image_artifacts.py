@@ -21,11 +21,17 @@ from app.models import (
     DatasetVersion,
     EvalPreparation,
     EvalRun,
+    ServiceHeartbeat,
 )
 from app.seed import ensure_default_scope
 from app.services import dataset_image_artifacts as artifacts
 from app.services.dataset_image_tarballs import tarball_key
+from app.services.image_prep_health import (
+    image_prep_health,
+    record_image_prep_heartbeat,
+)
 from app.services.object_store import ObjectStoreError
+from app.services.preparation_ttl import image_preparation_ttl_seconds
 from conftest import TEST_VIEWER_EMAIL, TEST_VIEWER_PASSWORD
 from fastapi.testclient import TestClient
 from object_stub import StubObjectStore
@@ -487,6 +493,20 @@ def test_failed_backoff_gates_requeue_and_stops_after_the_attempt_cap(
     assert exhausted["failed_count"] == 1
     assert _artifact(session, IMAGE_A).status == "failed"
 
+    # A reaped stale row can be below the attempt cap but has no retry time;
+    # it is terminal until the explicit retry, so ensure cannot revive it.
+    row = _artifact(session, IMAGE_A)
+    row.status = "failed"
+    row.attempts = 0
+    row.next_attempt_at = None
+    row.error = artifacts.STALE_PREPARING_ERROR
+    session.commit()
+    assert artifacts.requeue_due_failed_artifacts(session, settings) == 0
+    reaped = artifacts.readiness(session, [IMAGE_A], settings, enqueue=True)
+    session.commit()
+    assert reaped["failed_count"] == 1
+    assert _artifact(session, IMAGE_A).status == "failed"
+
 
 def test_recheck_keeps_a_maxed_failed_row_terminal(
     session: Session, configure_settings
@@ -744,6 +764,9 @@ def test_create_blocks_with_409_until_the_tar_is_ready(
         assert prepared["image_readiness"]["ready"] is False
         preparation_id = prepared["preparation_id"]
         headers = {"Idempotency-Key": "idem-image-not-ready"}
+        # A live worker makes this a normal "not ready yet" 409; the offline
+        # case is a distinct 503 covered below.
+        record_image_prep_heartbeat(session)
 
         blocked = client.post(
             "/api/v1/evaluations",
@@ -860,7 +883,7 @@ def test_artifact_endpoints_report_and_retry(
     assert row.error is None
 
 
-def test_artifact_endpoints_reap_a_stale_preparing_row(
+def test_artifact_get_is_read_only_and_ensure_reaps_only_when_worker_offline(
     client: TestClient, session: Session
 ) -> None:
     ids = seed_launch(session)
@@ -872,39 +895,68 @@ def test_artifact_endpoints_reap_a_stale_preparing_row(
     row.next_attempt_at = datetime.now(UTC) - timedelta(hours=2)
     session.commit()
 
+    # GET is a read: an offline worker is reported, the row is not failed.
     fetched = client.get(
         "/api/v1/dataset-images/artifacts",
         params={"preparation_id": preparation_id},
     )
     assert fetched.status_code == 200, fetched.text
     body = fetched.json()
-    assert body["preparing_count"] == 0
-    assert body["failed_count"] == 1
-    assert body["images"][0]["status"] == "failed"
-    assert body["images"][0]["error"] == artifacts.STALE_PREPARING_ERROR
-    assert body["images"][0]["next_attempt_at"] is None
-    # The GET persists the transition, so the next poll shows the same state.
-    assert _artifact(session, IMAGE_A).status == "failed"
+    assert body["preparing_count"] == 1
+    assert body["queued_count"] == 1
+    assert body["processing_count"] == 0
+    assert body["worker"]["online"] is False
+    assert body["images"][0]["phase"] == "queued"
+    assert _artifact(session, IMAGE_A).status == "preparing"
 
-    # Ensure runs the same reaper before readiness. A maxed row stays failed
-    # even though ensure would normally enqueue a non-ready image.
-    row = _artifact(session, IMAGE_A)
-    row.status = "preparing"
-    row.attempts = get_settings().dataset_image_prep_max_attempts
-    row.error = None
-    row.next_attempt_at = datetime.now(UTC) - timedelta(hours=2)
-    session.commit()
-
+    # A fresh heartbeat makes a long queue legitimate: ensure must not reap it.
+    record_image_prep_heartbeat(session)
     ensured = client.post(
         "/api/v1/dataset-images/artifacts/ensure",
         json={"preparation_id": preparation_id},
     )
     assert ensured.status_code == 200, ensured.text
-    ensured_body = ensured.json()
-    assert ensured_body["failed_count"] == 1
-    assert ensured_body["preparing_count"] == 0
-    assert ensured_body["images"][0]["status"] == "failed"
-    assert ensured_body["images"][0]["error"] == artifacts.STALE_PREPARING_ERROR
+    assert ensured.json()["preparing_count"] == 1
+    assert _artifact(session, IMAGE_A).status == "preparing"
+
+    # The worker disappears and the never-claimed row is overdue: ensure
+    # persists the visible failure. A claimed row is left for the startup sweep.
+    heartbeat = session.get(ServiceHeartbeat, "image-prep")
+    assert heartbeat is not None
+    session.delete(heartbeat)
+    session.commit()
+    row = _artifact(session, IMAGE_A)
+    row.next_attempt_at = datetime.now(UTC) - timedelta(hours=2)
+    row.claimed_at = datetime.now(UTC)
+    row.lease_owner = "host:123"
+    session.commit()
+
+    still_claimed = client.post(
+        "/api/v1/dataset-images/artifacts/ensure",
+        json={"preparation_id": preparation_id},
+    )
+    assert still_claimed.status_code == 200, still_claimed.text
+    assert still_claimed.json()["preparing_count"] == 1
+    assert _artifact(session, IMAGE_A).status == "preparing"
+
+    row = _artifact(session, IMAGE_A)
+    row.claimed_at = None
+    row.lease_owner = None
+    row.attempts = 0
+    row.next_attempt_at = datetime.now(UTC) - timedelta(hours=2)
+    session.commit()
+    reaped = client.post(
+        "/api/v1/dataset-images/artifacts/ensure",
+        json={"preparation_id": preparation_id},
+    )
+    assert reaped.status_code == 200, reaped.text
+    reaped_body = reaped.json()
+    assert reaped_body["failed_count"] == 1
+    assert reaped_body["preparing_count"] == 0
+    assert reaped_body["images"][0]["status"] == "failed"
+    assert reaped_body["images"][0]["error"] == artifacts.STALE_PREPARING_ERROR
+    assert reaped_body["images"][0]["next_attempt_at"] is None
+    assert _artifact(session, IMAGE_A).status == "failed"
 
 
 def test_artifact_retry_is_admin_only(client: TestClient, session: Session) -> None:
@@ -1003,3 +1055,209 @@ def test_artifact_endpoints_unknown_preparation_is_404(
     )
     assert response.status_code == 404
     assert response.json()["detail"]["error"]["code"] == "preparation_not_found"
+
+
+# ---------------------------------------------------------------------------
+# #436: queue/claimed split, heartbeat, TTL and service tokens
+# ---------------------------------------------------------------------------
+
+
+def test_readiness_distinguishes_queued_from_claimed(session: Session) -> None:
+    settings = _settings()
+    ensure_default_scope(session)
+    row = artifacts.get_or_create_artifact(session, IMAGE_A, settings)
+    row.status = "preparing"
+    row.next_attempt_at = datetime.now(UTC) - timedelta(seconds=1)
+    row.claimed_at = None
+    row.lease_owner = None
+    session.commit()
+
+    queued = artifacts.readiness(session, [IMAGE_A], settings)
+    assert queued["preparing_count"] == 1
+    assert queued["queued_count"] == 1
+    assert queued["processing_count"] == 0
+    assert queued["images"][0]["phase"] == "queued"
+    assert queued["images"][0]["claimed_at"] is None
+
+    claimed = artifacts.claim_preparing_artifact(session, settings)
+    assert claimed is not None
+    assert claimed.claimed_at is not None
+    assert claimed.lease_owner
+
+    processing = artifacts.readiness(session, [IMAGE_A], settings)
+    assert processing["preparing_count"] == 1
+    assert processing["queued_count"] == 0
+    assert processing["processing_count"] == 1
+    assert processing["images"][0]["phase"] == "processing"
+    assert processing["images"][0]["claimed_at"] is not None
+    assert processing["images"][0]["lease_owner"] == claimed.lease_owner
+
+
+def test_image_prep_heartbeat_reports_online_then_expires(session: Session) -> None:
+    settings = _settings(dataset_image_prep_heartbeat_timeout_seconds=60)
+    now = datetime.now(UTC)
+    record_image_prep_heartbeat(session, now=now)
+
+    fresh = image_prep_health(session, settings, now)
+    assert fresh["online"] is True
+    assert fresh["age_seconds"] == 0
+    assert fresh["queue_head_wait_seconds"] == 0
+
+    expired = image_prep_health(session, settings, now + timedelta(seconds=120))
+    assert expired["online"] is False
+    assert "过期" in expired["message"]
+    assert expired["age_seconds"] == 120
+
+
+def test_image_preparation_ttl_scales_with_the_queue() -> None:
+    settings = _settings(
+        eval_preparation_image_ttl_seconds=3600,
+        eval_preparation_image_ttl_per_image_seconds=600,
+        eval_preparation_image_ttl_max_seconds=86400,
+    )
+    assert image_preparation_ttl_seconds(settings, 1) == 3600
+    assert image_preparation_ttl_seconds(settings, 10) == 6000
+    assert image_preparation_ttl_seconds(settings, 200) == 86400
+
+
+def test_create_returns_503_when_the_image_prep_worker_is_offline(
+    client: TestClient, session: Session
+) -> None:
+    ids = seed_launch(session)
+    _set_first_case_image(session, ids["dataset_version_id"], IMAGE_A)
+    prepared = client.post("/api/v1/evaluations/prepare", json=prepare_body(ids)).json()
+    assert prepared["image_readiness"]["ready"] is False
+    preparation_id = prepared["preparation_id"]
+
+    offline = client.post(
+        "/api/v1/evaluations",
+        json={"preparation_id": preparation_id},
+        headers={"Idempotency-Key": "idem-image-prep-offline"},
+    )
+    assert offline.status_code == 503, offline.text
+    error = offline.json()["detail"]["error"]
+    assert error["code"] == "image_prep_unavailable"
+    assert "image-prep" in error["message"]
+    assert error["details"]["readiness_url"].endswith(preparation_id)
+    assert error["details"]["retry_after_seconds"] == 15
+    assert error["details"]["worker"]["online"] is False
+    assert session.scalar(select(func.count()).select_from(EvalRun)) == 0
+
+    # Once the worker reports a heartbeat the same launch is a normal 409.
+    record_image_prep_heartbeat(session)
+    blocked = client.post(
+        "/api/v1/evaluations",
+        json={"preparation_id": preparation_id},
+        headers={"Idempotency-Key": "idem-image-prep-online"},
+    )
+    assert blocked.status_code == 409, blocked.text
+    assert blocked.json()["detail"]["error"]["code"] == "image_not_ready"
+
+
+def test_ensure_renews_the_preparation_ttl_while_the_worker_progresses(
+    client: TestClient, session: Session
+) -> None:
+    ids = seed_launch(session)
+    _set_first_case_image(session, ids["dataset_version_id"], IMAGE_A)
+    prepared = client.post("/api/v1/evaluations/prepare", json=prepare_body(ids)).json()
+    preparation_id = prepared["preparation_id"]
+    preparation = session.get(EvalPreparation, preparation_id)
+    assert preparation is not None
+    preparation.expires_at = datetime.now(UTC) + timedelta(seconds=60)
+    session.commit()
+    record_image_prep_heartbeat(session)
+
+    ensured = client.post(
+        "/api/v1/dataset-images/artifacts/ensure",
+        json={"preparation_id": preparation_id, "recheck": False},
+    )
+    assert ensured.status_code == 200, ensured.text
+    body = ensured.json()
+    assert body["ready"] is False
+    assert body["worker"]["online"] is True
+    expires = datetime.fromisoformat(body["expires_at"].replace("Z", "+00:00"))
+    assert expires > datetime.now(UTC) + timedelta(seconds=3000)
+    preparation = session.get(EvalPreparation, preparation_id)
+    assert preparation is not None
+    assert _utc(preparation.expires_at) > datetime.now(UTC) + timedelta(seconds=3000)
+
+
+def _create_service_token(
+    client: TestClient,
+    *,
+    scopes: list[str],
+    allowlist: list[str] | None = None,
+) -> tuple[dict, str]:
+    payload = {
+        "name": f"image-bot-{uuid4().hex[:8]}",
+        "scopes": scopes,
+        "template_allowlist": allowlist or [],
+    }
+    response = client.post("/api/v1/service-tokens", json=payload)
+    assert response.status_code == 201, response.text
+    body = response.json()
+    return body["service_token"], body["token"]
+
+
+def test_artifact_endpoints_accept_service_tokens_for_owned_preparations(
+    client: TestClient, session: Session
+) -> None:
+    ids = seed_launch(session)
+    _set_first_case_image(session, ids["dataset_version_id"], IMAGE_A)
+    prepared = client.post("/api/v1/evaluations/prepare", json=prepare_body(ids)).json()
+    preparation_id = prepared["preparation_id"]
+
+    read_token, read_plaintext = _create_service_token(
+        client, scopes=["eval:read"]
+    )
+    read_auth = {"Authorization": f"Bearer {read_plaintext}"}
+    preparation = session.get(EvalPreparation, preparation_id)
+    assert preparation is not None
+    preparation.created_by = f"svc:{read_token['name']}"
+    session.commit()
+
+    fetched = client.get(
+        "/api/v1/dataset-images/artifacts",
+        params={"preparation_id": preparation_id},
+        headers=read_auth,
+    )
+    assert fetched.status_code == 200, fetched.text
+    assert fetched.json()["worker"]["online"] is False
+    # A read token cannot mutate the queue.
+    denied = client.post(
+        "/api/v1/dataset-images/artifacts/ensure",
+        json={"preparation_id": preparation_id},
+        headers=read_auth,
+    )
+    assert denied.status_code == 403, denied.text
+
+    # A different token cannot see the preparation even with eval:read.
+    _other, other_plaintext = _create_service_token(client, scopes=["eval:read"])
+    hidden = client.get(
+        "/api/v1/dataset-images/artifacts",
+        params={"preparation_id": preparation_id},
+        headers={"Authorization": f"Bearer {other_plaintext}"},
+    )
+    assert hidden.status_code == 404, hidden.text
+
+    launch_token, launch_plaintext = _create_service_token(
+        client, scopes=["eval:launch"], allowlist=["template-not-in-this-route"]
+    )
+    launch_auth = {"Authorization": f"Bearer {launch_plaintext}"}
+    preparation.created_by = f"svc:{launch_token['name']}"
+    session.commit()
+
+    # The template allowlist only applies to template launch paths; ensure/retry
+    # are bounded by preparation ownership instead of being rejected wholesale.
+    ensured = client.post(
+        "/api/v1/dataset-images/artifacts/ensure",
+        json={"preparation_id": preparation_id},
+        headers=launch_auth,
+    )
+    assert ensured.status_code == 200, ensured.text
+    retried = client.post(
+        "/api/v1/dataset-images/artifacts/retry",
+        json={"preparation_id": preparation_id},
+        headers=launch_auth,
+    )
+    assert retried.status_code == 200, retried.text

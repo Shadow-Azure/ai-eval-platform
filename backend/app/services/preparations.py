@@ -53,6 +53,7 @@ from . import capacity
 from . import dataset_image_artifacts as image_artifacts
 from . import evaluations as evaluation_service
 from .preflight import PreflightIssue, check_preparation
+from .preparation_ttl import image_preparation_ttl_seconds
 
 CASE_SELECTION_MODES = ("all", "count", "cases")
 DEFAULT_CASE_TIMEOUT_SECONDS = 3600
@@ -119,35 +120,91 @@ class PreparationInvalid(PreparationError):
         super().__init__(message, details={"fields": {field: "invalid"}} if field else {})
 
 
+IMAGE_PREP_RETRY_AFTER_SECONDS = 15
+
+
+def _image_readiness_url(preparation_id: str | None) -> str | None:
+    if not preparation_id:
+        return None
+    return f"/api/v1/dataset-images/artifacts?preparation_id={preparation_id}"
+
+
+def _image_readiness_details(
+    images: list[dict],
+    readiness: dict,
+    preparation_id: str | None,
+) -> dict:
+    total = int(readiness.get("total") or 0)
+    ready_count = int(readiness.get("ready_count") or 0)
+    pending_count = total - ready_count
+    details = {
+        "images": images,
+        "image_readiness": readiness,
+        "truncated": pending_count > len(images),
+        "total": total,
+        "pending_count": pending_count,
+        "counts": {
+            "ready": ready_count,
+            "preparing": int(readiness.get("preparing_count") or 0),
+            "failed": int(readiness.get("failed_count") or 0),
+            "missing": int(readiness.get("missing_count") or 0),
+        },
+        "worker": readiness.get("worker"),
+        # M8 (#436): a machine caller should poll this URL instead of launching
+        # the template again. The service token scopes in dataset-image-artifacts
+        # make the URL usable with the same eval:read/eval:launch credential.
+        "readiness_url": _image_readiness_url(preparation_id),
+        "retry_after_seconds": IMAGE_PREP_RETRY_AFTER_SECONDS,
+    }
+    return {key: value for key, value in details.items() if value is not None}
+
+
 class ImageNotReady(PreparationError):
     """M8 (#290): at least one case image has no OSS tarball yet."""
 
     status = 409
     code = "image_not_ready"
 
-    def __init__(self, images: list[dict], readiness: dict) -> None:
+    def __init__(
+        self,
+        images: list[dict],
+        readiness: dict,
+        *,
+        preparation_id: str | None = None,
+    ) -> None:
         # ``images`` is filtered from the capped readiness list, so the visible
         # subset may hide rows. Keep the authoritative counts and a truncation
         # flag next to it; the console can render "showing N of M" without
         # re-deriving anything from the capped array.
-        total = int(readiness.get("total") or 0)
-        ready_count = int(readiness.get("ready_count") or 0)
-        pending_count = total - ready_count
-        details = {
-            "images": images,
-            "image_readiness": readiness,
-            "truncated": pending_count > len(images),
-            "total": total,
-            "pending_count": pending_count,
-            "counts": {
-                "ready": ready_count,
-                "preparing": int(readiness.get("preparing_count") or 0),
-                "failed": int(readiness.get("failed_count") or 0),
-                "missing": int(readiness.get("missing_count") or 0),
-            },
-        }
         super().__init__(
             "运行时镜像尚未就绪，请等待准备完成或重试失败镜像",
+            details=_image_readiness_details(images, readiness, preparation_id),
+        )
+
+
+class ImagePrepUnavailable(PreparationError):
+    """M8 (#436): images are missing and the image-prep worker is not running.
+
+    Returning an endless ``image_not_ready`` 409 was the reported failure mode:
+    the queue had no consumer, so callers kept relaunching the template. A 503
+    with the readiness snapshot and heartbeat age names the real prerequisite.
+    """
+
+    status = 503
+    code = "image_prep_unavailable"
+
+    def __init__(
+        self,
+        images: list[dict],
+        readiness: dict,
+        *,
+        preparation_id: str | None = None,
+    ) -> None:
+        details = _image_readiness_details(images, readiness, preparation_id)
+        worker = readiness.get("worker") or {}
+        reason = worker.get("message") or "镜像准备服务未运行"
+        super().__init__(
+            f"{reason}；请检查 image-prep 服务是否启动后重试",
             details=details,
         )
 
@@ -809,13 +866,14 @@ def build_preparation(
     # Use the shared id helper so ids match every other domain row.
     preparation_id = new_id()
     ttl_seconds = settings.eval_preparation_ttl_seconds
-    # M8 (#290): a snapshot whose images still need an out-of-band worker run
-    # must survive the multi-minute pull/save/upload. Extend it to the image
-    # preparation window; a snapshot whose images are already ready keeps the
-    # normal short TTL.
+    # M8 (#436): a snapshot whose images still need an out-of-band worker run
+    # must survive the serial pull/save/upload queue. Derive the window from the
+    # frozen image count instead of the fixed one-hour #290 value. A snapshot
+    # whose images are already ready keeps the normal short TTL.
     if image_refs and not image_readiness["ready"]:
         ttl_seconds = max(
-            ttl_seconds, settings.eval_preparation_image_ttl_seconds
+            ttl_seconds,
+            image_preparation_ttl_seconds(settings, len(image_refs)),
         )
     expires_at = now + timedelta(seconds=ttl_seconds)
     asset_snapshot = _snapshot_asset(result.asset_snapshot)
@@ -1040,6 +1098,9 @@ def consume_preparation(
     # artifacts are enqueued for the prepare worker, then the launch is
     # rejected with the per-image state. The enqueue must survive the 409 so
     # the worker can actually fill the gaps.
+    # M8 (#436): if the worker heartbeat is stale, the queue has no consumer.
+    # Return a distinct 503 naming that prerequisite instead of an endless
+    # "preparing" 409 that invites repeated launches.
     image_readiness = image_artifacts.ensure_preparation_images(
         session, preparation, settings, enqueue=True
     )
@@ -1048,7 +1109,12 @@ def consume_preparation(
         pending = [
             item for item in image_readiness["images"] if item["status"] != "ready"
         ]
-        raise ImageNotReady(pending, image_readiness)
+        worker = image_readiness.get("worker") or {}
+        if not worker.get("online"):
+            raise ImagePrepUnavailable(
+                pending, image_readiness, preparation_id=preparation_id
+            )
+        raise ImageNotReady(pending, image_readiness, preparation_id=preparation_id)
 
     resolved = snapshot.get("resolved") or {}
     asset_snapshot = snapshot.get("asset_snapshot") or None
