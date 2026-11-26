@@ -6,7 +6,7 @@ English | [中文](m8-image-pull-throughput.md)
 kind: issue
 milestone: m8
 priority: P2
-status: in-progress
+status: done
 scope:
   - .agents/flow/issues/m8-image-pull-throughput.*
   - backend/app/services/dataset_image_prep.py
