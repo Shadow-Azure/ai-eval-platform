@@ -52,12 +52,7 @@ RETRY_BACKOFF_CAP_SECONDS = 3600.0
 # Startup/periodic residue sweep: temporary tarballs older than this are
 # leftovers from a killed process and are deleted.
 STALE_TAR_SECONDS = 3600.0
-# A completed export is kept much longer so an interrupted upload can be
-# retried without another multi-minute pull; after this window even a complete
-# tarball is residue.
-RESUMABLE_TAR_SECONDS = 86400.0
 TARBALL_GLOB = "dataset-image-*.tar.gz"
-TARBALL_MARKER_SUFFIX = ".complete"
 TARBALL_CONTENT_TYPE = "application/gzip"
 
 
@@ -218,7 +213,6 @@ class PrepareOutcome:
     cleanup_error: str | None = None
     error: str | None = None
     endpoint: str | None = None
-    reused_tarball: bool = False
 
 
 @dataclass
@@ -242,52 +236,6 @@ def temp_tarball_path(work_dir: str | os.PathLike[str], image: str) -> Path:
     """Deterministic temporary tarball path under the worker work dir."""
 
     return Path(work_dir) / f"dataset-image-{_image_digest(image)}.tar.gz"
-
-
-def temp_tarball_marker(tar_path: Path) -> Path:
-    """Sidecar proving ``docker save`` finished before a process was killed.
-
-    The tarball bytes alone cannot distinguish a complete export from a partial
-    one. The marker is written only after ``export_gzip`` returned a positive
-    size, so a complete tar can be re-uploaded without another pull while a
-    marker-less tar is discarded as partial residue.
-    """
-
-    return tar_path.with_name(tar_path.name + TARBALL_MARKER_SUFFIX)
-
-
-def complete_tarball_size(tar_path: Path) -> int | None:
-    """Return the tar size when both the tar and its completion marker agree."""
-
-    marker = temp_tarball_marker(tar_path)
-    try:
-        size = int(marker.read_text(encoding="utf-8").strip())
-    except (OSError, ValueError):
-        return None
-    if size <= 0:
-        return None
-    try:
-        if tar_path.stat().st_size != size:
-            return None
-    except OSError:
-        return None
-    return size
-
-
-def _mark_tarball_complete(tar_path: Path, size: int) -> None:
-    temp_tarball_marker(tar_path).write_text(str(size), encoding="utf-8")
-
-
-def _remove_tarball(tar_path: Path | None) -> None:
-    if tar_path is None:
-        return
-    tar_path.unlink(missing_ok=True)
-    temp_tarball_marker(tar_path).unlink(missing_ok=True)
-
-
-def _discard_incomplete_tarball(tar_path: Path) -> None:
-    if tar_path.exists() or temp_tarball_marker(tar_path).exists():
-        _remove_tarball(tar_path)
 
 
 def _select_store(settings: Settings, object_key: str):
@@ -333,21 +281,17 @@ def _cleanup(
     docker: ImagePreparer,
     tar_path: Path | None,
     refs: list[str],
-    *,
-    remove_tar: bool = True,
 ) -> tuple[str, str | None]:
     """Best-effort removal of the temp tar and all local image refs.
 
     Returns ``("done", None)`` or ``("failed", message)``; never raises so a
     cleanup problem cannot turn a successful upload into a failed artifact.
-    ``remove_tar=False`` keeps a completed export for the next upload attempt
-    while still removing the local docker image to free disk space.
     """
 
     errors: list[str] = []
-    if remove_tar and tar_path is not None:
+    if tar_path is not None:
         try:
-            _remove_tarball(tar_path)
+            tar_path.unlink(missing_ok=True)
         except OSError as exc:
             errors.append(f"删除临时 tar {tar_path} 失败：{exc}")
     seen: set[str] = set()
@@ -389,16 +333,9 @@ def prepare_one(
     """Claim and prepare at most one dataset image tarball.
 
     The claim lease is committed immediately so the multi-minute pull does not
-    hold a database transaction. Uploads use the internal OSS endpoint with a
-    public fallback (see ``_select_store``). On success the object is uploaded,
-    HEADed and the row marked ``ready`` before local cleanup runs; a cleanup
-    failure keeps ``ready`` and records ``local_cleanup=failed`` for the
-    periodic sweep.
-
-    A completed export is marked with a ``.complete`` sidecar. If the upload
-    fails or the process is killed mid-upload, the tar is kept and the next
-    attempt re-uploads it without another pull; only a partial (unmarked) tar
-    is discarded.
+    hold a database transaction. On success the object is uploaded, HEADed and
+    the row marked ``ready`` before local cleanup runs; a cleanup failure keeps
+    ``ready`` and records ``local_cleanup=failed`` for the periodic sweep.
     """
 
     settings = settings or get_settings()
@@ -427,8 +364,6 @@ def prepare_one(
     attempted_sources: list[str] = []
     size_bytes: int | None = None
     pulled_ref: str | None = None
-    tar_complete = False
-    keep_tar = False
 
     try:
         if store is None:
@@ -446,6 +381,11 @@ def prepare_one(
             )
         outcome.endpoint = getattr(store, "endpoint", None)
 
+        candidates = candidate_ref_pairs(image, effective_sources(session, settings))
+        # ``effective_sources`` opens a read transaction; release it before the
+        # multi-minute pull so no database transaction stays open meanwhile.
+        session.rollback()
+
         if existing_size is not None:
             # A previous worker or the manual publish script already uploaded
             # this image; only stale local residue needs attention.
@@ -457,60 +397,43 @@ def prepare_one(
                 work_dir.mkdir(parents=True, exist_ok=True)
             except OSError as exc:
                 raise PrepareError(f"创建镜像准备工作目录 {work_dir} 失败：{exc}") from exc
+            try:
+                free = _free_bytes(work_dir)
+            except OSError as exc:
+                raise PrepareError(f"读取数据盘可用空间失败：{exc}") from exc
+            minimum = max(0, int(settings.dataset_image_prep_min_free_bytes))
+            if free < minimum:
+                raise PrepareError(
+                    f"磁盘可用空间不足：{work_dir} 所在数据盘仅剩 {free} 字节，"
+                    f"低于最低要求 {minimum} 字节；请扩容数据盘后重试"
+                )
+            if not candidates:
+                raise PrepareError(f"没有可用的镜像源，无法拉取 {image}")
 
-            reused_size = complete_tarball_size(tar_path)
-            if reused_size is not None:
-                # The previous process exported this image but died during the
-                # upload. Re-upload the complete tar instead of pulling again.
-                outcome.reused_tarball = True
-                local_size = reused_size
-                tar_complete = True
-            else:
-                _discard_incomplete_tarball(tar_path)
+            platform = (settings.dataset_image_prep_platform or "").strip()
+            pull_errors: list[str] = []
+            for source, candidate in candidates:
+                if source.name not in attempted_sources:
+                    attempted_sources.append(source.name)
                 try:
-                    free = _free_bytes(work_dir)
-                except OSError as exc:
-                    raise PrepareError(f"读取数据盘可用空间失败：{exc}") from exc
-                minimum = max(0, int(settings.dataset_image_prep_min_free_bytes))
-                if free < minimum:
-                    raise PrepareError(
-                        f"磁盘可用空间不足：{work_dir} 所在数据盘仅剩 {free} 字节，"
-                        f"低于最低要求 {minimum} 字节；请扩容数据盘后重试"
-                    )
-                candidates = candidate_ref_pairs(image, effective_sources(session, settings))
-                # ``effective_sources`` opens a read transaction; release it
-                # before the multi-minute pull so no transaction stays open.
-                session.rollback()
-                if not candidates:
-                    raise PrepareError(f"没有可用的镜像源，无法拉取 {image}")
+                    docker.pull(candidate, platform)
+                except Exception as exc:
+                    pull_errors.append(f"{source.name} ({candidate})：{exc}")
+                    continue
+                pulled_ref = candidate
+                source_name = source.name
+                break
+            if pulled_ref is None:
+                raise PrepareError(
+                    "所有公开源均拉取失败：" + "；".join(pull_errors)
+                )
 
-                platform = (settings.dataset_image_prep_platform or "").strip()
-                pull_errors: list[str] = []
-                for source, candidate in candidates:
-                    if source.name not in attempted_sources:
-                        attempted_sources.append(source.name)
-                    try:
-                        docker.pull(candidate, platform)
-                    except Exception as exc:
-                        pull_errors.append(f"{source.name} ({candidate})：{exc}")
-                        continue
-                    pulled_ref = candidate
-                    source_name = source.name
-                    break
-                if pulled_ref is None:
-                    raise PrepareError(
-                        "所有公开源均拉取失败：" + "；".join(pull_errors)
-                    )
-
-                canonical = image
-                if pulled_ref != canonical:
-                    docker.tag(pulled_ref, canonical)
-                local_size = docker.export_gzip(canonical, str(tar_path))
-                if local_size <= 0:
-                    raise PrepareError("导出的镜像 tar 为空")
-                _mark_tarball_complete(tar_path, local_size)
-                tar_complete = True
-
+            canonical = image
+            if pulled_ref != canonical:
+                docker.tag(pulled_ref, canonical)
+            local_size = docker.export_gzip(canonical, str(tar_path))
+            if local_size <= 0:
+                raise PrepareError("导出的镜像 tar 为空")
             store.put_file(
                 object_key,
                 tar_path,
@@ -538,15 +461,11 @@ def prepare_one(
             session.commit()
     except PrepareError as exc:
         errors.append(str(exc))
-        keep_tar = tar_complete and not ready
     except Exception as exc:  # unexpected docker/DB/store failure
         errors.append(f"镜像准备失败：{exc}")
-        keep_tar = tar_complete and not ready
     finally:
         refs = [image, *(candidate for _source, candidate in candidates)]
-        cleanup_status, cleanup_error = _cleanup(
-            docker, tar_path, refs, remove_tar=not keep_tar
-        )
+        cleanup_status, cleanup_error = _cleanup(docker, tar_path, refs)
         if ready:
             row.status = "ready"
             row.error = None
@@ -568,21 +487,14 @@ def prepare_one(
                 max(1, int(settings.dataset_image_prep_max_attempts)),
                 datetime.now(UTC),
             )
-        if keep_tar:
-            # The tar is intentionally retained for the next upload attempt;
-            # ``local_cleanup=pending`` keeps the sweep from claiming the images
-            # were fully removed while the tar still occupies the data disk.
-            row.local_cleanup = "pending"
-            row.cleanup_error = cleanup_error
-        else:
-            row.local_cleanup = cleanup_status
-            row.cleanup_error = cleanup_error
+        row.local_cleanup = cleanup_status
+        row.cleanup_error = cleanup_error
         session.commit()
         outcome.status = row.status
         outcome.source = source_name or row.source
         outcome.size_bytes = size_bytes if ready else None
-        outcome.local_cleanup = row.local_cleanup
-        outcome.cleanup_error = row.cleanup_error
+        outcome.local_cleanup = cleanup_status
+        outcome.cleanup_error = cleanup_error
         outcome.error = row.error
     return outcome
 
@@ -602,12 +514,10 @@ def sweep(
     the worker's own ``dataset-image-*.tar.gz`` prefix, never platform images.
 
     ``startup=True`` additionally reclaims every ``preparing`` row (an
-    interrupted pull leaves the status behind with a lease nobody owns), clears
-    its claim owner, and sets ``next_attempt_at=now`` after cleanup so the
-    worker re-claims the row immediately. Complete tarballs (marked by a
-    ``.complete`` sidecar) survive both startup and periodic sweeps for
-    ``RESUMABLE_TAR_SECONDS``; only partial tarballs are dropped. Periodic
-    sweeps only touch expired leases and keep tarballs younger than
+    interrupted pull leaves the status behind with a lease nobody owns), drops
+    all temporary tarballs regardless of age, and sets ``next_attempt_at=now``
+    after cleanup so the worker re-claims the row immediately. Periodic sweeps
+    only touch expired leases and keep tarballs younger than
     ``STALE_TAR_SECONDS``.
     """
 
@@ -636,8 +546,6 @@ def sweep(
             )
         )
     )
-    work_dir = Path(settings.dataset_image_prep_work_dir)
-    max_attempts = max(1, int(settings.dataset_image_prep_max_attempts))
     sources: list[RegistrySource] = []
     if rows:
         try:
@@ -653,64 +561,30 @@ def sweep(
             except Exception:
                 pass
             cleanup_status, cleanup_error = _cleanup(docker, None, refs)
-            retained_tar = (
-                row.status == "failed"
-                and (row.attempts or 0) < max_attempts
-                and complete_tarball_size(
-                    temp_tarball_path(work_dir, row.image_ref)
-                )
-                is not None
-            )
-            if retained_tar and cleanup_status == "done":
-                # The local images are gone, but the complete tar is retained
-                # for the next upload attempt; the row is not fully cleaned.
-                row.local_cleanup = "pending"
-                row.cleanup_error = None
-            else:
-                row.local_cleanup = cleanup_status
-                row.cleanup_error = cleanup_error
+            row.local_cleanup = cleanup_status
+            row.cleanup_error = cleanup_error
             if cleanup_status == "done":
                 outcome.cleaned += 1
             else:
                 outcome.cleanup_failed += 1
             if row.status == "preparing":
                 # Keep the row claimable. A startup sweep is authoritative (the
-                # previous process is gone), so the lease and claim owner are
-                # reset to now; a periodic sweep only cleans an already-expired
-                # lease and must not move it.
+                # previous process is gone), so the lease is reset to now; a
+                # periodic sweep only cleans an already-expired lease and must
+                # not move it.
                 if startup:
                     row.next_attempt_at = now
                     row.claimed_at = None
                     row.lease_owner = None
-            if row.status == "ready":
-                # A crash after the upload was committed can leave the complete
-                # export behind; a ready row no longer needs it for a retry.
-                try:
-                    tar_path = temp_tarball_path(work_dir, row.image_ref)
-                    if tar_path.exists() or temp_tarball_marker(tar_path).exists():
-                        _remove_tarball(tar_path)
-                        outcome.tarballs_removed += 1
-                except OSError:
-                    pass
             session.commit()
 
+    work_dir = Path(settings.dataset_image_prep_work_dir)
     if work_dir.is_dir():
-        stale_cutoff = now.timestamp() - STALE_TAR_SECONDS
-        resumable_cutoff = now.timestamp() - RESUMABLE_TAR_SECONDS
+        cutoff = now.timestamp() - STALE_TAR_SECONDS
         for path in work_dir.glob(TARBALL_GLOB):
             try:
-                if not path.is_file():
-                    continue
-                mtime = path.stat().st_mtime
-                if complete_tarball_size(path) is not None:
-                    # A finished export is valid retry material; do not delete
-                    # it on restart or on the one-hour partial-tar schedule.
-                    if mtime < resumable_cutoff:
-                        _remove_tarball(path)
-                        outcome.tarballs_removed += 1
-                    continue
-                if startup or mtime < stale_cutoff:
-                    _remove_tarball(path)
+                if path.is_file() and (startup or path.stat().st_mtime < cutoff):
+                    path.unlink()
                     outcome.tarballs_removed += 1
             except OSError:
                 continue

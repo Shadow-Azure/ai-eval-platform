@@ -32,16 +32,14 @@ github:
 - Upload and HEAD through the internal OSS endpoint, falling back to the public endpoint for non-Aliyun, cross-region or unreachable internal deployments.
 - Write worker heartbeat and queue depth to service_heartbeat; expose worker plus queued/processing in readiness and return a clear launch error while the worker is offline.
 - Record claimed_at / lease_owner; make GET read-only and reap only never-claimed overdue rows from ensure while the worker is offline.
-- Derive the preparation TTL from the image count and renew it while the queue progresses.
-- Let service tokens read readiness and drive ensure/retry; return readiness_url and retry_after_seconds in 409/503.
-- Keep a completed temporary tarball so an upload failure or restart re-uploads it directly; start/update image-prep on deploy when no preparation is active.
+- Start/update image-prep on deploy when no preparation is active.
+
+This issue implements #436's P0 only; dynamic TTL, service-token readiness/ensure, restart tarball reuse and multiple workers are P1/P2 and intentionally deferred. The local flow priority P2 is only for m8 serial ordering and does not change #436's P0 severity.
 
 ## Acceptance
 
 - Tests cover internal endpoint selection and public fallback; upload and HEAD use the same endpoint.
 - Tests cover heartbeat, queued/processing, the offline 503, read-only GET and offline reaping.
 - Tests cover the claimed_at / lease_owner migration and that a reaped row stays failed.
-- Tests cover TTL derivation by image count and ensure/retry renewal.
-- Tests cover service-token eval:read / eval:launch artifacts access and readiness_url.
-- Tests cover complete-tarball reuse after upload failure/restart and the sweep retention policy.
+  # P1/P2 items are deferred; no acceptance tests are claimed for them.
 - Migration, deployment contract, documentation gates and the full backend suite pass.

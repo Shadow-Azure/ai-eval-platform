@@ -298,12 +298,6 @@ class Settings(BaseSettings):
     # snapshot TTL to this longer value so the operator can confirm the launch
     # after the worker finishes instead of losing the snapshot mid-preparation.
     eval_preparation_image_ttl_seconds: int = 3600
-    # M8 (#436): a fixed one-hour image window is shorter than the real serial
-    # queue (10 unique 1.2GB images took ~9h on the public endpoint). Derive the
-    # window from the frozen image count with a floor and a wall-clock cap; the
-    # ensure/retry paths also renew it while the worker is still progressing.
-    eval_preparation_image_ttl_per_image_seconds: int = 600
-    eval_preparation_image_ttl_max_seconds: int = 86400
     # Execution policy bounds accepted by prepare/create. The wizard renders
     # these as field errors; the server is the authority (never a fake success).
     eval_min_case_timeout_seconds: int = 60

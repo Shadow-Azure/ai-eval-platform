@@ -45,7 +45,7 @@ The object key defaults to `dataset-images/<sha256 of the image reference>.tar.g
 
 ## Automatic dataset image preparation worker
 
-A background worker fills missing image tarballs with a dedicated Docker-in-Docker daemon and never mounts the host Docker socket. The deploy script enables `image-prep` when the data disk has at least `DATASET_IMAGE_PREP_MIN_FREE_BYTES` free and skips the update while an image is actively claimed, so a deploy cannot interrupt a pull or upload. A first deployment or manual troubleshooting can still start it explicitly:
+A background worker fills missing image tarballs with a dedicated Docker-in-Docker daemon and never mounts the host Docker socket. The deploy script starts or updates `image-prep` when the data disk has at least `DATASET_IMAGE_PREP_MIN_FREE_BYTES` free and skips the update while an image is actively claimed, so a deploy cannot interrupt a pull or upload. A first deployment or manual troubleshooting can still start it explicitly:
 
 ```sh
 sudo mkdir -p /data/ai-eval-image-prep/docker /data/ai-eval-image-prep/work
@@ -63,7 +63,7 @@ docker compose --env-file .env -f deploy/docker-compose.prod.yml --profile image
 docker compose --env-file .env -f deploy/docker-compose.prod.yml --profile image-prep exec image-prep sh -c 'ls -l /work'
 ```
 
-After each upload passes HEAD, `docker images` no longer lists that image and `/work` holds no `dataset-image-*.tar.gz`; a completed export carries a `.complete` sidecar, so an upload failure or restart re-uploads it without another pull. Startup removes partial tarballs; the 10-minute sweep then removes partial tarballs older than 1 hour, while complete tarballs are kept for 24 hours. The worker writes its heartbeat and queue depth to `service_heartbeat` every 30 seconds; `GET /api/v1/dataset-images/artifacts` is read-only and returns the `worker` heartbeat with `queued`/`processing` counts, and a stale heartbeat makes launch return `503 image_prep_unavailable` instead of an endless `preparing`. Service tokens may read readiness with `eval:read` and call ensure/retry with `eval:launch`. Stop the services with `down` on the same profile and keep the data disk. Because deploy/rollback no longer pass `--remove-orphans`, removing or renaming a compose service requires manually pruning the old container (for example `docker compose ... rm -f <service>`); the profile is intentionally preserved.
+After each upload passes HEAD, `docker images` no longer lists that image and `/work` holds no `dataset-image-*.tar.gz`; startup cleans local images left by an interrupted run and all temporary tarballs, while the 10-minute sweep only removes temporary tarballs older than 1 hour. The worker writes its heartbeat and queue depth to `service_heartbeat` every 30 seconds; `GET /api/v1/dataset-images/artifacts` is read-only and returns the `worker` heartbeat with `queued`/`processing` counts, and a stale heartbeat makes launch return `503 image_prep_unavailable` instead of an endless `preparing`; an overdue queued row reaped by ensure stays failed until the explicit retry. Stop the services with `down` on the same profile and keep the data disk. Because deploy/rollback no longer pass `--remove-orphans`, removing or renaming a compose service requires manually pruning the old container (for example `docker compose ... rm -f <service>`); the profile is intentionally preserved.
 
 ## Editing documentation
 

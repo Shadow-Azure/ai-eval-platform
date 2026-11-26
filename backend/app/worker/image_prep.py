@@ -167,7 +167,7 @@ def main() -> int:
     heartbeat_thread, heartbeat_stop = start_heartbeat(heartbeat)
     db_heartbeat_thread, db_heartbeat_stop = start_db_heartbeat()
     # Make the worker visible to the launch gate immediately, before the first
-    # (potentially multi-hour) pull starts.
+    # (potentially multi-minute) pull starts.
     write_db_heartbeat()
     try:
         # Clear whatever a previous process left before claiming new work. The
@@ -184,7 +184,7 @@ def main() -> int:
                         "image-prep: prepare "
                         f"image={outcome.image} status={outcome.status} "
                         f"source={outcome.source} size={outcome.size_bytes} "
-                        f"endpoint={outcome.endpoint} reused={outcome.reused_tarball} "
+                        f"endpoint={outcome.endpoint} "
                         f"cleanup={outcome.local_cleanup} "
                         f"error={(outcome.error or '')[:200]}",
                         flush=True,

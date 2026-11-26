@@ -32,16 +32,14 @@ github:
 - 自动准备改用内网 OSS endpoint 上传与 HEAD，非阿里云、跨 region 或内网不可达时回退公网。
 - Worker 心跳与队列深度写入 service_heartbeat；readiness 暴露 worker 与 queued/processing；worker 离线时 launch 返回明确错误。
 - 记录 claimed_at / lease_owner；GET 只读，ensure 仅在 worker 离线时回收从未领取的逾期行。
-- 按镜像数推导 preparation TTL，并在队列有进展时续期。
-- 服务令牌可查询 readiness 并推进 ensure/retry；409/503 返回 readiness_url 与 retry_after_seconds。
-- 保留已完成的临时 tar，上传失败或重启后直接重传；部署在无进行中任务时自动启动/更新 image-prep。
+- 部署在无进行中任务时自动启动/更新 image-prep。
+
+本 issue 只实现 #436 的 P0；动态 TTL、服务令牌 readiness/ensure、重启 tar 复用与多 worker 属于 P1/P2，暂不实现。本地流程优先级 P2 仅用于 m8 串行排队，不改变 #436 的 P0 严重度。
 
 ## 验收
 
 - 内网 endpoint 选择与公网回退有测试；上传与 HEAD 走同一 endpoint。
 - 心跳、queued/processing、worker 离线 503、GET 只读与离线回收有测试。
 - claimed_at / lease_owner 迁移与回收后保持 failed 的行为有测试。
-- TTL 按镜像数推导、ensure/retry 续期有测试。
-- 服务令牌 eval:read / eval:launch 的 artifacts 鉴权与 readiness_url 有测试。
-- 上传失败/重启后复用完整 tar、sweep 保留策略有测试。
+  # P1/P2 项暂不实现，无对应验收。
 - 迁移、部署契约、文档门禁与全量后端测试通过。

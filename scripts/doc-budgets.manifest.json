@@ -23,6 +23,6 @@
   ".agents/flow/milestones/m7-extension-and-hardening.md": 200,
   ".agents/flow/milestones/m8-bug-fixes.md": 200,
   ".agents/flow/milestones/m9-self-evolution-reporting.md": 200,
-  "// docs/development.md": "M8 #273 adds the dataset image tarball publishing section (550 -> 800); M8 #290 adds the automatic preparation worker operations section (800 -> 1100; #290 closeout adds the DinD mirror note (1100 -> 1160)); M8 #436 adds internal OSS, heartbeat/queued monitoring, the 503 gate and restart-safe tarball reuse (1160 -> 1240).",
+  "// docs/development.md": "M8 #273 adds the dataset image tarball publishing section (550 -> 800); M8 #290 adds the automatic preparation worker operations section (800 -> 1100; #290 closeout adds the DinD mirror note (1100 -> 1160)); M8 #436 adds internal OSS, heartbeat/queued monitoring and the 503 gate (1160 -> 1240; P0-only scope).",
   ".agents/flow/milestones/m10-eval-templates.md": 200
 }

@@ -60,7 +60,7 @@ M2 把执行与数据集、Agent 解耦：平台经 repository_dispatch 传 8 �
 
 冷启动的竞价 Runner 没有本地镜像；除了在任务 payload 中按 `image_sources` 顺序回退公开源，平台还支持把数据集镜像的压缩 `docker save` tar 发布到私有 OSS。对象 key 由镜像引用确定性派生（默认 `dataset-images/<sha256>.tar.gz`），任务接口在 Runner 收到 `started` 2xx、拿到容量后按 case 签发短时 presign 的内网 GET URL（阿里云 OSS 从 `s3_endpoint` 自动派生 `-internal`，`S3_INTERNAL_ENDPOINT` 可覆盖；不把 OSS 凭据下发到实例）。URL 有效期只覆盖一次下载（默认 1200s，即 15 分钟下载预算加 5 分钟余量），不覆盖容量排队。Spot Runner 先下载、`docker load` 并校验镜像，再进入执行；首次下载返回 401/403 时刷新一次 `/tasks` 并重试一次，仍失败才回退 `image_sources`，404、超时、tar 损坏或 load 失败直接回退，诊断区分鉴权失败与对象缺失。发布在固定主机执行 `scripts/publish-dataset-image.sh`，与 `python -m app.manage dataset-image` 共用同一 key 派生和 presign 逻辑；OSS 保持私有。
 
-评测预检记录每个用例镜像的 OSS tar 是否就绪；缺失的 tar 由 compose `image-prep` Worker 串行补齐。部署脚本在数据盘满足门槛时启动或更新该 profile，有镜像正在领取处理时跳过本次更新。Worker 领取租约后按公开源顺序 `docker pull`，`docker save` 流式写入临时 tar，默认经内网 OSS endpoint 上传（非阿里云或跨 region 回退公网），HEAD 校验后清理。导出完成的 tar 带 `.complete` 标记，上传中断后可重传而无需重新 pull。Worker 把心跳写入 `service_heartbeat`；`image_readiness` 带心跳与 `queued` / `processing` 拆分，`GET artifacts` 只读，`ensure/retry` 仅在 worker 离线时回收从未领取的排队行。快照 TTL 按镜像数推导，并在队列有进展时续期。服务令牌可用 `eval:read` 查询 artifacts、用 `eval:launch` 调用 ensure/retry；未就绪返回 `409 image_not_ready`，worker 离线 `503 image_prep_unavailable`。
+评测预检记录每个用例镜像的 OSS tar 是否就绪；缺失的 tar 由 compose `image-prep` Worker 串行补齐。部署脚本在数据盘满足门槛时启动或更新该 profile，有镜像正在领取处理时跳过。Worker 使用独立 Docker-in-Docker 且不挂宿主 Docker socket，领取租约后按公开源顺序 `docker pull`，`docker save` 流式写入临时 tar，默认经内网 OSS endpoint 上传（非阿里云或跨 region 回退公网），HEAD 校验后清理。Worker 每 30 秒把心跳写入 `service_heartbeat`；`image_readiness` 带心跳与 `queued` / `processing`，`GET artifacts` 只读，`ensure` 仅在 worker 离线时回收从未领取的逾期行。未就绪的 create 返回 `409 image_not_ready`，worker 离线返回 `503 image_prep_unavailable`。
 
 ## GitHub 出口代理
 

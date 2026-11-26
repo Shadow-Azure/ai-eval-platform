@@ -45,7 +45,7 @@ bash scripts/publish-dataset-image.sh swebench/sweb.eval.x86_64.astropy_1776_ast
 
 ## 数据集镜像自动准备 Worker
 
-镜像 tar 缺失由后台准备 Worker 自动补齐；它使用独立 Docker-in-Docker，不挂宿主 Docker socket。部署脚本在数据盘父目录存在且可用空间不低于 `DATASET_IMAGE_PREP_MIN_FREE_BYTES` 时自动启用 `image-prep` profile，有镜像正在领取处理时跳过本次更新，避免普通部署中断拉取或上传。首次部署或手工排查仍可显式启动：
+镜像 tar 缺失由后台准备 Worker 自动补齐；它使用独立 Docker-in-Docker，不挂宿主 Docker socket。部署脚本在数据盘父目录存在且可用空间不低于 `DATASET_IMAGE_PREP_MIN_FREE_BYTES` 时自动启动或更新 `image-prep` profile，有镜像正在领取处理时跳过本次更新，避免普通部署中断拉取或上传。首次部署或手工排查仍可显式启动：
 
 ```sh
 sudo mkdir -p /data/ai-eval-image-prep/docker /data/ai-eval-image-prep/work
@@ -63,7 +63,7 @@ docker compose --env-file .env -f deploy/docker-compose.prod.yml --profile image
 docker compose --env-file .env -f deploy/docker-compose.prod.yml --profile image-prep exec image-prep sh -c 'ls -l /work'
 ```
 
-每次上传通过 HEAD 校验后，`docker images` 不应再出现该镜像，`/work` 也不应留下 `dataset-image-*.tar.gz`；导出完成的 tar 带 `.complete` 标记，上传失败或重启后下一次尝试直接重传，不再 pull。启动时清理未完成的 tar；之后每 10 分钟扫描清理超过 1 小时的未完成 tar，完整 tar 保留 24 小时。Worker 每 30 秒把心跳和队列深度写入 `service_heartbeat`；`GET /api/v1/dataset-images/artifacts` 只读并返回 `worker` 心跳与 `queued` / `processing` 计数，心跳失效时 launch 返回 `503 image_prep_unavailable` 而非无限 `preparing`。服务令牌可用 `eval:read` 查询 readiness、用 `eval:launch` 调用 ensure/retry。停止准备服务使用同一 profile 的 `down`，不要删除数据盘目录。deploy/rollback 不传 `--remove-orphans`，移除或重命名 compose 服务后需手动清理旧容器（例如 `docker compose ... rm -f <service>`）；`image-prep` profile 会被有意保留。
+每次上传通过 HEAD 校验后，`docker images` 不应再出现该镜像，`/work` 中也不应留下 `dataset-image-*.tar.gz`；进程启动会清理上次中断的本地镜像和全部临时 tar，之后每 10 分钟扫描只清理超过 1 小时的临时 tar。Worker 每 30 秒把心跳和队列深度写入 `service_heartbeat`；`GET /api/v1/dataset-images/artifacts` 只读并返回 `worker` 心跳与 `queued` / `processing` 计数，worker 心跳失效时 launch 返回 `503 image_prep_unavailable` 而非无限 `preparing`；ensure 在 worker 离线时回收的逾期排队行保持 failed，直到显式 retry。停止准备服务使用同一 profile 的 `down`，不要删除数据盘目录。由于 deploy/rollback 不再传 `--remove-orphans`，移除或重命名 compose 服务后需要手动清理旧容器（例如 `docker compose ... rm -f <service>`）；`image-prep` profile 会被有意保留。
 
 ## 修改文档
 

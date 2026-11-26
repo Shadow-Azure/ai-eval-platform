@@ -37,7 +37,6 @@ from .dataset_image_tarballs import tarball_key
 from .dataset_images import DEFAULT_ARCH, image_for_case
 from .image_prep_health import image_prep_health
 from .object_store import ObjectMissing, ObjectStoreError, object_store_from_settings
-from .preparation_ttl import renew_image_preparation_if_progressing
 
 READINESS_IMAGE_LIMIT = 200
 # HEAD checks are cheap but a dataset may select hundreds of cases; keep the
@@ -478,13 +477,7 @@ def ensure_preparation_images(
     refs = snapshot_image_refs(preparation)
     if refs is None:
         return None
-    settings = settings or get_settings()
-    result = readiness(session, refs, settings, recheck=True, enqueue=enqueue)
-    # M8 (#436): renew the snapshot while the worker is actually progressing.
-    # The operator polls the console repeatedly; without this, a 10-image queue
-    # can outlive the snapshot between the last prepare and the launch click.
-    renew_image_preparation_if_progressing(preparation, settings, result)
-    return result
+    return readiness(session, refs, settings, recheck=True, enqueue=enqueue)
 
 
 def retry_preparation_images(
@@ -525,9 +518,7 @@ def retry_preparation_images(
             row.claimed_at = None
             row.lease_owner = None
         session.flush()
-    result = readiness(session, refs, settings, recheck=False, enqueue=False)
-    renew_image_preparation_if_progressing(preparation, settings, result)
-    return result
+    return readiness(session, refs, settings, recheck=False, enqueue=False)
 
 
 def requeue_due_failed_artifacts(

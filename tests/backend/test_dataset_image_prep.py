@@ -21,7 +21,7 @@ from app.seed import ensure_default_scope
 from app.services import dataset_image_artifacts as artifacts
 from app.services import dataset_image_prep as prep
 from app.services.dataset_image_prep import DockerCommandError, prepare_one, sweep
-from app.services.object_store import ObjectMissing, ObjectStoreError
+from app.services.object_store import ObjectMissing
 from app.worker import image_prep as worker
 from object_stub import StubObjectStore
 from sqlalchemy.orm import Session
@@ -83,11 +83,9 @@ class FakeStore:
         *,
         objects: dict[str, bytes] | None = None,
         head_size_override: int | None = None,
-        fail_put: bool = False,
     ) -> None:
         self.objects = dict(objects or {})
         self.head_size_override = head_size_override
-        self.fail_put = fail_put
         self.put_calls: list[tuple[str, int, str]] = []
 
     def head_object(self, object_key: str) -> int:
@@ -98,8 +96,6 @@ class FakeStore:
         return len(self.objects[object_key])
 
     def put_file(self, object_key, path, *, content_type="application/octet-stream", timeout=1800):
-        if self.fail_put:
-            raise ObjectStoreError("模拟上传失败")
         data = Path(path).read_bytes()
         self.objects[object_key] = data
         self.put_calls.append((object_key, len(data), content_type))
@@ -395,11 +391,10 @@ def test_prepare_one_stays_ready_when_only_local_cleanup_fails(
     assert IMAGE in docker.images
 
 
-def test_prepare_one_keeps_a_complete_tar_when_upload_head_size_mismatches(
+def test_prepare_one_fails_when_upload_head_size_mismatches(
     session: Session, tmp_path: Path
 ) -> None:
-    work_dir = tmp_path / "work"
-    settings = _settings(work_dir, sources="docker.io")
+    settings = _settings(tmp_path / "work", sources="docker.io")
     store = FakeStore(head_size_override=len(PAYLOAD) + 1)
     docker = FakeDocker()
     _queue(session, settings)
@@ -407,99 +402,12 @@ def test_prepare_one_keeps_a_complete_tar_when_upload_head_size_mismatches(
     outcome = prepare_one(session, settings, docker=docker, store=store)
 
     row = _row(session)
-    tar_path = prep.temp_tarball_path(work_dir, IMAGE)
     assert outcome.status == "failed"
     assert "上传校验失败" in (outcome.error or "")
     assert row.status == "failed"
-    # The export is complete; keeping it lets the next attempt retry the upload
-    # without another pull. Only a partial export is discarded.
-    assert tar_path.exists()
-    assert prep.temp_tarball_marker(tar_path).exists()
-    assert row.local_cleanup == "pending"
-    assert docker.images == set()
-    assert store.put_calls
-
-
-def test_prepare_one_retries_a_failed_upload_from_the_complete_tarball(
-    session: Session, tmp_path: Path
-) -> None:
-    work_dir = tmp_path / "work"
-    settings = _settings(work_dir, sources="docker.io")
-    _queue(session, settings)
-    docker = FakeDocker()
-
-    first = prepare_one(session, settings, docker=docker, store=FakeStore(fail_put=True))
-
-    tar_path = prep.temp_tarball_path(work_dir, IMAGE)
-    assert first.status == "failed"
-    assert first.reused_tarball is False
-    assert tar_path.exists()
-    assert prep.complete_tarball_size(tar_path) == len(PAYLOAD)
-    assert docker.pull_calls == [(IMAGE, "linux/amd64")]
-    assert docker.images == set()
-
-    row = _row(session)
-    row.status = "preparing"
-    row.next_attempt_at = datetime.now(UTC) - timedelta(seconds=1)
-    row.claimed_at = None
-    row.lease_owner = None
-    session.commit()
-
-    retry_docker = FakeDocker()
-    second = prepare_one(
-        session, settings, docker=retry_docker, store=FakeStore()
-    )
-
-    assert second.status == "ready"
-    assert second.reused_tarball is True
-    assert retry_docker.pull_calls == []
-    assert retry_docker.export_calls == []
-    assert not tar_path.exists()
-    assert not prep.temp_tarball_marker(tar_path).exists()
-    row = _row(session)
-    assert row.status == "ready"
-    assert row.attempts == 2
     assert row.local_cleanup == "done"
-
-
-def test_startup_sweep_keeps_a_complete_tarball_and_drops_the_partial(
-    session: Session, tmp_path: Path
-) -> None:
-    work_dir = tmp_path / "work"
-    work_dir.mkdir()
-    settings = _settings(work_dir, sources="docker.io")
-    complete = work_dir / "dataset-image-complete.tar.gz"
-    complete.write_bytes(PAYLOAD)
-    prep._mark_tarball_complete(complete, len(PAYLOAD))
-    partial = work_dir / "dataset-image-partial.tar.gz"
-    partial.write_bytes(b"partial")
-
-    result = sweep(session, settings, docker=FakeDocker(), startup=True)
-
-    assert result.tarballs_removed == 1
-    assert complete.exists()
-    assert prep.complete_tarball_size(complete) == len(PAYLOAD)
-    assert not partial.exists()
-
-
-def test_periodic_sweep_expires_an_old_complete_tarball(
-    session: Session, tmp_path: Path
-) -> None:
-    work_dir = tmp_path / "work"
-    work_dir.mkdir()
-    settings = _settings(work_dir, sources="docker.io")
-    complete = work_dir / "dataset-image-old.tar.gz"
-    complete.write_bytes(PAYLOAD)
-    prep._mark_tarball_complete(complete, len(PAYLOAD))
-    old = (datetime.now(UTC) - timedelta(hours=25)).timestamp()
-    os.utime(complete, (old, old))
-    os.utime(prep.temp_tarball_marker(complete), (old, old))
-
-    result = sweep(session, settings, docker=FakeDocker())
-
-    assert result.tarballs_removed == 1
-    assert not complete.exists()
-    assert not prep.temp_tarball_marker(complete).exists()
+    assert store.put_calls
+    assert docker.images == set()
 
 
 # ---------------------------------------------------------------------------
@@ -669,6 +577,8 @@ def test_startup_sweep_cleans_an_interrupted_preparing_row_and_fresh_tarball(
     _queue(session, settings, status="preparing")
     row = _row(session)
     row.next_attempt_at = datetime.now(UTC) - timedelta(minutes=5)
+    row.claimed_at = datetime.now(UTC) - timedelta(minutes=5)
+    row.lease_owner = "old-host:1"
     row.local_cleanup = "pending"
     session.commit()
     # Interrupted pulls leave a fresh tar behind; startup must not wait for the
@@ -686,9 +596,12 @@ def test_startup_sweep_cleans_an_interrupted_preparing_row_and_fresh_tarball(
     assert IMAGE in docker.remove_calls
     assert row.status == "preparing"
     assert row.local_cleanup == "done"
-    # The row is immediately re-claimable by the worker.
+    # The row is immediately re-claimable by the worker, and the dead process
+    # no longer owns it.
     assert _utc(row.next_attempt_at) is not None
     assert abs((_utc(row.next_attempt_at) - now).total_seconds()) < 1
+    assert row.claimed_at is None
+    assert row.lease_owner is None
 
 
 def test_startup_sweep_reclaims_an_active_lease_but_periodic_does_not(
@@ -735,42 +648,6 @@ def test_periodic_sweep_cleans_an_expired_preparing_row_but_keeps_its_lease(
     assert row.status == "preparing"
     assert row.local_cleanup == "done"
     assert _utc(row.next_attempt_at) == lease
-
-
-def test_sweep_keeps_a_complete_retry_tarball_pending_but_drops_a_ready_one(
-    session: Session, tmp_path: Path
-) -> None:
-    work_dir = tmp_path / "work"
-    work_dir.mkdir()
-    settings = _settings(work_dir, sources="docker.io")
-    _queue(session, settings, image=IMAGE, status="failed")
-    failed_row = _row(session)
-    failed_row.attempts = 1
-    failed_row.local_cleanup = "pending"
-    session.commit()
-    failed_tar = prep.temp_tarball_path(work_dir, IMAGE)
-    failed_tar.write_bytes(PAYLOAD)
-    prep._mark_tarball_complete(failed_tar, len(PAYLOAD))
-
-    ready_image = "registry.example/eval/runtime-ready:latest"
-    _queue(session, settings, image=ready_image, status="ready")
-    ready_row = _row(session, ready_image)
-    ready_row.local_cleanup = "pending"
-    session.commit()
-    ready_tar = prep.temp_tarball_path(work_dir, ready_image)
-    ready_tar.write_bytes(PAYLOAD)
-    prep._mark_tarball_complete(ready_tar, len(PAYLOAD))
-
-    result = sweep(session, settings, docker=FakeDocker())
-
-    assert result.cleaned == 2
-    assert result.tarballs_removed == 1
-    # The failed row keeps its complete tar for the next upload attempt, so its
-    # cleanup stays pending; a ready row no longer needs its tar.
-    assert _row(session).local_cleanup == "pending"
-    assert failed_tar.exists()
-    assert not ready_tar.exists()
-    assert _row(session, ready_image).local_cleanup == "done"
 
 
 def test_run_sweep_passes_the_startup_flag(monkeypatch: pytest.MonkeyPatch) -> None:

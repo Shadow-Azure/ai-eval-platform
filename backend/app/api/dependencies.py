@@ -123,15 +123,8 @@ def _service_actor(
         allowlist = [str(item) for item in (token.template_allowlist_json or [])]
         if allowlist:
             template_id = str(request.path_params.get("template_id") or "")
-            if template_id:
-                if template_id not in allowlist:
-                    raise _forbidden("服务令牌无权启动该模板。")
-            elif not request.url.path.startswith("/api/v1/dataset-images/artifacts"):
-                # A template allowlist must not float to an unrelated launch
-                # surface. The dataset-image ensure/retry routes are the only
-                # non-template eval:launch routes; they are bounded by the
-                # preparation owner (svc:<name>) instead (#436).
-                raise _forbidden("服务令牌无权调用该接口。")
+            if template_id not in allowlist:
+                raise _forbidden("服务令牌无权启动该模板。")
     return Actor(
         label=token_service.actor_label(token),
         is_admin=False,
@@ -141,16 +134,12 @@ def _service_actor(
     )
 
 
-def require_session_or_service(
-    scope: str, *, session_admin: bool = True
-) -> Callable[..., Actor]:
+def require_session_or_service(scope: str) -> Callable[..., Actor]:
     """Build the dependency for a stable execution route.
 
     ``scope`` is one of ``SERVICE_TOKEN_SCOPES``: ``eval:launch`` additionally
-    requires the admin role for a console session by default, while ``eval:read``
-    accepts any authenticated role. ``session_admin=False`` keeps a route open to
-    any console session while still requiring ``eval:launch`` for a service
-    token (the dataset-image ensure POST predates the machine-token split).
+    requires the admin role for a console session, while ``eval:read`` accepts
+    any authenticated role.
     """
 
     if scope not in SERVICE_TOKEN_SCOPES:
@@ -168,11 +157,7 @@ def require_session_or_service(
         if context is None:
             raise _unauthenticated()
         request.state.auth = context
-        if (
-            scope == SCOPE_EVAL_LAUNCH
-            and session_admin
-            and context.role != identity.ROLE_ADMIN
-        ):
+        if scope == SCOPE_EVAL_LAUNCH and context.role != identity.ROLE_ADMIN:
             raise _forbidden("当前账号没有写入权限。")
         return Actor(
             label=context.user.email,
