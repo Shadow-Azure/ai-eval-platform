@@ -73,4 +73,4 @@ github:
 
 ## 讨论点
 
-代理实测的结论是“不能加快”：当前 Squid 只放行 GitHub，Docker registry 的 CONNECT 被拒绝；它和 image-prep 同机同出口，且 `cache deny all`，即使放开域名也不会增加带宽。要提速，优先换更快的 registry 镜像/ACR/GA，或把代理/registry 放到国际链路更好的主机；是否为 Docker 单独做代理或私有 registry，需要确认成本、运维和安全边界。
+代理实测的结论是“不能加快”：当前 Squid 只放行 GitHub，Docker registry 的 CONNECT 被拒绝；它和 image-prep 同机同出口，且 `cache deny all`，即使放开域名也不会增加带宽。另用同一镜像的临时 Squid 副本放行全部域名复测：`registry-1.docker.io:443` 30s 超时、`auth.docker.io` CONNECT 503、`api.github.com` 200，说明瓶颈在 ECS 出口而不是 ACL。要提速，优先换更快的 registry 镜像/ACR/GA，或把代理/registry 放到国际链路更好的主机；是否为 Docker 单独做代理或私有 registry，需要确认成本、运维和安全边界。
