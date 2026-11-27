@@ -39,7 +39,11 @@ function egressClaims(overrides = {}) {
   };
 }
 
-/** Squid sends "<username> <password>"; the password slot is empty. */
+/**
+ * Squid sends "<username> <password>". The runner uses a non-empty placeholder
+ * password because Squid rejects empty Basic passwords before calling the
+ * helper (#442); the helper only verifies the username token.
+ */
 function checkCredentials(lines, { secret = SECRET } = {}) {
   const result = spawnSync(process.env.PYTHON ?? "python3", [AUTH_SCRIPT], {
     input: `${lines.join("\n")}\n`,
@@ -53,6 +57,14 @@ function checkCredentials(lines, { secret = SECRET } = {}) {
 test("egress_auth.py accepts a valid egress token", () => {
   const token = issueToken(egressClaims());
   assert.deepEqual(checkCredentials([`${token} `]), ["OK"]);
+});
+
+test("egress_auth.py ignores the non-empty placeholder password (#442)", () => {
+  // Squid never hands an empty Basic password to the helper (it answers 407
+  // first), so the runner sends "x" as a placeholder; only the username token
+  // is verified.
+  const token = issueToken(egressClaims());
+  assert.deepEqual(checkCredentials([`${token} x`]), ["OK"]);
 });
 
 test("egress_auth.py rejects an expired token", () => {
