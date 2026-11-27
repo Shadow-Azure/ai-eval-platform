@@ -6,7 +6,7 @@ English | [中文](m8-egress-proxy-empty-password.md)
 kind: issue
 milestone: m8
 priority: P2
-status: in-progress
+status: done
 scope:
   - .agents/flow/issues/m8-egress-proxy-empty-password.*
   - runner/scripts/real-task.mjs
