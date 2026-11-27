@@ -7,8 +7,10 @@ Squid speaks a simple line protocol on stdin/stdout:
     stdout: "OK\\n" or "ERR\\n" for that line, flushed immediately
 
 The platform puts a short-lived signed egress token in the Basic *username*
-slot and leaves the password empty, so the password half of the line is
-ignored. Tokens use the v1 short-token format shared with
+slot and a non-empty placeholder password next to it: Squid rejects an empty
+Basic password with 407 and never calls this helper for it. The password value
+is ignored; only the username token is verified. Tokens use the v1
+short-token format shared with
 ``backend/app/services/short_token.py`` and ``runner/lib/auth.mjs``:
 
     v1.<base64url(JSON claims)>.<base64url(HMAC-SHA256(secret, body))>

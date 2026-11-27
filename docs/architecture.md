@@ -64,20 +64,20 @@ M2 把执行与数据集、Agent 解耦：平台经 repository_dispatch 传 8 �
 
 ## GitHub 出口代理
 
-评测容器以 `--network host` 运行，GitHub 出口即 runner 宿主出口；生产在平台 ECS 上以 `deploy/docker-compose.prod.yml` 的 `proxy` 服务运行固定版本 Squid（镜像在 `ubuntu/squid` 上补装 python3 供 auth helper 使用），同时监听两个端口：3128 是私网监听，不做认证，只接受 RFC1918 来源（`runner_network`，生产收敛到 runner 所在 VPC/子网 CIDR）；3129 是公网监听，要求 HTTP Basic 认证，凭据为平台签发的短期 egress token（放在用户名位、密码留空），供外部 Mac mini 等非 VPC Runner 使用。两个监听共用同一份 GitHub 域名白名单；默认所有池统一走公网 3129：部署流水线从 `ECS_HOST`（公网地址）派生 `RUNNER_EGRESS_PROXY=http://<公网地址>:3129`，每次评测再附带短期 egress token；3128 作为 VPC 内可选直连，绑定 `RUNNER_EGRESS_PROXY_BIND_ADDRESS`（可设为 `API_BIND_ADDRESS`）。3129 默认绑定 0.0.0.0，可用 `RUNNER_EGRESS_PROXY_PUBLIC_BIND_ADDRESS` 收紧；安全组按端口分别限制来源。
+评测容器以 `--network host` 运行，GitHub 出口即 runner 宿主出口；生产在平台 ECS 上以 `deploy/docker-compose.prod.yml` 的 `proxy` 服务运行固定版本 Squid（镜像在 `ubuntu/squid` 上补装 python3 供 auth helper 使用），同时监听两个端口：3128 是私网监听，不做认证，只接受 RFC1918 来源（`runner_network`，生产收敛到 runner 所在 VPC/子网 CIDR）；3129 是公网监听，要求 HTTP Basic 认证，凭据为平台签发的短期 egress token（放在用户名位，密码位用非空占位符；Squid 会直接拒绝空密码 Basic 凭据而不调用认证 helper），供外部 Mac mini 等非 VPC Runner 使用。两个监听共用同一份 GitHub 域名白名单；默认所有池统一走公网 3129：部署流水线从 `ECS_HOST`（公网地址）派生 `RUNNER_EGRESS_PROXY=http://<公网地址>:3129`，每次评测再附带短期 egress token；3128 作为 VPC 内可选直连，绑定 `RUNNER_EGRESS_PROXY_BIND_ADDRESS`（可设为 `API_BIND_ADDRESS`）。3129 默认绑定 0.0.0.0，可用 `RUNNER_EGRESS_PROXY_PUBLIC_BIND_ADDRESS` 收紧；安全组按端口分别限制来源。
 
 API 的 `RUNNER_EGRESS_PROXY` 只接受不含凭据的 http(s) URL，配置后随分片任务 payload 下发，并在同一 payload 里附带 `egress_token`：scope=`egress`，绑定 eval_run/shard/attempt/pool，TTL 与 case token 相同（`max(300, case_timeout_seconds + 900)`），由 `issue_short_token` 用 `RUNNER_TASK_SECRET` 签发；未配置代理时两个字段都不下发，Runner 保持直连。代理侧 `deploy/proxy/egress_auth.py` 用同一个 `RUNNER_TASK_SECRET` 校验 v1 格式的签名、`exp` 与 scope（wire format 与 `backend/app/services/short_token.py` 保持一致），secret 为空时一律拒绝；因此 `RUNNER_TASK_SECRET` 必须同时注入 api 与 proxy 容器。
 
-Runner 仅在 `egress_proxy` 非空时给资产 install 与 Agent 的 `docker exec` 注入 `HTTPS_PROXY`、`HTTP_PROXY` 与 `NO_PROXY`；有 token 时把地址组合成 `http://<token>:@<proxy-host>:<port>`（token 只含 `[A-Za-z0-9._-]`，无需转义），无 token 时沿用不带凭据的地址（私网监听）。未配置时命令参数与直连行为不变。`NO_PROXY` 从 payload 派生平台回调/模型网关主机与 OSS 资产包主机，并固定包含 `localhost`、`127.0.0.1`、`::1`、npm 镜像 `registry.npmmirror.com` 与默认源 `registry.npmjs.org`。
+Runner 仅在 `egress_proxy` 非空时给资产 install 与 Agent 的 `docker exec` 注入 `HTTPS_PROXY`、`HTTP_PROXY` 与 `NO_PROXY`；有 token 时把地址组合成 `http://<token>:x@<proxy-host>:<port>`（token 只含 `[A-Za-z0-9._-]`，无需转义；密码位必须非空，Squid 对空密码直接返回 407，helper 忽略其值），无 token 时沿用不带凭据的地址（私网监听）。未配置时命令参数与直连行为不变。`NO_PROXY` 从 payload 派生平台回调/模型网关主机与 OSS 资产包主机，并固定包含 `localhost`、`127.0.0.1`、`::1`、npm 镜像 `registry.npmmirror.com` 与默认源 `registry.npmjs.org`。
 
 代理只放行 GitHub：设置代理 env 后，非白名单外部请求会被 Squid 直接拒绝（`http_access deny all`），不会回退直连；因此只有确实需要 GitHub 的评测才应配置 `RUNNER_EGRESS_PROXY`，不需要时保持为空、完全不注入。白名单在 `deploy/proxy/squid.conf`：只允许 `.github.com` 与 `.githubusercontent.com` 两个通配（分别覆盖 github.com 及其子域、全部 GitHub 资产域名）的 443 端口，允许/拒绝都写入访问日志。改白名单或 CIDR 后重建 `proxy` 服务。该代理与 image-prep 同机同出口且不做缓存，Docker registry 的 CONNECT 会被拒绝；镜像拉取不走此代理，放开域名也不能增加拉取带宽。
 
 验证命令（token 取一次真实 payload 的 `egress_token`，或按 v1 格式自签一个过期/错 scope 的 token）：
 
 ```sh
-curl -x http://<token>:@<proxy-host>:3129 https://api.github.com/rate_limit
-curl -x http://<expired-token>:@<proxy-host>:3129 https://api.github.com/rate_limit
-curl -x http://<token>:@<proxy-host>:3129 https://registry.npmmirror.com/
+curl -x http://<token>:x@<proxy-host>:3129 https://api.github.com/rate_limit
+curl -x http://<expired-token>:x@<proxy-host>:3129 https://api.github.com/rate_limit
+curl -x http://<token>:x@<proxy-host>:3129 https://registry.npmmirror.com/
 docker compose -f deploy/docker-compose.prod.yml logs --tail=100 proxy
 ```
 

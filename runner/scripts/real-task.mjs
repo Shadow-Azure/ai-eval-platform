@@ -277,13 +277,20 @@ function normalizeEgressToken(value) {
   return EGRESS_TOKEN_RE.test(token) ? token : null;
 }
 
+// Squid refuses a Basic credential whose password is empty before it ever
+// invokes auth_param, so the password slot must carry a non-empty placeholder
+// even though the helper only verifies the token in the username slot.
+const EGRESS_PROXY_PASSWORD = "x";
+
 /**
  * Compose the credential-bearing proxy URL for the container. The public
  * listener authenticates with HTTP Basic, so the short-lived token rides in
- * the username slot and the password stays empty:
- * `http://<egress_token>:@<proxy-host>:<port>`. Without a token the payload's
- * credential-free URL is kept (private listener has no auth); a malformed
- * token is ignored instead of being spliced into a URL.
+ * the username slot and a non-empty placeholder occupies the password slot:
+ * `http://<egress_token>:x@<proxy-host>:<port>`. Squid rejects empty Basic
+ * passwords (407) without calling the auth helper, which is why the password
+ * must not be empty. Without a token the payload's credential-free URL is kept
+ * (private listener has no auth); a malformed token is ignored instead of
+ * being spliced into a URL.
  */
 function credentialedEgressProxy(proxy, token) {
   if (!token) return proxy;
@@ -291,7 +298,7 @@ function credentialedEgressProxy(proxy, token) {
     const parsed = new URL(proxy);
     const defaultPort = parsed.protocol === "https:" ? "443" : "80";
     const authority = parsed.port ? parsed.host : `${parsed.host}:${defaultPort}`;
-    return `${parsed.protocol}//${token}:@${authority}`;
+    return `${parsed.protocol}//${token}:${EGRESS_PROXY_PASSWORD}@${authority}`;
   } catch {
     return proxy;
   }

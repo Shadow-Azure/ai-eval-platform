@@ -468,7 +468,9 @@ test("the legacy runtime_prerequisites field still drives an install-only setup"
 const EGRESS_PROXY = "http://10.0.0.10:3128";
 // The platform signs tokens with `[A-Za-z0-9._-]` only, so the URL needs no escaping.
 const EGRESS_TOKEN = "v1.eyJzY29wZSI6ImVncmVzcyJ9.c2lnbmF0dXJl";
-const EGRESS_PROXY_WITH_TOKEN = `http://${EGRESS_TOKEN}:@10.0.0.10:3128`;
+// #442: Squid rejects an empty Basic password before calling the auth helper,
+// so the password slot must carry a non-empty placeholder.
+const EGRESS_PROXY_WITH_TOKEN = `http://${EGRESS_TOKEN}:x@10.0.0.10:3128`;
 
 function proxyEnvFrom(line) {
   const values = {};
@@ -504,6 +506,13 @@ test("the egress proxy env reaches the asset install and the agent exec", async 
       const env = proxyEnvFrom(line);
       assert.equal(env.HTTPS_PROXY, EGRESS_PROXY_WITH_TOKEN, line);
       assert.equal(env.HTTP_PROXY, EGRESS_PROXY_WITH_TOKEN, line);
+      for (const value of [env.HTTPS_PROXY, env.HTTP_PROXY]) {
+        const credential = new URL(value);
+        assert.equal(credential.username, EGRESS_TOKEN, line);
+        // #442: an empty password makes Squid answer 407 without invoking the
+        // auth helper, so this assertion is the regression guard for the bug.
+        assert.notEqual(credential.password, "", `empty Basic password in ${value}`);
+      }
       const noProxy = new Set((env.NO_PROXY ?? "").split(","));
       for (const host of [
         "localhost",
